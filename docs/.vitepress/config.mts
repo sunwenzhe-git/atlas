@@ -94,6 +94,13 @@ export default defineConfig({
         items: [
           { text: 'Obsidian 决策外脑哲学', link: '/vault/obsidian' }
         ]
+      },
+      {
+        text: '🤝 贡献与协同',
+        collapsed: false,
+        items: [
+          { text: '流水线 RFC 协同机制', link: '/guide/contributing' }
+        ]
       }
     ],
 

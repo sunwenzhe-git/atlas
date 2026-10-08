@@ -99,7 +99,7 @@ say "[1/6] 装配 atlas 包到 .atlas/"
 ATLAS_DEST="$TARGET/.atlas"
 run rm -rf "$ATLAS_DEST"
 run mkdir -p "$ATLAS_DEST"
-for pkg_dir in shared rings apply scripts templates adapters validators patches tests agents docs bin; do
+for pkg_dir in shared rings apply scripts templates adapters validators patches tests agents docs bin proposals; do
   if [ -d "$SCRIPT_DIR/$pkg_dir" ]; then
     run cp -R "$SCRIPT_DIR/$pkg_dir" "$ATLAS_DEST/$pkg_dir"
     say "      -> .atlas/$pkg_dir"

@@ -18,7 +18,8 @@
 - [九、铁血门禁系统（The Iron Gates）](#九铁血门禁系统the-iron-gates)
 - [十、自带技能生态（Built-in Skills & Agents）](#十自带技能生态built-in-skills--agents)
 - [十一、可选外脑增强：Obsidian 决策中枢哲学](#十一可选外脑增强obsidian-决策中枢哲学)
-- [十二、开源协议（License）](#十二开源协议license)
+- [十二、贡献与流水线协同（RFC 机制）](#十二贡献与流水线协同rfc-机制)
+- [十三、开源协议（License）](#十三开源协议license)
 
 ---
 
@@ -372,7 +373,36 @@ Atlas 随包完整分发了一套自洽的高阶开发与评审套件：
 
 ---
 
-## 十二、开源协议（License）
+## 十二、贡献与流水线协同（RFC 机制）
+
+> **“凡改流水线，必留取证、必记决策、必带测试。”**
+
+当你在真实业务项目中遇到与 Atlas 自身流水线设计相关的问题（门禁误报、契约盲区、规则不合理、新特性诉求）时，请遵循**三位一体 PR 协同机制**：
+
+```
+  1. 发现流水线缺陷与客观报错
+          │
+          ▼
+  2. 基于模板记录问题取证与决策权衡
+     cp proposals/TEMPLATE.md proposals/RFC-YYYYMMDD-01-主题.md
+          │
+          ▼
+  3. 修改代码并追加测试钉子 (tests/)
+          │
+          ▼
+  4. 发起 PR ──► 维护者一眼看清前因后果，一键审查合并！
+```
+
+### 为什么必须三位一体？
+* **带取证 (Evidence)**：拒绝无日志、无复现步骤的模糊抱怨，必须附带最小复现代码或终端输出；
+* **带决策 (Decision)**：明确写出为什么选择当前解法，以及否决了哪些备选方案（为什么不能简单把报错降级为跳过）；
+* **带测试 (Tests)**：任何新规则或 Bug 修复，必须在 `tests/` 补充用例或 M 系列变异证明，保证全量测试（280+ tests）全绿。
+
+详情见 [proposals/README.md](proposals/README.md) 与 [proposals/TEMPLATE.md](proposals/TEMPLATE.md)。
+
+---
+
+## 十三、开源协议（License）
 
 本项目基于 **[GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE)** 协议开源。
 
