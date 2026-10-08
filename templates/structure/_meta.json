@@ -1,0 +1,22 @@
+{
+  "atlas_version": "0.1.0",
+  "product": "[必填：产品名]",
+  "generated_at": "[必填：YYYY-MM-DD]",
+  "baseline": { "branch": "[必填：分支，无则 —]", "commit": "[必填：短哈希，无则 —]" },
+  "apps": [
+    { "name": "[必填：app 标识]", "path": "[必填：相对项目根的路径]", "kind": "[必填：frontend|backend|fullstack|mobile]", "role": "[必填：landing|legacy]", "stack": "[必填：自由文本，仅供展示]" }
+  ],
+  "categories": {
+    "A": "[covered|skipped：<取证>]",
+    "B": "[ok|maintained_by: agent]",
+    "C": "[ok|maintained_by: agent]",
+    "D": "[清单 | 指针（有机器可读描述）| 不适用：<取证>]",
+    "E": "[ok|maintained_by: agent]",
+    "F": "[ok|maintained_by: agent]",
+    "H": "[covered|added：<取证>；greenfield 下亦可用 skipped：<取证>]"
+  },
+  "note": "候选域由结构环从代码聚类；status ∈ 候选 | 已定稿 | 信号冲突（后两个分别由 PRD 回写与人工裁定）。globs 为 L2 spec 的 paths 来源（至少 1 条）。",
+  "domains": [
+    { "id": "[必填：ASCII kebab-case，全链路键]", "name": "[必填：中文名]", "apps": ["[必填：app 标识]"], "status": "候选", "globs": ["[必填：域代码 glob]"] }
+  ]
+}

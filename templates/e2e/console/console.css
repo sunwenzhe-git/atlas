@@ -1,0 +1,123 @@
+/* E2E 用例评审控制台 —— 样式（无外部依赖、无字体、无构建） */
+:root{
+  --bg:#f6f6f4; --surface:#ffffff; --surface-2:#f0f0ed; --border:#e2e2de; --border-strong:#cfcfc8;
+  --text:#1d1d1b; --muted:#6e6e67; --faint:#9a9a92;
+  --ok:#2f6f4f; --ok-bg:#eaf3ee; --bad:#a8231b; --bad-bg:#fbeeec; --warn:#8a6212; --warn-bg:#fbf4e4;
+  --run:#2b4f81; --run-bg:#ecf1f8;
+  --r-sm:4px; --r-md:7px; --sp1:4px; --sp2:8px; --sp3:12px; --sp4:16px; --sp5:24px;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+}
+*{box-sizing:border-box}
+/* 与原型契约 §8 同一条硬规则：作者样式会盖掉 UA 的 hidden→display:none
+   （本控制台自己踩过一次：`.log{display:flex}` 让 `hidden` 失效，面板挡住点击） */
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px;line-height:1.5}
+code{font-family:var(--mono);font-size:12px;background:var(--surface-2);padding:1px 5px;border-radius:var(--r-sm)}
+
+/* ---- 顶栏 ---- */
+.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:var(--sp5);flex-wrap:wrap;
+  padding:var(--sp3) var(--sp5);background:var(--surface);border-bottom:1px solid var(--border)}
+.bar h1{font-size:15px;margin:0;font-weight:650;letter-spacing:.01em}
+.bar .sub{margin:2px 0 0;color:var(--muted);font-size:12px;font-family:var(--mono)}
+.bar-stats{display:flex;gap:var(--sp4);flex-shrink:0}   /* 紧跟标题，不推到右边 */
+.stat{min-width:74px}
+.stat b{display:block;font-size:19px;font-variant-numeric:tabular-nums;font-weight:650}
+.stat span{color:var(--muted);font-size:11px}
+.stat.hot b{color:var(--warn)}
+.stat.hot span{color:var(--warn)}
+.bar-actions{display:flex;align-items:center;gap:var(--sp3);flex-shrink:0;margin-left:auto}
+
+/* ---- 控件 ---- */
+.field{display:flex;align-items:center;gap:var(--sp2);color:var(--muted);font-size:12px;white-space:nowrap}
+.field.grow{flex:1}
+.field input,.field select{border:1px solid var(--border-strong);background:var(--surface);color:var(--text);
+  border-radius:var(--r-md);padding:5px var(--sp2);font:inherit;font-size:12px}
+.field input[type=number]{width:70px;font-variant-numeric:tabular-nums}
+.field input[type=search]{width:100%}
+.unit{color:var(--faint)}
+.field.source select{border-color:var(--run);color:var(--run);font-weight:600;background:var(--run-bg)}
+.check{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;white-space:nowrap}
+.btn{border:1px solid var(--border-strong);background:var(--surface);color:var(--text);border-radius:var(--r-md);
+  padding:5px var(--sp3);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0}
+.btn:hover:not(:disabled){background:var(--surface-2)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-run{border-color:var(--run);color:var(--run);font-weight:600}
+.btn-run:hover:not(:disabled){background:var(--run-bg)}
+.btn-ok{border-color:var(--ok);color:var(--ok);font-weight:600}
+.btn-ok:hover:not(:disabled){background:var(--ok-bg)}
+.chk{display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;font-size:12px;font-weight:600;color:var(--ok)}
+.chk input{width:14px;height:14px;accent-color:var(--ok);cursor:inherit;margin:0}
+.chk.off{color:var(--faint);font-weight:400;cursor:not-allowed}
+.chk.off input{cursor:not-allowed}
+.btn-ghost{border-color:transparent;color:var(--muted);padding:2px 6px}
+.btn-ghost:hover{color:var(--text)}
+
+/* ---- 筛选条 ---- */
+.filters{display:flex;align-items:center;gap:var(--sp4);flex-wrap:wrap;
+  padding:var(--sp3) var(--sp5);background:var(--surface);border-bottom:1px solid var(--border)}
+.legend{margin:var(--sp3) var(--sp5);padding:var(--sp2) var(--sp4);border-radius:var(--r-sm);
+  background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--run);
+  color:var(--muted);font-size:11.5px}
+.legend b{color:var(--text);font-weight:600}
+.notify{margin:var(--sp3) var(--sp5) 0;padding:var(--sp3) var(--sp4);border-radius:var(--r-md);max-height:40vh;overflow:auto;
+  background:var(--warn-bg);color:var(--warn);border:1px solid #e8dcbb;white-space:pre-wrap}
+
+/* ---- 表 ---- */
+.grid{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
+.c1{width:88px}.c2{width:auto}.c3{width:290px}.c4{width:246px}
+.grid thead th{position:sticky;top:44px;z-index:10;background:var(--surface-2);text-align:left;
+  font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--faint);
+  padding:var(--sp2) var(--sp4);border-bottom:1px solid var(--border)}
+.grid td{padding:var(--sp3) var(--sp4) var(--sp3) var(--sp3);border-bottom:1px solid var(--border);vertical-align:top;background:var(--surface)}
+
+tr.group td{background:var(--surface-2);border-bottom:1px solid var(--border-strong);padding:var(--sp2) var(--sp4)}
+tr.group .gname{font-family:var(--mono);font-weight:600;font-size:12px}
+tr.group .gcount{color:var(--muted);margin-left:var(--sp3);font-size:11px}
+tr.group .gtoggle{cursor:pointer;user-select:none;color:var(--faint);margin-right:6px}
+tr.row:hover td{background:#fcfcfb}
+tr.row.dim td{opacity:.55}
+tr.row.busy td{background:var(--run-bg)}
+
+.pagecell{font-family:var(--mono);color:var(--faint);font-size:11px}
+.cid{font-family:var(--mono);font-weight:600;font-size:12px}
+.ctitle{margin-left:var(--sp2)}
+.cline{color:var(--muted);margin-top:2px}
+.cmeta{margin-top:4px;display:flex;gap:var(--sp2);align-items:center;flex-wrap:wrap}
+.tag.dirty{color:var(--warn);border-color:#e8dcbb;background:var(--warn-bg);font-weight:600}
+.tag{font-size:10px;color:var(--faint);border:1px solid var(--border);border-radius:999px;padding:0 6px;font-family:var(--mono)}
+.detail{margin-top:var(--sp3);border-top:1px dashed var(--border);padding-top:var(--sp3)}
+.detail h4{margin:var(--sp3) 0 2px;font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em}
+.detail h4:first-child{margin-top:0}
+.detail ul{margin:0;padding-left:18px}
+.detail li{font-family:var(--mono);font-size:11.5px;color:var(--text)}
+.detail .note{color:var(--faint)}
+
+.pill{display:inline-block;font-size:11px;border-radius:999px;padding:1px 8px;font-family:var(--mono)}
+.pill.none{background:var(--surface-2);color:var(--muted)}
+.pill.ok{background:var(--ok-bg);color:var(--ok)}
+.pill.bad{background:var(--bad-bg);color:var(--bad)}
+.pill.warn{background:var(--warn-bg);color:var(--warn)}
+.pill.run{background:var(--run-bg);color:var(--run)}
+.excerpt{margin-top:4px;color:var(--bad);font-family:var(--mono);font-size:11.5px;word-break:break-word}
+.out{margin-top:var(--sp2);max-height:260px;overflow:auto;background:#1d1d1b;color:#e8e8e4;
+  border-radius:var(--r-md);padding:var(--sp3);font-family:var(--mono);font-size:11.5px;white-space:pre-wrap}
+.why{margin-top:4px;color:var(--faint);font-size:11px}
+.who{margin-top:4px;color:var(--faint);font-size:11px;font-family:var(--mono)}
+.log{position:fixed;left:0;right:0;bottom:0;height:46vh;background:#1d1d1b;color:#e8e8e4;
+  border-top:1px solid var(--border-strong);z-index:40;display:flex;flex-direction:column;
+  box-shadow:0 -10px 28px rgba(16,24,40,.20)}
+.log-bar{display:flex;align-items:center;gap:var(--sp3);padding:var(--sp2) var(--sp4);border-bottom:1px solid #34342f}
+.log-bar b{font-family:var(--mono);font-size:12px;color:#f0f0ec}
+.log-meta{margin-left:auto;color:#9a9a92;font-size:11px;font-family:var(--mono)}
+.log .btn-ghost{color:#c9c9c3;border-color:#3a3a34}
+.log .btn-ghost:hover{background:#2a2a26;color:#fff}
+.log-body{margin:0;padding:var(--sp3) var(--sp4);flex:1;overflow:auto;
+  font-family:var(--mono);font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.excerpt{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.foot{display:flex;gap:var(--sp5);flex-wrap:wrap;color:var(--faint);font-size:11px;padding:var(--sp5)}
+.empty{padding:var(--sp5);color:var(--muted)}
+.chg{display:grid;gap:2px;margin:var(--sp3) 0;font-family:var(--mono);font-size:11.5px;max-height:34vh;overflow:auto}
+.chg i{color:var(--warn);font-style:normal}
+.chg b{color:var(--ok)}
+.wb-actions{display:flex;gap:var(--sp2)}

@@ -1,0 +1,70 @@
+{
+  "version": "1.1",
+  "description": "把跨项目的 skill 路由挂进 Trellis workflow.md（通用技能路由包）：UI（frontend-design 自备合规基线）+ 落笔纪律（内化契约 §14）+ 设计决策追问（atlas-grill）。块形态与判据同 workflow-plan-apply（锚点式版本化：指纹相同⇒skipped，不同⇒整块替换，旧式块⇒升级/替换）。通道依据：skill 自动触发是「请求文本↔description」概率匹配、绑请求时点，流程中段的技能需求等不到评估时点；workflow 祈使步骤 + [workflow-state:*] 面包屑（每轮注入）是实测最硬的软机制。",
+  "target_prefix": "",
+  "patches": [
+    {
+      "id": "ui-skill-breadcrumb",
+      "issue": "UP-161",
+      "file": ".trellis/workflow.md",
+      "mode": "insert_before",
+      "anchor": "[/workflow-state:in_progress]",
+      "snippet": "breadcrumb-in-progress.insert.md",
+      "note": "在 [workflow-state:in_progress] 面包屑块末尾加 UI 技能路由 enforcement 行（每轮自动提醒；子代理平台口径）。锚点全文件唯一，且不是 [/workflow-state:in_progress-inline] 的子串。"
+    },
+    {
+      "id": "ui-skill-breadcrumb-inline",
+      "issue": "UP-161",
+      "file": ".trellis/workflow.md",
+      "mode": "insert_before",
+      "anchor": "[/workflow-state:in_progress-inline]",
+      "snippet": "breadcrumb-in-progress-inline.insert.md",
+      "note": "Codex inline 变体同样加 UI 技能路由 enforcement 行（主会话自加载口径）。"
+    },
+    {
+      "id": "ui-skill-note",
+      "issue": "UP-161",
+      "file": ".trellis/workflow.md",
+      "mode": "insert_after",
+      "anchor": "**Final pass (before Phase 3.4 commit)**",
+      "snippet": "ui-skill-note.insert.md",
+      "note": "在 2.2 末（Final pass 段之后、#### 2.3 之前）落平台无关注——UI 路由细节的载体，两条 UI 面包屑行都指向它。锚点全文件唯一。"
+    },
+    {
+      "id": "skill-no-negative-echo",
+      "issue": "UP-162",
+      "file": ".trellis/workflow.md",
+      "mode": "insert_before",
+      "anchor": "[/workflow-state:in_progress]",
+      "snippet": "no-negative-echo-in-progress.insert.md",
+      "note": "落笔纪律 enforcement 行（与 ui-skill-breadcrumb 同锚点：应用器逐补丁重读文件，两块先后落在块尾；各自独立指纹可单独更新）。"
+    },
+    {
+      "id": "skill-no-negative-echo-inline",
+      "issue": "UP-162",
+      "file": ".trellis/workflow.md",
+      "mode": "insert_before",
+      "anchor": "[/workflow-state:in_progress-inline]",
+      "snippet": "no-negative-echo-in-progress-inline.insert.md",
+      "note": "Codex inline 变体同上。"
+    },
+    {
+      "id": "skill-grilling-planning",
+      "issue": "UP-162",
+      "file": ".trellis/workflow.md",
+      "mode": "insert_before",
+      "anchor": "[/workflow-state:planning]",
+      "snippet": "grilling-planning.insert.md",
+      "note": "重大设计决策定稿前 grilling → atlas-design-review 串行两道的推手（独立审查实例④的第一道此前无人推）。锚点全文件唯一，且不是 [/workflow-state:planning-inline] 的子串。"
+    },
+    {
+      "id": "skill-grilling-planning-inline",
+      "issue": "UP-162",
+      "file": ".trellis/workflow.md",
+      "mode": "insert_before",
+      "anchor": "[/workflow-state:planning-inline]",
+      "snippet": "grilling-planning-inline.insert.md",
+      "note": "Codex inline 变体同上。"
+    }
+  ]
+}

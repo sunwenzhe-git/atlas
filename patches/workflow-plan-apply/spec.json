@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "description": "把 atlas apply 挂进 Trellis Plan 的锚点**版本化**补丁载荷。块 = 带正文指纹的开始标记 + 片段正文 + 结束标记；判据 = 正文是否仍等于当前片段（相同⇒skipped，不同⇒整块替换，旧式块⇒升级/替换）。Trellis 升级、上游模板变更、**本包片段自身更新**后，重跑 install.sh（或本目录 apply-patches.py --apply）即对齐。前置：先把 trellis CLI 升到项目 .trellis/.version（见 open-issues B2），否则 trellis update 可能冲掉本补丁。",
+  "target_prefix": "",
+  "patches": [
+    {
+      "id": "plan-step-1-6",
+      "issue": "A3",
+      "file": ".trellis/workflow.md",
+      "mode": "insert_before_regex",
+      "pattern": "^---\\n\\n## Phase 2: Execute",
+      "snippet": "1.6-plan-apply.insert.md",
+      "note": "在 Phase 1 末尾（Phase 2 分隔线之前）插入 #### 1.6 步骤块。正则 ^---\\n\\n## Phase 2 在 workflow.md 中唯一。"
+    },
+    {
+      "id": "phase-index-1-6",
+      "issue": "A3",
+      "file": ".trellis/workflow.md",
+      "mode": "insert_after",
+      "anchor": "- 1.5 Completion criteria",
+      "snippet": "phase-index-1.6.insert.md",
+      "note": "在 Phase Index 的 Phase 1 步骤清单里补一行 1.6（人读总览）。"
+    },
+    {
+      "id": "breadcrumb-planning",
+      "issue": "A3",
+      "file": ".trellis/workflow.md",
+      "mode": "insert_before",
+      "anchor": "[/workflow-state:planning]",
+      "snippet": "breadcrumb-planning.insert.md",
+      "note": "在 [workflow-state:planning] 面包屑块末尾加 enforcement 行（每轮自动提醒）。"
+    },
+    {
+      "id": "breadcrumb-planning-inline",
+      "issue": "A3",
+      "file": ".trellis/workflow.md",
+      "mode": "insert_before",
+      "anchor": "[/workflow-state:planning-inline]",
+      "snippet": "breadcrumb-planning-inline.insert.md",
+      "note": "Codex inline 变体同样加 enforcement 行。"
+    }
+  ]
+}

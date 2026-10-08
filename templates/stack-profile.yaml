@@ -1,0 +1,81 @@
+# atlas stack-profile —— 技术栈画像
+#
+# 放在目标项目根：product/stack-profile.yaml
+# atlas 核心只读本文件来认识项目；正文与模板中不得出现具体框架名。
+#
+# 生成方式：由 atlas 与用户确认后生成。字段缺失会让对应环降级（降级行为见各分环契约）。
+
+# 产品名（项目级资产的归属维度：一个产品一份 atlas 资产）
+product: <产品名>
+
+# 项目来源形态（决定各环的默认形态；缺省 = greenfield）
+#   greenfield → atlas 从 0 建这个产品
+#   adopt      → 既有项目接入：PRD 走「增量起步」，开户只开最小集
+# 两种形态下 testid 口径相同（E1）：应然 = 用例分片、实然 = 前端源码。
+# 契约见 shared/stack-profile.md §2（安装后位于 .atlas/shared/stack-profile.md）。
+origin: greenfield   # greenfield | adopt
+
+# 实现。role 决定结构事实的去向：
+#   landing → .trellis/spec/structure/current/  （落地实现）
+#   legacy  → .trellis/spec/structure/legacy/   （事实来源，重构/存量项目才有）
+apps:
+  - name: <app 标识>
+    path: <相对项目根路径>
+    kind: frontend | backend | fullstack | mobile
+    role: landing | legacy
+    stack: <自由文本，仅作展示，atlas 不据此做任何判断>
+
+# 事实抽取适配器。null = 未提供，该类别降级为 agent 撰写。
+# 适配器契约见 shared/stack-profile.md §3（安装后位于 .atlas/shared/stack-profile.md）。
+adapters:
+  routes: null      # 路由 / 页面清单
+  api: null         # 接口清单
+  models: null      # 数据模型清单
+  tests: null       # 测试现状
+
+# 知识库（Obsidian）同步。可选增强：缺省 / null 时跳过，不阻断任何环。
+# 契约见 shared/knowledge.md（安装后位于 .atlas/shared/knowledge.md）。
+# dir 是 vault 内**唯一**的 atlas 设计目录，所有项目共用，不按项目分目录。
+knowledge:
+  tool: open-zk-kb          # 固定；写入/检索经该 MCP
+  vault: null               # vault 根绝对路径；null = 不启用知识库同步
+  dir: atlas                # vault 内 atlas 设计目录（相对 vault 根）
+  project: null             # open-zk-kb 的 project 作用域，可选
+
+# 代码图谱后端（可选增强，2026-10-05 图谱批 1）。段缺失 / graph: null = 不用图谱（合法降级）。
+# 声明后：routes 适配器走图谱文件枚举（用前现刷）、apply 影响面推导先跑 impact_report。
+# 后端未安装 ⇒ 消费者显式 not_ready / 降级（绝不静默）。契约见 shared/stack-profile.md §2/§3.6。
+# graph:
+#   backend: cgc            # 枚举：cgc（CodeGraphContext，MIT；uv tool install codegraphcontext）
+#   pinned: "0.6.13"        # 可选；与实装失配 ⇒ 显式 WARN
+
+# E2E（atlas e2e / apply 使用）。E1 起**单段执行**：唯一靶场 = 真实应用。
+e2e:
+  runner: python-playwright   # python-playwright | node-playwright
+  cases_dir: product/e2e/cases
+  index: product/e2e/e2e-index.md
+  scripts_dir: product/e2e/scripts
+  app_base_url: null          # 真实应用地址（单段唯一靶场）；为 null ⇒ 生成器报错向用户索取，不猜默认
+  reset: null                 # 真跑前靶场重置 shell 命令串（cwd = 项目根；null = 不重置）。种子态假设见 rings/e2e §7
+  node_modules: null          # node 运行器的依赖目录（相对项目根；runner=node-playwright 时必填）
+  # 应用靶场登录预置的取证值（可选段；**段缺失 = 合法降级**，字段不齐 = 生成报错）。
+  # 契约见 shared/stack-profile.md §2 + rings/e2e/reference.md §7.1。
+  # app_login:
+  #   endpoint: <OAuth2 表单端点，相对 app_base_url>
+  #   username_field: <表单用户名字段名>
+  #   password_field: <表单密码字段名>
+  #   token_key: <登录响应 JSON 里的令牌键>
+  #   storage_key: <前端读取的 localStorage 键>
+  # 数据播种通道（可选段；**段缺失 = 合法降级**：跳过播种 + 明确警告）。
+  # 接口语义 = 「输入实体清单 ⇒ 保证存在」（幂等）；用例侧 `seed:` 块见 rings/e2e/reference.md §5.7。
+  # mode（2026-10-07 补，B197-1）：enforce（缺省 = 每用例运行期播种）| declare（seed: 行只参与
+  # 静态对账、不发射运行期播种——累加链项目的合法形态，见 rings/e2e/reference.md §5.7）。
+  # seed:
+  #   hook: <项目自定的播种脚本路径，相对项目根>
+  #   mode: enforce        # declare | enforce
+  # 独立审查执行器（2026-09-26 补）。null = 会话环境默认子代理机制；
+  # 需要指定档位时写成映射：review: { model: <档位> }（model: null = 会话当前模型）。
+  review: null
+
+# 已退役（E1，2026-09-27，原型环移除）：`prototype` 段 —— atlas 不再消费任何字段；
+# 存量项目可保留（历史）或删除。见 shared/stack-profile.md §2 与知识库 `3508 §92`。

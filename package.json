@@ -1,0 +1,45 @@
+{
+  "name": "atlas-workflow",
+  "version": "1.0.0",
+  "description": "工业级 Spec-Driven 全流程 Vibecoding 工作流治理引擎",
+  "bin": {
+    "atlas": "./bin/atlas.js"
+  },
+  "files": [
+    "bin",
+    "shared",
+    "rings",
+    "apply",
+    "scripts",
+    "templates",
+    "adapters",
+    "validators",
+    "patches",
+    "agents",
+    "skills",
+    "docs",
+    "install.sh",
+    "README.md",
+    "DESIGN.md"
+  ],
+  "scripts": {
+    "test": "pytest tests/",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.4"
+  },
+  "keywords": [
+    "atlas",
+    "vibecoding",
+    "trellis",
+    "workflow",
+    "spec-driven",
+    "e2e",
+    "playwright"
+  ],
+  "author": "agent_learning",
+  "license": "AGPL-3.0-or-later"
+}

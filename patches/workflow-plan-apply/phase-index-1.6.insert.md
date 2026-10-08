@@ -1,0 +1,1 @@
+- 1.6 项目级资产更新（atlas apply） `[required · once]`

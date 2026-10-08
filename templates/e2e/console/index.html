@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E2E 用例评审控制台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232f6f4f'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='white'%3E%E2%9C%93%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="console.css">
+</head>
+<body>
+<header class="bar">
+  <div class="bar-main">
+    <h1>E2E 用例评审控制台</h1>
+    <p class="sub" id="meta">加载中…</p>
+  </div>
+  <div class="bar-stats" id="stats"></div>
+  <div class="bar-actions">
+    <label class="field">慢动作
+      <input id="slowmo" type="number" min="0" max="5000" step="100" value="500">
+      <span class="unit">ms</span>
+    </label>
+    <button id="closewin" class="btn" hidden title="关闭上一条用例保留的浏览器窗口（跑完不会自动关，留给你手动看）">关闭浏览器窗口</button>
+    <button id="submit" class="btn" title="把页面上的执行结果与勾选一次性提交：① 账本追加一条快照；② 回写 product/e2e/e2e-index.md 的「状态」一列（先给预览，确认后才写）">提交</button>
+    <button id="reload" class="btn">重新加载用例</button>
+  </div>
+</header>
+
+<section class="filters">
+  <label class="field">类型
+    <select id="f-type">
+      <option value="all">全部</option>
+      <option value="smoke">smoke</option>
+      <option value="acceptance">acceptance</option>
+      <option value="exception">exception</option>
+      <option value="permission">permission</option>
+      <option value="manual">走查</option>
+    </select>
+  </label>
+  <label class="field">页面
+    <select id="f-page"><option value="all">全部</option></select>
+  </label>
+  <label class="check"><input id="f-unreviewed" type="checkbox" title="只看还没人工勾「通过」的用例（按 review 状态筛，不按执行结果）"> 只看未评审</label>
+  <label class="field grow">过滤
+    <input id="f-q" type="search" placeholder="用例 ID / 标题 / intent 关键字">
+  </label>
+</section>
+
+<div id="notify" class="notify" hidden></div>
+
+<p class="legend">执行与勾选<b>先只改本地</b>（刷新不丢），点<b>提交</b>才一次性落账本；人工 review = 复核执行结果符合业务预期，勾选留痕、再点一次取消。<b>跑完不自动关浏览器窗口</b>，看够了手动关（或点右上「关闭浏览器窗口」）。失败那条点「输出」看底部面板。</p>
+
+<table class="grid">
+  <colgroup>
+    <col class="c1"><col class="c2"><col class="c3"><col class="c4">
+  </colgroup>
+  <thead>
+    <tr>
+      <th>用例分类</th>
+      <th>用例描述</th>
+      <th>执行用例</th>
+      <th>人工 review 用例</th>
+    </tr>
+  </thead>
+  <tbody id="tbody"></tbody>
+</table>
+
+<footer class="foot">
+  <span>执行结果与评审留痕写 <code>product/e2e/reviews/console/events.jsonl</code>（append-only 唯一真相源）。</span>
+  <span>索引的 <code>状态</code> 只经「提交」显式回写。</span>
+</footer>
+
+<aside id="log" class="log" hidden>
+  <div class="log-bar">
+    <b id="log-title">输出</b>
+    <span id="log-meta" class="log-meta"></span>
+    <button id="log-close" class="btn btn-ghost">关闭</button>
+  </div>
+  <pre id="log-body" class="log-body"></pre>
+</aside>
+
+<script src="app.js"></script>
+</body>
+</html>
