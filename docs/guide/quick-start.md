@@ -11,7 +11,7 @@ Atlas 采用现代化的一键全局 CLI 机制，你可以像使用 Trellis 一
 * **Node.js 18+**（CLI 运行环境）
 * **Python 3.10+**（核心校验器与生成引擎）
 * **Playwright**（E2E 测试运行器：Node 版，由项目 `node_modules` 提供）
-* **Trellis**（推荐宿主执行器，负责需求级任务调度）
+* **[Trellis](https://github.com/mindfold-ai/trellis)**（必需宿主执行器，负责需求级任务调度；安装：`npm install -g @mindfoldhq/trellis`）
 * *(可选)* **CodeGraphContext (cgc)**：若需开启图谱级跨文件逆向分析，安装 `pip install codegraphcontext`
 
 ---

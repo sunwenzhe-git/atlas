@@ -38,18 +38,59 @@ switch (command) {
     
     // 如果没有指定 --target，默认使用当前工作目录
     let hasTarget = false;
+    let targetDir = process.cwd();
     for (let i = 0; i < passthroughArgs.length; i++) {
-      if (passthroughArgs[i] === '--target') {
+      if (passthroughArgs[i] === '--target' && passthroughArgs[i + 1]) {
+        targetDir = path.resolve(passthroughArgs[i + 1]);
         hasTarget = true;
         break;
       }
     }
-    const finalArgs = hasTarget ? passthroughArgs : ['--target', process.cwd(), ...passthroughArgs];
+    const finalArgs = hasTarget ? passthroughArgs : ['--target', targetDir, ...passthroughArgs];
     
+    // Trellis 环境检测与自动初始化引导
+    const trellisDir = path.join(targetDir, '.trellis');
+    if (!fs.existsSync(trellisDir)) {
+      const hasTrellis = spawnSync('which', ['trellis']).status === 0;
+      if (hasTrellis) {
+        console.log('\n[Atlas] 检测到目标项目尚未初始化 Trellis (.trellis/ 缺失)。');
+        console.log('[Atlas] 正在自动运行 trellis init 初始化状态机骨架...');
+        const initRes = spawnSync('trellis', ['init'], {
+          cwd: targetDir,
+          stdio: 'inherit',
+          env: process.env,
+        });
+        if (initRes.status !== 0) {
+          console.warn('[Atlas] ⚠️ 警告: trellis init 执行异常，继续执行 Atlas 装配...');
+        }
+      } else {
+        console.warn('\n[Atlas] ⚠️ 提示: 未检测到 Trellis CLI。');
+        console.warn('[Atlas] Atlas 需求级执行依赖 Trellis，建议稍后安装:');
+        console.warn('        npm install -g @mindfoldhq/trellis\n');
+      }
+    }
+
     const res = spawnSync('bash', [installScript, ...finalArgs], {
       stdio: 'inherit',
       env: process.env,
     });
+
+    // 自动挂载 Pi Agent 扩展 (如果环境存在 ~/.pi)
+    try {
+      const os = require('os');
+      const homeDir = os.homedir();
+      if (fs.existsSync(path.join(homeDir, '.pi'))) {
+        const piExtDir = path.join(homeDir, '.pi', 'agent', 'extensions');
+        fs.mkdirSync(piExtDir, { recursive: true });
+        const srcExt = path.join(PKG_ROOT, 'extensions', 'pi.ts');
+        if (fs.existsSync(srcExt)) {
+          fs.copyFileSync(srcExt, path.join(piExtDir, 'atlasharness.ts'));
+          console.log('\n[Atlas] 🚀 已自动挂载 Pi Agent 扩展: ~/.pi/agent/extensions/atlasharness.ts');
+          console.log('[Atlas]    可在 Pi 中使用 /atlas 命令驱动全流程。\n');
+        }
+      }
+    } catch (_) {}
+
     process.exit(res.status || 0);
     break;
   }

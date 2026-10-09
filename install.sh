@@ -61,8 +61,16 @@ say "  目标项目: $TARGET"
 say ""
 
 if [ ! -d "$TARGET/.trellis" ]; then
+  if command -v trellis >/dev/null 2>&1; then
+    say "提示：目标项目尚未初始化 Trellis，尝试自动执行 trellis init..."
+    (cd "$TARGET" && trellis init) || true
+  fi
+fi
+
+if [ ! -d "$TARGET/.trellis" ]; then
   say "警告：目标项目没有 .trellis/（未初始化 Trellis）。"
   say "      atlas 的需求级衔接依赖 Trellis，请先在目标项目执行 trellis init。"
+  say "      （如果未安装，请执行: npm i -g @mindfoldhq/trellis）"
   if [ "$FORCE" -ne 1 ]; then
     say "      如确认要继续，请加 --force。"
     exit 1
@@ -99,7 +107,7 @@ say "[1/6] 装配 atlas 包到 .atlas/"
 ATLAS_DEST="$TARGET/.atlas"
 run rm -rf "$ATLAS_DEST"
 run mkdir -p "$ATLAS_DEST"
-for pkg_dir in shared rings apply scripts templates adapters validators patches tests agents docs bin proposals; do
+for pkg_dir in shared rings apply scripts templates adapters validators patches tests agents docs bin proposals extensions; do
   if [ -d "$SCRIPT_DIR/$pkg_dir" ]; then
     run cp -R "$SCRIPT_DIR/$pkg_dir" "$ATLAS_DEST/$pkg_dir"
     say "      -> .atlas/$pkg_dir"
@@ -166,6 +174,13 @@ if [ "$INSTALL_SKILL" -eq 1 ]; then
       done
       say "      -> agent ${agent_name}"
     done
+  fi
+
+  # Pi Agent 扩展挂载（若系统存在 ~/.pi）
+  if [ -d "$HOME/.pi" ] && [ -f "$SCRIPT_DIR/extensions/pi.ts" ]; then
+    run mkdir -p "$HOME/.pi/agent/extensions"
+    run cp "$SCRIPT_DIR/extensions/pi.ts" "$HOME/.pi/agent/extensions/atlasharness.ts"
+    say "      -> Pi Agent 扩展 (~/.pi/agent/extensions/atlasharness.ts)"
   fi
 else
   say "[2/6] 跳过 skill（--no-skill）"

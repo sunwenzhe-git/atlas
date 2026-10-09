@@ -106,7 +106,7 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
 - **何时**：域实现落码后、域收口前（不依赖真栈，E2E 真跑前即可跑）。
 - **前置**：`product/stack-profile.yaml` 的 `impl_review.llm` 非空（未配 ⇒ 本步 `SKIP` + 原因，**不是通过**；契约依据 `shared/independent-review.md` §10）。
 - **动作四步**：
-  1. 组 background（Markdown 文件：需求卡摘要 + 受影响域 AC + 相关用例断言；**不喂整仓**）；
+  1. 组 background（Markdown 文件：需求卡摘要 + 受影响域 AC + 相关用例断言 + 审查焦点三问（`shared/independent-review.md` §10.4，只引路径不复制正文）；**不喂整仓**）；
   2. `<cli> review --preview --from main --to <分支>`，记下 **Will review N**（`.md` 等不支持扩展名会被 CLI 排除 ⇒ N 用 preview 数，**不得**用 git diff 全量计数）；
   3. `<cli> review --audience agent --format json --output <报告目录>/cli.json --background-file <bg> --from main --to <分支>`（CLI 名取 `impl_review.cli`）；
   4. `python3 .atlas/scripts/cli_review_convert.py --input <报告目录>/cli.json --out <报告目录> --unit <需求ID> --round <N> --expected-files <preview 的 Will review 数>`；

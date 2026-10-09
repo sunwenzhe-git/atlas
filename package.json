@@ -5,8 +5,14 @@
   "bin": {
     "atlas": "./bin/atlas.js"
   },
+  "main": "./extensions/pi.ts",
+  "exports": {
+    ".": "./extensions/pi.ts",
+    "./pi": "./extensions/pi.ts"
+  },
   "files": [
     "bin",
+    "extensions",
     "shared",
     "rings",
     "apply",
