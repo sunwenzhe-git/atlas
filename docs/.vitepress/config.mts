@@ -59,7 +59,7 @@ export default defineConfig({
         text: '🏛️ 核心架构',
         collapsed: false,
         items: [
-          { text: '两层正交模型', link: '/concepts/architecture' },
+          { text: '践行 Project Harness (两层正交)', link: '/concepts/architecture' },
           { text: '三环资产体系', link: '/concepts/rings' },
           { text: '唯一编排件 (apply)', link: '/concepts/apply' }
         ]
