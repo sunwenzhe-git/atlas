@@ -39,7 +39,8 @@ export default defineConfig({
       { text: '独门重器', link: '/innovations/e2e-console' },
       { text: '机器门禁', link: '/gates/iron-gates' },
       { text: '技能生态', link: '/ecosystem/skills' },
-      { text: 'RFC 协同', link: '/guide/contributing' }
+      { text: 'RFC 协同', link: '/guide/contributing' },
+      { text: 'v0.1.0-beta.1', link: 'https://github.com/sunwenzhe-git/atlas/releases' }
     ],
 
     socialLinks: [

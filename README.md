@@ -1,5 +1,12 @@
 # Atlas — 践行 Project Harness 的全流程 AI 编程工作流
 
+<p align="left">
+  <img src="https://img.shields.io/badge/version-0.1.0--beta.1-blue.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/license-AGPL--3.0-orange.svg" alt="License" />
+  <img src="https://img.shields.io/badge/tests-293%20passed-success.svg" alt="Tests" />
+  <img src="https://img.shields.io/badge/docs-VitePress-green.svg" alt="Docs" />
+</p>
+
 > **Coding Agent 有 Agent Harness，而项目全生命周期更需要 Project Harness。**  
 > 
 > **Project Harness（项目级工程线束）是由 Atlas 原创提出的核心概念。**  
