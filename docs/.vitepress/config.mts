@@ -39,7 +39,7 @@ export default defineConfig({
       { text: '独门重器', link: '/innovations/e2e-console' },
       { text: '机器门禁', link: '/gates/iron-gates' },
       { text: '技能生态', link: '/ecosystem/skills' },
-      { text: 'Obsidian 外脑', link: '/vault/obsidian' }
+      { text: 'RFC 协同', link: '/guide/contributing' }
     ],
 
     socialLinks: [
@@ -86,13 +86,6 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: '自带技能全家桶', link: '/ecosystem/skills' }
-        ]
-      },
-      {
-        text: '🧠 决策中枢',
-        collapsed: false,
-        items: [
-          { text: 'Obsidian 决策外脑哲学', link: '/vault/obsidian' }
         ]
       },
       {
