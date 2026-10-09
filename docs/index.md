@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: "Atlas"
-  text: "工业级 Spec-Driven 全流程工作流"
-  tagline: "“没有应然资产约束的 AI 编码，写得越快，烂尾越彻底。” 让 Vibe Coding 拥有工业级确定性。"
+  text: "践行 Project Harness 的工业级全流程工作流"
+  tagline: "“Coding Agent 有 Agent Harness，而项目全生命周期更需要 Project Harness。” 原创项目级治理引擎。"
   image:
     src: /images/e2e-console.png
     alt: Atlas E2E 控制台
