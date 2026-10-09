@@ -48,20 +48,20 @@ export default defineConfig({
 
     sidebar: [
       {
-        text: '🚀 开始使用',
-        collapsed: false,
-        items: [
-          { text: '30 秒快速上手', link: '/guide/quick-start' },
-          { text: '破局 Vibe Coding', link: '/guide/how-it-works' }
-        ]
-      },
-      {
         text: '🏛️ 核心架构',
         collapsed: false,
         items: [
           { text: '践行 Project Harness (两层正交)', link: '/concepts/architecture' },
           { text: '三环资产体系', link: '/concepts/rings' },
           { text: '唯一编排件 (apply)', link: '/concepts/apply' }
+        ]
+      },
+      {
+        text: '🚀 开始使用',
+        collapsed: false,
+        items: [
+          { text: '30 秒快速上手', link: '/guide/quick-start' },
+          { text: '破局 Vibe Coding', link: '/guide/how-it-works' }
         ]
       },
       {
