@@ -22,7 +22,10 @@ Atlas 采用现代化的一键全局 CLI 机制，你可以像使用 Trellis 一
 
 ```bash
 # 全局安装 Atlas CLI
-npm install -g atlasharness
+npm install -g atlas-project-harness
+
+# 或者在 Pi Agent 中直接安装扩展
+pi install npm:atlas-project-harness
 
 # 进入你的项目目录
 cd your-project

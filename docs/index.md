@@ -62,7 +62,7 @@ features:
 
 ```bash
 # 1. 全局安装 CLI
-npm install -g atlasharness
+npm install -g atlas-project-harness
 
 # 2. 进入项目目录一键装配
 cd your-project && atlas init
