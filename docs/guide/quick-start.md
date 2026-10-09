@@ -21,8 +21,8 @@ Atlas 采用现代化的一键全局 CLI 机制，你可以像使用 Trellis 一
 在你的终端中执行：
 
 ```bash
-# 全局安装 Atlas CLI
-npm install -g atlas-workflow
+# 全局安装 Atlas CLI（直接从 GitHub 一键安装）
+npm install -g sunwenzhe-git/atlas
 
 # 进入你的项目目录
 cd your-project
