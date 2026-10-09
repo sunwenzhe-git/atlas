@@ -1,7 +1,7 @@
 {
   "name": "atlas-workflow",
   "version": "1.0.0",
-  "description": "工业级 Spec-Driven 全流程 Vibecoding 工作流治理引擎",
+  "description": "践行 Project Harness 的全流程 AI 编程工作流治理引擎",
   "bin": {
     "atlas": "./bin/atlas.js"
   },

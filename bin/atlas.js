@@ -9,7 +9,7 @@ const command = args[0] || 'help';
 
 function printHelp() {
   console.log(`
-Atlas — 工业级 Spec-Driven 全流程 Vibecoding 工作流治理引擎
+Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
 
 用法:
   atlas <command> [options]

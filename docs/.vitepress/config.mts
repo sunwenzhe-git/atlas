@@ -2,7 +2,7 @@ import { defineConfig } from 'vitepress'
 
 export default defineConfig({
   title: "Atlas",
-  description: "工业级 Spec-Driven 全流程 Vibecoding 工作流治理引擎",
+  description: "践行 Project Harness 的全流程 AI 编程工作流治理引擎",
   lang: 'zh-CN',
   base: '/atlas/',
   cleanUrls: true,

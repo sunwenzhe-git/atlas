@@ -1,4 +1,4 @@
-# Atlas — 践行 Project Harness 的工业级全流程 AI 编程工作流
+# Atlas — 践行 Project Harness 的全流程 AI 编程工作流
 
 > **“Coding Agent 有 Agent Harness，而项目全生命周期更需要 Project Harness。”**  
 > 
@@ -393,6 +393,6 @@ Atlas 随包完整分发了一套自洽的高阶开发与评审套件：
 ---
 
 <p align="center">
-  <b>Atlas</b> — 让 AI 编程拥有工业级确定性。<br>
+  <b>Atlas</b> — 让 AI 编程拥有真正的工程确定性。<br>
   Built with rigor. Governed by machines.
 </p>

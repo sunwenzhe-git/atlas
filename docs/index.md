@@ -2,9 +2,9 @@
 layout: home
 
 hero:
-  name: "Atlas"
-  text: "践行 Project Harness 的工业级全流程工作流"
-  tagline: "“Coding Agent 有 Agent Harness，而项目全生命周期更需要 Project Harness。” 原创项目级治理引擎。"
+  name: “Atlas”
+  text: “践行 Project Harness 的全流程工作流”
+  tagline: ““Coding Agent 有 Agent Harness，而项目全生命周期更需要 Project Harness。” 原创项目级治理引擎。”
   image:
     src: /images/e2e-console.png
     alt: Atlas E2E 控制台
@@ -33,7 +33,7 @@ features:
     title: 实例 ⑤ 只读防偷工减料审查
     details: 独立进程 diff 审查，严苛执行“应审 N / 实审 M”对账，彻底遏制大模型跳过文件、少审漏审的暗箱操作。
   - icon: 🔒
-    title: 纯 Git 工业级单源
+    title: 纯 Git 原生单源
     details: 零外部笔记或私有平台绑定。所有契约、门禁、用例与规则全部活在业务 Git 仓库内，真正开箱即用。
 ---
 
@@ -43,7 +43,7 @@ features:
 
 在纯粹依赖 Agent 自由发挥的 AI 辅助编程（Vibe Coding）中，开发者普遍会遇到难以逾越的工程陷阱：
 
-| 自由放养的传统 Vibe Coding | 🛡️ Atlas 工业级应然资产治理 |
+| 自由放养的传统 Vibe Coding | 🛡️ Atlas 应然资产治理与机器门禁 |
 |---|---|
 | **上下文失忆**：会话一压缩，模型遗忘历史决策，反复推翻既有架构 | **单一真相源**：项目级 PRD 锁死业务规则，新会话一秒读懂系统边界 |
 | **“伪完成”幻觉**：仅凭前端组件和 Toast 自证成功，数据根本没落盘 | **有头慢动作控制台**：慢速真实弹窗回放，刷新复断言，眼见为实 |
