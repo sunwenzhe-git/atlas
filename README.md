@@ -2,8 +2,8 @@
 
 <p align="left">
   <img src="https://img.shields.io/badge/version-0.1.0--beta.1-blue.svg" alt="Version" />
-  <img src="https://img.shields.io/badge/license-AGPL--3.0-orange.svg" alt="License" />
-  <img src="https://img.shields.io/badge/tests-293%20passed-success.svg" alt="Tests" />
+  <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License" />
+  <img src="https://img.shields.io/badge/tests-283%20passed-success.svg" alt="Tests" />
   <img src="https://img.shields.io/badge/docs-VitePress-green.svg" alt="Docs" />
 </p>
 
@@ -118,19 +118,32 @@ origin: greenfield          # greenfield: 全新项目 | adopt: 存量老项目�
 apps:
   - name: web
     path: frontend
-    role: landing           # landing: 当前主实现
+    kind: frontend          # frontend | backend | fullstack | mobile
+    role: landing           # landing: 当前落地实现 | legacy: 事实来源（重构/存量项目才有）
+    stack: React + Vite     # 自由文本，仅作展示，atlas 不据此做任何判断
   - name: api
     path: backend
+    kind: backend
     role: landing
+    stack: FastAPI
+
+adapters:                   # null = 该类事实降级为 agent 撰写
+  routes: null              # 路由 / 页面清单
+  api: null                 # 接口清单
+  models: null              # 数据模型清单
+  tests: null               # 测试现状
 
 e2e:
-  runner: python-playwright
+  runner: node-playwright
+  node_modules: frontend/node_modules   # node 运行器的依赖目录（相对项目根）
   app_base_url: http://127.0.0.1:8000
   review: null              # null = 默认使用会话模型；可配置备用模型做交叉审查
 
-graph:                      # 可选：开启代码图谱后端优化逆向
+graph:                      # 可选：声明后 routes 走图谱枚举、apply 先跑影响面推导
   backend: cgc
 ```
+
+> `apps[]` 的 `name` / `path` / `kind` / `role` 四项为**必填**（缺一即被 `validate_stack_profile` 判 FAIL），`origin` 只有 `greenfield` / `adopt` 两个取值。
 
 ### 4. 怎么快速使用？（纯自然语言驱动）
 
@@ -292,10 +305,10 @@ Atlas 引入了**图谱后端隔离层（`adapters/_graph.py`）**，接入基�
 很多 CI 门禁最大的隐患是：**代码写错了，校验器永远返回 PASS，人以为自己有防线，实际上形同虚设。**
 
 Atlas 坚持**变异证明（Mutation Proving / M 系列钉子测试）**原则：
-* **门禁自身必须证明自己会咬**：编写任何一条新校验规则，必须同步提交故意注入破坏性脏数据的“变异测试用例”（M1~M43 系列钉子）；
+* **门禁自身必须证明自己会咬**：编写任何一条新校验规则，必须同步提交故意注入破坏性脏数据的“变异测试用例”（M 系列钉子，编号已到 M43——编号在各自测试文件内自成序列，同一号在不同门含义不同）；
 * **自洽门与双向红灯验证**：
   * 变异测试人工制造各种边界事故：字段缺失、双向差集、静默截断、假冒通过、未声明退役；
-  * 只有在变异数据下门禁**百分之百响亮报红**，这条规则才被允许合入出厂检验套件（280+ tests）；
+  * 只有在变异数据下门禁**百分之百响亮报红**，这条规则才被允许合入出厂检验套件（`python3 -m pytest atlas/tests/`）；
   * 杜绝任何“永远绿灯的摆设门禁”。
 
 ---
@@ -378,7 +391,7 @@ Atlas 随包完整分发了一套自洽的高阶开发与评审套件：
 * **串行两道机制**：重大方案定稿前，先跑 `atlas-grill` 进行前沿刺探，拍板后再由 `atlas-design-review` 独立复核，确保无暗箱隐式假设。
 
 ### 3. `frontend-design` — 前端品味总监与合规基线
-* **两层合一**：第一层提供设计语言与审美旋钮（variance / motion / density）；第二层提供严格的 Web 合规基线（42 份细则文件覆盖 WCAG 可访问性、对比度、Core Web Vitals、暗色模式）；
+* **两层合一**：第一层提供设计语言与审美旋钮（variance / motion / density）；第二层提供严格的 Web 合规基线（53 份细则文件覆盖 WCAG 可访问性、对比度、Core Web Vitals、暗色模式）；
 * 交付前由预检闸门强制走查，纯后端项目自动降级忽略。
 
 ### 4. §14 产物落笔纪律（零反刍与读者中立）
@@ -410,7 +423,7 @@ Atlas 随包完整分发了一套自洽的高阶开发与评审套件：
 ### 为什么必须三位一体？
 * **带取证 (Evidence)**：拒绝无日志、无复现步骤的模糊抱怨，必须附带最小复现代码或终端输出；
 * **带决策 (Decision)**：明确写出为什么选择当前解法，以及否决了哪些备选方案（为什么不能简单把报错降级为跳过）；
-* **带测试 (Tests)**：任何新规则或 Bug 修复，必须在 `tests/` 补充用例或 M 系列变异证明，保证全量测试（280+ tests）全绿。
+* **带测试 (Tests)**：任何新规则或 Bug 修复，必须在 `tests/` 补充用例或 M 系列变异证明，保证全量出厂测试（`pytest tests/`）全绿。
 
 详情见 [proposals/README.md](proposals/README.md) 与 [proposals/TEMPLATE.md](proposals/TEMPLATE.md)。
 
@@ -418,7 +431,7 @@ Atlas 随包完整分发了一套自洽的高阶开发与评审套件：
 
 ## 十二、开源协议（License）
 
-本项目基于 **[GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE)** 协议开源。
+本项目基于 **[Apache License, Version 2.0](LICENSE)** 协议开源。
 
 ---
 

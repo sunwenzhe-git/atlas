@@ -41,5 +41,5 @@
     "playwright"
   ],
   "author": "agent_learning",
-  "license": "AGPL-3.0-or-later"
+  "license": "Apache-2.0"
 }

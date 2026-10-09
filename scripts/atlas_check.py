@@ -63,7 +63,6 @@ GEN_NOT_READY = 3
 
 # E2E 生成物运行器所需的解释器级依赖：候选解释器必须能**导入**它们才算可用。
 # 判据是「可导入性」而非「路径存在」——框架名只在这里作为探测目标出现。
-RUNNER_IMPORTS = ("playwright", "pytest_playwright")
 
 
 class Row:
@@ -87,53 +86,6 @@ def run(cmd: list[str] | str, cwd: Path, timeout: int = 1800, shell: bool = Fals
         return 124, "TIMEOUT"
     except FileNotFoundError as e:
         return 127, str(e)
-
-
-def python_for_playwright(root: Path, candidates: list[str] | None = None) -> tuple[str | None, str]:
-    """按**依赖可用性**选跑 E2E 的解释器，返回 (解释器路径, 失败原因)。
-
-    候选顺序：`<root>/.venv/bin/python` → `sys.executable` → `PATH` 上的 `python3`；
-    每个候选必须先能导入 `RUNNER_IMPORTS`，否则降级到下一个。去重按**绝对路径、不解析
-    符号链接** —— 调用路径决定 venv 是否生效（`pyvenv.cfg` 落点），同一二进制经 venv
-    调用与直调的可用性可能不同，不能折叠。
-    **全部不可用 ⇒ 返回 (None, 原因)**，由调用方把失败写进 rows ——
-    不得默认选一个跑不动的（实测：`.venv` 被重建成无运行器依赖的解释器后，
-    按「路径存在」静默选中 ⇒ E2E 全红且报错与根因隔了一层）。
-    `candidates` 参数供测试注入候选（默认按上述顺序推导）。
-    """
-    if candidates is None:
-        seen: set[str] = set()
-        candidates = []
-        for c in (str(root / ".venv" / "bin" / "python"), sys.executable, shutil.which("python3")):
-            if not c or not Path(c).exists():
-                continue
-            real = os.path.abspath(c)
-            if real not in seen:
-                seen.add(real)
-                candidates.append(c)
-    reasons: list[str] = []
-    for c in candidates:
-        ok, why = _imports_ok(c)
-        if ok:
-            return c, ""
-        reasons.append(f"{c}: {why}")
-    why = "没有候选解释器能导入 " + " + ".join(RUNNER_IMPORTS)
-    if reasons:
-        why += "；" + "；".join(reasons)
-    return None, why
-
-
-def _imports_ok(py: str, timeout: int = 120) -> tuple[bool, str]:
-    """探测候选解释器能否导入 `RUNNER_IMPORTS`（子进程内探，不污染本进程）。可用 = 退出码 0。"""
-    try:
-        p = subprocess.run([py, "-c", "import " + ", ".join(RUNNER_IMPORTS)],
-                           capture_output=True, text=True, timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return False, f"无法执行（{e}）"
-    if p.returncode == 0:
-        return True, ""
-    lines = [l.strip() for l in (p.stderr or p.stdout or "").strip().splitlines() if l.strip()]
-    return False, lines[-1] if lines else f"退出码 {p.returncode}"
 
 
 def _url_reachable(url: str, timeout: float = 5.0) -> tuple[bool, str]:
@@ -299,7 +251,7 @@ def check_version(root: Path, rows: Row) -> None:
              f"源包已前进/落后于装配态（装配 {stamped} → 当前 {current}）——重跑 install.sh 前先回灌对账（ATLAS-UPSTREAM）")
 
 
-def check_e2e(root: Path, rows: Row, py: str | None, page: str | None, py_why: str = "") -> None:
+def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     prof = root / "product" / "stack-profile.yaml"
     text = prof.read_text(encoding="utf-8") if prof.is_file() else ""
     # 值抽取正则只用 `[^\S\n]`（同行空白），不得用 `\s`——`\s` 会跨行匹配，把下一行的
@@ -309,17 +261,11 @@ def check_e2e(root: Path, rows: Row, py: str | None, page: str | None, py_why: s
     if not scripts.is_dir():
         rows.add("E2E 真跑", "SKIP", "无脚本目录（门控态）")
         return
-    # 页面脚本扩展名随 runner（2026-09-30 拉平：node = .spec.ts）
-    mrunner0 = re.search(r"^[^\S\n]*runner:[^\S\n]*(\S+)", text, re.M)
-    _runner = mrunner0.group(1) if mrunner0 else "python-playwright"
-    _ext = ".spec.ts" if _runner == "node-playwright" else ".py"
+    # 页面脚本扩展名（单轨 node-playwright，3507 BO 单轨化）
+    _ext = ".spec.ts"
     target = scripts if not page else scripts / f"{page}{_ext}"
     if page and not Path(target).is_file():
         rows.add("E2E 真跑", "SKIP", f"无 {page}{_ext}（{m.group(1) if m else 'cases_dir'} 未建？）")
-        return
-    if py is None:
-        # 门会咬：候选解释器全不可用时**明确失败并列原因**，不默认选一个跑不动的。
-        rows.add("E2E 真跑", "FAIL", f"{py_why or '无可用解释器'}（需能导入 {' + '.join(RUNNER_IMPORTS)}）")
         return
     # E1 单段：真实栈由业务侧拉起，atlas_check 不再起原型静态服务。
     mbase = re.search(r"^[^\S\n]*app_base_url:[^\S\n]*(\S+)", text, re.M)
@@ -341,30 +287,26 @@ def check_e2e(root: Path, rows: Row, py: str | None, page: str | None, py_why: s
     # （重置失败时继续跑 = 带着脏状态跑，结论不可信）。
     mreset = re.search(r"^[^\S\n]*reset:[^\S\n]*(\S.*\S)[^\S\n]*$", text, re.M)
     if mreset and mreset.group(1) not in ("null", "~"):
-        code_r, out_r = run(mreset.group(1), root, timeout=300, shell=True)
+        reset_cmd = mreset.group(1).strip("\"'")
+        code_r, out_r = run(reset_cmd, root, timeout=300, shell=True)
         if code_r != 0:
             rows.add("E2E 真跑" + (f"[{page}]" if page else "（六页）"), "FAIL",
                      f"e2e.reset 失败（exit {code_r}）：{out_r.strip()[-200:]}")
             return
-    mrunner = re.search(r"^[^\S\n]*runner:[^\S\n]*(\S+)", text, re.M)
-    if mrunner and mrunner.group(1) == "node-playwright":
-        # node 运行器（2026-09-30 拉平切换）：探测项目声明位置（e2e.node_modules）的
-        # playwright 可执行文件，经 NODE_PATH 解析生成物里的 @playwright/test；
-        # 未找到 ⇒ FAIL 列原因（不静默降级）。
-        nm = re.search(r"^[^\S\n]*node_modules:[^\S\n]*(\S+)", text, re.M)
-        nm_dir = Path(nm.group(1)) if nm else None
-        pw_bin = (nm_dir / ".bin" / "playwright") if nm_dir else None
-        if not pw_bin or not pw_bin.is_file():
-            rows.add("E2E 真跑", "FAIL",
-                     f"node-playwright 可执行文件不存在：{pw_bin}（stack-profile e2e.node_modules）")
-            return
-        spec_arg = f"{page}.spec.ts" if page else ""
-        cmd = (f"NODE_PATH={nm_dir} {pw_bin} test -c "
-               f"{scripts.relative_to(root) / 'playwright.config.ts'} {spec_arg}".strip())
-        code, out = run(cmd, root, timeout=1800, shell=True)
-    else:
-        code, out = run([py, "-m", "pytest", str(target.relative_to(root)), "-q", "--no-header",
-                         "-p", "no:cacheprovider"], root, timeout=1800)
+    # node 单轨（3507 BO）：探测项目声明位置（e2e.node_modules）的 playwright
+    # 可执行文件，经 NODE_PATH 解析生成物里的 @playwright/test；
+    # 未找到 ⇒ FAIL 列原因（不静默降级）。
+    nm = re.search(r"^[^\S\n]*node_modules:[^\S\n]*(\S+)", text, re.M)
+    nm_dir = Path(nm.group(1)) if nm else None
+    pw_bin = (nm_dir / ".bin" / "playwright") if nm_dir else None
+    if not pw_bin or not pw_bin.is_file():
+        rows.add("E2E 真跑", "FAIL",
+                 f"node-playwright 可执行文件不存在：{pw_bin}（stack-profile e2e.node_modules）")
+        return
+    spec_arg = f"{page}.spec.ts" if page else ""
+    cmd = (f"NODE_PATH={nm_dir} {pw_bin} test -c "
+           f"{scripts.relative_to(root) / 'playwright.config.ts'} {spec_arg}".strip())
+    code, out = run(cmd, root, timeout=1800, shell=True)
     m2 = re.findall(r"(\d+) (passed|failed|error)", out)
     summary = " ".join(f"{n} {k}" for n, k in m2) or "无结果"
     rows.add("E2E 真跑" + (f"[{page}]" if page else "（六页）"),
@@ -386,18 +328,13 @@ def main() -> int:
     check_generated(root, rows, sys.executable)
     check_drift(root, rows)
     check_version(root, rows)
-    py: str | None = None
     if not args.fast:
-        py, py_why = python_for_playwright(root)
-        check_e2e(root, rows, py, args.page, py_why)
+        check_e2e(root, rows, args.page)
     if args.json:
         print(json.dumps({"root": str(root), "ok": not rows.failed,
                           "rows": rows.rows}, ensure_ascii=False, indent=2))
     else:
-        head = f"atlas check @ {root}"
-        if py:
-            head += f"   （python: {Path(py).name}）"
-        print(head)
+        print(f"atlas check @ {root}")
         for r in rows.rows:
             line = f"  {r['status']:<4} {r['name']:<26}"
             if r["detail"]:

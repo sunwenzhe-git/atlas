@@ -191,7 +191,7 @@ adapters:
 prototype:
   dir: product/prototype
 e2e:
-  runner: python-playwright
+  runner: node-playwright
 """
 
 
@@ -762,15 +762,15 @@ def test_e2e_index_new_assert_verbs_render_and_validate() -> None:
     """
     exprs = {
         # is*() 先 count 守卫（缺失元素不挂起——projects 页基线实测 2026-10-02）
-        "- checked home-cta-btn": 'page.get_by_test_id("home-cta-btn").count() > 0 and _loc(page, "home-cta-btn").is_checked()',
-        "- unchecked home-cta-btn": 'not (page.get_by_test_id("home-cta-btn").count() > 0 and _loc(page, "home-cta-btn").is_checked())',
-        "- countOptions home-cta-btn 9": '_loc(page, "home-cta-btn").locator("option").count() == int("9")',
-        # B173-1：value 经 _value_of 实现无关化（原生表单读值，combobox 读触发器文本）
-        '- value home-cta-btn ""': '_value_of(page, "home-cta-btn") == ""',
-        # 3509 §B35：`attr <testid> <name> <value>`（**不要求可见** ⇒ 用 `_loc`）
-        "- attr home-cta-btn data-theme dark": '_loc(page, "home-cta-btn").get_attribute("data-theme") == "dark"',
+        "- checked home-cta-btn": '(async () => (await page.getByTestId("home-cta-btn").count()) > 0 && (await page.getByTestId("home-cta-btn").first().isChecked()))()',
+        "- unchecked home-cta-btn": '(async () => !((await page.getByTestId("home-cta-btn").count()) > 0 && (await page.getByTestId("home-cta-btn").first().isChecked())))()',
+        "- countOptions home-cta-btn 9": '(async () => (await page.getByTestId("home-cta-btn").locator(\'option\').count()) === Number("9"))()',
+        # B173-1：value 经 atlasValueOf 实现无关化（原生表单读值，combobox 读触发器文本）
+        '- value home-cta-btn ""': '(async () => { const x = await atlasValueOf(page, "home-cta-btn"); return x === null ? null : x === ""; })()',
+        # 3509 §B35：`attr <testid> <name> <value>`（**不要求可见** ⇒ 直取 first）
+        "- attr home-cta-btn data-theme dark": '(async () => (await page.getByTestId("home-cta-btn").first().getAttribute("data-theme")) === "dark")()',
         # 值可含空格：`name` 取首个空白前的 token，其余全部为值
-        "- attr home-cta-btn aria-label 开始 按钮": '_loc(page, "home-cta-btn").get_attribute("aria-label") == "开始 按钮"',
+        "- attr home-cta-btn aria-label 开始 按钮": '(async () => (await page.getByTestId("home-cta-btn").first().getAttribute("aria-label")) === "开始 按钮")()',
     }
     for line, want in exprs.items():
         with tempfile.TemporaryDirectory() as td:
@@ -784,7 +784,7 @@ def test_e2e_index_new_assert_verbs_render_and_validate() -> None:
                 for c in res.checks
             ), [(c["check"], c["level"], c["detail"]) for c in res.checks]
         # 生成器侧：`- ` 前缀由用例解析器剥，校验前需自行去掉
-        expr, _msg = gn.py_assert_expr(line[2:])
+        expr = gn.ts_assert_expr(line[2:])
         assert expr == want, (line, expr)
     # 反向证据：未知动词仍被拒
     with tempfile.TemporaryDirectory() as td:
@@ -1285,7 +1285,7 @@ apps:
     role: landing
     stack: demo
 e2e:
-  runner: python-playwright
+  runner: node-playwright
 """
     # 缺省（未声明 seed 段）= 合法降级
     rows = _gate(base)
@@ -1302,6 +1302,49 @@ e2e:
     assert rows["e2e.seed 键白名单"]["level"] == "FAIL", rows
     rows = _gate(base + "  seed: null\n")
     assert rows["e2e.seed（可选段）"]["level"] == "PASS", rows  # null = 合法降级
+
+
+def test_stack_profile_runner_single_track_gate() -> None:
+    """B201-4 单轨化（3507 BO，2026-10-09）：`e2e.runner` 唯一合法值 = node-playwright——
+
+    显式 `python-playwright`（已退役）⇒ FAIL 点名；其它未知值 ⇒ FAIL；缺省（未声明）
+    = node-playwright 合法。词表守恒：RUNNERS（生成器）与校验器同判。
+    变异证明 M44：把枚举判据卸成恒真 ⇒ python-playwright 钉子红。
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "gen_under_test", PKG_ROOT / "scripts" / "gen_e2e_scripts.py")
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+    assert set(gen.RUNNERS) == {"node-playwright"}, gen.RUNNERS  # 生成器与校验器同词表
+
+    def _gate(profile_text: str):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "product").mkdir(parents=True)
+            (root / "product" / "stack-profile.yaml").write_text(profile_text, encoding="utf-8")
+            res = vsp.validate(root)
+            return {c["check"]: c for c in res.checks}
+
+    base = """product: demo
+apps:
+  - name: app
+    path: app
+    kind: frontend
+    role: landing
+    stack: demo
+e2e:
+{}
+"""
+    rows = _gate(base.format("  runner: node-playwright\n"))
+    assert rows["e2e.runner 枚举（单轨）"]["level"] == "PASS", rows
+    rows = _gate(base.format(""))  # 缺省 = node-playwright（未声明 = 合法）
+    assert rows["e2e.runner 枚举（单轨）"]["level"] == "PASS", rows
+    rows = _gate(base.format("  runner: python-playwright\n"))
+    row = rows["e2e.runner 枚举（单轨）"]
+    assert row["level"] == "FAIL" and "python-playwright" in row["detail"], row
+    rows = _gate(base.format("  runner: selenium\n"))
+    assert rows["e2e.runner 枚举（单轨）"]["level"] == "FAIL", rows
 
 
 def test_stack_profile_origin_vocabulary_in_sync() -> None:

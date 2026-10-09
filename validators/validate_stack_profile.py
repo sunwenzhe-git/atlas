@@ -214,6 +214,14 @@ def validate(root: Path) -> Result:
                 "未声明 = 不用图谱（合法）；声明契约见 shared/stack-profile.md §2")
 
     e2e_prof = prof.get("e2e") or {}
+    if isinstance(e2e_prof, dict):
+        runner = e2e_prof.get("runner")
+        # B201-4 单轨化（3507 BO，2026-10-09）：python-playwright 已退役。
+        # 唯一合法值 = node-playwright；缺省 = node-playwright（未声明 = 合法）；
+        # 显式 python-playwright / 其它值 ⇒ FAIL（响亮拒绝，不静默改行为——同 B197-1 缺省判据）。
+        res.add("e2e.runner 枚举（单轨）",
+                "PASS" if (runner is None or runner == "node-playwright") else "FAIL",
+                f"值={runner!r} 允许=['node-playwright']（缺省同值；python-playwright 已退役，B201-4/3507 BO）")
     seed = e2e_prof.get("seed") if isinstance(e2e_prof, dict) else None
     if isinstance(seed, dict) and seed:
         unknown = [k for k in seed if k not in SEED_KEYS]

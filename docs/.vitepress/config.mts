@@ -54,7 +54,9 @@ export default defineConfig({
         items: [
           { text: '践行 Project Harness (两层正交)', link: '/concepts/architecture' },
           { text: '三环资产体系', link: '/concepts/rings' },
-          { text: '唯一编排件 (apply)', link: '/concepts/apply' }
+          { text: '唯一编排件 (apply)', link: '/concepts/apply' },
+          { text: '独立审查：四类实例', link: '/concepts/review' },
+          { text: '产物落点与生命周期', link: '/concepts/layout' }
         ]
       },
       {
@@ -72,7 +74,8 @@ export default defineConfig({
           { text: 'E2E 用例评审控制台', link: '/innovations/e2e-console' },
           { text: '代码图谱 (Code Graph) 逆向', link: '/innovations/code-graph' },
           { text: '变异证明 (Mutation Proving)', link: '/innovations/mutation-proving' },
-          { text: '硬核断言与累加链解耦', link: '/innovations/assertions' }
+          { text: '硬核断言与累加链解耦', link: '/innovations/assertions' },
+          { text: '流水线自感知上报', link: '/innovations/self-reporting' }
         ]
       },
       {
@@ -104,7 +107,7 @@ export default defineConfig({
     },
 
     footer: {
-      message: 'Released under the GNU AGPLv3 License.',
+      message: 'Released under the Apache-2.0 License.',
       copyright: 'Copyright © 2026 Atlas Authors. Governed by machines.'
     },
 

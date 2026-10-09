@@ -17,7 +17,7 @@
     生成脚本在存在时挂载调用 `hooks.deep_assert(<ID>, page)`；
   * 地址**不硬编码**：由运行器原生配置承载 `baseURL`，值 = `e2e.app_base_url`（E1 单段：
     唯一靶场 = 真实应用；为空 ⇒ 报错索取，不猜默认）；
-  * 运行器由 `e2e.runner` 决定（`python-playwright` / `node-playwright`），脚本扩展名随运行器；
+  * 运行器 = `node-playwright` 单轨（2026-10-09 `3507 BO` 单轨化，原 `§B201-4`；`python-playwright` 已退役——声明即拒）；
   * **派生、可重生成**：重跑覆盖同页脚本与运行器配置；`_support/` 永不覆盖。
   * **预置登录态**：以**真实登录**预置会话——端点 / 表单字段名 / 令牌键 / 存储键 = 取证值，
     登记在 `e2e.app_login` 段
@@ -44,7 +44,7 @@ import sys
 from pathlib import Path
 
 CASE_BLOCK = re.compile(r"```atlas-case\s*\n(.*?)```", re.S)
-RUNNERS = {"python-playwright": ".py", "node-playwright": ".spec.ts"}
+RUNNERS = {"node-playwright": ".spec.ts"}  # 单轨（3507 BO）：python-playwright 已退役
 # 前置未声明（例：`e2e.app_base_url` 为空）的**独立退出码**（`3509 §B110`）：
 # 与真错（2）分开 ⇒ 调用方（`atlas_check`）判 **SKIP（未就绪）** 而不是 FAIL。
 # 同一根因曾被判成两种结论（`E2E 真跑`=SKIP、`生成物最新`=FAIL）⇒ 永久红门 = 静音门（`§106`）。
@@ -113,154 +113,11 @@ def parse_line(line: str) -> tuple[str, str, str, str]:
     return verb, (parts[1] if len(parts) > 1 else ""), (parts[2] if len(parts) > 2 else ""), note.strip()
 
 
-def py_action(line: str) -> str:
-    verb, tid, value, note = parse_line(line)
-    tail = f"  # {note}" if note else ""
-    v = json.dumps(value, ensure_ascii=False)
-    if verb == "refresh":
-        return f"page.reload(){tail}"
-    if verb == "goto":
-        return f"page.goto({v}){tail}"
-    if verb == "waitFor":
-        # 契约 §7.1：`waitFor` 必须渲染为**带轮询的断言**，不得退化为固定等待。
-        if value == "":
-            return f'_wait_for_visible(page, "{tid}"){tail}'
-        return f'_wait_for_text(page, "{tid}", {v}){tail}'
-    if verb == "download":
-        # 契约 §5.5（2026-09-25 新增，3509 §B26）：触发下载并校验建议下载文件名（glob）。
-        # 必须是「先注册监听 → 再点击 → 再断言」：下载是动作的副作用，事后无法补取证。
-        # 固定形状由 header 的 `_download` 助手容纳，此处只传参。
-        if not value.strip():
-            raise ValueError(f"`download` 需要文件名 glob 参数: {line!r}（契约 §5.5）")
-        return f'_download(page, "{tid}", {v}){tail}'
-    if verb == "click":
-        return f'_loc(page, "{tid}").click(){tail}'
-    if verb == "fill":
-        return f'_loc(page, "{tid}").fill({v}){tail}'
-    if verb == "select":
-        return f'_select(page, "{tid}", {v}){tail}'
-    if verb == "check":
-        return f'_loc(page, "{tid}").check(){tail}'
-    if verb == "uncheck":
-        return f'_loc(page, "{tid}").uncheck(){tail}'
-    if verb == "press":
-        return f'_loc(page, "{tid}").press({v}){tail}'
-    if verb == "hover":
-        return f'_loc(page, "{tid}").hover(){tail}'
-    raise ValueError(f"未知动作动词: {verb}（契约 §5.5）")
-
-
-def py_assert_expr(line: str) -> tuple[str, str | None]:
-    """把一行断言渲染成 (表达式, 失败消息)。
-
-    正式用例（`py_assert`）与零步基线（`py_zero_step_baseline`）**共用**本函数 ——
-    两条路径的断言语义因此不可能漂（复用而非复制）。
-    """
-    _, line = split_prefix(line)
-    verb, tid, value, _note = parse_line(line)
-    v = json.dumps(value, ensure_ascii=False)
-    if verb == "text":
-        return (
-            f'_vis(page, "{tid}").inner_text().strip() == {v}',
-            f'_loc(page, "{tid}").inner_text()',
-        )
-    if verb == "contains":
-        return f'{v} in _vis(page, "{tid}").inner_text()', None
-    if verb == "count":
-        return f'page.get_by_test_id("{tid}").count() == int({v})', None
-    if verb == "countOptions":
-        # 契约 §5.5（2026-09-25 新增）：数该元素内的 `option` 子元素个数。
-        # 用于「枚举选项个数」类断言 —— 原来的 `count` 只能数到 `select` 自身（永远 1）吧。
-        return f'_loc(page, "{tid}").locator("option").count() == int({v})', None
-    if verb == "visible":
-        return f'_visible(page, "{tid}")', None
-    if verb == "hidden":
-        return f'not _visible(page, "{tid}")', None
-    # is*() 对缺失元素会等挂载 ⇒ 先 count 守卫（与 TS 侧同构）
-    if verb == "enabled":
-        return f'page.get_by_test_id("{tid}").count() > 0 and _loc(page, "{tid}").is_enabled()', None
-    if verb == "disabled":
-        return f'page.get_by_test_id("{tid}").count() > 0 and _loc(page, "{tid}").is_disabled()', None
-    if verb == "checked":
-        return f'page.get_by_test_id("{tid}").count() > 0 and _loc(page, "{tid}").is_checked()', None
-    if verb == "unchecked":
-        return f'not (page.get_by_test_id("{tid}").count() > 0 and _loc(page, "{tid}").is_checked())', None
-    if verb == "value":
-        # 契约 §5.5（2026-09-25 补空值分支）：值写作 `""` / `(空)` 时表示**空串**。
-        # 不补这一支则 `json.dumps('""')` 会得到字面量 `"\"\""` —— 与真实空串永远不相等，
-        # 于是「清除选区后为空」这类断言只能靠「少断言」回避（3509 §B39）。
-        # （B173-1：经 _value_of 实现无关化 —— 原生表单元素读值，combobox 读触发器文本。）
-        if value.strip() in ('""', "(空)"):
-            return f'_value_of(page, "{tid}") == ""', None
-        return f'_value_of(page, "{tid}") == {v}', None
-    if verb == "attr":
-        # 契约 §5.5（2026-09-25 新增，3509 §B35）：元素属性 `<name>` 的值等于 `<value>`。
-        # 值段 = `<name> <value>`：`name` 取**首个空白前**的 token，其余全部为 `value`（可含空格）。
-        # **不要求可见**（用 `_loc` 而非 `_vis`）—— 与 `enabled` / `checked` 同理：
-        # 属性可读性与渲染可见性正交（隐藏节点的属性照样有值）。
-        # 属性不存在时 `get_attribute()` 返回 `None` ⇒ 与任何字符串都不等 ⇒ 断言失败。
-        name, _, val = value.strip().partition(" ")
-        val = val.strip()
-        if not name or not val:
-            raise ValueError(f"`attr` 需要 `<name> <value>` 两个参数: {line!r}（契约 §5.5）")
-        n = json.dumps(name, ensure_ascii=False)
-        return (
-            f'_loc(page, "{tid}").get_attribute({n}) == {json.dumps(val, ensure_ascii=False)}',
-            f'_loc(page, "{tid}").get_attribute({n})',
-        )
-    if verb == "delta":
-        # 契约 §5.5（P5，2026-10-07）：相对断言的**行动后**复读比较。行动前采样（`__delta_<tid>`）
-        # 由 `py_case` 在第一个提交性动作之前发射（零步基线不收 delta —— 无初始态语义）。
-        if not re.fullmatch(r"[+-]\d+", value.strip()):
-            raise ValueError(f"`delta` 值须为带符号整数 ±N: {line!r}（契约 §5.5）")
-        var = "__delta_" + re.sub(r"[^0-9a-zA-Z]+", "_", tid)
-        n = int(value.strip())
-        return (
-            f'_int_of(_loc(page, "{tid}").inner_text()) == {var} + {n}',
-            f'"期望较行动前 {n:+d}，行动前基准 = " + str({var})',
-        )
-    raise ValueError(f"未知断言动词: {verb}（契约 §5.5）")
-
-
-def py_assert(line: str) -> str:
-    kind, line = split_prefix(line)
-    _verb, _tid, _value, note = parse_line(line)
-    tail = f"  # {note}" if note else ""
-    expr, msg = py_assert_expr(line)
-    if kind == UNCHANGED:
-        # 本用例的被测属性是「该动作不改变它」⇒ 这一处是**动作后**的复断言。
-        # 消息是字面量，必须渲染成合法的 python 字符串字面量（直接裸写会撞引号 / 全角括号）。
-        head = json.dumps(
-            "「unchanged:」断言在**动作后**不成立（本用例的被测属性是「该动作不改变它」）",
-            ensure_ascii=False,
-        )
-        msg = f'{head} + "；实际 = " + str({msg})' if msg else head
-    return f"assert {expr}, {msg}{tail}" if msg else f"assert {expr}{tail}"
-
-
-def py_unchanged_pre(line: str) -> str:
-    """`unchanged:` 的**行动前**断言（契约 §5.6 R9）。
-
-    采样于**第一个提交性动作之前**（不是「所有 `step` 之前」）：契约说该前缀表达的是
-    「**该动作**不改变它」，而「该动作」就是那个提交性动作。
-
-    为何不能放在所有 `step` 之前：用例自带的**准备步骤**（切页签 / 打开抽屉）还没执行时，
-    目标元素可能根本不可见 ⇒ 一条**合法**用例被判「自相矛盾」（实测踩到：
-    `E2E-ASSETS-003` / `E2E-CONFIG-003`，`3509 §B55`）。
-    """
-    _, body = split_prefix(line)
-    expr, _msg = py_assert_expr(body)
-    return (
-        f'assert {expr}, "`unchanged:` 断言在**行动前**就不成立 —— 该用例声称「动作不改变它」，'
-        f'而它一开始就不成立（用例自相矛盾）"'
-    )
-
-
 def _strip_inline_comment(s: str) -> str:
     """剥行内 `#` 注释（引号外）。
 
     与 `validate_stack_profile.py` 的口径一致：真实 profile 写作
-    `runner: python-playwright   # python-playwright | node-playwright`，
+    `runner: node-playwright   # 唯一合法运行器（行内注释须剥）`，
     不剥就会把整段注释当成值。
     """
     out: list[str] = []
@@ -384,134 +241,6 @@ def page_urls(index_text: str) -> dict[str, str]:
     return urls
 
 
-def py_header(runner: str) -> str:
-    return (
-        f'# AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py (runner={runner})\n'
-        "# 重跑覆盖本文件；复杂逻辑请放 _support/（不被覆盖）。\n"
-        "from __future__ import annotations\n\n"
-        "import json\n"
-        "import fnmatch\n"
-        "import re\n"
-        "from pathlib import Path\n"
-        "import pytest\n"
-        "from playwright.sync_api import expect\n\n"
-        "try:  # 可选：_support/hooks.py 提供 deep_assert(case_id, page)\n"
-        "    from _support import hooks  # type: ignore\n"
-        "except Exception:  # pragma: no cover\n"
-        "    hooks = None\n\n"
-        "_HERE = Path(__file__).resolve().parent\n\n"
-        "def _loc(page, tid):\n"
-        "    return page.get_by_test_id(tid).first\n\n"
-        "def _assert_testids(page, ids):\n"
-        "    # 元素齐全守卫（契约 §7.1）：**自动等待**判定 —— 真实应用是 SPA，goto 后元素\n"
-        "    # 异步渲染，即时 count() 必红；真缺失时超时失败并点名缺失清单（无永久等待后门）。\n"
-        "    missing = []\n"
-        "    for t in ids:\n"
-        "        try:\n"
-        "            expect(page.get_by_test_id(t)).to_have_count(1, timeout=_WAIT_TIMEOUT_MS)\n"
-        "        except AssertionError:\n"
-        "            missing.append(t)\n"
-        "    assert not missing, f\"缺少 data-testid: {missing}\"\n\n"
-        "def _select(page, tid, value):\n"
-        "    # 契约 §5.5（B173-1）：实现无关 select —— 语义 = 「选中 label 的那一项」。\n"
-        "    # 原生 <select> 走 select_option；否则视作 trigger+listbox 组合。\n"
-        "    loc = _loc(page, tid)\n"
-        "    if loc.evaluate(\"e => e.tagName.toLowerCase()\") != \"select\":\n"
-        "        loc.click()\n"
-        "        page.get_by_role(\"option\", name=value, exact=True).first.click()\n"
-        "        return\n"
-        "    try:\n"
-        "        loc.select_option(value=value)\n"
-        "    except Exception:\n"
-        "        loc.select_option(label=value)\n\n"
-        "def _value_of(page, tid):\n"
-        "    # 契约 §5.5（B173-1）：读「控件当前值」的实现无关入口（与 TS atlasValueOf 同构）：\n"
-        "    # 原生表单元素读 input 值；否则视作 trigger+listbox，当前值 = 触发器可见文本。\n"
-        "    loc = _vis(page, tid)\n"
-        "    if loc.evaluate(\"e => e.tagName.toLowerCase()\") in (\"select\", \"input\", \"textarea\"):\n"
-        "        return loc.input_value()\n"
-        "    return loc.inner_text().strip()\n\n"
-        "def _visible(page, tid):\n"
-        "    loc = page.get_by_test_id(tid)\n"
-        "    return loc.count() > 0 and loc.first.is_visible()\n\n"
-        "def _vis(page, tid):\n"
-        '    """契约 §7.1：读元素值的断言（text / contains / value）须先断言**可见**。\n\n'
-        "    隐藏元素同样有文本与取值（面板未展开时 inner_text() 照样返回），\n"
-        "    只比值会把「面板未展开」误判为通过。\n"
-        '    """\n'
-        "    loc = _loc(page, tid)\n"
-        '    assert loc.is_visible(), f"{tid} 不可见，其文案/取值不构成断言依据"\n'
-        "    return loc\n\n"
-        "_WAIT_TIMEOUT_MS = 10_000\n\n"
-        "def _download(page, tid, pattern):\n"
-        '    """契约 §5.5：`download` 动作 —— 先注册下载监听、再点击，最后校验建议文件名（glob）。\n\n'
-        "    `fnmatch` 语义（`*` 任意串 / `?` 单字符）；断言的是**文件名**而非内容（§5.5）。\n"
-        '    """\n'
-        "    with page.expect_download(timeout=_WAIT_TIMEOUT_MS) as _dl:\n"
-        "        _loc(page, tid).click()\n"
-        "    _name = _dl.value.suggested_filename\n"
-        '    assert fnmatch.fnmatch(_name, pattern), f"下载文件名 {_name} 不匹配 {pattern}"\n\n'
-        "def _wait_for_visible(page, tid, timeout_ms=_WAIT_TIMEOUT_MS):\n"
-        '    """契约 §7.1：`waitFor` 渲染为**带轮询的断言**，不得退化为固定等待。"""\n'
-        "    expect(page.get_by_test_id(tid).first).to_be_visible(timeout=timeout_ms)\n\n"
-        "def _wait_for_text(page, tid, value, timeout_ms=_WAIT_TIMEOUT_MS):\n"
-        '    """等到该 testid 的**渲染后可见文案**等于 value（`use_inner_text` 与 `text` 断言同源）。"""\n'
-        "    expect(page.get_by_test_id(tid).first).to_have_text(value, use_inner_text=True, timeout=timeout_ms)\n\n"
-        "def _int_of(text):\n"
-        '    """契约 §5.5（P5）：`delta` 相对断言的取数 —— 元素文本中的**首个整数**。\n\n'
-        "    找不到数值即响亮失败（永不静默当 0 处理）。\n"
-        '    """\n'
-        "    m = re.search(r\"-?\\d+\", text)\n"
-        "    assert m, f\"delta 采样：元素文本不含数值: {text!r}\"\n"
-        "    return int(m.group(0))\n\n"
-        "def _atlas_expand_panels(page):\n"
-        "    # 契约 §5.6 R9：`hidden` 类与 `unchanged:` 断言在**展开全部面板**后的状态下取样\n"
-        "    # （`data-atlas-panel` 标的是 Tab 级面板）。不展开 ⇒ 面板整体的 hidden 会把断言测到\n"
-        "    # 的东西从「元素本身」偷换成「面板」（面板内 `hidden X` 恒真）。依据 3509 §B49。\n"
-        "    page.eval_on_selector_all(\"[data-atlas-panel]\", \"els => els.forEach(e => { e.hidden = false; })\")\n\n"
-        "def _atlas_probe(page, probes, sampling, initial_true, contradictory):\n"
-        '    """按 `sampling` 筛出本趟要取的断言并逐条求值（两趟共用，不复制判定逻辑）。"""\n'
-        '    for p in probes:\n'
-        '        if p["sampling"] != sampling:\n'
-        "            continue\n"
-        "        try:\n"
-        '            ok = bool(eval(p["expr"], globals(), {"page": page}))\n'
-        "        except AssertionError:\n"
-        "            continue\n"
-        '        if p["kind"] == "unchanged":\n'
-        "            if not ok:\n"
-        '                contradictory.append(p["label"])\n'
-        "        elif ok:\n"
-        '            initial_true.append(p["label"])\n\n'
-        "def _atlas_zero_step_baseline(page, data_path):\n"
-        '    """契约 §5.6 R9 零步基线 —— **数据驱动**（断言清单落在 `_data/zero_step_*.json`）。\n\n'
-        "    清单由生成器从各用例 `expected` 逐条渲染（渲染逻辑与用例断言**同源**，\n"
-        "    不在运行期二次解释）；本函数只负责在**未执行任何 step** 的初始态逐条求值：\n"
-        "      * `kind=plain` 初始成立 ⇒ 恒真断言（用例什么都没验）⇒ FAIL；\n"
-        "      * `kind=unchanged` 初始**不**成立 ⇒ 用例自相矛盾 ⇒ FAIL；\n"
-        "      * `initial:` 不入清单（显式豁免）。\n"
-        "    **按动词分状态取样两趟**（契约 §5.6 R9，2026-09-25 补，3509 §B72）：\n"
-        "      第一趟先**按真实渲染**取存在类断言（面板未展开）；随后展开 Tab 级面板，\n"
-        "      第二趟取 `hidden` 类与 `unchanged:`。单一状态无法同时满足两类要求。\n"
-        "    判据「以返回值判定」而非「没抛异常」——`_vis` 对隐藏元素的守卫会抛 AssertionError，\n"
-        "    那是「不成立」而不是「成立」（2026-09-24 实测踩到：命中数被放大一倍）。\n"
-        '    """\n'
-        '    data = json.loads(Path(data_path).read_text(encoding="utf-8"))\n'
-        '    page.goto(data["url"])\n'
-        "    initial_true: list[str] = []\n"
-        "    contradictory: list[str] = []\n"
-        '    _atlas_probe(page, data["probes"], "rendered", initial_true, contradictory)\n'
-        "    _atlas_expand_panels(page)\n"
-        '    _atlas_probe(page, data["probes"], "expanded", initial_true, contradictory)\n'
-        "    problems = []\n"
-        "    if contradictory:\n"
-        '        problems.append("`unchanged:` 断言在初始态就不成立（它声称动作不改变它，而它一开始就不成立）=> 用例自相矛盾：\\n  - " + "\\n  - ".join(contradictory))\n'
-        "    if initial_true:\n"
-        '        problems.append("初始态即成立的断言（恒真，用例什么都没验）：\\n  - " + "\\n  - ".join(initial_true))\n'
-        '    assert not problems, "\\n".join(problems)\n\n'
-    )
-
-
 def parse_seed_line(line: str) -> tuple[str, dict]:
     """`upsert <实体> <字段>=<值> …` → `(实体, {字段: 值})`（契约 §5.7 的 `seed:` 行式语法）。"""
     toks = line.split()
@@ -524,139 +253,6 @@ def parse_seed_line(line: str) -> tuple[str, dict]:
         k, v = kv.split("=", 1)
         fields[k] = v
     return entity, fields
-
-
-def py_case(case: dict, url: str) -> str:
-    cid = case["id"]
-    fn = re.sub(r"[^0-9a-zA-Z]+", "_", cid).lower()
-    title = case.get("_title", "")
-    lines = []
-    # 契约 §5.7（2026-09-30 补）：`auth: none` → 挂 marker，conftest 的 page fixture
-    # 据此给**干净 context**（剥预置 storageState）——「未登录前提」的机制化，不再依赖
-    # 页内退出控件的存在。取值白名单外**中止**（不猜、不静默降级）。
-    auth = case.get("auth", "preset")
-    if auth not in ("preset", "none"):
-        raise ValueError(f"{cid}: auth 取值应为 preset|none，得 {auth!r}")
-    state = case.get("_state", "")
-    state_reason = case.get("_state_reason", "")
-    if state in ("blocked", "skipped"):
-        # 契约 §7（2026-09-30 补）：状态真相源 = 索引。blocked/skipped 用例仍生成
-        # （正文唯一源不变），但发 skip——真跑不会把「合法不可跑」跑成红。
-        reason = state_reason or state
-        lines.append(f"@pytest.mark.skip(reason={json.dumps('[' + state + '] ' + reason, ensure_ascii=False)})")
-    if auth == "none":
-        lines.append("@pytest.mark.atlas_auth_none")
-    lines += [f"def test_{fn}(page):", f'    """{cid} {title}']
-    if case.get("intent"):
-        lines.append(f"    intent: {case['intent']}")
-    # shared/single-source.md §2：用例正文的**唯一源**是分片文件（`cases/*.md`）。
-    # 生成物里只留指针，不复制作例块 —— 复制会造出第二处正文，且让每次改用例都重写整文件。
-    lines.append(f"    用例正文（唯一源）：{case.get('_shard', '')}#{cid.lower()}")
-    lines.append('    """')
-    lines.append(f'    page.goto("{url}")')
-    ids = case.get("testid") or []
-    lines.append(f"    _assert_testids(page, {json.dumps(ids, ensure_ascii=False)})")
-    # 契约 §5.7：结构化 `seed:` 行 → 逐条调用播种钩子（幂等 upsert；每条用例独立播种）。
-    # 未声明通道时 `_seed` 会**明确警告**（生成期另有一条 WARN），不静默。
-    for s in case.get("seed") or []:
-        entity, fields = parse_seed_line(s)
-        lines.append(f"    _seed(page, {entity!r}, {fields!r})")
-    # 契约 §5.6 R9：`unchanged:` 的**行动前**断言 —— 采样于**第一个提交性动作之前**
-    # （不是「所有 step 之前」：那会把用例自带的准备步骤落在采样之后，目标还不可见 ⇒ 误判自相矛盾）。
-    pre = ["    " + py_unchanged_pre(e) for e in case.get("expected", [])
-           if split_prefix(e)[0] == UNCHANGED]
-    # 契约 §5.5（P5，2026-10-07）：`delta` 相对断言的**行动前采样** —— 与 `unchanged:` 同点
-    # （第一个提交性动作之前）：「递增」的基准 = 动作发生前一刻的值，准备步骤不污染基准。
-    delta_pres: list[tuple[str, str, int]] = []
-    for e in case.get("expected", []):
-        if split_prefix(e)[0] is not None:
-            continue
-        verb, tid, value, _ = parse_line(e)
-        if verb != "delta":
-            continue
-        if not re.fullmatch(r"[+-]\d+", value.strip()):
-            raise ValueError(f"`delta` 值须为带符号整数 ±N: {e!r}（契约 §5.5）")
-        var = "__delta_" + re.sub(r"[^0-9a-zA-Z]+", "_", tid)
-        delta_pres.append((var, tid, int(value.strip())))
-    steps = case.get("step", [])
-    if delta_pres and not steps:
-        raise ValueError(f"{cid}: delta 相对断言需要至少一条 step（行动前采样点不存在）")
-    first_submit = next((i for i, s in enumerate(steps)
-                         if any(w in s.split("#", 1)[0] for w in SUBMITTING_WORDS)), None)
-    # 契约 §5.5：`after:<N>` 把断言插到第 N 条 step **之后**（中途态取证，`3509 §B57`）。
-    anchors: dict[int, list[str]] = {}
-    for e in case.get("expected", []):
-        _n, _ = split_after(e)
-        if _n is not None:
-            anchors.setdefault(_n, []).append(e)
-    if not steps:
-        lines.extend(pre)
-    else:
-        # 无提交性动作时退回「第一个 step 之前」：文本期门已对此 FAIL，此处保持保守位置。
-        for i, s in enumerate(steps, start=1):
-            if (i - 1) == (first_submit if first_submit is not None else 0):
-                lines.extend(pre)
-                lines.extend(f'    {var} = _int_of(_loc(page, "{tid}").inner_text())'
-                             for var, tid, _n in delta_pres)
-            lines.append("    " + py_action(s))
-            lines.extend("    " + py_assert(e) for e in anchors.get(i, []))
-    for e in case.get("expected", []):
-        if split_after(e)[0] is None:      # 锚已随其 step 发射，避免重复
-            lines.append("    " + py_assert(e))
-    lines.append(f'    if hooks:\n        hooks.deep_assert("{cid}", page)')
-    return "\n".join(lines) + "\n"
-
-
-def py_zero_step_baseline(page: str, url: str, cases: list[dict]) -> tuple[str, dict | None]:
-    """契约 §5.6 R9 —— 本页零步基线的**产出**（薄函数文本 + 数据清单）。
-
-    旧实现把每页每条断言内联成 lambda，占生成物体积 17–27% 且每次改用例整文件重写；
-    现改为「清单落 `_data/zero_step_<page>.json` + 运行期固定 runner」（runner 在 `py_header`）。
-    判据、`initial:` 豁免、`unchanged:` 期望反向、逐条指名用例与断言 —— **全部不变**。
-
-    **不再按「断言表达式串」去重**（3509 §B33）：同形的 plain 断言被先出现的
-    `unchanged:` 折叠 ⇒ 后者永不点名（假阴性）。同一断言在不同用例里本就应各自判定。
-    """
-    probes: list[dict] = []
-    for c in cases:
-        if c.get("_state") in ("blocked", "skipped"):
-            # 契约 §7（2026-10-01 补）：状态真相源 = 索引——blocked/skipped 用例不进真跑红面
-            # （生成语义②），其断言同样不进零步基线探针。否则部分实现页上「合法不可跑」用例的
-            # `hidden` 探针会在未实现面板上判真，把基线打成假红（实测：projects 页 016）。
-            continue
-        for e in c.get("expected") or []:
-            kind, body = split_prefix(e)
-            if kind == "initial":
-                continue  # 显式豁免：不参与零步基线
-            if body.split("#", 1)[0].strip().split(" ", 1)[0] == "delta":
-                continue  # 契约 §5.5（P5）：delta 是行动前后差值断言，没有「初始态成立/不成立」语义
-            expr, _msg = py_assert_expr(e)
-            verb = body.split("#", 1)[0].strip().split(" ", 1)[0].strip()
-            probes.append({
-                "label": f"{c['id']}: {body.split('#', 1)[0].strip()}",
-                "expr": expr,
-                "kind": kind or "plain",
-                # 契约 §5.6 R9（2026-09-25 补；`3509 §B72`）：**按动词分状态取样**。
-                # 单一取样状态无法同时满足两类要求（两种误报都实测踩过）：
-                #   * 面板内 `hidden X` 在**未展开**时恒真 ⇒ `hidden` 类必须在**展开后**取样；
-                #   * 面板内 `visible X` / `text X` 在**展开后**恒真 ⇒ 存在类必须在**真实渲染**时取样。
-                # `unchanged:` 一律用展开态：它的期望方向相反（判据是「必须已成立」），
-                # 用更宽松的态才不会把合法用例误判为自相矛盾。
-                "sampling": "expanded" if verb == "hidden" or (kind or "plain") == "unchanged" else "rendered",
-            })
-    if not probes:
-        return "", None
-    fn = re.sub(r"[^0-9a-zA-Z]+", "_", page).strip("_")
-    text = (
-        f"def test_{fn}__zero_step_baseline(page):\n"
-        '    \"\"\"契约 §5.6 R9 零步基线：本页全部用例 `expected` 断言的并集，在**未执行任何 step** 的初始态逐条求值。\n'
-        "    两类失败：无前缀者在初始态成立 ⇒ 恒真断言；`unchanged:` 者在初始态不成立 ⇒ 用例自相矛盾。\n"
-        f'    断言清单（数据）：_data/zero_step_{fn}.json\n'
-        '    \"\"\"\n'
-        f'    _atlas_zero_step_baseline(page, _HERE / "_data" / "zero_step_{fn}.json")\n'
-    )
-    payload = {"page": page, "url": url, "probes": probes}
-    return text, payload
 
 
 REV_TITLE = "## 页面 ↔ 用例"
@@ -716,7 +312,7 @@ def ts_case(case: dict, url: str) -> str:
     ids = json.dumps(case.get("testid") or [], ensure_ascii=False)
     step_note = "\\n".join("//   - " + s for s in case.get("step", []))
     assert_note = "\\n".join("//   - " + s for s in case.get("expected", []))
-    # 契约 §5.7（2026-09-30）：blocked/skipped ⇒ test.skip（状态真相源 = 索引，与 python 侧同义）。
+    # 契约 §5.7（2026-09-30）：blocked/skipped ⇒ test.skip（状态真相源 = 索引）。
     state = case.get("_state", "")
     state_reason = case.get("_state_reason", "")
     if state in ("blocked", "skipped"):
@@ -763,7 +359,7 @@ def ts_case(case: dict, url: str) -> str:
         elif verb == "hover":
             actions.append(f"await page.getByTestId('{tid}').hover();")
         elif verb == "waitFor":
-            # 契约 §7.1：带轮询的断言（不得退化为固定等待）—— 与 python 侧同义
+            # 契约 §7.1：带轮询的断言（不得退化为固定等待）
             loc = f"page.getByTestId('{tid}')"
             if value == "":
                 actions.append(f"await expect({loc}).toBeVisible({{ timeout: ATLAS_WAIT_TIMEOUT_MS }});")
@@ -773,7 +369,7 @@ def ts_case(case: dict, url: str) -> str:
                     "{ timeout: ATLAS_WAIT_TIMEOUT_MS, useInnerText: true });"
                 )
         elif verb == "download":
-            # 契约 §5.5（与 python 侧同源同义）：先注册监听、再点击、再校验建议文件名（glob）。
+            # 契约 §5.5（契约 §5.5）：先注册监听、再点击、再校验建议文件名（glob）。
             if not value.strip():
                 raise ValueError(f"`download` 需要文件名 glob 参数: {s!r}（契约 §5.5）")
             actions.append(
@@ -804,21 +400,21 @@ def ts_case(case: dict, url: str) -> str:
         elif verb == "disabled":
             line = f"await expect(page.getByTestId('{tid}')).toBeDisabled();"
         elif verb == "value":
-            # 契约 §5.5（与 python 侧同源同义）：值写作 `""` / `(空)` 时是**空串**，
+            # 契约 §5.5（契约 §5.5）：值写作 `""` / `(空)` 时是**空串**，
             # 必须渲染成空串实参 —— 直接 json.dumps 会得到两个字面引号字符，
             # 与真实空串永不相等。（B173-1：断言经 atlasExpectValue 实现无关化。）
             if value.strip() in ('""', "(空)"):
                 v = json.dumps("", ensure_ascii=False)
             line = f"await atlasExpectValue(page, '{tid}', {v});"
         elif verb == "countOptions":
-            # 契约 §5.5（与 python 侧同源同义）：数该元素内的 `option` 子元素个数。
+            # 契约 §5.5（契约 §5.5）：数该元素内的 `option` 子元素个数。
             line = f"await expect(page.getByTestId('{tid}').locator('option')).toHaveCount(Number({v}));"
         elif verb == "checked":
             line = f"await expect(page.getByTestId('{tid}')).toBeChecked();"
         elif verb == "unchecked":
             line = f"await expect(page.getByTestId('{tid}')).not.toBeChecked();"
         elif verb == "attr":
-            # 契约 §5.5（与 python 侧同源同义）：`attr <testid> <name> <value>`。
+            # 契约 §5.5（契约 §5.5）：`attr <testid> <name> <value>`。
             aname, _, aval = value.strip().partition(" ")
             aval = aval.strip()
             if not aname or not aval:
@@ -829,7 +425,7 @@ def ts_case(case: dict, url: str) -> str:
             )
         elif verb == "delta":
             # 契约 §5.5（P5，2026-10-07）：`delta <tid> <±N>` 相对断言 —— 行动前采样
-            # （贴第一个提交性动作，与 py 侧同点）、行动后 `expect.poll` 轮询复读
+            # （贴第一个提交性动作）、行动后 `expect.poll` 轮询复读
             # （SPA 竞态安全），差值必须恰为 ±N。与豁免通道 / 步骤锚叠写 ⇒ 生成期中止
             # （校验器同判 FAIL，双保险）。
             if kind is not None or split_after(raw)[0] is not None:
@@ -853,16 +449,17 @@ def ts_case(case: dict, url: str) -> str:
             if kind == UNCHANGED:
                 pre.append(line)  # 契约 §5.6 R9：行动前必须成立
             terminal.append(line)
-    # 组装顺序：行动前断言 → （每条 step + 它身后的锚断言）→ 终态断言。
-    # `actions` 与 `step` 一一对应（每个动作分支只 append 一次），故可直接按序号对位。
-    # `delta` 的行动前采样贴**第一个提交性动作**（与 `unchanged:` 先例同点、与 py 侧同构）；
-    # 无提交性动作时退回第一个 step 之前（校验器对此 FAIL，此处保持保守位置）。
+    # 组装顺序：（每条 step + 它身后的锚断言）→ 终态断言；行动前断言（unchanged pre +
+    # delta 采样）贴**第一个提交性动作**（§5.6 R9 / §B55——放所有 step 之前会把准备步骤
+    # 未执行时的不可见元素误判成自相矛盾）；无提交性动作时退回第一个 step 之前
+    # （校验器对此 FAIL，此处保持保守位置）。`actions` 与 `step` 一一对应，按序号对位。
     delta_pos = next((i for i, s in enumerate(case.get("step", []), start=1)
                       if any(w in s.split("#", 1)[0] for w in SUBMITTING_WORDS)), 1)
-    seq: list[str] = list(pre)
+    seq: list[str] = [] if actions else list(pre)
     for _i, _act in enumerate(actions, start=1):
-        if _i == delta_pos and delta_pre:
+        if _i == delta_pos:
             seq.extend(delta_pre)
+            seq.extend(pre)
         seq.append(_act)
         seq.extend(anchors.get(_i, []))
     seq.extend(terminal)
@@ -883,7 +480,7 @@ def ts_case(case: dict, url: str) -> str:
 def ts_assert_expr(line: str) -> str:
     """把一行断言渲染成 **awaitable 布尔表达式串**（`ts_assert` / 零步基线 runner 共用）。
 
-    与 `py_assert_expr` 逐动词同构（复用而非复制）：语义漂移面只有这一处。
+    用例断言与零步基线**共用**本函数 —— 两条路径的断言语义因此不可能漂（复用而非复制）。
     表达式求值环境 = 页面文件 header 的 `tsVis` / `tsVisible` / `page`。
     """
     _, line = split_prefix(line)
@@ -891,7 +488,7 @@ def ts_assert_expr(line: str) -> str:
     v = json.dumps(value, ensure_ascii=False)
     t = json.dumps(tid, ensure_ascii=False)
     if verb == "text":
-        # 与 python `_vis` 语义对齐：元素不可见 ⇒ **null**（基线 runner 跳过，不是 false）
+        # 元素不可见 ⇒ **null**（基线 runner 跳过，不是 false）
         return (
             f'(async () => {{ const l = await tsVis(page, {t}); '
             f"return l === null ? null : (await l.innerText()).trim() === {v}; }})()"
@@ -949,7 +546,7 @@ def ts_zero_step_baseline(page: str, url: str, cases: list[dict]) -> str:
     probes: list[dict] = []
     for c in cases:
         if c.get("_state") in ("blocked", "skipped"):
-            # 契约 §7（2026-10-01 补）：与 py 侧同构——blocked/skipped 用例不进基线探针。
+            # 契约 §7（2026-10-01 补）：blocked/skipped 用例不进基线探针。
             continue
         for e in c.get("expected") or []:
             kind, body = split_prefix(e)
@@ -1064,15 +661,13 @@ def main() -> int:
         return 2
     prof = parse_profile(prof_path.read_text(encoding="utf-8"))
     e2e = prof.get("e2e") or {}
-    runner = e2e.get("runner") or "python-playwright"
+    runner = e2e.get("runner") or "node-playwright"
     if runner not in RUNNERS:
         print(f"ERROR: 未知 e2e.runner={runner!r}（允许 {sorted(RUNNERS)}）", file=sys.stderr)
         return 2
     ext = RUNNERS[runner]
     scripts_dir = root / (e2e.get("scripts_dir") or "product/e2e/scripts")
-    # 契约 §5.7（2026-09-30）：`auth: none` 当前只在 python 运行器路径实现
-    # （2026-09-30 拉平：node 运行器已实现 auth:none——describe 内 test.use 覆盖
-    # storageState 为干净 context；原「node 遇 auth:none 诚实中止」守卫随之移除。）
+    # 契约 §5.7：`auth: none` = describe 内 test.use 覆盖 storageState 为干净 context（node 单轨）。
 
     base = e2e.get("app_base_url")
     if not base:
@@ -1161,7 +756,6 @@ def main() -> int:
         return 2
 
     results: list[dict] = []
-    data_files: set[str] = set()
     generated = 0
     idx_text = idx_path.read_text(encoding="utf-8") if idx_path.is_file() else ""
     case_states = index_case_states(idx_text)
@@ -1170,155 +764,134 @@ def main() -> int:
         for c in items:
             st = case_states.get(c.get("id", ""), ("", ""))
             c["_state"], c["_state_reason"] = st[0], st[1]
-        if runner == "python-playwright":
-            # 契约 §5.6 R9：每页一条零步基线（只 goto，逐条求值全部用例的断言并集）。
-            # ** emission order = 执行 order（pytest 按定义序）**：基线必须**先于**用例——
-            #   真栈时代用例会持久化改库状态（实测 config 批：005 后 provider 恒「不可用」），
-            #   基线后跑会把「断言因前序用例改态而成立」误判成「初始态恒真」假红。
-            baseline, payload = py_zero_step_baseline(page, url, items)
-            if baseline:
-                body = py_header(runner) + baseline + "\n\n" + "\n\n".join(
-                    py_case(c, url) for c in items)
-                fn = re.sub(r"[^0-9a-zA-Z]+", "_", page).strip("_")
-                data_files.add(f"zero_step_{fn}.json")
-                # 紧凑序列化：这是**数据**（只有断言变化时才变），不进人工/agent 的阅读面
-                write(scripts_dir / "_data" / f"zero_step_{fn}.json",
-                      json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n",
-                      args.apply, results)
-            else:
-                body = py_header(runner) + "\n\n".join(
-                    py_case(c, url) for c in items)
-            # 标题来自分片 `## <ID> 标题`；此处 best-effort 注入
-        else:
-            # 契约 §5.6 R9（2026-09-30）：基线先于用例（与 python 侧同因：真栈用例持久化改态）。
-            body = (
-                "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py"
-                f" (runner={runner})；重跑覆盖；深断言放 _support/\n"
-                "import { test, expect } from '@playwright/test';\n"
-                "import { readFileSync } from 'node:fs';\n"
-                "// 契约 §7.1：`waitFor` 的超时默认值（与 python 侧同值）\n"
-                "const ATLAS_WAIT_TIMEOUT_MS = 10_000;\n\n"
-                "function tsLoc(page: any, tid: string) {\n"
-                "  return page.getByTestId(tid).first();\n"
-                "}\n"
-                "async function tsVisible(page: any, tid: string): Promise<boolean> {\n"
-                "  const loc = page.getByTestId(tid);\n"
-                "  return (await loc.count()) > 0 && (await loc.first().isVisible());\n"
-                "}\n"
-                "async function tsVis(page: any, tid: string) {\n"
-                "  // 契约 §7.1：读值断言须先可见；不可见 ⇒ null（= 不成立，不抛错）\n"
-                "  const l = page.getByTestId(tid).first();\n"
-                "  return (await l.isVisible()) ? l : null;\n"
-                "}\n"
-                "async function atlasValueOf(page: any, tid: string): Promise<string | null> {\n"
-                "  // 契约 §5.5（B173-1，2026-10-04）：`value` 断言/探针的实现无关入口。\n"
-                "  // 原生表单元素读 input 值；否则视作 trigger+listbox 组合（如 Radix/shadcn\n"
-                "  // Select），其「当前值」= 触发器可见文本。E2E 只断言行为，不约束组件实现。\n"
-                "  const l = await tsVis(page, tid);\n"
-                "  if (l === null) return null;\n"
-                "  const tag = await l.evaluate((e) => e.tagName.toLowerCase());\n"
-                "  return (tag === 'select' || tag === 'input' || tag === 'textarea')\n"
-                "    ? l.inputValue()\n"
-                "    : (await l.innerText()).trim();\n"
-                "}\n"
-                "async function atlasSelect(page: any, tid: string, label: string) {\n"
-                "  // 契约 §5.5（B173-1，2026-10-04）：`select` 动词的实现无关入口 ——\n"
-                "  // 语义 = 「在该控件上选中 label 的那一项」。原生 <select> 走 selectOption；\n"
-                "  // 否则视作 trigger+listbox 组合：点开触发器后按可访问名点选 option。\n"
-                "  const el = page.getByTestId(tid).first();\n"
-                "  const tag = await el.evaluate((e) => e.tagName.toLowerCase());\n"
-                "  if (tag === 'select') {\n"
-                "    await el.selectOption({ label });\n"
-                "    return;\n"
-                "  }\n"
-                "  await el.click();\n"
-                "  await page.getByRole('option', { name: label, exact: true }).first().click();\n"
-                "}\n"
-                "async function atlasIntOf(loc: any): Promise<number> {\n"
-                "  // 契约 §5.5（P5，2026-10-07）：`delta` 相对断言的取数 —— 元素文本中的首个整数。\n"
-                "  // 找不到数值即响亮失败（永不静默当 0 处理；与 python `_int_of` 同构）。\n"
-                "  const text = await loc.innerText({ timeout: ATLAS_WAIT_TIMEOUT_MS });\n"
-                "  const m = text.match(/-?\\d+/);\n"
-                "  if (!m) throw new Error('delta 采样：元素文本不含数值: ' + text);\n"
-                "  return Number(m[0]);\n"
-                "}\n"
-                "async function atlasExpectValue(page: any, tid: string, v: string) {\n"
-                "  // 契约 §5.5（B173-1，2026-10-04）：`value` 断言的实现无关入口\n"
-                "  // （与 atlasValueOf 同判；两分支都保留 expect 的自动轮询语义）。\n"
-                "  const el = page.getByTestId(tid).first();\n"
-                "  const tag = await el.evaluate((e) => e.tagName.toLowerCase());\n"
-                "  if (tag === 'select' || tag === 'input' || tag === 'textarea') {\n"
-                "    await expect(el).toHaveValue(v);\n"
-                "  } else {\n"
-                "    await expect(el).toHaveText(v, { useInnerText: true });\n"
-                "  }\n"
-                "}\n"
-                "async function atlasProbeOnce(page: any, p: any): Promise<boolean | null> {\n"
-                "  // 三态透传（与 python runner 同判）：true/false/**null**——\n"
-                "  // null = 元素不可见或求值异常（expr 的 `l === null ? null : …` 分支），\n"
-                "  // unchanged 探针对 null **跳过**（python 侧 except-continue 的等价），不得折叠成 false。\n"
-                "  try {\n"
-                "    const v = await eval(p.expr);\n"
-                "    return v === null ? null : v ? true : false;\n"
-                "  } catch {\n"
-                "    return null;\n"
-                "  }\n"
-                "}\n"
-                "async function atlasExpandPanels(page: any) {\n"
-                "  // §B49：hidden/unchanged 断言在展开全部 Tab 级面板后取样（hidden 属性语义）。\n"
-                "  // CSS 类隐藏（shadcn data-[state=inactive]:hidden 等）在 React 重渲染下无法稳定\n"
-                "  // 强开 ⇒ 与 python 侧同判：探不到（isVisible=false）的 unchanged 探针**跳过**，\n"
-                "  // 由正式用例自身的 pre 断言把关（runner 对 ok===false 才记 contradictory）。\n"
-                "  for (const el of await page.locator('[data-atlas-panel]').all()) {\n"
-                "    try { await el.evaluate('(e) => { e.hidden = false; }'); } catch { /* 忽略 */ }\n"
-                "  }\n"
-                "}\n"
-                "async function atlasZeroStepBaseline(page: any, data: any) {\n"
-                "  // 契约 §5.6 R9：初始态观测（数据驱动；两趟取样 §B72）。\n"
-                "  // 判据『以返回值判定』而非『没抛异常』——tsVis 对隐藏元素返回 null = 不成立。\n"
-                "  await page.goto(data.url);\n"
-                "  // SPA 安定：React 异步渲染/API 响应会重渲染并冲掉手改的展开样式，\n"
-                "  // 两趟取样都必须在**安定态**；networkidle 不可达环境超时降级为继续。\n"
-                "  await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => { });\n"
-                "  const initialTrue: string[] = [];\n"
-                "  const contradictory: string[] = [];\n"
-                "  for (const pass of ['rendered', 'expanded'] as const) {\n"
-                "    for (const p of data.probes) {\n"
-                "      if (p.sampling !== pass) continue;\n"
-                "      if (pass === 'expanded') await atlasExpandPanels(page);  // 每条前重展开（重渲染会冲掉，幂等廉价）\n"
-                "      const ok = await atlasProbeOnce(page, p);\n"
-                "      if (p.kind === 'unchanged') {\n"
-                "        // 与 python 侧同判：null（元素不可见/求值异常——如 Tab 未展开的面板）⇒ 跳过；\n"
-                "        // 零步基线无 step 无法展开交互面板，该面由正式用例自身的 pre 断言把关。\n"
-                "        if (ok === false) contradictory.push(p.label);\n"
-                "      } else if (ok === true) {\n"
-                "        initialTrue.push(p.label);\n"
-                "      }\n"
-                "    }\n"
-                "  }\n"
-                "  const misses = [...initialTrue, ...contradictory];\n"
-                "  expect(misses, `零步基线（恒真/自相矛盾）：${misses.join('；')}`).toEqual([]);\n"
-                "}\n\n"
-                "// 契约 §5.5：`download` 的 glob 语义（与 python 侧 `fnmatch` 同义：* 任意串 / ? 单字符）\n"
-                "function atlasGlob(pattern) {\n"
-                r"  return new RegExp('^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&')"
-                ".replace(/\\*/g, '.*').replace(/\\?/g, '.') + '$');\n"
-                "}\n"
-                "async function atlasDownload(page, tid, pattern) {\n"
-                "  const [download] = await Promise.all([\n"
-                "    page.waitForEvent('download', { timeout: ATLAS_WAIT_TIMEOUT_MS }),\n"
-                "    page.getByTestId(tid).click(),\n"
-                "  ]);\n"
-                "  const name = download.suggestedFilename();\n"
-                "  expect(name, `下载文件名 ${name} 不匹配 ${pattern}`).toMatch(atlasGlob(pattern));\n"
-                "}\n\n"
-                + ts_zero_step_baseline(page, url, items) + "\n"
-                + "\n".join(ts_case(c, url) for c in items)
-            )
+        # 契约 §5.6 R9（2026-09-30）：基线先于用例（与 python 侧同因：真栈用例持久化改态）。
+        body = (
+            "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py"
+            f" (runner={runner})；重跑覆盖；深断言放 _support/\n"
+            "import { test, expect } from '@playwright/test';\n"
+            "import { readFileSync } from 'node:fs';\n"
+            "// 契约 §7.1：`waitFor` 的超时默认值（与 python 侧同值）\n"
+            "const ATLAS_WAIT_TIMEOUT_MS = 10_000;\n\n"
+            "function tsLoc(page: any, tid: string) {\n"
+            "  return page.getByTestId(tid).first();\n"
+            "}\n"
+            "async function tsVisible(page: any, tid: string): Promise<boolean> {\n"
+            "  const loc = page.getByTestId(tid);\n"
+            "  return (await loc.count()) > 0 && (await loc.first().isVisible());\n"
+            "}\n"
+            "async function tsVis(page: any, tid: string) {\n"
+            "  // 契约 §7.1：读值断言须先可见；不可见 ⇒ null（= 不成立，不抛错）\n"
+            "  const l = page.getByTestId(tid).first();\n"
+            "  return (await l.isVisible()) ? l : null;\n"
+            "}\n"
+            "async function atlasValueOf(page: any, tid: string): Promise<string | null> {\n"
+            "  // 契约 §5.5（B173-1，2026-10-04）：`value` 断言/探针的实现无关入口。\n"
+            "  // 原生表单元素读 input 值；否则视作 trigger+listbox 组合（如 Radix/shadcn\n"
+            "  // Select），其「当前值」= 触发器可见文本。E2E 只断言行为，不约束组件实现。\n"
+            "  const l = await tsVis(page, tid);\n"
+            "  if (l === null) return null;\n"
+            "  const tag = await l.evaluate((e) => e.tagName.toLowerCase());\n"
+            "  return (tag === 'select' || tag === 'input' || tag === 'textarea')\n"
+            "    ? l.inputValue()\n"
+            "    : (await l.innerText()).trim();\n"
+            "}\n"
+            "async function atlasSelect(page: any, tid: string, label: string) {\n"
+            "  // 契约 §5.5（B173-1，2026-10-04）：`select` 动词的实现无关入口 ——\n"
+            "  // 语义 = 「在该控件上选中 label 的那一项」。原生 <select> 走 selectOption；\n"
+            "  // 否则视作 trigger+listbox 组合：点开触发器后按可访问名点选 option。\n"
+            "  const el = page.getByTestId(tid).first();\n"
+            "  const tag = await el.evaluate((e) => e.tagName.toLowerCase());\n"
+            "  if (tag === 'select') {\n"
+            "    await el.selectOption({ label });\n"
+            "    return;\n"
+            "  }\n"
+            "  await el.click();\n"
+            "  await page.getByRole('option', { name: label, exact: true }).first().click();\n"
+            "}\n"
+            "async function atlasIntOf(loc: any): Promise<number> {\n"
+            "  // 契约 §5.5（P5，2026-10-07）：`delta` 相对断言的取数 —— 元素文本中的首个整数。\n"
+            "  // 找不到数值即响亮失败（永不静默当 0 处理）。\n"
+            "  const text = await loc.innerText({ timeout: ATLAS_WAIT_TIMEOUT_MS });\n"
+            "  const m = text.match(/-?\\d+/);\n"
+            "  if (!m) throw new Error('delta 采样：元素文本不含数值: ' + text);\n"
+            "  return Number(m[0]);\n"
+            "}\n"
+            "async function atlasExpectValue(page: any, tid: string, v: string) {\n"
+            "  // 契约 §5.5（B173-1，2026-10-04）：`value` 断言的实现无关入口\n"
+            "  // （与 atlasValueOf 同判；两分支都保留 expect 的自动轮询语义）。\n"
+            "  const el = page.getByTestId(tid).first();\n"
+            "  const tag = await el.evaluate((e) => e.tagName.toLowerCase());\n"
+            "  if (tag === 'select' || tag === 'input' || tag === 'textarea') {\n"
+            "    await expect(el).toHaveValue(v);\n"
+            "  } else {\n"
+            "    await expect(el).toHaveText(v, { useInnerText: true });\n"
+            "  }\n"
+            "}\n"
+            "async function atlasProbeOnce(page: any, p: any): Promise<boolean | null> {\n"
+            "  // 三态透传：true/false/**null**——\n"
+            "  // null = 元素不可见或求值异常（expr 的 `l === null ? null : …` 分支），\n"
+            "  // unchanged 探针对 null **跳过**，不得折叠成 false。\n"
+            "  try {\n"
+            "    const v = await eval(p.expr);\n"
+            "    return v === null ? null : v ? true : false;\n"
+            "  } catch {\n"
+            "    return null;\n"
+            "  }\n"
+            "}\n"
+            "async function atlasExpandPanels(page: any) {\n"
+            "  // §B49：hidden/unchanged 断言在展开全部 Tab 级面板后取样（hidden 属性语义）。\n"
+            "  // CSS 类隐藏（shadcn data-[state=inactive]:hidden 等）在 React 重渲染下无法稳定\n"
+            "  // 强开 ⇒ 探不到（isVisible=false）的 unchanged 探针**跳过**，\n"
+            "  // 由正式用例自身的 pre 断言把关（runner 对 ok===false 才记 contradictory）。\n"
+            "  for (const el of await page.locator('[data-atlas-panel]').all()) {\n"
+            "    try { await el.evaluate('(e) => { e.hidden = false; }'); } catch { /* 忽略 */ }\n"
+            "  }\n"
+            "}\n"
+            "async function atlasZeroStepBaseline(page: any, data: any) {\n"
+            "  // 契约 §5.6 R9：初始态观测（数据驱动；两趟取样 §B72）。\n"
+            "  // 判据『以返回值判定』而非『没抛异常』——tsVis 对隐藏元素返回 null = 不成立。\n"
+            "  await page.goto(data.url);\n"
+            "  // SPA 安定：React 异步渲染/API 响应会重渲染并冲掉手改的展开样式，\n"
+            "  // 两趟取样都必须在**安定态**；networkidle 不可达环境超时降级为继续。\n"
+            "  await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => { });\n"
+            "  const initialTrue: string[] = [];\n"
+            "  const contradictory: string[] = [];\n"
+            "  for (const pass of ['rendered', 'expanded'] as const) {\n"
+            "    for (const p of data.probes) {\n"
+            "      if (p.sampling !== pass) continue;\n"
+            "      if (pass === 'expanded') await atlasExpandPanels(page);  // 每条前重展开（重渲染会冲掉，幂等廉价）\n"
+            "      const ok = await atlasProbeOnce(page, p);\n"
+            "      if (p.kind === 'unchanged') {\n"
+            "        // null（元素不可见/求值异常——如 Tab 未展开的面板）⇒ 跳过；\n"
+            "        // 零步基线无 step 无法展开交互面板，该面由正式用例自身的 pre 断言把关。\n"
+            "        if (ok === false) contradictory.push(p.label);\n"
+            "      } else if (ok === true) {\n"
+            "        initialTrue.push(p.label);\n"
+            "      }\n"
+            "    }\n"
+            "  }\n"
+            "  const misses = [...initialTrue, ...contradictory];\n"
+            "  expect(misses, `零步基线（恒真/自相矛盾）：${misses.join('；')}`).toEqual([]);\n"
+            "}\n\n"
+            "// 契约 §5.5：`download` 的 glob 语义（`*` 任意串 / `?` 单字符）\n"
+            "function atlasGlob(pattern) {\n"
+            r"  return new RegExp('^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&')"
+            ".replace(/\\*/g, '.*').replace(/\\?/g, '.') + '$');\n"
+            "}\n"
+            "async function atlasDownload(page, tid, pattern) {\n"
+            "  const [download] = await Promise.all([\n"
+            "    page.waitForEvent('download', { timeout: ATLAS_WAIT_TIMEOUT_MS }),\n"
+            "    page.getByTestId(tid).click(),\n"
+            "  ]);\n"
+            "  const name = download.suggestedFilename();\n"
+            "  expect(name, `下载文件名 ${name} 不匹配 ${pattern}`).toMatch(atlasGlob(pattern));\n"
+            "}\n\n"
+            + ts_zero_step_baseline(page, url, items) + "\n"
+            + "\n".join(ts_case(c, url) for c in items)
+        )
         write(scripts_dir / f"{page}{ext}", body, args.apply, results)
         # runner 切换后清理另一扩展名的旧页面脚本（否则双份同语义产物互斥漂移）
-        other_ext = next(e for e, r in RUNNERS.items() if e != ext and RUNNERS[e] != ext) if False else (
-            ".py" if ext == ".spec.ts" else ".spec.ts")
+        other_ext = ".py"  # 单轨化（3507 BO）：清理旧 python 运行器残留页脚本
         stale = scripts_dir / f"{page}{other_ext}"
         if stale.is_file():
             stale.unlink()
@@ -1326,250 +899,83 @@ def main() -> int:
         generated += 1
 
     # 运行器原生配置：承载 baseURL（不硬编码在用例脚本里）
-    if runner == "python-playwright":
-        cfg = (
-            "# AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py；重跑覆盖。\n"
-            "import json\n"
-            "import os\n"
-            "import pytest\n\n"
-            f'_DEFAULT_BASE = "{base}"  # E1 单段：唯一靶场 = 真实应用（e2e.app_base_url）\n'
-            f"_PAGE_FILES = ({', '.join(repr(f'{p}.py') for p in sorted(cases))},)\n\n\n"
-            '@pytest.fixture(scope="session")\n'
-            "def base_url():\n"
-            '    return os.environ.get("ATLAS_BASE_URL", _DEFAULT_BASE)\n\n\n'
-            '# 人工 review（2026-09-23）：如需跑完**不自动关窗**、由人手动关闭，\n'
-            '# 设 ATLAS_KEEP_OPEN=1（并可设 ATLAS_RESULT_FILE=<路径>）——控制台就是这么用的。\n'
-            'import sys\n'
-            "_KEEP_OPEN = os.environ.get(\"ATLAS_KEEP_OPEN\") == \"1\"\n"
-            '_OUTCOME = pytest.StashKey()\n\n\n'
-            'def _write_result(exitstatus):\n'
-            '    path = os.environ.get("ATLAS_RESULT_FILE")\n'
-            '    if not path:\n'
-            '        return\n'
-            '    try:\n'
-            '        with open(path, "w", encoding="utf-8") as fh:\n'
-            '            json.dump({"exitstatus": int(exitstatus)}, fh)\n'
-            '    except Exception:\n'
-            '        pass\n\n\n'
-            'def pytest_runtest_makereport(item, call):\n'
-            '    if call.when == "call":\n'
-            '        item.stash[_OUTCOME] = call.excinfo is None\n\n\n'
-            '# 应用靶场真实登录（契约 §5.4 / §7.1）：\n'
-            '#   * 端点 / 表单字段名 / 令牌键 / 前端读取的存储键 = 取证值，登记在\n'
-            '#     product/stack-profile.yaml 的 e2e.app_login 段（shared/stack-profile.md §2），\n'
-            '#     生成时烘进 _APP_LOGIN；段缺失 = 合法降级（跳过登录预置 + 明确警告）。\n'
-            '#   * 凭据只来自运行期环境变量 ATLAS_APP_USER / ATLAS_APP_PASSWORD\n'
-            '#     （不读项目 .env、不硬编码）；未设置 ⇒ 跳过预置并打印警告（不静默）。\n'
-            '#   * 换取令牌失败（网络 / 凭据 / 端点变更）⇒ 报错中止 —— 不得静默续跑成假绿。\n'
-            f'_APP_LOGIN = {app_login!r}  # None = stack-profile 未声明 e2e.app_login\n'
-            f'_SEED = {seed_hook!r}  # None = stack-profile 未声明 e2e.seed.hook（合法降级 + 明确警告）\n\n\n'
-            'def _seed(page, entity, fields):\n'
-            '    """用例级数据播种（契约 §5.7）：幂等 upsert；未声明通道 ⇒ **明确警告**（不静默）。\n\n'
-            '    接口语义 = 「输入实体清单 ⇒ 保证存在」；实现由项目自定（`e2e.seed.hook`）。\n'
-            '    """\n'
-            '    if _SEED is None:\n'
-            '        print(f"[atlas] 警告：未声明 e2e.seed.hook ⇒ 跳过播种 {entity}"\n'
-            '              "（依赖该数据的断言会失败）", file=sys.stderr, flush=True)\n'
-            '        return\n'
-            '    import importlib.util as _ilu\n'
-            '    import os as _os\n'
-            '    root = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..", "..", ".."))\n'
-            '    target = _os.path.join(root, _SEED)\n'
-            '    if not _os.path.isfile(target):\n'
-            '        raise RuntimeError(f"[atlas] e2e.seed.hook 指向的文件不存在：{target}"\n'
-            '                           "（product/stack-profile.yaml 的 e2e.seed.hook）")\n'
-            '    _spec = _ilu.spec_from_file_location("atlas_seed_hook", target)\n'
-            '    _mod = _ilu.module_from_spec(_spec)\n'
-            '    _spec.loader.exec_module(_mod)\n'
-            '    _mod.upsert(entity, fields)  # 幂等；已存在则更新\n\n\n'
-            'def _atlas_app_token(base_url, user, password):\n'
-            '    """应用靶场：**真实登录**换取令牌（session 级，一次）。\n\n'
-            '    失败必须响亮：网络不通 / 凭据错误 / 端点变更都抛 RuntimeError 中止，\n'
-            '    不静默返回 —— 静默 = 「未登录态跑用例」的假绿。\n'
-            '    """\n'
-            '    import urllib.parse\n'
-            '    import urllib.request\n'
-            '    path = _APP_LOGIN["endpoint"]\n'
-            '    form = {_APP_LOGIN["username_field"]: user, _APP_LOGIN["password_field"]: password}\n'
-            '    url = base_url.rstrip("/") + path\n'
-            '    data = urllib.parse.urlencode(form).encode("utf-8")\n'
-            '    req = urllib.request.Request(url, data=data, method="POST",\n'
-            '                                 headers={"Content-Type": "application/x-www-form-urlencoded"})\n'
-            '    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 回环地址直连，绕代理\n'
-            '    try:\n'
-            '        with opener.open(req, timeout=10) as resp:\n'
-            '            token = (json.loads(resp.read().decode("utf-8")) or {}).get(_APP_LOGIN["token_key"])\n'
-            '    except Exception as exc:\n'
-            '        raise RuntimeError(\n'
-            '            f"[atlas] 应用靶场登录失败（{url}，user={user}）：{exc!r}"\n'
-            '            f"—— 核对服务可达 / ATLAS_APP_USER·ATLAS_APP_PASSWORD / 端点是否仍为 {path}") from exc\n'
-            '    if not token:\n'
-            '        raise RuntimeError(f"[atlas] 应用靶场登录响应无 {_APP_LOGIN[\'token_key\']}（{url}）—— 端点契约可能已变更")\n'
-            '    return token\n\n\n'
-            'def _app_context_args(args, base_url, app_user, app_password):\n'
-            '    """应用靶场的会话预置：未声明 e2e.app_login 或凭据缺 ⇒ 跳过 + 明确警告；齐 ⇒ 真实登录换令牌。"""\n'
-            '    if _APP_LOGIN is None:\n'
-            '        print("[atlas] 警告：stack-profile 未声明 e2e.app_login（应用靶场登录预置的取证配置），"\n'
-            '              "跳过登录态预置；依赖预置登录态的用例会失败", file=sys.stderr, flush=True)\n'
-            '        return args\n'
-            '    if not (app_user and app_password):\n'
-            '        print("[atlas] 警告：应用靶场未设 ATLAS_APP_USER / ATLAS_APP_PASSWORD，"\n'
-            '              "跳过登录态预置；依赖预置登录态的用例（先退出再制造未登录前提）会失败",\n'
-            '              file=sys.stderr, flush=True)\n'
-            '        return args\n'
-            '    args["storage_state"] = {"cookies": [], "origins": [{\n'
-            '        "origin": base_url.rstrip("/"),\n'
-            '        "localStorage": [{"name": _APP_LOGIN["storage_key"],\n'
-            '                          "value": _atlas_app_token(base_url, app_user, app_password)}],\n'
-            '    }]}\n'
-            '    return args\n\n\n'
-            'def _context_args(browser_context_args, base_url, app_user=None, app_password=None):\n'
-            '    args = dict(browser_context_args)\n'
-            '    return _app_context_args(args, base_url, app_user, app_password)\n\n\n'
-            '@pytest.fixture(scope="session")\n'
-            'def browser_context_args(browser_context_args, base_url):\n'
-            '    """契约 §5.4（E1 单段）：以真实登录预置会话。\n\n'
-            '    凭据来自运行期环境变量 ATLAS_APP_USER / ATLAS_APP_PASSWORD\n'
-            '    （未设 ⇒ 跳过预置并警告；换取失败即中止）。\n'
-            '    需要「未登录」前提的用例：块内声明 `auth: none`（⇒ page fixture 剥预置 storageState）；\n'
-            '    存量以页内退出控件制造未登录态的写法仍合法（E2E 环契约 §5.7）。\n'
-            '    """\n'
-            '    return _context_args(browser_context_args, base_url,\n'
-            '                         app_user=os.environ.get("ATLAS_APP_USER"),\n'
-            '                         app_password=os.environ.get("ATLAS_APP_PASSWORD"))\n\n\n'
-            '@pytest.fixture\n'
-            'def page(request, browser, browser_context_args):\n'
-            '    """覆盖运行器自带的 page：ATLAS_KEEP_OPEN=1 时跑完**不关窗**，留给人手动关。\n\n'
-            '    默认（未设该环境变量）行为与原生一致：用例结束即关 context。\n'
-            '    持窗模式是为单条跑 + 人工 review 设计（跑整包会同时留下多个窗口）。\n\n'
-            '    **为何等在本 fixture 的 teardown 里、而不在 pytest_sessionfinish**：\n'
-            '    实测（2026-09-23）session 级 browser fixture 在 sessionfinish **之前**就拆了，\n'
-            '    那时 page 已 closed ⇒ 在 sessionfinish 里等信息于空等，进程照样退。\n'
-            '    而这里等能用：结果先写哨兵文件，控制台据此判通过/失败，进程再持窗等人手动关。\n'
-            '    """\n'
-            '    ctx_args = browser_context_args\n'
-            '    if request.node.get_closest_marker("atlas_auth_none") is not None:\n'
-            '        # 块内 `auth: none`：该用例声明「未登录前提」⇒ 干净 context（剥预置 storage_state）。\n'
-            '        # 双键名都剥：Playwright Python API 主键为 snake_case，camelCase 为历史防御。\n'
-            '        ctx_args = {k: v for k, v in browser_context_args.items()\n'
-            '                    if k not in ("storage_state", "storageState")}\n'
-            '    ctx = browser.new_context(**ctx_args)\n'
-            '    p = ctx.new_page()\n'
-            '    if not _KEEP_OPEN:\n'
-            '        yield p\n'
-            '        ctx.close()\n'
-            '        return\n'
-            '    yield p\n'
-            '    _write_result(0 if request.node.stash.get(_OUTCOME, False) else 1)\n'
-            '    print("ATLAS-HOLD: 用例已结束，浏览器窗口保留；关闭窗口后本进程退出",\n'
-            '          file=sys.__stdout__, flush=True)\n'
-            '    try:\n'
-            '        p.wait_for_event("close", timeout=0)   # timeout=0 = 无限等，等人手动关窗\n'
-            '    except Exception:\n'
-            '        pass\n\n\n'
-            'def pytest_sessionfinish(session, exitstatus):\n'
-            '    """非持窗路径（或持窗路径未走到 fixture teardown）时，把结果落哨兵文件。"""\n'
-            '    path = os.environ.get("ATLAS_RESULT_FILE")\n'
-            '    if path and not os.path.exists(path):\n'
-            '        _write_result(exitstatus)\n\n\n'
-            "def pytest_configure(config):\n"
-            '    # 独立审查 D3（2026-09-30）：注册 auth marker，消除 PytestUnknownMarkWarning 噪声。\n'
-            '    config.addinivalue_line(\n'
-            '        "markers",\n'
-            '        "atlas_auth_none: 块内 auth: none —— 本用例用干净 context（无预置登录态）",\n'
-            '    )\n'
-            "    # 契约 §7.1：一页一脚本的文件名是 <page>.py，pytest 默认只收 test_*.py。\n"
-            "    # 按页面文件名扩 python_files（而不是自建 Module）：pytest 自己按路径去重，\n"
-            "    # 显式点名 <page>.py::<test> 时不会把同一条用例收两遍。\n"
-            "    # （复审 D3 Major：两个 pytest_configure 会互相遮蔽，必须合并为一个。）\n"
-            "    for _name in _PAGE_FILES:\n"
-            '        config.addinivalue_line("python_files", _name)\n\n\n'
-        )
-        write(scripts_dir / "conftest.py", cfg, args.apply, results)
-        # 清理已无对应页的零步基线清单（否则会留孤儿数据文件）
-        data_dir = scripts_dir / "_data"
-        if data_dir.is_dir():
-            for stale in sorted(data_dir.glob("zero_step_*.json")):
-                if stale.name not in data_files and args.apply:
-                    stale.unlink()
-    else:
-        # node 运行器全机制版（2026-09-30 拉平）：storageState 预置登录（setup 项目）、
-        # auth:none 由用例 describe 内 test.use 覆盖（ts_case 渲染）。
-        state_rel = ".atlas-auth/state.json"
-        cfg = (
-            "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py；重跑覆盖。\n"
-            "import { defineConfig } from '@playwright/test';\n\n"
-            "// 会话预置登录（契约 §5.7 / §5.4）：setup 项目真实登录一次 → state 文件；\n"
-            "// 凭据来自运行期环境变量 ATLAS_APP_USER / ATLAS_APP_PASSWORD（不读项目 .env、不硬编码）；\n"
-            "// 未设置 ⇒ setup 写空 state 并警告（不静默）；换取失败 ⇒ setup 抛错中止（不静默续跑）。\n"
-            "export default defineConfig({\n"
-            "  reporter: [['list']],\n"
-            "  outputDir: '.atlas-run',\n"
-            "  // 契约 rings/e2e §8：执行一次一条（并发 = 1）。零步基线必须先于改态用例，\n"
-            "  // 并行调度会乱序 ⇒ 恒真误报 / 前提被前序用例污染。\n"
-            "  workers: 1,\n"
-            "  fullyParallel: false,\n"
-            f"  use: {{ baseURL: process.env.ATLAS_BASE_URL ?? '{base}' }},  // E1 单段\n"
-            "  projects: [\n"
-            "    { name: 'setup', testMatch: /atlas-auth[.]setup[.]ts/ },\n"
-            "    {\n"
-            "      name: 'chromium',\n"
-            "      dependencies: ['setup'],\n"
-            "      use: { storageState: "
-            + json.dumps(state_rel) +
-            " },\n"
-            "    },\n"
-            "  ],\n"
-            "});\n"
-        )
-        write(scripts_dir / "playwright.config.ts", cfg, args.apply, results)
-        endpoint = app_login["endpoint"] if app_login else "/login"
-        user_field = app_login["username_field"] if app_login else "username"
-        pass_field = app_login["password_field"] if app_login else "password"
-        token_key = app_login["token_key"] if app_login else "access_token"
-        storage_key = app_login["storage_key"] if app_login else "access_token"
-        setup_ts = (
-            "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py；重跑覆盖。\n"
-            "import { test, expect } from '@playwright/test';\n"
-            "import { mkdirSync, writeFileSync } from 'node:fs';\n"
-            "import { dirname } from 'node:path';\n\n"
-            "test('atlas auth setup', async ({ request }) => {\n"
-            "  const user = process.env.ATLAS_APP_USER;\n"
-            "  const password = process.env.ATLAS_APP_PASSWORD;\n"
-            f"  const endpoint = {json.dumps(endpoint)};\n"
-            f"  const userField = {json.dumps(user_field)};\n"
-            f"  const passField = {json.dumps(pass_field)};\n"
-            f"  const tokenKey = {json.dumps(token_key)};\n"
-            f"  const storageKey = {json.dumps(storage_key)};\n"
-            f"  const stateFile = {json.dumps(state_rel)};\n"
-            "  if (!user || !password) {\n"
-            "    console.warn('[atlas] 警告：未设置 ATLAS_APP_USER/ATLAS_APP_PASSWORD ⇒ 跳过登录预置（需要登录态的用例会失败）');\n"
-            "    mkdirSync(dirname(stateFile), { recursive: true });\n"
-            "    writeFileSync(stateFile, JSON.stringify({ cookies: [], origins: [] }));\n"
-            "    return;\n"
-            "  }\n"
-            "  const form = new URLSearchParams({ [userField]: user, [passField]: password });\n"
-            "  const resp = await request.post(endpoint, {\n"
-            "    headers: { 'content-type': 'application/x-www-form-urlencoded' },\n"
-            "    data: form.toString(),\n"
-            "  });\n"
-            "  if (!resp.ok()) {\n"
-            "    throw new Error(`[atlas] 应用靶场登录失败（HTTP ${resp.status()}）：核对服务可达 / ATLAS_APP_USER·ATLAS_APP_PASSWORD / 端点 ${endpoint}`);\n"
-            "  }\n"
-            "  const token = (await resp.json())[tokenKey];\n"
-            "  const origin = process.env.ATLAS_BASE_URL ?? " + json.dumps(base) + ";\n"
-            "  const state = {\n"
-            "    cookies: [] as unknown[],\n"
-            "    origins: [{ origin, localStorage: [{ name: storageKey, value: token }] }],\n"
-            "  };\n"
-            "  mkdirSync(dirname(stateFile), { recursive: true });\n"
-            "  writeFileSync(stateFile, JSON.stringify(state));\n"
-            "});\n"
-        )
-        write(scripts_dir / "atlas-auth.setup.ts", setup_ts, args.apply, results)
-        gitignore = scripts_dir / ".gitignore"
-        if not gitignore.is_file():
-            write(gitignore, ".atlas-auth/\n.atlas-run/\n", args.apply, results)
+    # node 运行器全机制版（2026-09-30 拉平）：storageState 预置登录（setup 项目）、
+    # auth:none 由用例 describe 内 test.use 覆盖（ts_case 渲染）。
+    state_rel = ".atlas-auth/state.json"
+    cfg = (
+        "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py；重跑覆盖。\n"
+        "import { defineConfig } from '@playwright/test';\n\n"
+        "// 会话预置登录（契约 §5.7 / §5.4）：setup 项目真实登录一次 → state 文件；\n"
+        "// 凭据来自运行期环境变量 ATLAS_APP_USER / ATLAS_APP_PASSWORD（不读项目 .env、不硬编码）；\n"
+        "// 未设置 ⇒ setup 写空 state 并警告（不静默）；换取失败 ⇒ setup 抛错中止（不静默续跑）。\n"
+        "export default defineConfig({\n"
+        "  reporter: [['list']],\n"
+        "  outputDir: '.atlas-run',\n"
+        "  // 契约 rings/e2e §8：执行一次一条（并发 = 1）。零步基线必须先于改态用例，\n"
+        "  // 并行调度会乱序 ⇒ 恒真误报 / 前提被前序用例污染。\n"
+        "  workers: 1,\n"
+        "  fullyParallel: false,\n"
+        f"  use: {{ baseURL: process.env.ATLAS_BASE_URL ?? '{base}' }},  // E1 单段\n"
+        "  projects: [\n"
+        "    { name: 'setup', testMatch: /atlas-auth[.]setup[.]ts/ },\n"
+        "    {\n"
+        "      name: 'chromium',\n"
+        "      dependencies: ['setup'],\n"
+        "      use: { storageState: "
+        + json.dumps(state_rel) +
+        " },\n"
+        "    },\n"
+        "  ],\n"
+        "});\n"
+    )
+    write(scripts_dir / "playwright.config.ts", cfg, args.apply, results)
+    endpoint = app_login["endpoint"] if app_login else "/login"
+    user_field = app_login["username_field"] if app_login else "username"
+    pass_field = app_login["password_field"] if app_login else "password"
+    token_key = app_login["token_key"] if app_login else "access_token"
+    storage_key = app_login["storage_key"] if app_login else "access_token"
+    setup_ts = (
+        "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py；重跑覆盖。\n"
+        "import { test, expect } from '@playwright/test';\n"
+        "import { mkdirSync, writeFileSync } from 'node:fs';\n"
+        "import { dirname } from 'node:path';\n\n"
+        "test('atlas auth setup', async ({ request }) => {\n"
+        "  const user = process.env.ATLAS_APP_USER;\n"
+        "  const password = process.env.ATLAS_APP_PASSWORD;\n"
+        f"  const endpoint = {json.dumps(endpoint)};\n"
+        f"  const userField = {json.dumps(user_field)};\n"
+        f"  const passField = {json.dumps(pass_field)};\n"
+        f"  const tokenKey = {json.dumps(token_key)};\n"
+        f"  const storageKey = {json.dumps(storage_key)};\n"
+        f"  const stateFile = {json.dumps(state_rel)};\n"
+        "  if (!user || !password) {\n"
+        "    console.warn('[atlas] 警告：未设置 ATLAS_APP_USER/ATLAS_APP_PASSWORD ⇒ 跳过登录预置（需要登录态的用例会失败）');\n"
+        "    mkdirSync(dirname(stateFile), { recursive: true });\n"
+        "    writeFileSync(stateFile, JSON.stringify({ cookies: [], origins: [] }));\n"
+        "    return;\n"
+        "  }\n"
+        "  const form = new URLSearchParams({ [userField]: user, [passField]: password });\n"
+        "  const resp = await request.post(endpoint, {\n"
+        "    headers: { 'content-type': 'application/x-www-form-urlencoded' },\n"
+        "    data: form.toString(),\n"
+        "  });\n"
+        "  if (!resp.ok()) {\n"
+        "    throw new Error(`[atlas] 应用靶场登录失败（HTTP ${resp.status()}）：核对服务可达 / ATLAS_APP_USER·ATLAS_APP_PASSWORD / 端点 ${endpoint}`);\n"
+        "  }\n"
+        "  const token = (await resp.json())[tokenKey];\n"
+        "  const origin = process.env.ATLAS_BASE_URL ?? " + json.dumps(base) + ";\n"
+        "  const state = {\n"
+        "    cookies: [] as unknown[],\n"
+        "    origins: [{ origin, localStorage: [{ name: storageKey, value: token }] }],\n"
+        "  };\n"
+        "  mkdirSync(dirname(stateFile), { recursive: true });\n"
+        "  writeFileSync(stateFile, JSON.stringify(state));\n"
+        "});\n"
+    )
+    write(scripts_dir / "atlas-auth.setup.ts", setup_ts, args.apply, results)
+    gitignore = scripts_dir / ".gitignore"
+    if not gitignore.is_file():
+        write(gitignore, ".atlas-auth/\n.atlas-run/\n", args.apply, results)
 
     # 索引的 `## 页面 ↔ 用例` 反向视图：100% 派生 ⇒ 由生成器重写（3509 §B64）。
     idx_path = root / "product" / "e2e" / "e2e-index.md"
@@ -1582,12 +988,9 @@ def main() -> int:
     support = scripts_dir / "_support"
     if not support.exists():
         support.mkdir(parents=True, exist_ok=True)
-        seed = support / ("__init__.py" if runner == "python-playwright" else "hooks.ts")
+        seed = support / "hooks.ts"
         seed.write_text(
-            "# 自定义深断言钩子放这里（生成器不覆盖本目录）。\n"
-            "# python: 定义 deep_assert(case_id, page)\n"
-            if runner == "python-playwright"
-            else "// 自定义深断言钩子放这里（生成器不覆盖本目录）。\n"
+            "// 自定义深断言钩子放这里（生成器不覆盖本目录）。\n"
         , encoding="utf-8")
 
     out = {"root": str(root), "runner": runner, "base_url": base,

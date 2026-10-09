@@ -124,23 +124,12 @@ def test_e2e_reset_failure_fails_the_run_row() -> None:
         os.symlink(PKG_ROOT / "scripts", root / ".atlas" / "scripts")
         (root / "product").mkdir(parents=True, exist_ok=True)
         (root / "product" / "e2e" / "scripts").mkdir(parents=True, exist_ok=True)
-        (root / "product" / "e2e" / "scripts" / "config.py").write_text(
-            "def test_ok():\n    assert True\n", encoding="utf-8")
+        (root / "product" / "e2e" / "scripts" / "config.spec.ts").write_text(
+            "test('ok', async () => {});\n", encoding="utf-8")
         (root / "product" / "stack-profile.yaml").write_text(
-            "product: 夹具\ne2e:\n  runner: python-playwright\n"
+            "product: 夹具\ne2e:\n  runner: node-playwright\n"
             f"  app_base_url: {_live_base()}\n"
             "  reset: \"exit 7\"\n", encoding="utf-8")
-        # 解释器候选：root/.venv/bin/python shim（带 playwright 桩模块，让依赖可导入性检查通过）
-        stub = root / "stubmods"
-        stub.mkdir()
-        (stub / "playwright.py").write_text("")
-        (stub / "pytest_playwright.py").write_text("")
-        vbin = root / ".venv" / "bin"
-        vbin.mkdir(parents=True)
-        shim = vbin / "python"
-        shim.write_text(
-            f'#!/bin/sh\nPYTHONPATH={stub} exec "{sys.executable}" "$@"\n')
-        shim.chmod(0o755)
         code, out = run(["--root", ".", "--page", "config", "--json"], root)
         rows = {r["name"]: r for r in json.loads(out)["rows"]}
         e2e = rows.get("E2E 真跑[config]")
@@ -159,7 +148,7 @@ def test_generated_gate_reports_not_ready_as_skip() -> None:
         os.symlink(PKG_ROOT / "scripts", root / ".atlas" / "scripts")
         (root / "product").mkdir(parents=True, exist_ok=True)
         (root / "product" / "stack-profile.yaml").write_text(
-            "product: 夹具\ne2e:\n  runner: python-playwright\n  app_base_url: null\n",
+            "product: 夹具\ne2e:\n  runner: node-playwright\n  app_base_url: null\n",
             encoding="utf-8")
         code, out = run(["--root", ".", "--fast", "--json"], root)
         rows = {r["name"]: r for r in json.loads(out)["rows"]}
@@ -204,70 +193,6 @@ def _load_check():
     return mod
 
 
-def _fake_py(path: Path, ok: bool) -> str:
-    """造一个「候选解释器」：退出码 0 = 能导入运行器依赖；非 0 = 不能（带一行报错）。"""
-    path.write_text(
-        "#!/bin/sh\n"
-        + ("exit 0\n" if ok
-           else "echo 'ModuleNotFoundError: No module named playwright' >&2\nexit 1\n"),
-        encoding="utf-8")
-    path.chmod(0o755)
-    return str(path)
-
-
-def test_python_for_playwright_selects_by_dependency_availability() -> None:
-    """`3509 §B99`：解释器按**依赖可用性**选，不按「路径存在」。
-
-    实测事故：`.venv` 被底座导入重建成无运行器依赖的解释器 ⇒ 按路径静默选中 ⇒
-    E2E 全红且报错与根因隔了一层。门必须：能导入依赖的候选才可用；全不可用 ⇒
-    返回 (None, 原因) 并点名每个候选。
-
-    变异证明：`_imports_ok` 改为恒可用 ⇒ 本用例变红。
-    """
-    mod = _load_check()
-    with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
-        venv = root / ".venv" / "bin" / "python"
-        venv.parent.mkdir(parents=True, exist_ok=True)
-        venv.write_text("#!/bin/sh\nexit 0\n")
-        venv.chmod(0o755)
-        # 默认候选序：venv 能导入依赖 ⇒ 直接选中 venv（不再看后续候选）
-        py, why = mod.python_for_playwright(root)
-        assert py == str(venv), (py, why)
-        assert why == "", why
-        # 显式候选：第一个不可用 ⇒ 降级到下一个
-        bad = _fake_py(root / "bad.sh", ok=False)
-        good = _fake_py(root / "good.sh", ok=True)
-        py2, why2 = mod.python_for_playwright(root, candidates=[bad, good])
-        assert py2 == good, (py2, why2)
-        # 全部不可用 ⇒ (None, 原因)，原因点名每个候选的失败原因
-        py3, why3 = mod.python_for_playwright(root, candidates=[bad, bad])
-        assert py3 is None, py3
-        assert "没有候选解释器能导入" in why3 and bad in why3, why3
-        # 空候选表也不炸：同样返回 (None, 原因)
-        py4, why4 = mod.python_for_playwright(root / "empty", candidates=[])
-        assert py4 is None and "没有候选解释器能导入" in why4, (py4, why4)
-
-
-def test_check_e2e_reports_loud_failure_when_no_usable_interpreter() -> None:
-    """无可用解释器时 E2E 真跑必须 FAIL 并写原因（不再静默选一个跑不动的）。"""
-    mod = _load_check()
-    with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
-        scripts = root / "product" / "e2e" / "scripts"
-        scripts.mkdir(parents=True, exist_ok=True)
-        (scripts / "login.py").write_text("# dummy\n", encoding="utf-8")
-        rows = mod.Row()
-        mod.check_e2e(root, rows, None, "login", py_why="原因X：全部候选不可用")
-        row = [r for r in rows.rows if r["name"] == "E2E 真跑"]
-        assert len(row) == 1 and row[0]["status"] == "FAIL", rows.rows
-        assert "原因X" in row[0]["detail"], row[0]
-        # 门控态（无脚本目录）⇒ 仍是 SKIP，不因解释器缺失误报
-        rows2 = mod.Row()
-        mod.check_e2e(root / "gated", rows2, None, None, py_why="原因X")
-        assert rows2.rows[0]["status"] == "SKIP", rows2.rows
-
-
 def test_check_e2e_skips_when_app_base_url_empty_followed_by_key() -> None:
     """回归（2026-10-04 门禁负向用例 #2）：`app_base_url:` 空值、下一行是 `reset:` ⇒
     不得跨行把键名当成 URL 误判「已声明」而进真跑分支（reset 会被意外执行）。
@@ -278,12 +203,12 @@ def test_check_e2e_skips_when_app_base_url_empty_followed_by_key() -> None:
         root = Path(td)
         scripts = root / "product" / "e2e" / "scripts"
         scripts.mkdir(parents=True)
-        (scripts / "login.py").write_text("# dummy\n", encoding="utf-8")
+        (scripts / "login.spec.ts").write_text("// dummy\n", encoding="utf-8")
         (root / "product" / "stack-profile.yaml").write_text(
             "e2e:\n  cases_dir: product/e2e/cases\n  app_base_url:\n  reset: echo hi\n",
             encoding="utf-8")
         rows = mod.Row()
-        mod.check_e2e(root, rows, "python3", "login")
+        mod.check_e2e(root, rows, "login")
         row = [r for r in rows.rows if r["name"] == "E2E 真跑"][0]
         assert row["status"] == "SKIP", rows.rows
         assert "app_base_url" in row["detail"], row
@@ -303,12 +228,12 @@ def test_check_e2e_skips_when_target_unreachable() -> None:
         root = Path(td)
         scripts = root / "product" / "e2e" / "scripts"
         scripts.mkdir(parents=True)
-        (scripts / "login.py").write_text("def test_boom():\n    assert False\n", encoding="utf-8")
+        (scripts / "login.spec.ts").write_text("test('boom', async () => { expect(1).toBe(2); });\n", encoding="utf-8")
         (root / "product" / "stack-profile.yaml").write_text(
-            "e2e:\n  runner: python-playwright\n  app_base_url: http://127.0.0.1:9\n",
+            "e2e:\n  runner: node-playwright\n  app_base_url: http://127.0.0.1:9\n",
             encoding="utf-8")
         rows = mod.Row()
-        mod.check_e2e(root, rows, sys.executable, "login")
+        mod.check_e2e(root, rows, "login")
         row = [r for r in rows.rows if r["name"] == "E2E 真跑"][0]
         assert row["status"] == "SKIP", rows.rows
         assert "ENV_ISSUE" in row["detail"] and "不可达" in row["detail"], row
@@ -324,14 +249,36 @@ def test_check_e2e_reachable_target_is_not_skipped() -> None:
         root = Path(td)
         scripts = root / "product" / "e2e" / "scripts"
         scripts.mkdir(parents=True)
-        (scripts / "login.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+        (scripts / "login.spec.ts").write_text("test('ok', async () => {});\n", encoding="utf-8")
+        nm = root / "fake_nm" / ".bin"
+        nm.mkdir(parents=True)
+        pw = nm / "playwright"
+        pw.write_text("#!/bin/sh\necho '1 passed'\nexit 0\n", encoding="utf-8")
+        pw.chmod(0o755)
         (root / "product" / "stack-profile.yaml").write_text(
-            f"e2e:\n  runner: python-playwright\n  app_base_url: {_live_base()}\n",
+            f"e2e:\n  runner: node-playwright\n  node_modules: {nm.parent}\n  app_base_url: {_live_base()}\n",
             encoding="utf-8")
         rows = mod.Row()
-        mod.check_e2e(root, rows, sys.executable, "login")
+        mod.check_e2e(root, rows, "login")
         row = [r for r in rows.rows if r["name"].startswith("E2E 真跑")][0]
         assert row["status"] == "ok", rows.rows
+
+def test_check_e2e_fails_loudly_when_node_playwright_missing() -> None:
+    """单轨化（B201-4）：node 可执行缺失 ⇒ FAIL 点名（不静默降级、不猜别的运行器）。"""
+    mod = _load_check()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        scripts = root / "product" / "e2e" / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "login.spec.ts").write_text("// dummy\n", encoding="utf-8")
+        (root / "product" / "stack-profile.yaml").write_text(
+            f"e2e:\n  runner: node-playwright\n  app_base_url: {_live_base()}\n",
+            encoding="utf-8")
+        rows = mod.Row()
+        mod.check_e2e(root, rows, "login")
+        row = [r for r in rows.rows if r["name"] == "E2E 真跑"][0]
+        assert row["status"] == "FAIL", rows.rows
+        assert "node-playwright" in row["detail"] and "node_modules" in row["detail"], row
 
 
 def test_drift_gate_reads_marker() -> None:

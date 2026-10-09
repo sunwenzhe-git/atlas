@@ -2,9 +2,9 @@
 layout: home
 
 hero:
-  name: “Atlas”
-  text: “践行 Project Harness 的全流程工作流”
-  tagline: ““Coding Agent 有 Agent Harness，而项目全生命周期更需要 Project Harness。” 原创项目级治理引擎。”
+  name: Atlas
+  text: 践行 Project Harness 的全流程工作流
+  tagline: “Coding Agent 有 Agent Harness，而项目全生命周期更需要 Project Harness。”——原创项目级治理引擎
   image:
     src: /images/e2e-console.png
     alt: Atlas E2E 控制台
@@ -28,16 +28,22 @@ features:
     details: 基于 FalkorDB / cgc 全仓拓扑，跨文件 callers/callees 深度感知，精准推导需求影响面与架构漂移。
   - icon: 🔨
     title: 变异证明 (Mutation Proving)
-    details: 拒绝形同虚设的假门禁。M1~M43 变异钉子测试实证：每一条机器规则都必须证明自己在脏数据下会咬人。
+    details: 拒绝形同虚设的假门禁。每条机器规则都配一组注入脏数据的变异钉子（M 系列，编号已到 M43）：正常数据 PASS + 脏数据必红，双向咬合才算入网。
   - icon: 🛡️
     title: 实例 ⑤ 只读防偷工减料审查
     details: 独立进程 diff 审查，严苛执行“应审 N / 实审 M”对账，彻底遏制大模型跳过文件、少审漏审的暗箱操作。
   - icon: 🔒
     title: 纯 Git 原生单源
-    details: 零外部笔记或私有平台绑定。所有契约、门禁、用例与规则全部活在业务 Git 仓库内，真正开箱即用。
+    details: 不绑定任何笔记软件或私有平台。契约、门禁、用例与规则全部活在业务 Git 仓库内，开箱即用。
+  - icon: 🚦
+    title: 门禁三态：SKIP 不是通过
+    details: 每道门只有 ok / WARN / SKIP 三种输出，SKIP 必须带原因，永不被当成绿灯——永久红门与静音门都被这一条堵死。
+  - icon: 📡
+    title: 流水线自感知上报
+    details: 规则与真实业务发生结构性冲突时不许静默绕过；结构化提炼现场后一键直推云端设计池，成熟结论再回填契约。
 ---
 
-<div class=”vp-doc” style=”max-width: 960px; margin: 40px auto; padding: 0 24px;”>
+<div class="vp-doc" style="max-width: 960px; margin: 40px auto; padding: 0 24px;">
 
 ## 💡 为什么开发者选择 Atlas？
 

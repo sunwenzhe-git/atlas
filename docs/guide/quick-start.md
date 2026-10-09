@@ -10,7 +10,7 @@ Atlas 采用现代化的一键全局 CLI 机制，你可以像使用 Trellis 一
 
 * **Node.js 18+**（CLI 运行环境）
 * **Python 3.10+**（核心校验器与生成引擎）
-* **Playwright**（E2E 测试运行器：Python 或 Node 版）
+* **Playwright**（E2E 测试运行器：Node 版，由项目 `node_modules` 提供）
 * **Trellis**（推荐宿主执行器，负责需求级任务调度）
 * *(可选)* **CodeGraphContext (cgc)**：若需开启图谱级跨文件逆向分析，安装 `pip install codegraphcontext`
 
@@ -34,10 +34,15 @@ atlas init
 > 💡 **提示**：也可以直接从 GitHub 仓库一键安装：`npm install -g sunwenzhe-git/atlas`。
 
 ### `atlas init` 会自动为你完成什么？
-1. **整包镜像**：将核心契约、校验器、模板整包镜像至项目 `.atlas/`；
-2. **下发专用 Skills 瘦桩**：向你的 Agent 平台目录（`.agents/skills/`、`.claude/skills/`、`.codex/skills/`）注入 `atlas-structure`, `atlas-prd`, `atlas-e2e`, `atlas-apply`, `atlas-grill`, `frontend-design` 等；
-3. **注入工作流锚点补丁**：向 `.trellis/workflow.md` 注入 `Phase 1.6` 锚点补丁与执行提示；
-4. **部署只读独立审查 Agent**：自动生成 `atlas-reviewer` 只读审查者配置。
+
+**四样主件**（atlas 与宿主执行器之间的全部耦合面）：
+
+1. **整包镜像**：把契约、环文档、校验器、模板、适配器整包复制到项目 `.atlas/`（日后所有规则与机器校验的唯一正本；skill 与文档都指回这里，不存第二份）；
+2. **下发专用 Skills 瘦桩**：按探测到的平台目录（`.agents/skills/`、`.claude/skills/`、`.codex/skills/`）各装一份轻量入口——`atlas-structure`、`atlas-prd`、`atlas-e2e`、`atlas-apply`、`atlas-grill`、`atlas-design-review`、`frontend-design`。梓本身不装规则，第一步就指回 `.atlas/`；
+3. **注入工作流锚点补丁**：向 `.trellis/workflow.md` 插入 `Phase 1.6 项目级资产更新（atlas apply）`——对准模板里的稳定标记定位、用带指纹的标记包住，幂等可重放（Trellis 升级重写该文件后，重跑 `install.sh` 即自动对齐）；
+4. **两处接线 + 只读审查 Agent**：`.trellis/config.yaml` 加 `after_finish` hook（每次任务收口后自动刷新结构事实）、项目 `AGENTS.md` 加一段指针，并下发 `atlas-reviewer` 只读审查者配置（工具集不含写文件与 bash）。
+
+**两步卫生件**：清理历史遗留 / 已退役的 skill；建 `product/` 骨架（已有内容永不覆盖）。
 
 ---
 
@@ -52,19 +57,32 @@ origin: greenfield          # greenfield: 全新项目 | adopt: 存量老项目�
 apps:
   - name: web
     path: frontend
-    role: landing           # landing: 当前主实现
+    kind: frontend          # frontend | backend | fullstack | mobile
+    role: landing           # landing: 当前落地实现 | legacy: 事实来源（重构/存量项目才有）
+    stack: React + Vite     # 自由文本，仅作展示，atlas 不据此做任何判断
   - name: api
     path: backend
+    kind: backend
     role: landing
+    stack: FastAPI
+
+adapters:                   # null = 该类事实降级为 agent 撰写
+  routes: null              # 路由 / 页面清单
+  api: null                 # 接口清单
+  models: null              # 数据模型清单
+  tests: null               # 测试现状
 
 e2e:
-  runner: python-playwright
+  runner: node-playwright
+  node_modules: frontend/node_modules   # node 运行器的依赖目录（相对项目根）
   app_base_url: http://127.0.0.1:8000
   review: null              # null = 默认使用会话模型；可配置备用模型做交叉审查
 
-graph:                      # 可选：开启代码知识图谱后端优化逆向
+graph:                      # 可选：声明后 routes 走图谱枚举、apply 先跑影响面推导
   backend: cgc
 ```
+
+> `apps[]` 的 `name` / `path` / `kind` / `role` 四项为**必填**（缺一即被 `validate_stack_profile` 判 FAIL），`origin` 只有 `greenfield` / `adopt` 两个取值。
 
 ---
 
