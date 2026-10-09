@@ -104,7 +104,7 @@ switch (command) {
   case '--version':
   case 'version': {
     const pkg = require(path.join(PKG_ROOT, 'package.json'));
-    console.log(`atlas-workflow v${pkg.version}`);
+    console.log(`atlasharness v${pkg.version}`);
     break;
   }
 

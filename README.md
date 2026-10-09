@@ -84,8 +84,8 @@
 ### 2. 全局安装 CLI 与项目初始化
 
 ```bash
-# 全局安装 Atlas CLI（直接从 GitHub 一键安装）
-npm install -g sunwenzhe-git/atlas
+# 全局安装 Atlas CLI
+npm install -g atlasharness
 
 # 进入你的项目目录
 cd your-project
@@ -93,6 +93,8 @@ cd your-project
 # 一键初始化并装配 Atlas 工作流（自动探测平台、下发 Skills 与契约）
 atlas init
 ```
+
+> 💡 **提示**：也可以直接从 GitHub 仓库一键安装：`npm install -g sunwenzhe-git/atlas`。
 
 装配命令将自动完成：
 1. 将核心契约、校验器、模板整包镜像至目标项目 `.atlas/`；

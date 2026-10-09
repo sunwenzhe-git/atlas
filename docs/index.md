@@ -55,8 +55,8 @@ features:
 ## ⚡ 极速开始：只需两行
 
 ```bash
-# 1. 全局安装 CLI（从 GitHub 一键安装）
-npm install -g sunwenzhe-git/atlas
+# 1. 全局安装 CLI
+npm install -g atlasharness
 
 # 2. 进入项目目录一键装配
 cd your-project && atlas init

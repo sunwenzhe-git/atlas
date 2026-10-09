@@ -21,8 +21,8 @@ Atlas 采用现代化的一键全局 CLI 机制，你可以像使用 Trellis 一
 在你的终端中执行：
 
 ```bash
-# 全局安装 Atlas CLI（直接从 GitHub 一键安装）
-npm install -g sunwenzhe-git/atlas
+# 全局安装 Atlas CLI
+npm install -g atlasharness
 
 # 进入你的项目目录
 cd your-project
@@ -30,6 +30,8 @@ cd your-project
 # 一键初始化并装配 Atlas 工作流（自动探测平台、下发 Skills 与契约）
 atlas init
 ```
+
+> 💡 **提示**：也可以直接从 GitHub 仓库一键安装：`npm install -g sunwenzhe-git/atlas`。
 
 ### `atlas init` 会自动为你完成什么？
 1. **整包镜像**：将核心契约、校验器、模板整包镜像至项目 `.atlas/`；
