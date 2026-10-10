@@ -39,6 +39,7 @@ export default defineConfig({
       { text: '独门重器', link: '/innovations/e2e-console' },
       { text: '机器门禁', link: '/gates/iron-gates' },
       { text: '技能生态', link: '/ecosystem/skills' },
+      { text: '社区交流', link: '/guide/community' },
       { text: 'RFC 协同', link: '/guide/contributing' },
       { text: 'v0.1.0-beta.1', link: 'https://github.com/sunwenzhe-git/atlas/releases' }
     ],
@@ -96,6 +97,7 @@ export default defineConfig({
         text: '🤝 贡献与协同',
         collapsed: false,
         items: [
+          { text: '钉钉交流群', link: '/guide/community' },
           { text: '流水线 RFC 协同机制', link: '/guide/contributing' }
         ]
       }

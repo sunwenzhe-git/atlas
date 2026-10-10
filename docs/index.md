@@ -70,4 +70,19 @@ cd your-project && atlas init
 
 > **日常开发全自动**：在 Trellis 中提需求，工作流自动编译应然资产；写完代码自动逆向刷新事实，零心智负担！
 
+---
+
+## 💬 社区与交流群
+
+加入 Atlas 官方钉钉交流群，探讨 AI 编程与 Project Harness 实践、交流工作流落地经验、反馈真实业务场景：
+
+<div align="center" style="margin: 28px 0;">
+  <a href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,wnhPdhM5jGAW/bvbixua4P0eUPQGBoodsrdcpLeOEG1uRVJIwrSsXmL8oFqU5ajJ&_dt_no_comment=1&origin=1" target="_blank" style="text-decoration: none;">
+    <img src="/images/atlas-dingtalk-group.png" alt="Atlas 钉钉交流群" width="240" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); display: inline-block;" />
+  </a>
+  <p style="margin-top: 12px; color: var(--vp-c-text-2); font-size: 14px;">
+    📱 钉钉扫码，或 <a href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,wnhPdhM5jGAW/bvbixua4P0eUPQGBoodsrdcpLeOEG1uRVJIwrSsXmL8oFqU5ajJ&_dt_no_comment=1&origin=1" target="_blank">点击此处直接唤起入群</a>（二维码永久有效）
+  </p>
+</div>
+
 </div>

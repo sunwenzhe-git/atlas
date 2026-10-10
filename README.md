@@ -28,7 +28,8 @@
 - [九、铁血门禁系统（The Iron Gates）](#九铁血门禁系统the-iron-gates)
 - [十、自带技能生态（Built-in Skills & Agents）](#十自带技能生态built-in-skills--agents)
 - [十一、贡献与流水线协同（RFC 机制）](#十一贡献与流水线协同rfc-机制)
-- [十二、开源协议（License）](#十二开源协议license)
+- [十二、社区交流（钉钉群）](#十二社区交流钉钉群)
+- [十三、开源协议（License）](#十三开源协议license)
 
 ---
 
@@ -434,7 +435,21 @@ Atlas 随包完整分发了一套自洽的高阶开发与评审套件：
 
 ---
 
-## 十二、开源协议（License）
+## 十二、社区交流（钉钉群）
+
+欢迎加入 **Atlas 官方钉钉交流群**！无论是探讨 AI 编程、Project Harness 架构理念，还是交流工作流落地经验、反馈业务碰撞场景，都欢迎扫码或点击链接入群畅聊：
+
+<p align="center">
+  <a href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,wnhPdhM5jGAW/bvbixua4P0eUPQGBoodsrdcpLeOEG1uRVJIwrSsXmL8oFqU5ajJ&_dt_no_comment=1&origin=1" target="_blank">
+    <img src="docs/images/atlas-dingtalk-group.png" alt="Atlas 钉钉交流群" width="260" />
+  </a>
+  <br />
+  <sub>📱 钉钉扫码或 <a href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,wnhPdhM5jGAW/bvbixua4P0eUPQGBoodsrdcpLeOEG1uRVJIwrSsXmL8oFqU5ajJ&_dt_no_comment=1&origin=1" target="_blank">点击此处直接加入群聊</a>（二维码永久有效）</sub>
+</p>
+
+---
+
+## 十三、开源协议（License）
 
 本项目基于 **[Apache License, Version 2.0](LICENSE)** 协议开源。
 
