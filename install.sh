@@ -107,7 +107,7 @@ say "[1/6] 装配 atlas 包到 .atlas/"
 ATLAS_DEST="$TARGET/.atlas"
 run rm -rf "$ATLAS_DEST"
 run mkdir -p "$ATLAS_DEST"
-for pkg_dir in shared rings apply scripts templates adapters validators patches tests agents docs bin proposals extensions; do
+for pkg_dir in shared rings apply scripts templates adapters validators patches tests; do
   if [ -d "$SCRIPT_DIR/$pkg_dir" ]; then
     run cp -R "$SCRIPT_DIR/$pkg_dir" "$ATLAS_DEST/$pkg_dir"
     say "      -> .atlas/$pkg_dir"
@@ -117,9 +117,6 @@ done
 if [ -f "$SCRIPT_DIR/LICENSE" ]; then
   run cp "$SCRIPT_DIR/LICENSE" "$ATLAS_DEST/LICENSE"
 fi
-
-if [ -d "$ATLAS_DEST/docs/.vitepress/dist" ]; then run rm -rf "$ATLAS_DEST/docs/.vitepress/dist"; fi
-if [ -d "$ATLAS_DEST/docs/.vitepress/cache" ]; then run rm -rf "$ATLAS_DEST/docs/.vitepress/cache"; fi
 
 # ---------------------------------------------------------------- 2. skill 瘦桩
 
