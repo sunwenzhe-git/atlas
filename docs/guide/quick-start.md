@@ -24,9 +24,6 @@ Atlas 采用现代化的一键全局 CLI 机制，你可以像使用 Trellis 一
 # 全局安装 Atlas CLI
 npm install -g atlas-project-harness
 
-# 或者在 Pi Agent 中直接安装扩展
-pi install npm:atlas-project-harness
-
 # 进入你的项目目录
 cd your-project
 
@@ -34,7 +31,7 @@ cd your-project
 atlas init
 ```
 
-> 💡 **提示**：也可以直接从 GitHub 仓库一键安装：`npm install -g sunwenzhe-git/atlas`。
+> 💡 **提示**：也可以直接从 GitHub 仓库一键安装：`npm install -g sunwenzhe-git/atlas`。Atlas 坚持纯项目级设计，零全局扩展依赖，通过 `atlas init` 按需将治理规则与 skills 注入项目本地。
 
 ### `atlas init` 会自动为你完成什么？
 

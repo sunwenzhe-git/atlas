@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""atlas skill 路由 —— Trellis workflow.md 挂载补丁的锚点式**版本化**应用器。
+"""atlas 红灯根因前置 —— Trellis workflow.md 挂载补丁的锚点式**版本化**应用器。
 
-（与 patches/workflow-plan-apply / patches/workflow-root-cause 的 apply-patches.py
+（与 patches/workflow-plan-apply / patches/workflow-skill-routing 的 apply-patches.py
 同一实现的自包含拷贝；机制变更须三处同步或合并为共享实现后回灌。）
 
 用法：

@@ -1,0 +1,16 @@
+{
+  "version": "1.0",
+  "description": "红灯根因前置纪律挂进 Trellis workflow.md 2.2/2.3：任何测试 / lint / 类型 / 机器门红灯，修复动作前必须先落一条根因结论（失败在哪一层 + 证据）；改断言求绿不走此通道（AC 或断言本身错 ⇒ 走 2.3 显式回退改资产）；同一红灯第二次仍未绿 ⇒ 停止试错转 trellis-break-loop。块形态与判据同 workflow-plan-apply / workflow-skill-routing（锚点式版本化：指纹相同⇒skipped，不同⇒整块替换，旧式块⇒升级/替换）。",
+  "target_prefix": "",
+  "patches": [
+    {
+      "id": "root-cause-first-red",
+      "issue": "UP-192",
+      "file": ".trellis/workflow.md",
+      "mode": "insert_before",
+      "anchor": "#### 2.3 Rollback",
+      "snippet": "root-cause-first-red.insert.md",
+      "note": "在 2.2 末（Final pass 段与 ui-skill-note 块之后、#### 2.3 标题之前）落平台无关注红灯根因前置纪律。锚点全文件唯一，不与 ui-skill-note 同锚堆叠。"
+    }
+  ]
+}

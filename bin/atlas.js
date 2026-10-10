@@ -75,22 +75,6 @@ switch (command) {
       env: process.env,
     });
 
-    // 自动挂载 Pi Agent 扩展 (如果环境存在 ~/.pi)
-    try {
-      const os = require('os');
-      const homeDir = os.homedir();
-      if (fs.existsSync(path.join(homeDir, '.pi'))) {
-        const piExtDir = path.join(homeDir, '.pi', 'agent', 'extensions');
-        fs.mkdirSync(piExtDir, { recursive: true });
-        const srcExt = path.join(PKG_ROOT, 'extensions', 'pi.ts');
-        if (fs.existsSync(srcExt)) {
-          fs.copyFileSync(srcExt, path.join(piExtDir, 'atlasharness.ts'));
-          console.log('\n[Atlas] 🚀 已自动挂载 Pi Agent 扩展: ~/.pi/agent/extensions/atlasharness.ts');
-          console.log('[Atlas]    可在 Pi 中使用 /atlas 命令驱动全流程。\n');
-        }
-      }
-    } catch (_) {}
-
     process.exit(res.status || 0);
     break;
   }

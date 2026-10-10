@@ -96,21 +96,7 @@
 
 - 流水线级变更定义**纪元**（当前唯一：**E1 = 原型退役**，`3508 §92`）；旧标签按映射表**转义**（`prototype-pass` → E0 历史终态，存量合法、不再产生；见 `rings/e2e/reference.md` §5.4）。
 - 新增纪元时必须在 `3507` 记一节（背景 / 被否 / 连带）+ 在本节登记映射表。
-
-### 已执行范例：E1（原型环退役）失义清单
-
-| 面 | 处置 |
-|---|---|
-| 状态标签 | `prototype-pass` → **E0 历史终态**（不再产生；存量合法） |
-| 输入链 | 原型 → **用例分片**（testid 应然）；「页 ↔ 路由」→ 索引**页面表** |
-| 门 | 环间「原型产出后等用户 review」门 → **退役并重立为两道人侧门**（走查单确认门 + 验收走查门，`3507 AQ`/B124，2026-09-29；`rings/prd/reference.md` §4·八 + `rings/e2e/reference.md` §5.4/§6.2）；`validate_prototype` → **删除** |
-| 校验器 | `validate_testids` 抽取源**统一前端源码**（不再按 `origin` 分流）+ 未实现页 SKIP |
-| 模板 | `templates/prototype/` → **删除**；`templates/e2e/e2e-index.md` 补**页面表** |
-| 装配项 | `install.sh` 骨架去 `product/prototype`；新增**退役 skill 泛化清理**（源包已无的 `atlas-*` 桩一律移除） |
-| **规则** | `data-atlas-panel` → 归位 E2E 环 §4.1；UI 文案纪律 → 归位 PRD 环 §6；testid 命名规范 → 归位 E2E 环 §4 |
-| 传播 | 回灌 `ATLAS-UPSTREAM #114`（含删 5 件）；副本重装对账；vault `3502`/`3505`/`3506`/`3508` 同步 |
-
-**机器判据**：环退役的**对称性**（`rings/<r>/` ⇔ `skills/atlas-<r>/`）由 `tests/test_install_selfcheck.py` 判据 5 守（`3509 §115`）。
+- **机器判据**：环退役的**对称性**（`rings/<r>/` ⇔ `skills/atlas-<r>/`）由 `tests/test_install_selfcheck.py` 判据 5 守（先例见 `3508 §92` E1 原型退役）。
 
 ## 12. 成本预算（通则，`3509 §100`）
 

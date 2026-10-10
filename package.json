@@ -1,6 +1,6 @@
 {
   "name": "atlas-project-harness",
-  "version": "0.1.0-beta.4",
+  "version": "0.1.0-beta.5",
   "description": "践行 Project Harness 的全流程 AI 编程工作流治理引擎",
   "bin": {
     "atlas": "bin/atlas.js"
@@ -9,14 +9,6 @@
   "exports": {
     ".": "./extensions/pi.ts",
     "./pi": "./extensions/pi.ts"
-  },
-  "pi": {
-    "extensions": [
-      "./extensions/pi.ts"
-    ],
-    "skills": [
-      "./skills"
-    ]
   },
   "files": [
     "bin",

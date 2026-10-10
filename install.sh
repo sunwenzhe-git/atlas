@@ -172,13 +172,6 @@ if [ "$INSTALL_SKILL" -eq 1 ]; then
       say "      -> agent ${agent_name}"
     done
   fi
-
-  # Pi Agent 扩展挂载（若系统存在 ~/.pi）
-  if [ -d "$HOME/.pi" ] && [ -f "$SCRIPT_DIR/extensions/pi.ts" ]; then
-    run mkdir -p "$HOME/.pi/agent/extensions"
-    run cp "$SCRIPT_DIR/extensions/pi.ts" "$HOME/.pi/agent/extensions/atlasharness.ts"
-    say "      -> Pi Agent 扩展 (~/.pi/agent/extensions/atlasharness.ts)"
-  fi
 else
   say "[2/6] 跳过 skill（--no-skill）"
   say "[3/6] 跳过 skill 清理（--no-skill）"
