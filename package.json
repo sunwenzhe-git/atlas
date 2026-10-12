@@ -26,6 +26,7 @@
     "_support",
     "install.sh",
     "README.md",
+    "CHANGELOG.md",
     "DESIGN.md"
   ],
   "scripts": {

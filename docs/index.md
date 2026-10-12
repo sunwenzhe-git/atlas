@@ -68,6 +68,10 @@ npm install -g atlas-project-harness
 cd your-project && atlas init
 ```
 
+> **平滑升级与刷新**：
+> - 升级全局 CLI：`atlas upgrade`（自动通过 npm 拉取最新全局包）；
+> - 刷新项目工程线束：`atlas update`（安全刷新 `.atlas/` 资产与平台 Skills，业务代码与配置严格保护）。
+>
 > **日常开发全自动**：在 Trellis 中提需求，工作流自动编译应然资产；写完代码自动逆向刷新事实，零心智负担！
 
 ---

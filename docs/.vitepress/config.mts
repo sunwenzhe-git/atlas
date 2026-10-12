@@ -40,8 +40,8 @@ export default defineConfig({
       { text: '机器门禁', link: '/gates/iron-gates' },
       { text: '技能生态', link: '/ecosystem/skills' },
       { text: '社区交流', link: '/guide/community' },
-      { text: 'RFC 协同', link: '/guide/contributing' },
-      { text: 'v0.1.0-beta.4', link: 'https://github.com/sunwenzhe-git/atlas/releases' }
+      { text: '更新日志', link: '/guide/changelog' },
+      { text: 'v0.1.0-beta.7', link: 'https://github.com/sunwenzhe-git/atlas/releases' }
     ],
 
     socialLinks: [
@@ -65,7 +65,8 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: '30 秒快速上手', link: '/guide/quick-start' },
-          { text: '破局 Vibe Coding', link: '/guide/how-it-works' }
+          { text: '破局 Vibe Coding', link: '/guide/how-it-works' },
+          { text: '更新日志 (Changelog)', link: '/guide/changelog' }
         ]
       },
       {
