@@ -12,7 +12,7 @@ Atlas 采用现代化的一键全局 CLI 机制，你可以像使用 Trellis 一
 * **Python 3.10+**（核心校验器与生成引擎）
 * **Playwright**（E2E 测试运行器：Node 版，由项目 `node_modules` 提供）
 * **[Trellis](https://github.com/mindfold-ai/trellis)**（必需宿主执行器，负责需求级任务调度；安装：`npm install -g @mindfoldhq/trellis`）
-* *(可选)* **CodeGraphContext (cgc)**：若需开启图谱级跨文件逆向分析，安装 `pip install codegraphcontext`
+* *(可选)* **CodeGraphContext (cgc)**：若需开启图谱级跨文件逆向分析，安装 `uv tool install codegraphcontext`（或 `pip install codegraphcontext`）
 
 ---
 
@@ -38,8 +38,8 @@ atlas init
 **四样主件**（atlas 与宿主执行器之间的全部耦合面）：
 
 1. **整包镜像**：把契约、环文档、校验器、模板、适配器整包复制到项目 `.atlas/`（日后所有规则与机器校验的唯一正本；skill 与文档都指回这里，不存第二份）；
-2. **下发专用 Skills 瘦桩**：按探测到的平台目录（`.agents/skills/`、`.claude/skills/`、`.codex/skills/`）各装一份轻量入口——`atlas-structure`、`atlas-prd`、`atlas-e2e`、`atlas-apply`、`atlas-grill`、`atlas-design-review`、`frontend-design`。梓本身不装规则，第一步就指回 `.atlas/`；
-3. **注入工作流锚点补丁**：向 `.trellis/workflow.md` 插入 `Phase 1.6 项目级资产更新（atlas apply）`——对准模板里的稳定标记定位、用带指纹的标记包住，幂等可重放（Trellis 升级重写该文件后，重跑 `install.sh` 即自动对齐）；
+2. **下发专用 Skills 瘦桩**：按探测到的平台目录（`.agents/skills/`、`.claude/skills/`、`.codex/skills/`）各装一份轻量入口——`atlas-structure`、`atlas-prd`、`atlas-e2e`、`atlas-apply`、`atlas-grill`、`atlas-design-review`、`frontend-design`。桩本身不装规则，第一步就指回 `.atlas/`；
+3. **注入工作流补丁组**：向 `.trellis/` 注入补丁组（Phase 1.6 资产更新挂载、阶段技能路由、根因分析优先红用例）与项目接线——对准模板里的稳定标记定位、用带指纹的标记包住，幂等可重放（Trellis 升级重写该文件后，重跑 `install.sh` 即自动对齐）；
 4. **两处接线 + 只读审查 Agent**：`.trellis/config.yaml` 加 `after_finish` hook（每次任务收口后自动刷新结构事实）、项目 `AGENTS.md` 加一段指针，并下发 `atlas-reviewer` 只读审查者配置（工具集不含写文件与 bash）。
 
 **两步卫生件**：清理历史遗留 / 已退役的 skill；建 `product/` 骨架（已有内容永不覆盖）。
@@ -69,7 +69,7 @@ atlas init
 
 ## 3. 配置技术栈画像 (`product/stack-profile.yaml`)
 
-安装完成后，项目根目录会生成一份技术栈画像草稿，请根据你的工程实际情况进行确认：
+安装完成后，项目根目录会生成一份技术栈画像草稿，请根据你的工程实际情况进行确认（出厂草稿含占位符，未替换占位符前 `atlas check` 必有门禁 FAIL；首跑开户前 Agent 会先与你核对画像草稿）：
 
 ```yaml
 product: MyAwesomeApp
@@ -116,22 +116,22 @@ Atlas 完全做到了**“日常全自动，低频全靠大白话”**：
 ```text
 “帮我把这个项目接入 Atlas 工作流”
 ```
-Agent 将自动调用 `atlas apply adopt`，逆向扫描现有代码拓扑，建立应然资产起点（不瞎猜老业务用例，只登记基线）。
+Agent 将自动唤起技能 `atlas-apply adopt`（或 `/atlas-apply adopt`），逆向扫描现有代码拓扑，建立应然资产起点（不瞎猜老业务用例，只登记基线）。首跑开户前 Agent 会与你核对画像草稿，将占位符替换为真实路径。
 
 ### 场景 B：全新空白项目立项
 对 Agent 说：
 ```text
 “跑一下三环全量构建，建立应然基线”
 ```
-Agent 自动调用 `atlas apply all`，全量串行初始化 `structure → prd → e2e`。
+Agent 自动唤起技能 `atlas-apply all`，全量串行初始化 `structure → prd → e2e`。
 
 ### 场景 C：日常迭代提需求（100% 自动无感）
 你**无需敲任何 Atlas 命令**，像往常一样在 Trellis 中创建任务（如 `/trellis:start 优化配音列表`）：
-* 工作流在 Phase 1.6 **自动静默调用** `apply <需求ID>` 完成应然资产编译；
+* 工作流在 Phase 1.6 **自动调度 Agent 执行** `atlas-apply <需求ID>` 技能完成应然资产编译；
 * 需求写完收口时，自动触发钩子刷新最新代码事实。
 
 ### 场景 D：一键体检与门禁自检
-随时可在终端跑一条命令检查全项目应然资产与门禁状态：
+随时可在终端跑一条命令检查全项目应然资产与门禁状态（`--fast` 为秒级轻量体检，仅跑静态校验器与生成物新鲜度；默认模式还会跑出厂测试与浏览器真跑）：
 ```bash
 atlas check --fast
 ```

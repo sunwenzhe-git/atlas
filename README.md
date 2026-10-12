@@ -3,9 +3,11 @@
 <p align="left">
   <img src="https://img.shields.io/badge/version-0.1.0--beta.7-blue.svg" alt="Version" />
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License" />
-  <img src="https://img.shields.io/badge/tests-332%20passed-success.svg" alt="Tests" />
-  <img src="https://img.shields.io/badge/docs-VitePress-green.svg" alt="Docs" />
+  <img src="https://img.shields.io/badge/tests-334%20passed-success.svg" alt="Tests" />
+  <a href="https://sunwenzhe-git.github.io/atlas/"><img src="https://img.shields.io/badge/docs-VitePress-green.svg" alt="Docs" /></a>
 </p>
+
+> 📖 **官方文档与官网**：[https://sunwenzhe-git.github.io/atlas/](https://sunwenzhe-git.github.io/atlas/)
 
 > **Coding Agent 有 Agent Harness，而项目全生命周期更需要 Project Harness。**  
 > 
@@ -48,7 +50,7 @@
 │   │   项目级平面（全局资产与秩序）                        │   │
 │   │   结构基线 ──► 项目级 PRD (AC) ──► E2E 验收总索引与分片 │   │
 │   └──────────────────────────┬──────────────────────────┘   │
-│                              │  单向编排：atlas apply <ID>   │
+│                              │  单向编排：atlas-apply (Skill) │
 │                              ▼                              │
 │   ┌─────────────────────────────────────────────────────┐   │
 │   │   需求级平面（小需求任务执行，由内置的 Trellis 承担）    │   │
@@ -76,7 +78,7 @@
 ### 2. 两大平面与单向流水线
 1. **项目级（应然资产层）**：定义“这个系统是什么、长什么样、怎么算做对”。包含**结构事实**（图谱与 AST 逆向抽取）、**项目级 PRD**（业务规则单源）与 **E2E 验收用例**（真实靶场可证伪用例）。
 2. **需求级（小需求执行层）**：定义“这次改动改什么、怎么写代码”。由内置的 **Trellis** 任务系统承担，Atlas 本身**不侵入业务代码实现**。
-3. **`apply` 单向衔接**：需求在进入实现前，必须先调用 `atlas apply <需求ID>` 将需求增量合并入项目级应然资产，坚决杜绝“先写代码、事后补文档”的失控循环。
+3. **`apply` 单向衔接**：需求在进入实现前，先由 Agent 唤起 `atlas-apply <需求ID>` 技能将需求增量合并入项目级应然资产，坚决杜绝“先写代码、事后补文档”的失控循环。
 
 ---
 
@@ -85,9 +87,9 @@
 ### 1. 依赖准备
 * **Node.js 18+**（CLI 运行环境）
 * **Python 3.10+**（核心校验器与生成引擎）
-* **Playwright**（E2E 测试运行器：Python 或 Node 版）
+* **Playwright**（E2E 测试运行器：Node 版，由项目 node_modules 提供）
 * **[Trellis](https://github.com/mindfold-ai/trellis)**（必需宿主执行器，负责需求级任务调度；安装：`npm install -g @mindfoldhq/trellis`）
-* *(可选)* **CodeGraphContext (cgc)**：若需开启图谱级跨文件逆向分析，安装 `pip install codegraphcontext`
+* *(可选)* **CodeGraphContext (cgc)**：若需开启图谱级跨文件逆向分析，安装 `uv tool install codegraphcontext`（或 `pip install codegraphcontext`）
 
 ### 2. 全局安装 CLI 与项目初始化
 
@@ -106,8 +108,8 @@ atlas init
 
 装配命令将自动完成：
 1. 将核心契约、校验器、模板整包镜像至目标项目 `.atlas/`；
-2. 为你的 Agent 平台生成专用 Skills 瘦桩（`atlas-structure`, `atlas-prd`, `atlas-e2e`, `atlas-apply`, `atlas-grill`, `frontend-design` 等）；
-3. 向 `.trellis/workflow.md` 注入 `Phase 1.6` 锚点补丁与执行提示；
+2. 为你的 Agent 平台生成专用 Skills 瘦桩（`atlas-structure`, `atlas-prd`, `atlas-e2e`, `atlas-apply`, `atlas-grill`, `atlas-design-review`, `frontend-design` 等）；
+3. 向 `.trellis/` 注入工作流补丁组（Plan 1.6 应然资产挂载、各阶段技能路由、根因分析优先红用例）与项目接线；
 4. 部署只读审查专用 Agent：`atlas-reviewer`。
 
 > 🔄 **升级与更新**：
@@ -115,7 +117,7 @@ atlas init
 > - **项目内工程线束刷新**：在项目目录下运行 `atlas update`（安全刷新 `.atlas/` 资产与平台 Skills 瘦桩，版本戳对账更新，业务配置严格保护不覆盖）。
 
 ### 3. 配置技术栈画像 (`product/stack-profile.yaml`)
-检查并填写生成的画像草稿：
+检查并填写生成的画像草稿（出厂草稿含占位符，未替换真实字段前 `atlas check` 必有门禁 FAIL；首跑开户前 Agent 会先与你核对画像）：
 ```yaml
 product: MyAwesomeApp
 origin: greenfield          # greenfield: 全新项目 | adopt: 存量老项目接入
@@ -159,22 +161,22 @@ Atlas 完全做到了**“日常全自动，低频全靠大白话”**：
 ```text
 “帮我把这个项目接入 Atlas 工作流”
 ```
-Agent 将自动调用 `atlas apply adopt`，逆向扫描现有代码拓扑，建立应然资产起点（不瞎猜老业务用例，只登记基线）。
+Agent 将自动唤起技能 `atlas-apply adopt`（或 `/atlas-apply adopt`），逆向扫描现有代码拓扑，建立应然资产起点（不瞎猜老业务用例，只登记基线）。首跑开户前 Agent 会与你核对画像草稿，将占位符替换为真实路径。
 
 #### 场景 B：全新空白项目立项
 对 Agent 说：
 ```text
 “跑一下三环全量构建，建立应然基线”
 ```
-Agent 自动调用 `atlas apply all`，全量串行初始化 `structure → prd → e2e`。
+Agent 自动唤起技能 `atlas-apply all`，全量串行初始化 `structure → prd → e2e`。
 
 #### 场景 C：日常迭代提需求（100% 自动无感）
 你**无需敲任何 Atlas 命令**，像往常一样在 Trellis 中创建任务（如 `/trellis:start 优化配音列表`）：
-* 工作流在 Phase 1.6 **自动静默调用** `apply <需求ID>` 完成应然资产编译；
+* 工作流在 Phase 1.6 **自动调度 Agent 执行** `atlas-apply <需求ID>` 技能完成应然资产编译；
 * 需求写完收口时，自动触发钩子刷新最新代码事实。
 
 #### 场景 D：一键体检与门禁自检
-随时可在终端跑一条命令检查全项目应然资产与门禁状态：
+随时可在终端跑一条命令检查全项目应然资产与门禁状态（`--fast` 为秒级轻量体检，仅跑静态校验器与生成物新鲜度；默认模式还会跑出厂测试与浏览器真跑）：
 ```bash
 atlas check --fast
 ```
@@ -265,11 +267,12 @@ Atlas 的核心由 **三环（Rings）** 与 **一个跨环编排件（Apply）*
 | **Ring 3: 验收用例** (`atlas-e2e`) | **验证应然** | `product/e2e/` | 真实应用单段执行（Playwright）。总索引唯一入口，一例一片（页面分片），以 `data-testid` 为唯一硬锚，严禁将瞬时反馈（Toast）当终态。 |
 | **Orchestrator: 跨环编排** (`atlas-apply`) | **编排引擎** | 任务卡 / 报告 | 唯一的增量流水线。负责将具体需求前置编译为应然资产更新，运行全部机器门禁，形成执行闭环。 |
 
-### `apply` 的四种运行模式
-* `atlas apply <需求ID>`：**需求增量模式**。识别受影响的 PRD 与 E2E 页面分片，增量生成用例资产并跑门禁；
-* `atlas apply adopt`：**存量项目开户模式**。面向既有代码库，先逆向抽取结构基线，PRD 开到“开户最小集”，不预设虚拟 E2E，由后续需求逐步长出；
-* `atlas apply all`：**全量构建模式**。顺序执行 `structure → prd → e2e`，支持幂等与断点续跑；
-* `atlas apply backfill`：**反向回流模式**。实现或评审过程中发现上游资产缺口时，已裁决条目攒批回填上游。
+### `apply` 的四种运行模式（Agent 会话内原语）
+> 💡 **提示**：`apply` 是由 Agent 在会话中执行的认知编排技能（Skill），通过 `/atlas-apply <模式>` 或大白话唤起，终端无独立的 `atlas apply` 命令：
+* `atlas-apply <需求ID>`：**需求增量模式**。识别受影响的 PRD 与 E2E 页面分片，增量生成用例资产并跑门禁；
+* `atlas-apply adopt`：**存量项目开户模式**。面向既有代码库，先逆向抽取结构基线，PRD 开到“开户最小集”，不预设虚拟 E2E，由后续需求逐步长出；
+* `atlas-apply all`：**全量构建模式**。顺序执行 `structure → prd → e2e`，支持幂等与断点续跑；
+* `atlas-apply backfill`：**反向回流模式**。实现或评审过程中发现上游资产缺口时，已裁决条目攒批回填上游。
 
 ---
 
@@ -312,7 +315,7 @@ Atlas 引入了**图谱后端隔离层（`adapters/_graph.py`）**，接入基�
 很多 CI 门禁最大的隐患是：**代码写错了，校验器永远返回 PASS，人以为自己有防线，实际上形同虚设。**
 
 Atlas 坚持**变异证明（Mutation Proving / M 系列钉子测试）**原则：
-* **门禁自身必须证明自己会咬**：编写任何一条新校验规则，必须同步提交故意注入破坏性脏数据的“变异测试用例”（M 系列钉子，编号已到 M43——编号在各自测试文件内自成序列，同一号在不同门含义不同）；
+* **门禁自身必须证明自己会咬**：编写任何一条新校验规则，必须同步提交故意注入破坏性脏数据的“变异测试用例”（M 系列钉子，编号已到 M49——编号在各自测试文件内自成序列，同一号在不同门含义不同）；
 * **自洽门与双向红灯验证**：
   * 变异测试人工制造各种边界事故：字段缺失、双向差集、静默截断、假冒通过、未声明退役；
   * 只有在变异数据下门禁**百分之百响亮报红**，这条规则才被允许合入出厂检验套件（`python3 -m pytest atlas/tests/`）；
@@ -369,16 +372,20 @@ Atlas 坚持**变异证明（Mutation Proving / M 系列钉子测试）**原则�
                              [收口归档]
 ```
 
+> 💡 **核心对账门禁（代表性节选）**：机器侧全量总账见 `.atlas/shared/gates.md`；运行 `atlas check` 时会聚合执行全部登记校验器。
+
 1. **`testid` 双向集合对账门 (`validate_testids.py`)**：
    * **断言**：用例分片中声明的应然 `testid:` 清单，与前端源码中真实扫描出的 `data-testid` **按页面双向集合严格相等**。漏写控件报 FAIL，多写无用埋点报 FAIL。
-2. **实例 ⑤：实现代码 ⇔ 应然资产独立审查（防偷工减料）**：
-   * 需求实现后、归档前，由独立进程执行只读 diff 审查；
+2. **实例 ⑤：实现代码 ⇔ 应然资产独立审查（防偷工减料；机制与对账门已定形，外部执行器接入中，见 shared/gates.md）**：
+   * 需求实现后、归档收口前，由独立进程执行只读 diff 审查（Fresh Context 隔离；契约与转换器见 scripts/cli_review_convert.py）；
    * **应审 N / 实审 M 严格对账**：实测表明大模型审查大体积 diff 时会悄悄跳过文件；若实际评审文件数 `M < N`，无论结论如何一律报红拒绝，发现 `Critical` 缺陷一票否决。
-3. **impact 预测对账门 (`impact_reconcile.py`)**：
+3. **后端/全栈测试用例 ⇔ AC 跨语言对账门 (`validate_ac_alignment.py`)**：
+   * 校验后端与全栈测试用例中挂载的验收标记（如 `@pytest.mark.ac("AC-xxx")`）与 PRD 声明的 AC 集合严格对齐，防止实现测试漏测或假挂载。
+4. **impact 预测对账门 (`impact_reconcile.py`)**：
    * 在需求规划时预测的影响面集合，与收口时的真实 `git diff` 变更文件列表自动比对差集，持续校准模型的架构感知力。
-4. **设计档案豁免 ⇔ 检测器双向对账 (`validate_design_exemptions.py`)**：
+5. **设计档案豁免 ⇔ 检测器双向对账 (`validate_design_exemptions.py`)**：
    * 设计档案中的豁免理由必须与代码扫描器中的忽略规则双向集合相等，关掉报警必须有台账，杜绝任何暗箱私货。
-5. **装配版本完整性门 (`.atlas/VERSION`)**：
+6. **装配版本完整性门 (`.atlas/VERSION`)**：
    * 目标项目中的装配态与 Atlas 源包内容哈希实时对账，源码更新未重新同步时响亮报警。
 
 ---

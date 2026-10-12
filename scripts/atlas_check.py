@@ -12,7 +12,7 @@
 用法：
     python3 .atlas/scripts/atlas_check.py [--root .] [--page <slug>] [--fast] [--json]
 
-  * 默认跑：4 个校验器 → 出厂测试 → 生成物是否最新（干跑） →（有 --page 或六页全量）真跑
+  * 默认跑：全部校验器（VALIDATORS 9 门） → 出厂测试 → 生成物是否最新（干跑） →（有 --page 或六页全量）真跑
   * `--page voices`：只真跑该页（E1 单段：真实应用由业务侧拉起，本器不起任何服务）
   * `--fast`：跳过出厂测试与真跑（只跑校验器 + 生成物）
   * 任一 FAIL ⇒ 退出码 1；WARN 不影响退出码。

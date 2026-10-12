@@ -84,3 +84,16 @@ def test_cli_update_dry_run_on_initialized_project():
         assert res.returncode == 0
         assert "Atlas Update" in res.stdout
         assert "dummy-digest" in res.stdout
+
+
+def test_cli_apply_prints_guidance_and_exits_2():
+    res = run_cmd(["node", str(ATLAS_BIN), "apply"])
+    assert res.returncode == 2
+    assert "认知编排技能" in res.stderr
+    assert "/atlas-apply" in res.stderr
+
+
+def test_cli_unknown_command_exits_2():
+    res = run_cmd(["node", str(ATLAS_BIN), "nonexistent-cmd"])
+    assert res.returncode == 2
+    assert "未知命令" in res.stderr

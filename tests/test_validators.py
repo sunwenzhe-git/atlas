@@ -1374,6 +1374,13 @@ def test_stack_profile_runner_single_track_gate() -> None:
     spec.loader.exec_module(gen)
     assert set(gen.RUNNERS) == {"node-playwright"}, gen.RUNNERS  # 生成器与校验器同词表
 
+    # 词表与模板守恒：出厂模板 runner 必须为 node-playwright，契约正本必须保持单轨
+    tpl_text = (PKG_ROOT / "templates" / "stack-profile.yaml").read_text(encoding="utf-8")
+    contract_text = (PKG_ROOT / "shared" / "stack-profile.md").read_text(encoding="utf-8")
+    parsed_tpl = vsp.parse_profile(tpl_text)
+    assert (parsed_tpl.get("e2e") or {}).get("runner") == "node-playwright", "出厂模板默认 runner 必须为 node-playwright"
+    assert "node-playwright" in contract_text, "契约正本缺 node-playwright"
+
     def _gate(profile_text: str):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

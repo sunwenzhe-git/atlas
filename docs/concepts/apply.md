@@ -6,30 +6,32 @@
 
 ---
 
+> 💡 **重要概念澄清**：`apply` 是一套由 AI Coding Agent（如 Claude Code / Cursor / OpenCode）在会话中执行的**认知编排技能（Skill）**，依赖 `.atlas/apply/reference.md` 契约。**终端无独立的 `atlas apply` 命令行脚本**，它通过自然语言大白话或平台命令 `/atlas-apply <模式>` 在 Agent 会话内唤起。
+
 ## 1. 四大运行模式
 
-| 模式 | 命令原语 | 触发场景 | 执行链条 |
+| 模式 | 会话原语 (Agent 内部) | 触发场景 | 执行链条 |
 |---|---|---|---|
-| **需求增量** | `atlas apply <需求ID>` | 日常开发新需求（95% 场景） | 过三问门 ──► 推导受影响域 ──► `prd → e2e` 增量更新 ──► 跑门禁并生成报告 |
-| **存量开户** | `atlas apply adopt` | 老项目第一次接入 Atlas | 仅跑结构逆向抽取，PRD 建最小开户登记集，**不猜虚拟 E2E** |
-| **全量构建** | `atlas apply all` | 全新项目从零立项 | 严格按顺序串行跑通 `structure → prd → e2e`，支持幂等与断点续跑 |
-| **反向回流** | `atlas apply backfill` | 实现期发现上游规则遗漏 | 不偷改文档；将上游缺陷入队，攒批（≤10条）回填 PRD/用例并重跑全部门禁 |
+| **需求增量** | `atlas-apply <需求ID>` | 日常开发新需求（95% 场景） | 过三问门 ──► 推导受影响域 ──► `prd → e2e` 增量更新 ──► 跑门禁并生成报告 |
+| **存量开户** | `atlas-apply adopt` | 老项目第一次接入 Atlas | 仅跑结构逆向抽取，PRD 建最小开户登记集，**不猜虚拟 E2E** |
+| **全量构建** | `atlas-apply all` | 全新项目从零立项 | 严格按顺序串行跑通 `structure → prd → e2e`，支持幂等与断点续跑 |
+| **反向回流** | `atlas-apply backfill` | 实现期发现上游规则遗漏 | 不偷改文档；将上游缺陷入队，攒批（≤10条）回填 PRD/用例并重跑全部门禁 |
 
 ---
 
 ## 2. 自然语言触发支持
 
-为了做到零心智负担，用户根本无需死记具体的 CLI 命令，在聊天框中直接说大白话即可：
+为了做到零心智负担，用户根本无需死记具体的技能参数，在聊天框中直接说大白话即可：
 
 ```text
 🗣️ 用户：“帮我把这个项目接入 Atlas 工作流”
-🤖 Agent 内部自动调用：atlas apply adopt
+🤖 Agent 内部唤起技能：/atlas-apply adopt
 
 🗣️ 用户：“跑一下三环全量构建，重置全部应然基线”
-🤖 Agent 内部自动调用：atlas apply all
+🤖 Agent 内部唤起技能：/atlas-apply all
 
 🗣️ 用户：“把这周发现的上游 PRD 缺口攒批回填一下”
-🤖 Agent 内部自动调用：atlas apply backfill
+🤖 Agent 内部唤起技能：/atlas-apply backfill
 ```
 
 ---

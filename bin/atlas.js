@@ -288,7 +288,31 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
   case '-h':
   case '--help':
   case 'help':
+    printHelp();
+    break;
+
+  case 'apply': {
+    const sub = args.slice(1).join(' ') || 'adopt';
+    console.error(`
+[Atlas] 提示: 'apply' 是由 AI Coding Agent（如 Claude Code / Cursor / OpenCode）在会话中执行的认知编排技能，非终端独立脚本。
+
+使用方式:
+  1. 在 Agent 会话中直接输入大白话，例如:
+     - "帮我把这个项目接入 Atlas 工作流" (对应 adopt 存量开户)
+     - "跑一下三环全量构建，建立应然基线" (对应 all 全量构建)
+  2. 或在支持 Slash Command 的平台中唤起技能:
+     /atlas-apply ${sub}
+`);
+    process.exit(2);
+    break;
+  }
+
   default:
+    if (command) {
+      console.error(`\n[Atlas] 错误: 未知命令 '${command}'。\n`);
+      printHelp();
+      process.exit(2);
+    }
     printHelp();
     break;
 }
