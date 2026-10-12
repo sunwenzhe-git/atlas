@@ -68,9 +68,19 @@ GEN_NOT_READY = 3
 class Row:
     def __init__(self) -> None:
         self.rows: list[dict] = []
+        self.failures: list[dict] = []
 
-    def add(self, name: str, status: str, detail: str = "") -> None:
+    def add(self, name: str, status: str, detail: str = "",
+            command: str = "", full_output: str = "", code: int | None = None) -> None:
         self.rows.append({"name": name, "status": status, "detail": detail})
+        if status == "FAIL":
+            self.failures.append({
+                "name": name,
+                "detail": detail,
+                "command": command,
+                "code": code,
+                "output": full_output,
+            })
 
     @property
     def failed(self) -> bool:
@@ -129,18 +139,23 @@ def check_validators(root: Path, rows: Row, py: str) -> None:
         if code != 0:
             bad = [l for l in last if "[FAIL]" in l or "[WARN]" in l]
             detail = (bad[0] if bad else tail)[:160]
+            rows.add(v, status, detail or tail,
+                     command=f"{py} {script} --root .", full_output=out, code=code)
         elif any("[WARN]" in l for l in last):
             # WARN = 提示补不置红（退出码 0），但门总览必须可见，不得静默当 ok
             status = "WARN"
             detail = next((l for l in last if "[WARN]" in l), tail)[:160]
-        rows.add(v, status, detail or tail)
+            rows.add(v, status, detail or tail)
+        else:
+            rows.add(v, status, detail or tail)
 
 
 def check_factory(root: Path, rows: Row, py: str) -> None:
     code, out = run([py, "-m", "pytest", ".atlas/tests", "-q", "--no-header"], root, timeout=900)
     m = re.findall(r"(\d+) (passed|failed)", out)
     summary = " ".join(f"{n} {k}" for n, k in m) or out.strip().splitlines()[-1:][0] if out.strip() else ""
-    rows.add("对齐测试(.atlas/tests)", "ok" if code == 0 else "FAIL", summary[:160])
+    rows.add("对齐测试(.atlas/tests)", "ok" if code == 0 else "FAIL", summary[:160],
+             command=f"{py} -m pytest .atlas/tests -q --no-header", full_output=out, code=code)
 
 
 def check_generated(root: Path, rows: Row, py: str) -> None:
@@ -167,7 +182,8 @@ def check_generated(root: Path, rows: Row, py: str) -> None:
         rows.add("生成物最新", "SKIP", f"前置未声明（未就绪，非失败）：{why[:150]}")
         return
     if code != 0:
-        rows.add("生成物最新", "FAIL", out.strip().splitlines()[-1][:160] if out.strip() else "")
+        rows.add("生成物最新", "FAIL", out.strip().splitlines()[-1][:160] if out.strip() else "",
+                 command=f"{py} {gen} --root . --json", full_output=out, code=code)
         return
     try:
         info = json.loads(out)
@@ -291,7 +307,8 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
         code_r, out_r = run(reset_cmd, root, timeout=300, shell=True)
         if code_r != 0:
             rows.add("E2E 真跑" + (f"[{page}]" if page else "（六页）"), "FAIL",
-                     f"e2e.reset 失败（exit {code_r}）：{out_r.strip()[-200:]}")
+                     f"e2e.reset 失败（exit {code_r}）：{out_r.strip()[-200:]}",
+                     command=reset_cmd, full_output=out_r, code=code_r)
             return
     # node 单轨（3507 BO）：探测项目声明位置（e2e.node_modules）的 playwright
     # 可执行文件，经 NODE_PATH 解析生成物里的 @playwright/test；
@@ -301,7 +318,8 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     pw_bin = (nm_dir / ".bin" / "playwright") if nm_dir else None
     if not pw_bin or not pw_bin.is_file():
         rows.add("E2E 真跑", "FAIL",
-                 f"node-playwright 可执行文件不存在：{pw_bin}（stack-profile e2e.node_modules）")
+                 f"node-playwright 可执行文件不存在：{pw_bin}（stack-profile e2e.node_modules）",
+                 command="", full_output=f"pw_bin not found: {pw_bin}")
         return
     spec_arg = f"{page}.spec.ts" if page else ""
     cmd = (f"NODE_PATH={nm_dir} {pw_bin} test -c "
@@ -309,8 +327,77 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     code, out = run(cmd, root, timeout=1800, shell=True)
     m2 = re.findall(r"(\d+) (passed|failed|error)", out)
     summary = " ".join(f"{n} {k}" for n, k in m2) or "无结果"
+
+    results_json = scripts / ".atlas-run" / "results.json"
+    parsed_stats = {}
+    if results_json.is_file():
+        try:
+            rdata = json.loads(results_json.read_text(encoding="utf-8"))
+            stats = rdata.get("stats", {})
+            parsed_stats = {
+                "expected": stats.get("expected", 0),
+                "unexpected": stats.get("unexpected", 0),
+                "flaky": stats.get("flaky", 0),
+                "skipped": stats.get("skipped", 0),
+                "duration_ms": stats.get("duration", 0),
+            }
+        except Exception:
+            pass
+
+    full_err_output = out
+    if code != 0 and results_json.is_file():
+        try:
+            rdata = json.loads(results_json.read_text(encoding="utf-8"))
+            err_details = []
+            for suite in rdata.get("suites", []):
+                for spec in suite.get("specs", []):
+                    for t in spec.get("tests", []):
+                        if t.get("status") == "unexpected":
+                            title = " > ".join(t.get("titlePath", [spec.get("title", "")]))
+                            res_list = t.get("results", [])
+                            err_msg = ""
+                            if res_list and "error" in res_list[0]:
+                                err_msg = res_list[0]["error"].get("message", "")
+                            err_details.append(f"FAILED: {title}\n{err_msg}")
+            if err_details:
+                full_err_output = "\n".join(err_details) + "\n\n--- Playwright Raw Output ---\n" + out
+        except Exception:
+            pass
+
+    if code == 0:
+        summary_path = root / ".atlas" / "runs" / "e2e-summary.json"
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        git_head, git_dirty = "unknown", False
+        try:
+            p_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(root),
+                                    capture_output=True, text=True, timeout=5)
+            if p_head.returncode == 0:
+                git_head = p_head.stdout.strip()
+            p_st = subprocess.run(["git", "status", "--porcelain"], cwd=str(root),
+                                  capture_output=True, text=True, timeout=5)
+            if p_st.returncode == 0:
+                git_dirty = bool(p_st.stdout.strip())
+        except Exception:
+            pass
+
+        summary_payload = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "git_head": git_head,
+            "git_dirty": git_dirty,
+            "page": page,
+            "status": "ok",
+            "summary": summary,
+            "stats": parsed_stats,
+            "results_path": str(results_json.relative_to(root)) if results_json.is_file() and results_json.is_relative_to(root) else None,
+        }
+        try:
+            summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+
     rows.add("E2E 真跑" + (f"[{page}]" if page else "（六页）"),
-             "ok" if code == 0 else "FAIL", summary)
+             "ok" if code == 0 else "FAIL", summary,
+             command=cmd, full_output=full_err_output, code=code)
 
 
 def main() -> int:
@@ -330,9 +417,42 @@ def main() -> int:
     check_version(root, rows)
     if not args.fast:
         check_e2e(root, rows, args.page)
+
+    error_log = root / ".atlas" / "runs" / "last-check-error.log"
+    if rows.failed:
+        error_log.parent.mkdir(parents=True, exist_ok=True)
+        with error_log.open("w", encoding="utf-8") as f:
+            now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+            f.write("=" * 80 + "\n")
+            f.write(f"ATLAS CHECK FAILURE LOG - {now_str}\n")
+            f.write(f"Target root: {root}\n")
+            f.write(f"Failed count: {len(rows.failures)}\n")
+            f.write("=" * 80 + "\n\n")
+            for i, fail in enumerate(rows.failures, 1):
+                f.write(f"[{i}/{len(rows.failures)}] Gate: {fail['name']}\n")
+                if fail.get("command"):
+                    f.write(f"Command: {fail['command']}\n")
+                if fail.get("code") is not None:
+                    f.write(f"Exit Code: {fail['code']}\n")
+                if fail.get("detail"):
+                    f.write(f"Summary: {fail['detail']}\n")
+                f.write("--- Full Output ---\n")
+                f.write(fail.get("output", "").strip() + "\n\n")
+    else:
+        if error_log.is_file():
+            try:
+                error_log.unlink()
+            except OSError:
+                pass
+
     if args.json:
-        print(json.dumps({"root": str(root), "ok": not rows.failed,
-                          "rows": rows.rows}, ensure_ascii=False, indent=2))
+        payload = {
+            "root": str(root),
+            "ok": not rows.failed,
+            "rows": rows.rows,
+            "error_log": str(error_log.relative_to(root)) if rows.failed and error_log.is_file() else None,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print(f"atlas check @ {root}")
         for r in rows.rows:
@@ -340,7 +460,11 @@ def main() -> int:
             if r["detail"]:
                 line += " " + r["detail"]
             print(line)
-        print("FAIL" if rows.failed else "OK")
+        if rows.failed:
+            rel = error_log.relative_to(root) if error_log.is_file() else error_log
+            print(f"FAIL (详细错误堆栈已落盘至: {rel})")
+        else:
+            print("OK")
     return 1 if rows.failed else 0
 
 

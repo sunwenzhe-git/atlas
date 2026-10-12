@@ -262,6 +262,10 @@ def test_check_e2e_reachable_target_is_not_skipped() -> None:
         mod.check_e2e(root, rows, "login")
         row = [r for r in rows.rows if r["name"].startswith("E2E 真跑")][0]
         assert row["status"] == "ok", rows.rows
+        summary_file = root / ".atlas" / "runs" / "e2e-summary.json"
+        assert summary_file.is_file(), "E2E 成功时必须写入 e2e-summary.json 凭据快照"
+        data = json.loads(summary_file.read_text(encoding="utf-8"))
+        assert data["status"] == "ok" and data["page"] == "login"
 
 def test_check_e2e_fails_loudly_when_node_playwright_missing() -> None:
     """单轨化（B201-4）：node 可执行缺失 ⇒ FAIL 点名（不静默降级、不猜别的运行器）。"""
@@ -409,3 +413,41 @@ def test_check_version_skips_legacy_or_lost_source() -> None:
         import shutil
         shutil.rmtree(src)                            # 源包搬家/不可达 ⇒ SKIP 不误报
         assert _version_rows(root2)["装配版本"]["status"] == "SKIP"
+
+
+def test_atlas_check_failure_log_written_on_fail_and_cleaned_on_pass() -> None:
+    """atlas_check.py 失败时落盘 .atlas/runs/last-check-error.log；全绿时自动清理。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / ".atlas").mkdir(parents=True, exist_ok=True)
+        os.symlink(PKG_ROOT / "validators", root / ".atlas" / "validators")
+        os.symlink(PKG_ROOT / "scripts", root / ".atlas" / "scripts")
+        (root / "product").mkdir(parents=True, exist_ok=True)
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: 夹具\napps:\n  - name: web\n    path: web\n    kind: frontend\n"
+            "    role: landing\n    stack: x\n", encoding="utf-8")
+        c = root / "product" / "e2e" / "cases"
+        c.mkdir(parents=True, exist_ok=True)
+        (c / "home.md").write_text(CASE_BAD, encoding="utf-8")
+
+        code, out = run(["--root", ".", "--fast"], root)
+        assert code == 1
+        err_log = root / ".atlas" / "runs" / "last-check-error.log"
+        assert err_log.is_file(), "失败时必须生成 last-check-error.log"
+        content = err_log.read_text(encoding="utf-8")
+        assert "ATLAS CHECK FAILURE LOG" in content
+        assert "validate_" in content
+        assert "FAIL (详细错误堆栈已落盘至:" in out
+
+        # 在另一个纯空测试目录验证：若存在历史错误日志，全绿 (code 0) 时自动删除
+        root_clean = Path(td) / "clean_proj"
+        root_clean.mkdir()
+        fake_log = root_clean / ".atlas" / "runs" / "last-check-error.log"
+        fake_log.parent.mkdir(parents=True)
+        fake_log.write_text("old error", encoding="utf-8")
+        assert fake_log.is_file()
+
+        code_clean, out_clean = run(["--root", ".", "--fast"], root_clean)
+        assert code_clean == 0, out_clean
+        assert not fake_log.is_file(), "全绿时必须自动清理旧的 last-check-error.log"
+
