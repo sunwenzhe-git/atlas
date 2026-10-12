@@ -361,6 +361,26 @@ def validate(root: Path) -> Result:
                 orphan_fn = sorted(f for f in decl_fn if f not in served)
                 if orphan_fn:
                     issues.append(f"{d.name} 功能无规则服务：{orphan_fn[:8]}")
+
+        # AC 跨域唯一性检查（Phase 0：B209-1 / 3507 BT，只检查各域主定义的本域 AC，跨域引用不计入）
+        seen_acs: dict[str, str] = {}
+        dup_acs: list[str] = []
+        for d in domains:
+            t = d.read_text(encoding="utf-8")
+            cm = re.search(r"^domain_code:\s*([A-Z0-9]+)", t, re.M)
+            c = cm.group(1) if cm else ""
+            if not c:
+                continue
+            # 本域声明的 AC（AC-{domain_code}-\d+）
+            own_acs = set(re.findall(rf"AC-{c}-\d+", t))
+            for ac in own_acs:
+                if ac in seen_acs:
+                    dup_acs.append(f"{ac} 在 {seen_acs[ac]} 与 {d.name} 重复")
+                else:
+                    seen_acs[ac] = d.name
+        if dup_acs:
+            issues.append(f"本域 AC 编号跨域重复（必须全局唯一）：{dup_acs[:5]}")
+
         # 追溯总表行形态 + 未覆盖登记（契约 §7 参数 4 ⑥；2026-09-28 补，`3509 §B75`）：
         # `增量起步` 下没有域级文件的域，必须在总表里有一行合法的「未覆盖（沿用实然）」——
         # 否则「本轮没覆盖哪些域」没有唯一登记点（下一条需求接手时看不出上一轮的边界）。

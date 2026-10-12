@@ -145,3 +145,73 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def test_snapshot_carries_mock_lines_for_badge() -> None:
+    """契约 §5.8 桩披露（2026-10-12）：snapshot 把分片 `mock:` 行随用例带给前端——
+    MOCKED 徽标的数据面（静态事实 = 用例声明了桩；运行时命中由 `[atlas-mock]` 日志行承载）。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_project(Path(tmp))
+        v = load("validate_e2e_index", "validators/validate_e2e_index.py")
+        cols = list(v.MAIN_COLUMNS)
+        (root / "product" / "e2e" / "e2e-index.md").write_text(
+            "# E2E 索引\n\n| " + " | ".join(cols) + " |\n| " + " | ".join(["---"] * len(cols)) + " |\n"
+            "| E2E-USERS-001 | users | 空态缺省页 | acceptance | AC-U-001 | | red | | "
+            "[cases/users.md#e2e-users-001](cases/users.md#e2e-users-001) |\n", encoding="utf-8")
+        (root / "product" / "e2e" / "cases").mkdir(parents=True, exist_ok=True)
+        (root / "product" / "e2e" / "cases" / "users.md").write_text(
+            "# users 页面用例\n\n## E2E-USERS-001 空态缺省页\n\n```atlas-case\n"
+            "id: E2E-USERS-001\nintent: 列表为空时渲染缺省占位\npages:\n  - users\n"
+            "mock:\n  - GET /api/v1/users -> fixtures/users/empty.json\n"
+            "step:\n  - goto /users\nexpected:\n  - visible users-empty-placeholder\n"
+            "testid:\n  - users-empty-placeholder\n```\n", encoding="utf-8")
+        snap = cons.snapshot(root)
+        case = next(c for c in snap["cases"] if c["id"] == "E2E-USERS-001")
+        assert case["mock"] == ["GET /api/v1/users -> fixtures/users/empty.json"], case["mock"]
+
+
+def test_node_ids_extracts_ts_lines_and_skips_blocked() -> None:
+    """契约 §10.1（2026-10-12 迁移批）：node_ids() 解析 .spec.ts 中的行号，
+    作为 Playwright 原生单用例过滤标记（file:line）；且 test.skip（blocked 用例）
+    与零步基线不被匹配。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        scripts = Path(td)
+        (scripts / "demo.spec.ts").write_text(
+            "import { test } from './atlas-hold';\n"
+            "test('test_demo__zero_step_baseline', async ({ page }) => {});\n"
+            "test('E2E-DEMO-001 正常用例', async ({ page }) => {\n"
+            "  await page.goto('/');\n"
+            "});\n"
+            "test.skip('E2E-DEMO-002 blocked用例', async ({ page }) => {\n"
+            "});\n",
+            encoding="utf-8"
+        )
+        mapping = cons.node_ids(scripts)
+        assert mapping == {"E2E-DEMO-001": "demo.spec.ts:3"}, mapping
+
+
+def test_resolve_pw_and_runner_fail_loud_on_missing_executable() -> None:
+    """契约 §10.1：Runner 解析不到可执行文件时诚实拒绝，不起盲目失败的子进程。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        # 无 profile
+        pw, nm, why = cons.resolve_pw(root)
+        assert pw is None and "stack-profile.yaml" in why
+
+        # profile 未声明 e2e.node_modules
+        (root / "product").mkdir(parents=True)
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: demo\napps: []\ne2e: { runner: node-playwright }\n", encoding="utf-8"
+        )
+        pw, nm, why = cons.resolve_pw(root)
+        assert pw is None and "node_modules" in why
+
+        # runner.start 必须直接返回 False 并告知原因
+        ledger = cons.Ledger(root, "tester")
+        runner = cons.Runner(root, ledger, timeout=60, head=True)
+        ok, reason = runner.start({"id": "E2E-DEMO-001"}, "demo.spec.ts:3", 500, "app", "http://127.0.0.1:8000")
+        assert not ok
+        assert "node-playwright 不可用" in reason

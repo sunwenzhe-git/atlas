@@ -185,7 +185,7 @@ def tables(text: str) -> list[tuple[list[str], list[list[str]]]]:
 
 
 def parse_block(body: str) -> dict:
-    d: dict = {"pages": [], "precondition": [], "seed": [], "step": [], "expected": [], "testid": []}
+    d: dict = {"pages": [], "precondition": [], "seed": [], "mock": [], "step": [], "expected": [], "testid": []}
     key = None
     for line in body.splitlines():
         s = line.strip()

@@ -2097,3 +2097,163 @@ def test_cross_page_terminal_assertion_must_target_lead_page(tmp_path: Path) -> 
     res2 = ve.validate(root)
     row2 = {c["check"]: c for c in res2.checks}.get("跨页终态断言落首列页")
     assert row2 is not None and row2["level"] == "PASS", res2.checks
+
+
+# ---- 网络边界打桩门（契约 §5.8 / §8.3，2026-10-12；对抗评审修订案落地）----
+
+vm = load("validate_e2e_mocks", "validators/validate_e2e_mocks.py")
+
+
+def test_stack_profile_mock_gate() -> None:
+    """stack-profile §2 / rings/e2e §5.8：`e2e.mock` 子段——键白名单（mode/api_prefix）+
+    mode 枚举（off | on，缺省 off = 现行为：mock: 行即 FAIL）+ on ⇒ api_prefix 必填；
+    `app_login.mode` 枚举（real | fabricated）。词表守恒：MOCK_MODES ⊆ 模板 ⊆ 契约正文
+    （照 SEED_MODES 三处同步先例）。"""
+    template = (PKG_ROOT / "templates" / "stack-profile.yaml").read_text(encoding="utf-8")
+    contract = (PKG_ROOT / "shared" / "stack-profile.md").read_text(encoding="utf-8")
+    for v in vsp.MOCK_MODES:
+        assert v in template, f"模板缺 mock.mode 取值：{v}"
+        assert v in contract, f"契约缺 mock.mode 取值：{v}"
+    for k in vsp.MOCK_KEYS:
+        assert k in contract, f"契约缺 e2e.mock 子键：{k}"
+
+    def _gate(profile_text: str):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "product").mkdir(parents=True)
+            (root / "product" / "stack-profile.yaml").write_text(profile_text, encoding="utf-8")
+            res = vsp.validate(root)
+            return {c["check"]: c for c in res.checks}
+
+    base = """product: demo
+apps:
+  - name: app
+    path: app
+    kind: frontend
+    role: landing
+    stack: demo
+e2e:
+  runner: node-playwright
+"""
+    rows = _gate(base)
+    assert rows["e2e.mock（可选段）"]["level"] == "PASS", rows  # 缺省 off = 合法
+    rows = _gate(base + "  mock:\n    mode: on\n    api_prefix: /api/\n")
+    assert rows["e2e.mock.mode 枚举"]["level"] == "PASS", rows
+    assert rows["e2e.mock.api_prefix 前置"]["level"] == "PASS", rows
+    rows = _gate(base + "  mock:\n    mode: on\n")  # on 而 prefix 缺
+    assert rows["e2e.mock.api_prefix 前置"]["level"] == "FAIL", rows
+    rows = _gate(base + "  mock:\n    mode: maybe\n")
+    assert rows["e2e.mock.mode 枚举"]["level"] == "FAIL" and "maybe" in rows["e2e.mock.mode 枚举"]["detail"], rows
+    rows = _gate(base + "  mock:\n    mode: on\n    api_prefix: /api/\n    zombie: 1\n")
+    assert rows["e2e.mock 键白名单"]["level"] == "FAIL", rows
+    rows = _gate(base + "  mock: on\n")  # 标量形态（非映射）
+    assert rows["e2e.mock 段形态"]["level"] == "FAIL", rows
+    rows = _gate(base + "  app_login:\n    mode: fabricated\n    storage_key: k\n")
+    assert rows["e2e.app_login.mode 枚举"]["level"] == "PASS", rows
+    rows = _gate(base + "  app_login:\n    mode: magic\n")
+    assert rows["e2e.app_login.mode 枚举"]["level"] == "FAIL", rows
+
+
+MOCK_SHARD = """# users 页面用例
+
+## E2E-USERS-001 空态缺省页
+
+```atlas-case
+id: E2E-USERS-001
+intent: 列表为空时渲染缺省占位
+pages:
+  - users
+precondition:
+  - 已打开用户列表页
+mock:
+  - GET /api/v1/users -> fixtures/users/empty.json   # 空列表
+step:
+  - goto /users
+expected:
+  - visible users-empty-placeholder
+testid:
+  - users-empty-placeholder
+```
+"""
+
+
+def _mk_mocks_project(root: Path, *, mock_section: str = "  mock:\n    mode: on\n    api_prefix: /api/\n",
+                      shard: str = MOCK_SHARD) -> None:
+    (root / "product" / "e2e" / "cases").mkdir(parents=True, exist_ok=True)
+    (root / "product" / "e2e" / "fixtures" / "users").mkdir(parents=True, exist_ok=True)
+    (root / "product" / "e2e" / "e2e-index.md").write_text("# E2E 索引\n", encoding="utf-8")
+    (root / "product" / "e2e" / "cases" / "users.md").write_text(shard, encoding="utf-8")
+    (root / "product" / "e2e" / "fixtures" / "users" / "empty.json").write_text('{"items": []}', encoding="utf-8")
+    (root / "product" / "stack-profile.yaml").write_text(
+        "product: demo\napps:\n  - name: app\n    path: app\n    kind: frontend\n"
+        "    role: landing\n    stack: demo\ne2e:\n  app_base_url: http://127.0.0.1:1\n" + mock_section,
+        encoding="utf-8")
+
+
+def test_validate_e2e_mocks_gate_matrix() -> None:
+    """契约 §8.3（2026-10-12）门矩阵：mode 开关 / api_prefix / 行语法+锚定 / 引用闭环
+    （缺 + 孤儿 + schema 无主）/ schema 收紧（未收紧 schema、多余字段）/ mock 先于 step /
+    基线空转 WARN / 前置 N/A。变异：任一判据卸成恒真 ⇒ 对应钉子红。"""
+
+    def _rows(root: Path):
+        return {c["check"]: c for c in vm.validate(root).checks}
+
+    with tempfile.TemporaryDirectory() as td:  # 干净态：全 PASS + 基线空转 WARN
+        root = Path(td)
+        _mk_mocks_project(root)
+        rows = _rows(root)
+        for k in ("mode 开关（防误用）", "api_prefix 前置", "行语法 + 路径锚定",
+                  "fixture 引用存在", "fixture 孤儿", "伴生 schema 有主",
+                  "fixture schema 收紧", "mock 先于 step"):
+            assert rows[k]["level"] == "PASS", (k, rows[k])
+        assert rows["零步基线空转"]["level"] == "WARN" and "users" in rows["零步基线空转"]["detail"], rows
+
+    with tempfile.TemporaryDirectory() as td:  # mode 门：分片有 mock: 行而未开 ⇒ FAIL 点名
+        root = Path(td)
+        _mk_mocks_project(root, mock_section="")
+        row = _rows(root)["mode 开关（防误用）"]
+        assert row["level"] == "FAIL" and "E2E-USERS-001" in row["detail"], row
+
+    with tempfile.TemporaryDirectory() as td:  # 锚定门：越界路径
+        root = Path(td)
+        _mk_mocks_project(root, shard=MOCK_SHARD.replace("/api/v1/users", "/v2/users"))
+        assert _rows(root)["行语法 + 路径锚定"]["level"] == "FAIL"
+
+    with tempfile.TemporaryDirectory() as td:  # 引用存在：缺 fixture
+        root = Path(td)
+        _mk_mocks_project(root, shard=MOCK_SHARD.replace("empty.json", "missing.json"))
+        assert _rows(root)["fixture 引用存在"]["level"] == "FAIL"
+
+    with tempfile.TemporaryDirectory() as td:  # 孤儿 fixture（僵尸数据）
+        root = Path(td)
+        _mk_mocks_project(root)
+        (root / "product" / "e2e" / "fixtures" / "users" / "zombie.json").write_text("{}", encoding="utf-8")
+        row = _rows(root)["fixture 孤儿"]
+        assert row["level"] == "FAIL" and "zombie.json" in row["detail"], row
+
+    with tempfile.TemporaryDirectory() as td:  # schema 收紧：未收紧 schema / 多余字段
+        root = Path(td)
+        _mk_mocks_project(root)
+        fx = root / "product" / "e2e" / "fixtures" / "users"
+        (fx / "empty.schema.json").write_text(
+            '{"type": "object", "properties": {"items": {"type": "array"}}}', encoding="utf-8")
+        assert _rows(root)["fixture schema 收紧"]["level"] == "FAIL", "未收紧的 schema 必须先 FAIL"
+        (fx / "empty.schema.json").write_text(
+            '{"type": "object", "properties": {"items": {"type": "array"}}, '
+            '"required": ["items"], "additionalProperties": false}', encoding="utf-8")
+        assert _rows(root)["fixture schema 收紧"]["level"] == "PASS"
+        (fx / "empty.json").write_text('{"items": [], "stale": 1}', encoding="utf-8")
+        row = _rows(root)["fixture schema 收紧"]
+        assert row["level"] == "FAIL" and "stale" in row["detail"], row  # 后端删字段防不住 ⇒ 多余字段即红
+
+    with tempfile.TemporaryDirectory() as td:  # mock 先于 step
+        root = Path(td)
+        late = MOCK_SHARD.replace(
+            "testid:\n  - users-empty-placeholder\n",
+            "testid:\n  - users-empty-placeholder\nmock:\n  - GET /api/v1/late -> fixtures/users/empty.json\n")
+        _mk_mocks_project(root, shard=late)
+        row = _rows(root)["mock 先于 step"]
+        assert row["level"] == "FAIL" and "late" in row["detail"], row
+
+    res = vm.validate(Path("/nonexistent-root"))  # 前置：E2E 资产未建 ⇒ N/A
+    assert res.checks[0]["level"] == "N/A" and res.status == "PASS"

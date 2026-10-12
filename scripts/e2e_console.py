@@ -23,7 +23,9 @@
 
 执行语义：
 
-* 「执行用例」= 起一次**有头**子进程跑这一条（`--headed --slowmo <N>`，看得见浏览器在动）；
+* 「执行用例」= 起一次**有头**子进程跑这一条（node 单轨：`<e2e.node_modules>/.bin/playwright test
+  -c playwright.config.ts <file>:<line> --headed --slowmo=<N>`；「跑完留窗 + 结果哨兵」由生成物
+  `atlas-hold.ts` 承载——契约 `rings/e2e/reference.md` §10.1）；
 * **并发 = 1**（同时只跑一条，其余按钮禁用）；单条 wall-clock 超时到点 kill 并如实报「超时」；
 * 「人工 review 通过」= 人工复核**执行结果**符合业务预期；只在**执行通过**后解锁按钮
   （不通过就是没通过，回对话改用例）。
@@ -82,9 +84,15 @@ class SnapshotError(RuntimeError):
 
 
 def load_generator(root: Path):
-    """复用生成器的 profile 解析器（同一份格式解析，不另写）。"""
-    spec = importlib.util.spec_from_file_location(
-        "atlas_gen_e2e_scripts", root / ".atlas" / "scripts" / "gen_e2e_scripts.py")
+    """复用生成器的 profile 解析器（同一份格式解析，不另写）。
+
+    优先读项目根下的 `.atlas/scripts/gen_e2e_scripts.py`；若为临时/独立运行目录，
+    回落至本控制台所在目录的 `gen_e2e_scripts.py`（随包同级分发）。
+    """
+    gen_path = root / ".atlas" / "scripts" / "gen_e2e_scripts.py"
+    if not gen_path.is_file():
+        gen_path = Path(__file__).resolve().parent / "gen_e2e_scripts.py"
+    spec = importlib.util.spec_from_file_location("atlas_gen_e2e_scripts", gen_path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
     return mod
@@ -190,24 +198,48 @@ def snapshot(root: Path) -> dict:
             "step": blk.get("step", []),
             "expected": blk.get("expected", []),
             "testid": blk.get("testid", []),
+            # 契约 §5.8（2026-10-12）：mock 行随分片带给前端渲染 MOCKED 徽标（桩披露，静态事实）
+            "mock": blk.get("mock", []),
         })
     return {"cases": cases, "nodeids": node_ids(e2e / "scripts")}
 
 
 def node_ids(scripts_dir: Path) -> dict:
-    """用例 ID → pytest node id（从生成脚本里读，不猜函数名）。"""
+    """用例 ID → playwright 测试引用 `<file>.spec.ts:<line>`（从生成脚本里读，不猜）。
+
+    node 单轨（3507 BO，2026-10-12 控制台迁移批）：解析 `.spec.ts` 里 `test('<ID> …')`
+    的**行号**——`file:line` 是 playwright 的原生过滤形态（`--list` 输出同款）。
+    blocked / skipped 用例生成物为 `test.skip(` ⇒ 天然不匹配（本就无可执行测试）；
+    零步基线 `test('test_<page>__…')` 不带用例 ID 前缀 ⇒ 同样不匹配。
+    """
     out: dict[str, str] = {}
     if not scripts_dir.is_dir():
         return out
-    for py in sorted(scripts_dir.glob("*.py")):
-        if py.name == "conftest.py":
-            continue
-        text = py.read_text(encoding="utf-8")
-        for m in re.finditer(r"def (\w+)\(page\):", text):
-            hit = re.search(r"(E2E-[A-Z0-9]+-\d{3})", text[m.end():m.end() + 400])
-            if hit:
-                out[hit.group(1)] = f"{py.name}::{m.group(1)}"
+    for ts in sorted(scripts_dir.glob("*.spec.ts")):
+        for lineno, line in enumerate(ts.read_text(encoding="utf-8").splitlines(), start=1):
+            m = re.match(r"\s*test\(['\"](E2E-[A-Z0-9]+-\d+)[ '\"].*async", line)
+            if m:
+                out[m.group(1)] = f"{ts.name}:{lineno}"
     return out
+
+
+def resolve_pw(root: Path) -> tuple[Path | None, Path | None, str]:
+    """node 单轨运行器解析——与 `atlas_check`「E2E 真跑」门**同一规则**（不造第二份）：
+    stack-profile 的 `e2e.node_modules` → `<该目录>/.bin/playwright` + `NODE_PATH=<该目录>`。
+    解析不到 ⇒ (None, None, 原因)——控制台如实拒绝，不静默降级。
+    """
+    profile = root / "product" / "stack-profile.yaml"
+    if not profile.is_file():
+        return None, None, "无 product/stack-profile.yaml"
+    prof = load_generator(root).parse_profile(profile.read_text(encoding="utf-8"))
+    nm = (prof.get("e2e") or {}).get("node_modules")
+    if not nm:
+        return None, None, "stack-profile 未声明 e2e.node_modules（node-playwright 依赖目录，契约 §7）"
+    nm_dir = (root / str(nm)).resolve()
+    pw_bin = nm_dir / ".bin" / "playwright"
+    if not pw_bin.is_file():
+        return None, None, f"node-playwright 可执行文件不存在：{pw_bin}（e2e.node_modules）"
+    return pw_bin, nm_dir, ""
 
 
 # ---------------------------------------------------------------- 账本（append-only 唯一真相源）
@@ -326,11 +358,12 @@ class Runner:
         self.held_case: str | None = None   # 窗口被保留中的那条用例（可手动关窗）
         self._proc: subprocess.Popen | None = None
 
-    def python(self) -> str:
-        venv = self.root / ".venv" / "bin" / "python"
-        return str(venv) if venv.is_file() else sys.executable
-
     def start(self, case: dict, nodeid: str, slowmo: int, source: str, base_url: str) -> tuple[bool, str]:
+        # node 单轨（2026-10-12 迁移批）：可执行先行解析（与 atlas_check 真跑门同规则），
+        # 解析不到 ⇒ 诚实拒绝，不起注定失败的子进程。
+        pw_bin, nm_dir, why = resolve_pw(self.root)
+        if pw_bin is None:
+            return False, f"node-playwright 不可用：{why}——解析规则与 atlas_check「E2E 真跑」门一致"
         with self.cond:
             if self.running:
                 return False, f"已有用例在跑（{self.case}）——本控制台并发=1"
@@ -339,7 +372,7 @@ class Runner:
             self.case = case["id"]
             self.lines = []
             self.done = None
-        threading.Thread(target=self._run, args=(case, nodeid, slowmo, source, base_url), daemon=True).start()
+        threading.Thread(target=self._run, args=(case, nodeid, slowmo, source, base_url, pw_bin, nm_dir), daemon=True).start()
         return True, ""
 
     def _proc_alive_kill(self) -> None:
@@ -375,24 +408,27 @@ class Runner:
         except Exception:
             pass
 
-    def _run(self, case: dict, nodeid: str, slowmo: int, source: str, base_url: str) -> None:
+    def _run(self, case: dict, nodeid: str, slowmo: int, source: str, base_url: str,
+             pw_bin: Path, nm_dir: Path) -> None:
         scripts = self.root / "product" / "e2e" / "scripts"
-        cmd = [self.python(), "-m", "pytest", "-q", "--slowmo", str(slowmo),
-               "--browser-channel", "chrome", nodeid]
+        # node 单轨（3507 BO）：`file:line` 过滤 + 运行器原生 flag；NODE_PATH 让生成物里的
+        # @playwright/test 解析到项目声明的依赖目录（与 atlas_check 真跑门同一姿势）。
+        cmd = [str(pw_bin), "test", "-c", "playwright.config.ts", nodeid, f"--slowmo={slowmo}"]
         if self.head:
-            cmd.insert(3, "--headed")
+            cmd.append("--headed")
         self._emit(f"# 来源 {source} → ATLAS_BASE_URL={base_url}\n$ cd {scripts}\n$ {' '.join(cmd)}\n")
         t0 = time.time()
         timed_out = False
         held = False
         exit_code = -1
         # 结果哨兵：持窗模式下进程会活过用例结束，所以不能靠「进程退出」判结果。
+        # node 轨的哨兵写入方 = 生成物 atlas-hold.ts（ATLAS_RESULT_FILE；契约 §10.1）。
         # 注意：mkstemp 会**先建一个空文件**，必须删掉它—— 否则 is_file() 一开始就为真。
         _fd, _spath = tempfile.mkstemp(prefix="atlas-e2e-result-", suffix=".json")
         os.close(_fd)
         sentinel = Path(_spath)
         sentinel.unlink()
-        env = {**os.environ, "ATLAS_BASE_URL": base_url}
+        env = {**os.environ, "ATLAS_BASE_URL": base_url, "NODE_PATH": str(nm_dir)}
         if self.keep_open:
             env["ATLAS_KEEP_OPEN"] = "1"
             env["ATLAS_RESULT_FILE"] = str(sentinel)

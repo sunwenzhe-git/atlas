@@ -38,10 +38,12 @@ VALIDATORS = (
     "validate_structure",
     "validate_e2e_index",
     "validate_testids",
+    "validate_e2e_mocks",
+    "validate_ac_alignment",
     "validate_prd",
     "validate_ledger",
     "validate_design_exemptions",
-)  # E1：validate_prototype 随原型环退役；§B120：stack_profile / structure 纳入（三态前置见 _GATE_PRECONDITIONS）；#182：design_exemptions 纳入（同款三态前置）
+)  # E1：validate_prototype 随原型环退役；§B120：stack_profile / structure 纳入；#182：design_exemptions 纳入；§5.8：e2e_mocks 纳入；B209-1（3507 BT）：validate_ac_alignment 纳入（后端与全栈 AC 对账门）
 
 # §B120：三态前置 —— 前置未声明 ⇒ SKIP（不是通过，且必须带原因）；标记存在才真正跑。
 _GATE_PRECONDITIONS = {
@@ -57,6 +59,14 @@ _GATE_PRECONDITIONS = {
     "validate_design_exemptions": (
         "product/design.md",
         "前置未声明（未就绪，非失败）：无 product/design.md（设计档案未建）"),
+    # E2E 用例资产未建 ⇒ 打桩门无输入面（§5.8，2026-10-12）
+    "validate_e2e_mocks": (
+        "product/e2e/e2e-index.md",
+        "前置未声明（未就绪，非失败）：E2E 用例资产未建（无 product/e2e/e2e-index.md）"),
+    # PRD 资产未建 ⇒ AC 对账门无输入面（B209-1，2026-10-12）
+    "validate_ac_alignment": (
+        "product/prd/prd.md",
+        "前置未声明（未就绪，非失败）：PRD 资产未建（无 product/prd/prd.md）"),
 }
 
 GEN_NOT_READY = 3

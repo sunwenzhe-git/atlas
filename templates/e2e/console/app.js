@@ -190,6 +190,7 @@ function rowHTML(c) {
       <div class="cline">${esc(c.intent)}</div>
       <div class="cmeta">
         ${isManual ? '' : `<span class="tag">${esc(c.type)}</span>`}
+        ${(c.mock && c.mock.length) ? '<span class="tag mocked" title="本用例声明了 mock: 桩行——执行绿可能有桩支撑（契约 §5.8 桩披露）">MOCKED</span>' : ''}
         <span class="tag">${esc(c.ac)}</span>
         ${c.need ? `<span class="tag">需求 ${esc(c.need)}</span>` : ''}
         ${S.draft[c.id] ? '<span class="tag dirty">未提交</span>' : ''}
@@ -224,6 +225,7 @@ function detailHTML(c) {
     <h4>数据前提（precondition，不执行）</h4><ul>${li(c.precondition)}</ul>
     <h4>步骤（step）</h4><ul>${li(c.step)}</ul>
     <h4>预期（expected）</h4><ul>${li(c.expected)}</ul>
+    ${(c.mock && c.mock.length) ? `<h4>打桩（mock，契约 §5.8；执行绿可能有桩支撑）</h4><ul>${li(c.mock)}</ul>` : ''}
     <h4>testid（${c.testid.length}）</h4><ul>${c.testid.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
     <h4>分片</h4><div><code>${esc(c.shard)}</code></div>
   </div>`;

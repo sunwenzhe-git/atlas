@@ -85,6 +85,8 @@ tr.row.busy td{background:var(--run-bg)}
 .cline{color:var(--muted);margin-top:2px}
 .cmeta{margin-top:4px;display:flex;gap:var(--sp2);align-items:center;flex-wrap:wrap}
 .tag.dirty{color:var(--warn);border-color:#e8dcbb;background:var(--warn-bg);font-weight:600}
+/* 契约 §5.8 桩披露（2026-10-12）：含 mock: 桩行的用例必须显眼——人工走查者得知道「这条绿是桩撑的」 */
+.tag.mocked{color:var(--warn);border-color:#e8dcbb;background:var(--warn-bg);font-weight:600;letter-spacing:.05em}
 .tag{font-size:10px;color:var(--faint);border:1px solid var(--border);border-radius:999px;padding:0 6px;font-family:var(--mono)}
 .detail{margin-top:var(--sp3);border-top:1px dashed var(--border);padding-top:var(--sp3)}
 .detail h4{margin:var(--sp3) 0 2px;font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em}

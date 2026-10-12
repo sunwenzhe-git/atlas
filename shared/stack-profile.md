@@ -84,9 +84,22 @@
 |---|---|---|
 | `prototype` | （已退役，E1） | **atlas 不再消费任何字段**；存量项目可保留（历史）或删除。原型环移除见 `3508 §92` |
 | `e2e` | `runner`（`python-playwright` \| `node-playwright`）/ `cases_dir` / `index` / `scripts_dir` / `app_base_url` / `node_modules`（node 运行器的依赖目录，`atlas_check` 据此定位可执行与 NODE_PATH）/ `reset`（可选：真跑前执行的靶场重置 shell 命令串，项目相对 cwd；null = 无重置，合法降级） | 用例组织与**单段执行**（真实应用；E1 起原型靶场已退役） |
-| `e2e` | `app_login`（子段：`endpoint` / `username_field` / `password_field` / `token_key` / `storage_key`） | **应用靶场登录预置的取证值**（2026-09-28 补，`3509 §B101`）：OAuth2 表单端点（相对 base_url 的路径）、表单字段名、响应令牌键、前端读取的 localStorage 键。生成时烘进运行器配置；**凭据仍只来自运行期环境变量**（`rings/e2e/reference.md` §7.1）。**段缺失 = 合法降级**（跳过登录预置 + 生成与运行期明确警告）；段存在但字段不齐 ⇒ 生成报错 |
+| `e2e` | `app_login`（子段：`mode` / `endpoint` / `username_field` / `password_field` / `token_key` / `storage_key`） | **应用靶场登录预置的取证值**（2026-09-28 补，`3509 §B101`）：OAuth2 表单端点（相对 base_url 的路径）、表单字段名、响应令牌键、前端读取的 localStorage 键。生成时烘进运行器配置；**凭据仍只来自运行期环境变量**（`rings/e2e/reference.md` §7.1）。**段缺失 = 合法降级**（跳过登录预置 + 生成与运行期明确警告）；段存在但字段不齐 ⇒ 生成报错。`mode`（2026-10-12 补，`rings/e2e/reference.md` §5.8）= `real`（**缺省** = 上述真实登录语义）\| `fabricated`（**纯前端桩项目**：不发真实登录请求，setup 直写固定假令牌进 storageState；必填字段收窄为 `storage_key`）；白名单外 ⇒ 校验器 FAIL + 生成器报错 |
 | `e2e` | `review` / `review.model` | 独立审查执行器（语义见 `rings/e2e/reference.md` §12） |
 | `e2e` | `seed`（子段：`hook` / `mode`） | **数据播种通道**（2026-09-28 补，`3509 §98 ⑪`）：`hook` = 项目自定实现的脚本路径（相对项目根），接口语义 = 「输入实体清单 ⇒ 保证存在」（幂等 upsert），生成时烘进 `_SEED`。`mode`（2026-10-07 补，B197-1）= **声明 / 发射解耦开关**：`enforce`（**缺省** = 现行为）= 每用例运行期播种；`declare` = `seed:` 行只参与静态对账（`rings/e2e/reference.md` §5.7 的 seed×models 门）、**不发射**运行期播种——累加链项目（运行期重播会撤销链上破坏性动作）的合法形态；取值白名单外 ⇒ 校验器 FAIL + 生成器报错。**段缺失 = 合法降级**（mode 按 enforce + hook 未声明 ⇒ 生成期 WARN + 运行期明确警告）。用例侧 `seed:` 块见 `rings/e2e/reference.md` §5.7 |
+| `e2e` | `mock`（子段：`mode` / `api_prefix`） | **网络边界打桩通道**（2026-10-12 补，`rings/e2e/reference.md` §5.8）：`mode` = `off`（**缺省** = 现行为：分片出现 `mock:` 行 ⇒ 校验器 FAIL + 生成器中止，防全后端项目静默屏蔽真 API 回归）\| `on`（放行——纯前端 / 无后端项目的确定性 UI 验收）。`on` 时 `api_prefix` 必填（以 `/` 开头）：桩路径锚定前缀 + 运行期拦截范围。白名单外取值 ⇒ 校验器 FAIL + 生成器报错。用例侧 `mock:` 块见 `rings/e2e/reference.md` §5.8 |
+
+### `backend_test`（后端测试调度与 AC 对账）
+
+纯后端与全栈后端项目的自动化测试调度与验收标准对账契约（2026-10-12 补，`3507 BT` / B209-1）。**可选能力**：段缺失 = 合法降级（项目自行执行原生测试；`validate_ac_alignment` 按降级通过）。
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `command` | 否 | 测试执行命令（收口核验命令保管；如 `pytest backend/tests`） |
+| `test_dir` | 否 | 测试代码根目录（相对路径，用于 AST 提取 AC 挂载点，缺省 `backend/tests`） |
+| `framework` | 否 | 测试提取器框架，枚举：`pytest`（v1 仅支持 pytest） |
+| `mode` | 否 | AC 对账门禁模式，枚举：`advisory`（**缺省** = 报告覆盖缺口与对账清单，不阻断）\| `enforce`（对账缺口硬阻断） |
+| `ac_marker` | 否 | 测试用例挂载 AC 的语法形态，如 `pytest_mark`（`@pytest.mark.ac("AC-xxx")`） |
 
 **`review` 字段的两条口径（写死）**：
 

@@ -1071,3 +1071,145 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# ---- 网络边界打桩（契约 §5.8，2026-10-12；对抗评审修订案落地）----
+
+MOCK_CASE = CASE.replace(
+    "precondition:\n  - 已打开首页\n",
+    "precondition:\n  - 已打开首页\n"
+    "mock:\n"
+    "  - GET /api/v1/home -> fixtures/home/feed.json   # 单发（缺省 200）\n"
+    "  - GET /api/v1/jobs/1 -> seq fixtures/home/p.json, 503:fixtures/home/e.json\n",
+)
+MOCK_PROFILE = PROFILE + "  mock:\n    mode: on\n    api_prefix: /api/\n"
+
+
+def make_mock(root: Path) -> None:
+    make(root, profile=MOCK_PROFILE, case=MOCK_CASE)
+    fx = root / "product" / "e2e" / "fixtures" / "home"
+    fx.mkdir(parents=True, exist_ok=True)
+    (fx / "feed.json").write_text('{"items": []}\n', encoding="utf-8")
+    (fx / "p.json").write_text('{"s": "pending"}\n', encoding="utf-8")
+    (fx / "e.json").write_text('{"error": "x"}\n', encoding="utf-8")
+
+
+def test_mock_compiles_to_single_dispatch_table() -> None:
+    """契约 §5.8：`mock:` 行 ⇒ **单条** `context.route` 派发表（pathname+method 命中、
+    query 免疫；不逐行注册 glob——注册逆序 + query 不匹配 = 两类静默穿透）；
+    注册先于 goto、审计殿后；fixture 生成期内联；fail-loud（abort + 审计断言，不是
+    continue）；CORS 预检；证据披露（atlas-mock 注记 + 日志行）；mock 页基线空转显式标记；
+    **未启用项目的生成物零变化**（无 mock helper）。变异：route 计数 >1 / 退回 continue 即红。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make_mock(root)
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stdout + r.stderr
+        spec = spec_of(root)
+        assert spec.count("await page.context().route(") == 1, "必须单派发表，不逐行注册"
+        assert "atlasMockTable" in spec and "atlasMockAudit" in spec
+        assert "route.abort('failed')" in spec, "前缀内未命中必须 fail-loud abort"
+        assert "route.continue()" in spec, "前缀外（静态资源）必须放行"
+        assert "access-control-allow-origin" in spec, "跨源桩须补 CORS 头"
+        assert "'atlas-mock'" in spec and "[atlas-mock]" in spec, "桩命中须双留痕（注记+日志）"
+        # 时序：派发表注册先于本用例 goto；审计殿后（断言之后）
+        i_mock = spec.index("const __mock = await atlasMockTable(")
+        i_goto = spec.index("await page.goto(", i_mock)
+        assert i_mock < i_goto
+        assert spec.index("await atlasMockAudit(__mock);") > spec.index("toHaveText", i_goto)
+        # fixture 生成期内联（零运行期路径解析）；seq 状态码前缀编译
+        assert '"ref": "fixtures/home/feed.json"' in spec and '\\"items\\"' in spec
+        assert '"status": 503' in spec
+        # 派发机制面：pathname + method（query 免疫的实现判据）
+        assert "u.pathname" in spec and "e.method === method" in spec
+        # mock 页基线空转显式标记
+        assert "空转守卫" in spec
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)  # 既有夹具（无 mock、未开通道）
+        assert run(root, "--apply").returncode == 0
+        assert "atlasMockTable" not in spec_of(root), "未启用项目的生成物必须零变化"
+
+
+def test_mock_requires_explicit_mode_on_and_prefix() -> None:
+    """契约 §5.8 防误用门（镜像 seed.mode 先例）：分片有 `mock:` 行而 `e2e.mock`
+    未声明 `mode: on` ⇒ exit 2 点名用例（真实后端项目写桩 = 静默屏蔽真 API 回归）；
+    `mode: on` 而 `api_prefix` 缺 ⇒ exit 2。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make_mock(root)
+        (root / "product" / "stack-profile.yaml").write_text(PROFILE, encoding="utf-8")  # 撤掉 mock 段
+        r = run(root, "--apply")
+        assert r.returncode == 2, (r.returncode, r.stdout + r.stderr)
+        assert "mode: on" in r.stderr and "E2E-HOME-001" in r.stderr, r.stderr
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make_mock(root)
+        (root / "product" / "stack-profile.yaml").write_text(
+            PROFILE + "  mock:\n    mode: on\n", encoding="utf-8")  # on 而 prefix 缺
+        r = run(root, "--apply")
+        assert r.returncode == 2 and "api_prefix" in r.stderr, r.stderr
+
+
+def test_mock_grammar_anchor_fixture_fail_loud() -> None:
+    """契约 §5.8 文法封闭 + 锚定门 + fixture 存在：三口均 exit 2 并点名（fail-loud，
+    不静默降级）。"""
+    good = "  - GET /api/v1/home -> fixtures/home/feed.json   # 单发（缺省 200）"
+    bad_lines = [
+        "  - FETCH /api/v1/home -> fixtures/home/feed.json",    # 方法枚举外
+        "  - GET /v2/home -> fixtures/home/feed.json",          # 越界（不在 /api/ 内）
+        "  - GET /api/v1/home -> fixtures/home/missing.json",   # fixture 不存在
+        "  - GET /api/v1/home -> fixtures/home/feed.json extra",  # 右段语法不识
+    ]
+    for bad in bad_lines:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            make_mock(root)
+            (root / "product" / "e2e" / "cases" / "home.md").write_text(
+                MOCK_CASE.replace(good, bad), encoding="utf-8")
+            r = run(root, "--apply")
+            assert r.returncode == 2, (bad, r.returncode, r.stdout + r.stderr)
+            assert "mock" in r.stderr, r.stderr
+
+
+def test_app_login_fabricated_setup() -> None:
+    """契约 §5.8/§7.1：`app_login.mode: fabricated` ⇒ setup 不发真实登录请求、直写固定
+    假令牌（必填收窄为 storage_key，缺它 ⇒ exit 2）。真实登录语义只属缺省 real
+    （既有 setup 断言由 test_runner_emits_skip_baseline_first_and_setup 承载）。"""
+    fab = PROFILE.split("  app_login:")[0] + \
+        "  app_login:\n    mode: fabricated\n    storage_key: app_session\n"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=fab)
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stdout + r.stderr
+        setup = (root / "product" / "e2e" / "scripts" / "atlas-auth.setup.ts").read_text(encoding="utf-8")
+        assert "request.post" not in setup, "fabricated 不得发真实登录请求"
+        assert "ATLAS_APP_USER" not in setup
+        assert "atlas-fabricated-token" in setup and "app_session" in setup
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=fab.replace("    storage_key: app_session\n", ""))
+        r = run(root, "--apply")
+        assert r.returncode == 2 and "storage_key" in r.stderr, r.stderr
+
+
+def test_atlas_hold_ts_emitted_and_imported_by_specs() -> None:
+    """契约 §10.1 / §7.1（2026-10-12 控制台 node 轨迁移批）：
+    ① 页面脚本必须从 `./atlas-hold` 引入 `test`/`expect`（不得直连 `@playwright/test`，
+       否则控制台持窗+哨兵失效）；
+    ② `atlas-hold.ts` 必须随 `--apply` 发射，包含 `ATLAS_RESULT_FILE` 哨兵写盘
+       与 `ATLAS_KEEP_OPEN` 延时等人工关窗逻辑。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stdout + r.stderr
+        spec = spec_of(root)
+        assert "from './atlas-hold';" in spec, "页面脚本必须从 ./atlas-hold 引入"
+        hold_file = root / "product" / "e2e" / "scripts" / "atlas-hold.ts"
+        assert hold_file.is_file(), "必须发射 atlas-hold.ts"
+        hold_src = hold_file.read_text(encoding="utf-8")
+        assert "ATLAS_RESULT_FILE" in hold_src
+        assert "ATLAS_KEEP_OPEN" in hold_src
+        assert "context.pages().length === 0" in hold_src

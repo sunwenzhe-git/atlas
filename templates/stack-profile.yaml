@@ -61,6 +61,7 @@ e2e:
   # 应用靶场登录预置的取证值（可选段；**段缺失 = 合法降级**，字段不齐 = 生成报错）。
   # 契约见 shared/stack-profile.md §2 + rings/e2e/reference.md §7.1。
   # app_login:
+  #   mode: real            # real（缺省 = 真实登录语义）| fabricated（纯前端桩项目：不发请求直写假令牌，§5.8）
   #   endpoint: <OAuth2 表单端点，相对 app_base_url>
   #   username_field: <表单用户名字段名>
   #   password_field: <表单密码字段名>
@@ -73,6 +74,12 @@ e2e:
   # seed:
   #   hook: <项目自定的播种脚本路径，相对项目根>
   #   mode: enforce        # declare | enforce
+  # 网络边界打桩通道（可选段，2026-10-12；契约 rings/e2e/reference.md §5.8）。
+  # **缺省 off = 分片出现 mock: 行即 FAIL**（防全后端项目静默屏蔽真 API 回归）；
+  # 纯前端 / 无后端项目的确定性 UI 验收显式声明 on 放行。
+  # mock:
+  #   mode: off            # off | on
+  #   api_prefix: /api/    # mode: on 时必填：桩路径锚定前缀 + 运行期拦截范围（以 / 开头）
   # 独立审查执行器（2026-09-26 补）。null = 会话环境默认子代理机制；
   # 需要指定档位时写成映射：review: { model: <档位> }（model: null = 会话当前模型）。
   review: null

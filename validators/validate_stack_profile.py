@@ -36,6 +36,19 @@ GRAPH_KEYS = ("backend", "pinned")
 # mode：enforce（缺省 = 现行为，每用例运行期播种）/ declare（只对账不发射，B197-1，2026-10-07）。
 SEED_KEYS = ("hook", "mode")
 SEED_MODES = ("declare", "enforce")
+# 网络边界打桩通道词表（`shared/stack-profile.md` §2 `e2e.mock` 段同源，rings/e2e §5.8；
+# 2026-10-12）。mode：off（缺省 = 现行为：mock: 行即 FAIL，防全后端项目误用）/ on（放行）。
+MOCK_KEYS = ("mode", "api_prefix")
+MOCK_MODES = ("off", "on")
+# 登录预置形态（rings/e2e §5.8 / §7.1，2026-10-12）：real（缺省 = 真实登录语义）/
+# fabricated（纯前端桩项目：setup 不发请求直写假令牌，必填收窄为 storage_key）。
+APP_LOGIN_MODES = ("real", "fabricated")
+
+# 后端测试调度段白名单（shared/stack-profile.md §2；B209-1 / 3507 BT，2026-10-12）。
+# 可选能力：段缺失 = 降级（由项目自行执行）；声明了就必须合法。
+BACKEND_TEST_KEYS = ("command", "test_dir", "framework", "mode", "ac_marker")
+BACKEND_TEST_MODES = ("enforce", "advisory")
+BACKEND_TEST_FRAMEWORKS = ("pytest",)
 
 
 class Result:
@@ -91,7 +104,7 @@ def yaml_scalar(raw: str):
 
 def parse_profile(text: str) -> dict:
     data: dict = {"product": None, "origin": None, "apps": [], "adapters": {},
-                  "prototype": {}, "e2e": {}, "graph": None}
+                  "prototype": {}, "e2e": {}, "graph": None, "backend_test": None}
     section = None
     cur = None
     for raw in text.splitlines():
@@ -107,6 +120,8 @@ def parse_profile(text: str) -> dict:
                 section = s[:-1].strip()
                 if section == "graph":
                     data["graph"] = {}
+                elif section == "backend_test":
+                    data["backend_test"] = {}
                 cur = None
                 continue
             if ":" in line:
@@ -124,7 +139,7 @@ def parse_profile(text: str) -> dict:
             m = re.match(r"^\s+(path|kind|role|stack):\s*(.*?)\s*$", line)
             if m and cur is not None:
                 cur[m.group(1)] = yaml_scalar(m.group(2))
-        elif section in ("adapters", "prototype", "e2e") or (section == "graph" and isinstance(data["graph"], dict)):
+        elif section in ("adapters", "prototype", "e2e", "backend_test") or (section == "graph" and isinstance(data["graph"], dict)):
             m = re.match(r"^\s+([\w.-]+):\s*(.*?)\s*$", line)
             if m:
                 if section == "graph":
@@ -133,9 +148,9 @@ def parse_profile(text: str) -> dict:
                 indent = len(line) - len(line.lstrip())
                 key, v = m.group(1), yaml_scalar(m.group(2))
                 # e2e 子段（2026-10-07 对齐 gen_e2e_scripts.parse_profile 的子块机制）：
-                # `app_login:` / `seed:` 等缩进2且值为空的键开子块，更深缩进键归子 dict——
+                # `app_login:` / `seed:` / `mock:` 等缩进2且值为空的键开子块，更深缩进键归子 dict——
                 # 旧实现全扁平化，`seed.mode` 会被误读成 e2e 顶层键（与子段键空间冲突）。
-                if section == "e2e" and key in ("app_login", "seed") and indent == 2 and v is None:
+                if section == "e2e" and key in ("app_login", "seed", "mock") and indent == 2 and v is None:
                     data[section].setdefault(key, {})
                     cur = key
                     continue
@@ -238,10 +253,61 @@ def validate(root: Path) -> Result:
         res.add("e2e.seed（可选段）", "PASS",
                 "未声明 = 合法降级（mode 缺省 enforce；hook 未声明 ⇒ 生成期 WARN + 运行期警告）")
 
+    app_login = e2e_prof.get("app_login") if isinstance(e2e_prof, dict) else None
+    if isinstance(app_login, dict) and app_login:
+        m = app_login.get("mode")
+        res.add("e2e.app_login.mode 枚举", "PASS" if m is None or m in APP_LOGIN_MODES else "FAIL",
+                f"值={m!r} 允许={list(APP_LOGIN_MODES)}（缺省 real；fabricated = 纯前端桩项目直写假令牌，"
+                "rings/e2e §5.8/§7.1）")
+
+    mock = e2e_prof.get("mock") if isinstance(e2e_prof, dict) else None
+    if isinstance(mock, dict) and mock:
+        unknown = [k for k in mock if k not in MOCK_KEYS]
+        res.add("e2e.mock 键白名单", "PASS" if not unknown else "FAIL",
+                f"未知键={unknown} 允许={list(MOCK_KEYS)}")
+        mode = mock.get("mode")
+        res.add("e2e.mock.mode 枚举", "PASS" if mode is None or mode in MOCK_MODES else "FAIL",
+                f"值={mode!r} 允许={list(MOCK_MODES)}（缺省 off = 分片出现 mock: 行即 FAIL，防全后端项目误用；"
+                "rings/e2e §5.8）")
+        if mode in (None, "on"):
+            prefix = mock.get("api_prefix")
+            bad_prefix = mode == "on" and (
+                not prefix or not str(prefix).startswith("/") or " " in str(prefix))
+            if mode == "on":
+                res.add("e2e.mock.api_prefix 前置", "PASS" if not bad_prefix else "FAIL",
+                        f"值={prefix!r}（mode: on 时必填、以 / 开头且无空白）")
+    elif mock:
+        # 非映射真值（字符串等）= 形态非法；空 dict / null 与未声明同判（显式不用 = 合法降级）。
+        res.add("e2e.mock 段形态", "FAIL", f"值={mock!r}（应为映射或 null）")
+    else:
+        res.add("e2e.mock（可选段）", "PASS",
+                "未声明 = off（分片出现 mock: 行 ⇒ FAIL，防全后端项目误用；rings/e2e §5.8）")
+
     res.add("prototype 段（已退役 E1）", "N/A",
             "atlas 不再消费；存量项目可保留（历史）或删除（shared/stack-profile.md §2）")
     present = bool(prof.get("e2e"))
     res.add("e2e 段存在", "PASS" if present else "WARN", "")
+
+    # 后端测试调度段（B209-1 / 3507 BT，2026-10-12）：可选能力，段缺失 = 合法降级。
+    backend_test = prof.get("backend_test")
+    if isinstance(backend_test, dict) and backend_test:
+        unknown_bt = [k for k in backend_test if k not in BACKEND_TEST_KEYS]
+        res.add("backend_test 键白名单", "PASS" if not unknown_bt else "FAIL",
+                f"未知键={unknown_bt} 允许={list(BACKEND_TEST_KEYS)}")
+        bt_mode = backend_test.get("mode")
+        res.add("backend_test.mode 枚举",
+                "PASS" if bt_mode is None or bt_mode in BACKEND_TEST_MODES else "FAIL",
+                f"值={bt_mode!r} 允许={list(BACKEND_TEST_MODES)}（缺省 advisory）")
+        bt_fw = backend_test.get("framework")
+        res.add("backend_test.framework 枚举",
+                "PASS" if bt_fw is None or bt_fw in BACKEND_TEST_FRAMEWORKS else "FAIL",
+                f"值={bt_fw!r} 允许={list(BACKEND_TEST_FRAMEWORKS)}")
+    elif backend_test is not None and not isinstance(backend_test, dict):
+        res.add("backend_test 段形态", "FAIL", f"值={backend_test!r}（应为映射或 null）")
+    else:
+        res.add("backend_test（可选段）", "PASS",
+                "未声明 = 合法降级（由项目自行执行测试；契约见 shared/stack-profile.md §2）")
+
     return res
 
 

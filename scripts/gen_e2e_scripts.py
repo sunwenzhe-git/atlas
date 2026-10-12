@@ -19,12 +19,24 @@
     唯一靶场 = 真实应用；为空 ⇒ 报错索取，不猜默认）；
   * 运行器 = `node-playwright` 单轨（2026-10-09 `3507 BO` 单轨化，原 `§B201-4`；`python-playwright` 已退役——声明即拒）；
   * **派生、可重生成**：重跑覆盖同页脚本与运行器配置；`_support/` 永不覆盖。
+  * **`atlas-hold.ts`（§10.1，2026-10-12 控制台 node 轨迁移批）**：页面脚本经它引入
+    `test` / `expect`——承载控制台「跑完留窗（ATLAS_KEEP_OPEN）+ 结果哨兵
+    （ATLAS_RESULT_FILE）」；环境变量未设时行为与 `@playwright/test` 原生一致。
+    py 时代等价物 = conftest.py（已随单轨化退役）。
   * **预置登录态**：以**真实登录**预置会话——端点 / 表单字段名 / 令牌键 / 存储键 = 取证值，
     登记在 `e2e.app_login` 段
     （段缺失 = 合法降级：跳过预置 + 明确警告；字段不齐 ⇒ 生成报错）；凭据只来自运行期
     环境变量 `ATLAS_APP_USER` / `ATLAS_APP_PASSWORD`（不读项目 `.env`、不硬编码）；
     未设置 ⇒ 跳过预置 + 明确警告；换取令牌失败 ⇒ 报错中止
     （不得静默续跑——那会退化成「未登录态跑用例」的假绿）。
+    `app_login.mode: fabricated`（§5.8，2026-10-12）= 纯前端桩项目形态：不发真实登录请求，
+    setup 直写固定假令牌进 storageState（必填收窄为 `storage_key`）。
+  * **网络边界打桩**（契约 §5.8，2026-10-12）：`mock:` 行（用例级）在 `e2e.mock.mode: on`
+    时编译为**单条** `context.route` 派发表（pathname+method 命中、query 免疫；前缀内未命中
+    fail-loud abort + 用例末审计断言点名；OPTIONS 自动 204 + CORS 头）；fixture 内容**生成期
+    读入内联**（生成物 = 确定性派生物）；命中记 `atlas-mock` 注记 + `[atlas-mock]` 日志。
+    **mode 未开而分片有 `mock:` 行 ⇒ 报错中止**（防全后端项目静默屏蔽真 API 回归）；
+    未启用项目的生成物**零变化**（新 helper 只出现在 mock 页脚本头部）。
 
 纯标准库；无任何框架名（运行器名只作为 `e2e.runner` 的值出现）。
 
@@ -51,6 +63,11 @@ RUNNERS = {"node-playwright": ".spec.ts"}  # 单轨（3507 BO）：python-playwr
 NOT_READY = 3
 # e2e.app_login 段的必填字段（段缺失 = 合法降级；段存在则须齐全，3509 §B101）
 APP_LOGIN_FIELDS = ("endpoint", "username_field", "password_field", "token_key", "storage_key")
+# e2e.app_login.mode（契约 §5.8/§7.1，2026-10-12）：real（缺省 = 真实登录语义）/
+# fabricated（纯前端桩项目：setup 直写假令牌，必填收窄为 storage_key）。
+APP_LOGIN_MODES = ("real", "fabricated")
+# 网络边界打桩（契约 §5.8，2026-10-12）：`mock:` 行的方法枚举（行式语法见 parse_mock_line）。
+MOCK_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 
 # 分片 step / expected 的动词词表（契约 `rings/e2e/reference.md` §5.5，2026-09-23 定）
 ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "hover", "refresh", "goto", "waitFor", "download")
@@ -168,6 +185,11 @@ def parse_profile(text: str) -> dict:
             sub = "seed"
             data[section].setdefault("seed", {})
             continue
+        # `e2e.mock`（契约 §5.8，2026-10-12）：网络边界打桩开关段（mode / api_prefix）。
+        if section == "e2e" and key == "mock" and indent == 2 and v is None:
+            sub = "mock"
+            data[section].setdefault("mock", {})
+            continue
         if sub is not None and indent > 2:
             data[section][sub][key] = v
             continue
@@ -177,7 +199,7 @@ def parse_profile(text: str) -> dict:
 
 
 def parse_block(body: str) -> dict:
-    d: dict = {"pages": [], "precondition": [], "seed": [], "step": [], "expected": [], "testid": []}
+    d: dict = {"pages": [], "precondition": [], "seed": [], "mock": [], "step": [], "expected": [], "testid": []}
     key = None
     for line in body.splitlines():
         s = line.strip()
@@ -253,6 +275,90 @@ def parse_seed_line(line: str) -> tuple[str, dict]:
         k, v = kv.split("=", 1)
         fields[k] = v
     return entity, fields
+
+
+MOCK_FIXTURE_RE = r"fixtures/[\w./-]+\.json"
+
+
+def parse_mock_line(line: str, api_prefix: str | None = None) -> dict:
+    """`<METHOD> <path> -> <rhs>` → 桩表条目（契约 §5.8 的 `mock:` 行式语法）。
+
+    rhs 为**封闭文法**（越界即 ValueError，不得静默降级）：
+      `fixtures/<…>.json`                        单发（缺省 200）
+      `status <N> fixtures/<…>.json`             单发带状态码
+      `delay <N>ms fixtures/<…>.json`            延迟应答（1–5000ms；慢动作下 loading 态可见）
+      `seq [N:]fixtures/…[, [N:]fixtures/…]`     按调用次序出队（队空运行期 fail-loud）
+    `api_prefix` 非空时校验路径锚定（拦越界桩 / 误伤静态资源，契约锚定门）。
+    """
+    code, _, _note = line.partition("#")
+    left, arrow, rhs = code.partition("->")
+    if not arrow:
+        raise ValueError(f"mock 行缺 `->`：{line!r}（契约 §5.8）")
+    toks = left.strip().split()
+    if len(toks) != 2:
+        raise ValueError(f"mock 行左段应为 `<METHOD> <path>`：{line!r}（契约 §5.8）")
+    method, path = toks[0].upper(), toks[1]
+    if method not in MOCK_METHODS:
+        raise ValueError(f"mock 方法 {toks[0]!r} 不在 {MOCK_METHODS} 内（契约 §5.8）")
+    if not path.startswith("/"):
+        raise ValueError(f"mock 路径须以 / 开头：{path!r}（契约 §5.8）")
+    if api_prefix is not None and not path.startswith(api_prefix):
+        raise ValueError(f"mock 路径 {path!r} 不在 api_prefix {api_prefix!r} 内（锚定门，契约 §5.8）")
+    r = rhs.strip()
+    m = re.fullmatch(MOCK_FIXTURE_RE, r)
+    if m:
+        return {"method": method, "path": path, "status": 200, "delay_ms": 0, "seq": None, "ref": r}
+    m = re.fullmatch(rf"status (\d{{3}}) ({MOCK_FIXTURE_RE})", r)
+    if m:
+        return {"method": method, "path": path, "status": int(m.group(1)), "delay_ms": 0,
+                "seq": None, "ref": m.group(2)}
+    m = re.fullmatch(rf"delay (\d{{1,4}})ms ({MOCK_FIXTURE_RE})", r)
+    if m:
+        n = int(m.group(1))
+        if not 1 <= n <= 5000:
+            raise ValueError(f"delay 须在 1–5000ms：{line!r}（契约 §5.8）")
+        return {"method": method, "path": path, "status": 200, "delay_ms": n, "seq": None,
+                "ref": m.group(2)}
+    m = re.fullmatch(r"seq (.+)", r)
+    if m:
+        seq: list[dict] = []
+        for item in m.group(1).split(","):
+            sm = re.fullmatch(rf"(?:(\d{{3}}):)?({MOCK_FIXTURE_RE})", item.strip())
+            if not sm:
+                raise ValueError(f"seq 项非法 {item.strip()!r}（应 `[N:]fixtures/….json`，契约 §5.8）")
+            seq.append({"status": int(sm.group(1) or 200), "ref": sm.group(2)})
+        if not seq:
+            raise ValueError(f"seq 至少一项：{line!r}（契约 §5.8）")
+        return {"method": method, "path": path, "status": 200, "delay_ms": 0, "seq": seq, "ref": None}
+    raise ValueError(f"mock 行右段语法不识：{r!r}（契约 §5.8）")
+
+
+def compile_mock_entries(case: dict, api_prefix: str, e2e_root: Path) -> list[dict] | None:
+    """把用例的 `mock:` 行编译为派发表条目（fixture 内容生成期内联；契约 §5.8）。
+
+    内联而非运行期读盘：生成物 = **确定性派生物**，`atlas_check` 的「生成物最新」门
+    看守 stale 内联（fixture 改了没重生成 ⇒ 门红），且运行期零路径解析（免 cwd / ESM 坑）。
+    """
+    lines = case.get("mock") or []
+    if not lines:
+        return None
+
+    def body_of(ref: str) -> str:
+        p = e2e_root / ref
+        if not p.is_file():
+            raise ValueError(f"fixture 不存在：{ref}（{case.get('id')} 的 mock 行；契约 §5.8）")
+        return p.read_text(encoding="utf-8")
+
+    out: list[dict] = []
+    for line in lines:
+        e = parse_mock_line(line, api_prefix)
+        if e["seq"] is not None:
+            for item in e["seq"]:
+                item["body"] = body_of(item["ref"])
+        else:
+            e["body"] = body_of(e["ref"])
+        out.append(e)
+    return out
 
 
 REV_TITLE = "## 页面 ↔ 用例"
@@ -463,10 +569,20 @@ def ts_case(case: dict, url: str) -> str:
         seq.append(_act)
         seq.extend(anchors.get(_i, []))
     seq.extend(terminal)
+    # 契约 §5.8（2026-10-12）：mock 用例在全部断言后跑打桩审计——未桩请求 / seq 队列耗尽
+    # 在此响亮失败（fail-loud），并把桩命中清单记入测试注记（证据披露）。
+    if case.get("_mock") is not None:
+        seq.append("await atlasMockAudit(__mock);")
     indented = "\n".join("  " + b for b in seq)
+    # 派发表注册必须先于 goto（拦截不漏首屏请求的时序前提，契约 §5.8）。
+    mock_open = ""
+    if case.get("_mock") is not None:
+        mock_open = ("  const __mock = await atlasMockTable(page, "
+                     + json.dumps(case["_mock"], ensure_ascii=False) + ");\n")
     body = (
         f"test({json.dumps(cid + ' ' + (case.get('_title') or ''), ensure_ascii=False)}, async ({{ page }}) => {{\n"
         f"  {step_note}\n  {assert_note}\n"
+        f"{mock_open}"
         f"  await page.goto('{url}');\n"
         f"  for (const id of {ids}) {{\n    await expect(page.getByTestId(id)).toHaveCount(1);\n  }}\n"
         f"{indented}\n}});\n"
@@ -536,12 +652,89 @@ def ts_assert_expr(line: str) -> str:
     raise ValueError(f"未知断言动词: {verb}（契约 §5.5）")
 
 
-def ts_zero_step_baseline(page: str, url: str, cases: list[dict]) -> str:
+def ts_mock_helpers(api_prefix: str) -> str:
+    """契约 §5.8（2026-10-12）：网络边界打桩的页面头部 helper（**只出现在 mock 页脚本**——
+    未启用项目的生成物零变化）。
+
+    单条 `context.route` 派发表（pathname+method 命中、query 免疫；不逐行注册 glob——
+    注册逆序 + query 不匹配 = 两类静默穿透）；前缀内未命中 fail-loud abort、前缀外放行、
+    OPTIONS 自动 204 + CORS 头；命中留痕 = `atlas-mock` 注记 + `[atlas-mock]` 日志（证据披露）。
+    """
+    return (
+        "// 契约 §5.8：网络边界打桩（单条 context.route 派发表；随用例 context 生灭）\n"
+        "const ATLAS_MOCK_PREFIX = " + json.dumps(api_prefix) + ";\n"
+        "async function atlasMockTable(page: any, entries: any[]) {\n"
+        "  const audit = { errors: [] as string[], hits: [] as string[] };\n"
+        "  const table = entries.map((e) => ({ ...e, queue: e.seq ? e.seq.slice() : null }));\n"
+        "  await page.context().route('**' + ATLAS_MOCK_PREFIX + '**',\n"
+        "    (route: any) => atlasMockDispatch(route, table, audit));\n"
+        "  return audit;\n"
+        "}\n"
+        "async function atlasMockDispatch(route: any, table: any[], audit: any) {\n"
+        "  const u = new URL(route.request().url());\n"
+        "  if (!u.pathname.startsWith(ATLAS_MOCK_PREFIX)) {\n"
+        "    await route.continue();  // 前缀外（如 /static/api/… 静态资源）：放行\n"
+        "    return;\n"
+        "  }\n"
+        "  const method = route.request().method().toUpperCase();\n"
+        "  if (method === 'OPTIONS') {  // 跨源预检：自动 204 + CORS 头（防浏览器层白屏）\n"
+        "    await route.fulfill({\n"
+        "      status: 204,\n"
+        "      headers: {\n"
+        "        'access-control-allow-origin': '*',\n"
+        "        'access-control-allow-methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',\n"
+        "        'access-control-allow-headers':\n"
+        "          route.request().headers()['access-control-request-headers'] || '*',\n"
+        "      },\n"
+        "    });\n"
+        "    return;\n"
+        "  }\n"
+        "  const ent = table.find((e) => e.method === method && e.path === u.pathname);\n"
+        "  if (!ent) {\n"
+        "    audit.errors.push('未桩 API 命中（fail-loud）：' + method + ' ' + u.pathname);\n"
+        "    await route.abort('failed');\n"
+        "    return;\n"
+        "  }\n"
+        "  let status = ent.status, body = ent.body, served = ent.ref;\n"
+        "  if (ent.queue) {\n"
+        "    if (ent.queue.length === 0) {\n"
+        "      audit.errors.push('seq 队列耗尽：' + method + ' ' + ent.path);\n"
+        "      await route.abort('failed');\n"
+        "      return;\n"
+        "    }\n"
+        "    const nxt = ent.queue.shift();\n"
+        "    status = nxt.status; body = nxt.body; served = nxt.ref;\n"
+        "  }\n"
+        "  if (ent.delayMs) await new Promise((r) => setTimeout(r, ent.delayMs));\n"
+        "  audit.hits.push(method + ' ' + ent.path + ' -> ' + served);\n"
+        "  await route.fulfill({\n"
+        "    status,\n"
+        "    contentType: 'application/json',\n"
+        "    headers: { 'access-control-allow-origin': '*' },\n"
+        "    body,\n"
+        "  });\n"
+        "}\n"
+        "async function atlasMockAudit(audit: any) {\n"
+        "  // 证据披露（契约 §5.8）：桩命中 = 证据链一等声明（注记 + 日志双留痕）；\n"
+        "  // 未桩请求 / seq 队列耗尽在此响亮失败（不得静默续跑）。\n"
+        "  test.info().annotations.push({\n"
+        "    type: 'atlas-mock',\n"
+        "    description: audit.hits.join('；') || '(无桩命中)',\n"
+        "  });\n"
+        "  if (audit.hits.length) console.log('[atlas-mock] ' + audit.hits.join('；'));\n"
+        "  expect(audit.errors, '网络边界打桩审计（未桩请求 / seq 队列耗尽）').toEqual([]);\n"
+        "}\n\n"
+    )
+
+
+def ts_zero_step_baseline(page: str, url: str, cases: list[dict], mock_vacuous: bool = False) -> str:
     """TS 版零步基线（契约 §5.6 R9；与 py_zero_step_baseline **同构**）。
 
     同一设计：断言清单落 `_data/zero_step_<page>.json`（label/expr/kind/sampling），
     运行期 runner 在页面 header（`atlasZeroStepBaseline`）。`expr` = ts_assert_expr
     的 awaitable 串——与用例断言**同源渲染**，两条路径语义不可能漂。
+    `mock_vacuous`（契约 §5.8，2026-10-12）：本页含 `mock:` 行 ⇒ 基线不挂桩，
+    无后端环境下探针全 null = **空转守卫**——生成物显式注释标记（validate_e2e_mocks 侧 WARN）。
     """
     probes: list[dict] = []
     for c in cases:
@@ -567,9 +760,12 @@ def ts_zero_step_baseline(page: str, url: str, cases: list[dict]) -> str:
         return ""
     fn = re.sub(r"[^0-9a-zA-Z]+", "_", page).strip("_")
     data = json.dumps({"url": url, "probes": probes}, ensure_ascii=False, separators=(",", ":"))
+    vacuous = ("  // 契约 §5.8：本页含 mock: 用例 —— 基线不挂桩，无后端环境下探针全 null = 空转守卫"
+               "（validate_e2e_mocks 记 WARN；恒真守卫失效为知悉项）\n" if mock_vacuous else "")
     return (
         f"const ATLAS_ZS_{fn} = {data};\n"
         f"test('test_{fn}__zero_step_baseline', async ({{ page }}) => {{\n"
+        f"{vacuous}"
         f"  await atlasZeroStepBaseline(page, ATLAS_ZS_{fn});\n"
         "});\n"
     )
@@ -679,10 +875,18 @@ def main() -> int:
         return NOT_READY
 
     app_login = e2e.get("app_login") or None
+    login_mode = (app_login or {}).get("mode") or "real"
+    if app_login is not None and login_mode not in APP_LOGIN_MODES:
+        print(f"ERROR: e2e.app_login.mode 非法: {login_mode!r}（允许 {list(APP_LOGIN_MODES)}；缺省 real）"
+              "——契约见 shared/stack-profile.md §2 + rings/e2e/reference.md §5.8", file=sys.stderr)
+        return 2
     if app_login is not None:
-        missing = [k for k in APP_LOGIN_FIELDS if not (app_login.get(k) or "").strip()]
+        # fabricated（契约 §5.8，2026-10-12）：纯前端桩项目——不发真实登录请求，
+        # setup 直写假令牌 ⇒ 必填收窄为 storage_key（其余取证字段无消费方）。
+        required = ("storage_key",) if login_mode == "fabricated" else APP_LOGIN_FIELDS
+        missing = [k for k in required if not (app_login.get(k) or "").strip()]
         if missing:
-            print(f"ERROR: e2e.app_login 段不完整（缺 {missing}）——要么补齐全部字段，"
+            print(f"ERROR: e2e.app_login 段不完整（mode={login_mode}，缺 {missing}）——要么补齐，"
                   "要么整段删除（未声明 = 合法降级：跳过登录预置 + 明确警告）", file=sys.stderr)
             return 2
     else:
@@ -698,6 +902,21 @@ def main() -> int:
     if seed_mode not in ("declare", "enforce"):
         print(f"ERROR: e2e.seed.mode 非法: {seed_mode!r}（允许 declare|enforce；缺省 enforce）"
               "——契约见 shared/stack-profile.md §2 + rings/e2e/reference.md §5.7", file=sys.stderr)
+        return 2
+
+    # 网络边界打桩通道（契约 §5.8，2026-10-12）：mode off（缺省 = 现行为）/ on（放行 mock: 行）。
+    # 与 seed 通道**正交**：seed 的 declare 豁免辖环境播种声明，mock 是运行期网络行为、无豁免态。
+    mock_cfg = e2e.get("mock") or {}
+    mock_mode = mock_cfg.get("mode") or "off"
+    if mock_mode not in ("off", "on"):
+        print(f"ERROR: e2e.mock.mode 非法: {mock_mode!r}（允许 off|on；缺省 off）"
+              "——契约见 shared/stack-profile.md §2 + rings/e2e/reference.md §5.8", file=sys.stderr)
+        return 2
+    mock_prefix = mock_cfg.get("api_prefix")
+    if mock_mode == "on" and (not mock_prefix or not str(mock_prefix).startswith("/")
+                              or " " in str(mock_prefix)):
+        print(f"ERROR: e2e.mock.mode=on 须同时声明合法 api_prefix（以 / 开头、无空白），"
+              f"得 {mock_prefix!r}（契约 §5.8）", file=sys.stderr)
         return 2
 
     cases = gather_cases(root / "product" / "e2e" / "cases")
@@ -717,6 +936,35 @@ def main() -> int:
         for items in cases.values():
             for c in items:
                 c["seed"] = []
+
+    # 网络边界打桩门 + 编译趟（契约 §5.8，2026-10-12）：
+    # ① mode 未开而分片有 mock: 行 ⇒ 中止（防全后端项目静默屏蔽真 API 回归——
+    #    镜像 seed 的 enforce/declare 先例：缺省 = 现行为，显式声明才放行）；
+    # ② mode on ⇒ 编译全部 mock 行（语法 + 锚定 + fixture 存在，fail-loud 不静默降级）。
+    mock_lines_present = [c["id"] for items in cases.values() for c in items if c.get("mock")]
+    if mock_lines_present and mock_mode != "on":
+        print("ERROR: 分片出现 mock: 行但 e2e.mock 未声明 mode: on（契约 §5.8——"
+              "防全后端项目静默屏蔽真实 API 回归；纯前端桩项目显式声明后放行）：", file=sys.stderr)
+        for cid in mock_lines_present[:10]:
+            print(f"  - {cid}", file=sys.stderr)
+        print(f"  共 {len(mock_lines_present)} 条用例", file=sys.stderr)
+        return 2
+    e2e_root = (root / (e2e.get("cases_dir") or "product/e2e/cases")).parent
+    bad_mock: list[str] = []
+    for items in cases.values():
+        for c in items:
+            c["_mock"] = None
+            if mock_mode == "on" and c.get("mock"):
+                try:
+                    c["_mock"] = compile_mock_entries(c, mock_prefix or "", e2e_root)
+                except ValueError as exc:
+                    bad_mock.append(f"{c['id']}: {exc}")
+    if bad_mock:
+        print("ERROR: mock: 行编译失败（契约 rings/e2e/reference.md §5.8）：", file=sys.stderr)
+        for b in bad_mock[:40]:
+            print(f"  - {b}", file=sys.stderr)
+        print(f"  共 {len(bad_mock)} 条", file=sys.stderr)
+        return 2
     idx_path = root / (e2e.get("index") or "product/e2e/e2e-index.md")
     urls = page_urls(idx_path.read_text(encoding="utf-8")) if idx_path.is_file() else {}
     if not cases:
@@ -768,7 +1016,9 @@ def main() -> int:
         body = (
             "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py"
             f" (runner={runner})；重跑覆盖；深断言放 _support/\n"
-            "import { test, expect } from '@playwright/test';\n"
+            "// 页面脚本经 ./atlas-hold 引入 test/expect（契约 §10.1：控制台「跑完留窗 + 结果哨兵」"
+            "的 node 载体；环境变量未设时行为与 @playwright/test 原生一致）\n"
+            "import { test, expect } from './atlas-hold';\n"
             "import { readFileSync } from 'node:fs';\n"
             "// 契约 §7.1：`waitFor` 的超时默认值（与 python 侧同值）\n"
             "const ATLAS_WAIT_TIMEOUT_MS = 10_000;\n\n"
@@ -886,7 +1136,8 @@ def main() -> int:
             "  const name = download.suggestedFilename();\n"
             "  expect(name, `下载文件名 ${name} 不匹配 ${pattern}`).toMatch(atlasGlob(pattern));\n"
             "}\n\n"
-            + ts_zero_step_baseline(page, url, items) + "\n"
+            + (ts_mock_helpers(mock_prefix) if (page_has_mocks := any(c.get("_mock") for c in items)) else "")
+            + ts_zero_step_baseline(page, url, items, mock_vacuous=page_has_mocks) + "\n"
             + "\n".join(ts_case(c, url) for c in items)
         )
         write(scripts_dir / f"{page}{ext}", body, args.apply, results)
@@ -932,49 +1183,115 @@ def main() -> int:
         "});\n"
     )
     write(scripts_dir / "playwright.config.ts", cfg, args.apply, results)
-    endpoint = app_login["endpoint"] if app_login else "/login"
-    user_field = app_login["username_field"] if app_login else "username"
-    pass_field = app_login["password_field"] if app_login else "password"
-    token_key = app_login["token_key"] if app_login else "access_token"
-    storage_key = app_login["storage_key"] if app_login else "access_token"
-    setup_ts = (
+
+    # atlas-hold.ts（契约 §10.1，2026-10-12 控制台 node 轨迁移批）：页面脚本的 test/expect
+    # 引入源——承载控制台「跑完留窗（人工 review）+ 结果哨兵」。py 时代该语义活在 conftest.py，
+    # node 轨等价载体 = auto fixture（依赖 context ⇒ teardown 先于内置 context 关闭 ⇒ 可等人工关窗）。
+    # 两环境变量都未设（直跑 / atlas_check 真跑门）⇒ 行为与 @playwright/test 原生一致。
+    hold_ts = (
         "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py；重跑覆盖。\n"
-        "import { test, expect } from '@playwright/test';\n"
-        "import { mkdirSync, writeFileSync } from 'node:fs';\n"
-        "import { dirname } from 'node:path';\n\n"
-        "test('atlas auth setup', async ({ request }) => {\n"
-        "  const user = process.env.ATLAS_APP_USER;\n"
-        "  const password = process.env.ATLAS_APP_PASSWORD;\n"
-        f"  const endpoint = {json.dumps(endpoint)};\n"
-        f"  const userField = {json.dumps(user_field)};\n"
-        f"  const passField = {json.dumps(pass_field)};\n"
-        f"  const tokenKey = {json.dumps(token_key)};\n"
-        f"  const storageKey = {json.dumps(storage_key)};\n"
-        f"  const stateFile = {json.dumps(state_rel)};\n"
-        "  if (!user || !password) {\n"
-        "    console.warn('[atlas] 警告：未设置 ATLAS_APP_USER/ATLAS_APP_PASSWORD ⇒ 跳过登录预置（需要登录态的用例会失败）');\n"
-        "    mkdirSync(dirname(stateFile), { recursive: true });\n"
-        "    writeFileSync(stateFile, JSON.stringify({ cookies: [], origins: [] }));\n"
-        "    return;\n"
-        "  }\n"
-        "  const form = new URLSearchParams({ [userField]: user, [passField]: password });\n"
-        "  const resp = await request.post(endpoint, {\n"
-        "    headers: { 'content-type': 'application/x-www-form-urlencoded' },\n"
-        "    data: form.toString(),\n"
-        "  });\n"
-        "  if (!resp.ok()) {\n"
-        "    throw new Error(`[atlas] 应用靶场登录失败（HTTP ${resp.status()}）：核对服务可达 / ATLAS_APP_USER·ATLAS_APP_PASSWORD / 端点 ${endpoint}`);\n"
-        "  }\n"
-        "  const token = (await resp.json())[tokenKey];\n"
-        "  const origin = process.env.ATLAS_BASE_URL ?? " + json.dumps(base) + ";\n"
-        "  const state = {\n"
-        "    cookies: [] as unknown[],\n"
-        "    origins: [{ origin, localStorage: [{ name: storageKey, value: token }] }],\n"
-        "  };\n"
-        "  mkdirSync(dirname(stateFile), { recursive: true });\n"
-        "  writeFileSync(stateFile, JSON.stringify(state));\n"
+        "import { test as base, expect } from '@playwright/test';\n"
+        "import { writeFileSync } from 'node:fs';\n"
+        "export * from '@playwright/test';\n\n"
+        "// 契约 rings/e2e/reference.md §10.1：控制台逐条执行的两条运行期语义——\n"
+        "//   ATLAS_RESULT_FILE：结果哨兵（持窗期间进程活着，控制台不能靠进程退出码判结果）；\n"
+        "//   ATLAS_KEEP_OPEN=1：跑完**不自动关浏览器**，留给人手动 review（用户 2026-09-23 定）。\n"
+        "const test = base.extend<{ atlasHold: void }>({\n"
+        "  atlasHold: [async ({ context }, use, testInfo) => {\n"
+        "    await use();\n"
+        "    if (process.env.ATLAS_RESULT_FILE) {\n"
+        "      try {\n"
+        "        writeFileSync(process.env.ATLAS_RESULT_FILE,\n"
+        "          JSON.stringify({ exitstatus: testInfo.status === 'passed' ? 0 : 1 }));\n"
+        "      } catch { /* 哨兵写失败 ⇒ 控制台回落进程退出码 */ }\n"
+        "    }\n"
+        "    if (process.env.ATLAS_KEEP_OPEN !== '1') return;\n"
+        "    // 留窗：本 fixture 依赖 context ⇒ teardown 先于内置 context 关闭；\n"
+        "    // 轮询等人工关窗（关页 ⇒ pages 空；关整个浏览器 ⇒ 断连）再放行。\n"
+        "    await new Promise<void>((resolve) => {\n"
+        "      const timer = setInterval(() => {\n"
+        "        let done = false;\n"
+        "        try {\n"
+        "          const b = context.browser();\n"
+        "          done = context.pages().length === 0 || !b || !b.isConnected();\n"
+        "        } catch {\n"
+        "          done = true;\n"
+        "        }\n"
+        "        if (done) { clearInterval(timer); resolve(); }\n"
+        "      }, 250);\n"
+        "    });\n"
+        "  }, { auto: true }],\n"
         "});\n"
+        "export { test, expect };\n"
     )
+    write(scripts_dir / "atlas-hold.ts", hold_ts, args.apply, results)
+    # fabricated 段只要求 storage_key（§5.8）⇒ 其余取证键用 .get 兜默认，不假设存在。
+    endpoint = (app_login or {}).get("endpoint") or "/login"
+    user_field = (app_login or {}).get("username_field") or "username"
+    pass_field = (app_login or {}).get("password_field") or "password"
+    token_key = (app_login or {}).get("token_key") or "access_token"
+    storage_key = (app_login or {}).get("storage_key") or "access_token"
+    if login_mode == "fabricated":
+        # 契约 §5.8（2026-10-12）：纯前端桩项目 —— 不发真实登录请求，直写假令牌。
+        # 真实登录语义（换取失败 ⇒ 报错中止）只属 real；fabricated 无凭据面、无网络面。
+        setup_ts = (
+            "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py；重跑覆盖。\n"
+            "import { test } from '@playwright/test';\n"
+            "import { mkdirSync, writeFileSync } from 'node:fs';\n"
+            "import { dirname } from 'node:path';\n\n"
+            "test('atlas auth setup', async () => {\n"
+            f"  const storageKey = {json.dumps(storage_key)};\n"
+            f"  const stateFile = {json.dumps(state_rel)};\n"
+            "  console.warn('[atlas] app_login.mode=fabricated：不发真实登录请求，"
+            "直写固定假令牌（纯前端桩项目，契约 §5.8）');\n"
+            "  const origin = process.env.ATLAS_BASE_URL ?? " + json.dumps(base) + ";\n"
+            "  const state = {\n"
+            "    cookies: [] as unknown[],\n"
+            "    origins: [{ origin, localStorage: [{ name: storageKey, value: 'atlas-fabricated-token' }] }],\n"
+            "  };\n"
+            "  mkdirSync(dirname(stateFile), { recursive: true });\n"
+            "  writeFileSync(stateFile, JSON.stringify(state));\n"
+            "});\n"
+        )
+    else:
+        setup_ts = (
+            "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py；重跑覆盖。\n"
+            "import { test, expect } from '@playwright/test';\n"
+            "import { mkdirSync, writeFileSync } from 'node:fs';\n"
+            "import { dirname } from 'node:path';\n\n"
+            "test('atlas auth setup', async ({ request }) => {\n"
+            "  const user = process.env.ATLAS_APP_USER;\n"
+            "  const password = process.env.ATLAS_APP_PASSWORD;\n"
+            f"  const endpoint = {json.dumps(endpoint)};\n"
+            f"  const userField = {json.dumps(user_field)};\n"
+            f"  const passField = {json.dumps(pass_field)};\n"
+            f"  const tokenKey = {json.dumps(token_key)};\n"
+            f"  const storageKey = {json.dumps(storage_key)};\n"
+            f"  const stateFile = {json.dumps(state_rel)};\n"
+            "  if (!user || !password) {\n"
+            "    console.warn('[atlas] 警告：未设置 ATLAS_APP_USER/ATLAS_APP_PASSWORD ⇒ 跳过登录预置（需要登录态的用例会失败）');\n"
+            "    mkdirSync(dirname(stateFile), { recursive: true });\n"
+            "    writeFileSync(stateFile, JSON.stringify({ cookies: [], origins: [] }));\n"
+            "    return;\n"
+            "  }\n"
+            "  const form = new URLSearchParams({ [userField]: user, [passField]: password });\n"
+            "  const resp = await request.post(endpoint, {\n"
+            "    headers: { 'content-type': 'application/x-www-form-urlencoded' },\n"
+            "    data: form.toString(),\n"
+            "  });\n"
+            "  if (!resp.ok()) {\n"
+            "    throw new Error(`[atlas] 应用靶场登录失败（HTTP ${resp.status()}）：核对服务可达 / ATLAS_APP_USER·ATLAS_APP_PASSWORD / 端点 ${endpoint}`);\n"
+            "  }\n"
+            "  const token = (await resp.json())[tokenKey];\n"
+            "  const origin = process.env.ATLAS_BASE_URL ?? " + json.dumps(base) + ";\n"
+            "  const state = {\n"
+            "    cookies: [] as unknown[],\n"
+            "    origins: [{ origin, localStorage: [{ name: storageKey, value: token }] }],\n"
+            "  };\n"
+            "  mkdirSync(dirname(stateFile), { recursive: true });\n"
+            "  writeFileSync(stateFile, JSON.stringify(state));\n"
+            "});\n"
+        )
     write(scripts_dir / "atlas-auth.setup.ts", setup_ts, args.apply, results)
     gitignore = scripts_dir / ".gitignore"
     if not gitignore.is_file():

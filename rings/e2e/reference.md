@@ -145,7 +145,7 @@ product/e2e/
 | 落点 | 字段 |
 |---|---|
 | 索引主表 | `ID` · `页面` · `中文标题` · `类型` · `关联AC` · `需求` · `状态` · `状态原因` · `分片链接` |
-| 分片 `atlas-case` 块 | `id` · `intent` · `pages` · `precondition` · `auth`（可选，`preset` \| `none`，缺省 `preset`）· `step` · `expected` · `testid` · `seed`（可选） |
+| 分片 `atlas-case` 块 | `id` · `intent` · `pages` · `precondition` · `auth`（可选，`preset` \| `none`，缺省 `preset`）· `step` · `expected` · `testid` · `seed`（可选）· `mock`（可选，§5.8） |
 
 - **状态类字段（`状态` / `状态原因`）只在索引**——执行结果回写索引。
 - `testid` **只在分片**——`validate_testids.py` 只读 `cases/*.md`。
@@ -300,6 +300,31 @@ testid:
 
 - **种子/初始数据变更须跨域对账（2026-10-05 补，project-management 批实证）**：种子是全部分片数据前提的公共底座——变更种子字段（枚举值 / 状态 / 增删实体）前，须逐案核对全部既有分片的 `initial:` 断言与跨域冻结 AC 是否被波及（实证：AC-PROJECT-017 冻结徽标 × PROJECT-R-002 × config 批种子 unverified 的合取矛盾，项目 issues P12）。
 
+### 5.8 网络边界打桩（`mock:`，2026-10-12 定）
+
+**裁决定位**（对抗评审 `product/reviews/proposals-for-review/01-frontend-e2e-mock-proposal.md` 修订案，用户 2026-10-12 拍板）：桩的**状态性以用例为边界声明**，实现载体不限（生成器统一编译为网络边界派发表）；**套件级共享假后端维持否决**（维护陷阱取证 = 该提案第三节 #1）。适用判据一句话：**被测状态机必须完全位于前端——凡「后端记得上一步」的流程（服务端分配 ID 回显、服务端会话 / 草稿、SSE / WebSocket 推送流、OAuth 第三方域交互）出界**，须真实后端或集成测试承载，不得以桩降级表达。
+
+- **开关（硬，防全后端项目误用）**：`stack-profile.yaml` 的 `e2e.mock.mode`（`off` **缺省** = 现行为；`on` = 放行 `mock:` 行）。**未声明 / off 而分片出现 `mock:` 行 ⇒ 文本期 FAIL + 生成器中止**——真实后端健在的项目里写桩 = 静默屏蔽真 API 回归。`on` 时必须同时声明 `e2e.mock.api_prefix`（以 `/` 开头：桩路径锚定前缀 + 运行期拦截范围）。字段契约见 `shared/stack-profile.md` §2。
+- **行式语法**（与 `seed:` 同一行式风格，stdlib 可解析；`#` 后中文说明可选）：
+
+  ```atlas-case
+  mock:
+    - GET /api/v1/users -> fixtures/users/list-empty.json        # 单发：命中即返（缺省 200）
+    - POST /api/v1/users -> status 400 fixtures/users/create-error.json
+    - GET /api/v1/jobs/1 -> seq fixtures/jobs/pending.json, fixtures/jobs/done.json   # 按调用次序出队；队空 fail-loud
+    - GET /api/v1/projects -> delay 300ms fixtures/projects/list.json  # 延迟应答（慢动作回放下 loading 态可见）
+  ```
+
+  - 方法枚举 `GET|POST|PUT|PATCH|DELETE`；`seq` 项可带状态码前缀（`503:fixtures/e.json`，缺省 200）——重试 / 防重复提交的「先败后成」用此表达；`seq` 与 `delay` 不得叠写。
+  - 路径必须落在 `api_prefix` 内（锚定门）；fixture 引用必须以 `fixtures/` 开头（相对 `product/e2e/`）。
+  - `mock:` 行必须**先于首条 `step`**（注册先于 `goto` 是拦截不漏的时序前提）。
+  - **`mock:` 与 `seed:` 正交**：seed 是环境播种声明（受 `e2e.seed.mode` 的 declare 豁免辖），mock 是运行期网络行为（**不受 declare 豁免**）——两通道不得合并解析。
+- **fixtures 静态数据**：`product/e2e/fixtures/<page>/…`，响应正文 JSON 文本。**引用闭环 + 收紧三门**（§8.3）：引用存在（缺 = FAIL）、孤儿（盘上未被任何用例引用 = FAIL，防僵尸数据）、schema 收紧（同名伴生 `<fixture>.schema.json` 存在时 fixture 必须 ⊨ schema 且声明 `properties` 的对象层必须 `additionalProperties: false`——多余字段即 FAIL，防「后端删字段桩不知道」的静默假绿灯）。fixtures 内**禁放真实凭据**（凭据纪律 §7.1 不因桩豁免）。
+- **运行期语义（生成器统一编译，§7.1）**：每用例**单条** `context.route` 派发表按 **pathname + method** 命中（query 天然免疫；不逐行注册 glob——注册逆序 + query 不匹配 = 两类静默穿透）；前缀内未命中派发表 ⇒ **fail-loud**（abort + 用例末尾审计断言点名未桩 URL 清单），前缀外放行；`OPTIONS` 预检自动 204、应答补 CORS 头（跨源桩不因浏览器 CORS 层白屏）。**生命周期 = 当前用例**（每用例独立 context；注册先于 `goto`）。
+- **证据披露（硬）**：桩是证据链上的一等声明——每用例的**桩命中清单**（方法 × 路径 × fixture × 次数）写入测试注记（`atlas-mock`）并打 `[atlas-mock]` 日志行；控制台用例卡片渲染 **MOCKED 徽标**（§10.1）。人工验收走查者必须能看见「这条绿是桩撑的」。
+- **零步基线咬合**：基线测试自身不挂桩 ⇒ 无后端环境下探针全 null ⇒ **空转绿灯**。mock 页（分片含 `mock:` 行）的基线降级为**显式空转**：生成物注释标记 + §8.3 **WARN**（恒真守卫在该页失效 = 知悉项，不静默）。后续如需恢复守卫强度，引入 `mock-default:`（页级缺省桩集）另立批。
+- **登录预置咬合**：纯前端桩项目**不应声明真实登录取证**（`e2e.app_login` 段缺失 = 合法降级，既有语义）；确需预置会话的桩项目用 **`e2e.app_login.mode: fabricated`**（§7.1 / `shared/stack-profile.md` §2：setup 不发真请求、直写假令牌进 storageState），或用例 `auth: none` + 桩登录端点走完整登录流。
+
 ---
 
 ## 6. 生成算法
@@ -395,13 +420,16 @@ testid:
 - **生成物必须可被运行器收集**（2026-09-23 补）：一页一脚本的文件名为 `<page>.<ext>`（不以 `test_` 开头），而 python 侧运行器默认只收集 `test_*.py` ⇒ 生成器**必须**在运行器原生配置里声明收集规则（python：`conftest.py` 的 `pytest_configure` 里按页面文件名扩 `python_files`）；否则「一页一脚本」等于不执行。**不要改用 `pytest_collect_file` 自建 Module**（2026-09-23 实测）：显式点名 `<page>.py::<test>` 时，pytest 的默认收集与自建 Module 会**各收一次** ⇒ 单条跑实际跑两遍（取证：`login.py::test_e2e_login_001` → `2 tests collected`）；扩 `python_files` 则由 pytest 自己按路径去重（同一条 → `1 test collected`）。
 - **页面 URL** = 索引**页面表**（§3.2）该页的 `路由` 列——唯一来源，不从文件系统派生（E1；带参路由取业务段，§3.1）。
 - **派生、可重生成**：重跑覆盖 `<page>.<ext>` 与运行器配置；`_support/` 永不覆盖；dry-run 为缺省，`--apply` 写盘。
+- **网络边界打桩编译（§5.8，2026-10-12 补）**：`mock:` 行**不逐行产路由**——每用例编译为**单条 `context.route`**（覆盖 popup 弹窗）按 **pathname + method** 派发：前缀内未命中 ⇒ `abort` + 用例末尾审计断言点名未桩 URL 清单（**fail-loud**；不得 `continue`——那是混布环境下的静默假绿）；前缀外放行；`OPTIONS` 自动 204 + 应答补 CORS 头。fixture 内容**生成期读入并内联**为字面量（生成物 = 确定性派生物，`atlas_check` 的「生成物最新」门看守 stale 内联）；命中记 `atlas-mock` 测试注记 + `[atlas-mock]` 日志行（§5.8 证据披露）。mock 页的零步基线产**空转标记**注释（§5.8）。**零变化承诺**：未启用 `e2e.mock` 的项目，生成物与既有形态逐字节一致（新 helper 只在 mock 页脚本的头部出现）。
+- **`app_login.mode: fabricated`（2026-10-12 补，§5.8）**：`mode` 显式 `fabricated` 时 setup **不发真实登录请求**——直接把固定假令牌写入 storageState（必填字段收窄为 `storage_key`）。真实登录语义（换取失败 ⇒ 报错中止）只属缺省的 `real`。
+- **`atlas-hold.ts` 生成物（2026-10-12 补，§10.1）**：页面脚本的 `test` / `expect` 引入源——承载控制台「跑完留窗（`ATLAS_KEEP_OPEN=1`）+ 结果哨兵（`ATLAS_RESULT_FILE`）」；环境变量未设时行为与 `@playwright/test` 原生一致。py 时代的等价物 `conftest.py` 已随单轨化退役。
 - 命令：`python3 .atlas/scripts/gen_e2e_scripts.py --root <项目根> [--apply]`。
 
 ---
 
 ## 8. 校验清单（本环门）
 
-两个校验器均为**纯标准库、无框架名**；CLI 统一 `--root <项目根> [--json]`、输出 `{ok,status,checks[]}`、`PASS`/`WARN` → 退出码 0、`FAIL` → 退出码 1（学 `validate_prd.py`）。门控态记 `N/A`、不计分母。
+三个校验器均为**纯标准库、无框架名**；CLI 统一 `--root <项目根> [--json]`、输出 `{ok,status,checks[]}`、`PASS`/`WARN` → 退出码 0、`FAIL` → 退出码 1（学 `validate_prd.py`）。门控态记 `N/A`、不计分母。
 
 ### 8.1 `validators/validate_testids.py`
 
@@ -469,6 +497,22 @@ testid:
 >
 > **（2026-09-24 追加）本条的适用范围由 §6.0 `C-new` 收紧**：不是「语义项交给 agent 自觉」，而是「语义项**迁到运行期门**」—— 能写成可执行断言的语义纪律（R9 页面初值）就写成运行期测试；只有真正无法执行化的（"这条断言是否异源"、去重 intent）才留在纪律里。**把只能运行期判的东西写成文本期判据，等于没判。**
 
+### 8.3 `validators/validate_e2e_mocks.py`（网络边界打桩门，2026-10-12 新增）
+
+前置：`product/e2e/e2e-index.md` 存在（否则 N/A，`atlas_check` 记 SKIP）。读 `stack-profile.yaml` 的 `e2e.mock` 段 + 全部分片 `mock:` 行 + `product/e2e/fixtures/`。**「后端记得上一步」类出界判据是语义项，不进本门**（§5.8 判据一句话由人 / 独立审查承担）。
+
+| 项 | 判定 |
+|---|---|
+| mode 开关门 | 分片出现 `mock:` 行而 `e2e.mock.mode` 未声明 / 非 `on` ⇒ **FAIL**（防全后端项目静默屏蔽真 API 回归；镜像 `e2e.seed.mode` 的 declare|enforce 先例，B197-1） |
+| mode / api_prefix 前置 | `mode` 白名单外取值 ⇒ **FAIL**；`on` 而 `api_prefix` 缺失 / 不以 `/` 开头 ⇒ **FAIL** |
+| 行语法 | 方法 ∉ {GET,POST,PUT,PATCH,DELETE}、缺 `->`、`seq` 项数 < 1、状态码非三位整数、`delay` 非 `Nms`（1–5000）形态、`seq` 与 `delay` 叠写 ⇒ **FAIL** 并逐行指名 |
+| 路径锚定 | `mock:` 路径不以 `api_prefix` 开头 ⇒ **FAIL**（拦误伤静态资源 / 越界桩） |
+| fixture 引用存在 | 引用的 `fixtures/…` 文件不存在 ⇒ **FAIL**（生成期读文件内联为双保险） |
+| fixture 孤儿 | `product/e2e/fixtures/` 下未被任何 `mock:` 行引用 ⇒ **FAIL**（防僵尸数据；与 §8.1 双向集合同构）；伴生 `*.schema.json` 无同位 fixture ⇒ **FAIL** |
+| fixture schema 收紧 | 伴生 `<fixture>.schema.json` 存在时：fixture ⊨ schema（子集：`type` / `properties` / `required` / `enum` / `items`）且声明 `properties` 的对象层必须 `additionalProperties: false` ⇒ 违者 **FAIL**。无伴生 schema ⇒ PASS 不阻断（纯前端无契约源的入场形态；补 schema 即收紧） |
+| mock 先于 step | `mock:` 行出现在首条 `step` 之后 ⇒ **FAIL**（注册先于 `goto` 的时序前提） |
+| 零步基线空转 | `mode: on` 且某页分片含 `mock:` 行 ⇒ 该页**WARN**（§5.8：恒真守卫失效是知悉项，非失败） |
+
 ---
 
 ## 9. 与其它环的接口 / 本环不产出
@@ -515,7 +559,8 @@ testid:
 | 启动 | `python3 .atlas/scripts/e2e_console.py --root .`（默认端口 4190；`--slowmo` / `--timeout` / `--no-head` / `--auto-close` 可选） |
 | 静态资源 | `.atlas/templates/e2e/console/`（`index.html` / `app.js` / `console.css`）；环境变量 `ATLAS_CONSOLE_ASSETS` 可覆盖 |
 | 只读输入 | `product/e2e/e2e-index.md` + `product/e2e/cases/*.md`；格式解析**复用** `validate_e2e_index.py`，不写第二份 |
-| 执行 | 一次一条（**并发 = 1**）、有头子进程、单条 wall-clock 超时到点 kill 并如实报「超时」；地址 = `e2e.app_base_url`（E1 单段；来源下拉随 E1 删除，`#155`——meta 行保留 base_url 展示）。**blocked / skipped 用例执行按钮禁用**（title 带索引状态原因；服务端同判诚实拒绝，`#158`——生成物为 `test.skip` 本无 node id，不得误报「重跑生成」） |
+| 执行 | 一次一条（**并发 = 1**）、node 单轨（`<e2e.node_modules>/.bin/playwright test -c playwright.config.ts <file>.spec.ts:<line> --headed --slowmo=<N>`，可执行解析与 `atlas_check`「E2E 真跑」门同一规则；缺或不可达 ⇒ 服务端诚实拒绝，不起注定失败的子进程；「跑完留窗 + 结果哨兵」由 `atlas-hold.ts` 承载，2026-10-12 迁移批）、单条 wall-clock 超时到点 kill 并如实报「超时」；地址 = `e2e.app_base_url`（E1 单段；来源下拉随 E1 删除，`#155`——meta 行保留 base_url 展示）。**blocked / skipped 用例执行按钮禁用**（title 带索引状态原因；服务端同判诚实拒绝，`#158`——生成物为 `test.skip` 本无 node id，不得误报「重跑生成」） |
+| **桩披露（2026-10-12，§5.8）** | 含 `mock:` 行的用例卡片渲染 **MOCKED 徽标**（分片静态事实）+ 展开区 mock 清单；执行输出的 `[atlas-mock]` 命中行随日志流呈现（运行时事实）——人工走查者必须能看见「这条绿是桩撑的」 |
 | **评审维度与执行状态正交** | 页面 `localStorage` 草稿 = 人的勾选；索引 `状态` 列（`red` / `green` / `blocked` / `skipped`；E0 历史态 `prototype-pass` 见 §5.4）= 执行结果。**两者不得互相推导**；「人工 review 通过」只在**执行通过**后解锁 |
 | 提交（唯一写盘点） | 点「提交」才一次性落两处：① 账本 `product/e2e/reviews/console/events.jsonl` 追加**一条快照**（append-only，唯一真相源；派生人读 `ledger.md`）；② 回写索引 `状态` 列（先预览、确认后写）。不提交 ⇒ 服务端不知道任何过程 |
 | 运行时产物落点 | 账本与人读件**只落 `product/e2e/reviews/console/`**；控制台本体与静态资源**不落** `product/`（`.atlas/` 才是包的落点，且 `install.sh` 会整包刷新）。界面文案**面向用户**（去黑话：headful →「执行时弹出浏览器窗口」，`#156`）；说明/提示样式与表头视觉区分（`#157`） |
@@ -530,7 +575,7 @@ testid:
 2. **用例变化**：新增 / 修改 / 停用（含 ID 与所回指 AC）。
 3. **testid 变化**：用例分片应然清单新增 / 改名的 testid 及其引用同步情况。
 4. **脚本**：生成 / 重生成的页面脚本清单。
-5. **校验结果**：两个校验器的 PASS / WARN / FAIL 项；门控态 N/A 说明。
+5. **校验结果**：各校验器（§8.1 / §8.2 / §8.3）的 PASS / WARN / FAIL 项；门控态 N/A 说明。
 6. **独立审查**（§12）：本次报告目录与 `review.json` 的 `status`；有 `Critical` 时明确「不得生成脚本」。
 7. **未发现 / 无法取证**：及取证范围。
 
