@@ -38,6 +38,15 @@ import re
 import sys
 from pathlib import Path
 
+# 随包内核引导（`_support/`，2026-10-12 单源批）：用例块解析取 `_support/case_block.py`
+# 单源实现（原与 gen_e2e_scripts 逐字节双拷贝；本文件被控制台经内核加载，见 _support/siblings.py）。
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.siblings import load_module  # noqa: E402
+
+# 保名兼容（本文件内与外部按名引用）
+parse_block = load_module("case_block").parse_block
+
 MAIN_COLUMNS = ["用例ID", "页面", "中文标题", "类型", "关联AC", "需求", "状态", "状态原因", "分片"]
 REV_COLUMNS = ["页面", "断言落点用例", "链路经过用例"]
 
@@ -51,6 +60,9 @@ AC_RE = re.compile(r"^AC-[A-Z0-9]+-\d{3}$")
 # 该小节内的 AC 其被测属性**只能在初始态观测**（骨架 / 默认面板 / 按数据渲染构成）。
 STRUCT_LIST_HEAD = "#### 结构类 AC 清单"
 STRUCT_AC_RE = re.compile(r"AC-[A-Z0-9]+-\d{3}")
+# 契约 §8.2 / PRD 环 §五（2026-10-12 补，`3509 §B201-3`）：PRD 环登记「不可验 AC」的小节标题 ——
+# 「AC 反向覆盖」门从零挂靠清单中**减去**本清单（豁免落点定形 = 本条的落地）。
+UNVER_LIST_HEAD = "#### 不可验 AC 清单"
 SHARD_RE = re.compile(r"cases/(?P<file>[^#)\s]+)#(?P<anchor>[a-z0-9-]+)")
 HEAD = re.compile(r"^##\s+(E2E-[A-Za-z0-9-]+)\b.*$", re.M)
 BLOCK = re.compile(r"```atlas-case\s*\n(.*?)```", re.S)
@@ -71,7 +83,7 @@ REFRESH_WORDS = ("刷新", "reload", "refresh")
 I18N_HINTS = (re.compile(r"\bt\("), re.compile(r"\b[a-z]+\.[a-z]+\.[a-z]+\b"), re.compile(r"\b[A-Z]{2,}_[A-Z_]+\b"))
 
 # 分片 step / expected 的动词词表（契约 `rings/e2e/reference.md` §5.5，2026-09-23 定）
-ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "hover", "refresh", "goto", "waitFor", "download")
+ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "hover", "refresh", "goto", "waitFor", "download", "upload")
 ASSERT_VERBS = ("text", "contains", "count", "countOptions", "visible", "hidden", "enabled", "disabled", "checked", "unchecked", "value", "attr", "delta")
 # 契约 §5.6 R9：`expected` 行可加**行首前缀**，显式声明该断言的判据形状。
 # 本校验器只负责**形态项**（前缀后是词表内的动词 / 不嵌套 / `unchanged:` 的用例有提交性动作）；
@@ -184,29 +196,6 @@ def tables(text: str) -> list[tuple[list[str], list[list[str]]]]:
     return out
 
 
-def parse_block(body: str) -> dict:
-    d: dict = {"pages": [], "precondition": [], "seed": [], "mock": [], "step": [], "expected": [], "testid": []}
-    key = None
-    for line in body.splitlines():
-        s = line.strip()
-        if not s:
-            continue
-        if s.startswith("- ") and key:
-            d[key].append(s[2:].strip())
-            continue
-        if ":" in s:
-            k, v = s.split(":", 1)
-            k, v = k.strip(), v.strip()
-            if k in d:
-                key = k
-                if v:
-                    d[k].append(v)
-            else:
-                d[k] = v
-                key = None
-    return d
-
-
 def seed_models_check(root: Path, blocks: dict[str, dict]) -> tuple[str, str]:
     """`seed:` 的实体 × 字段必须存在于 structure 的 `data-models` 事实（契约 §5.7，`3509 §98 ⑪`）。
 
@@ -249,6 +238,34 @@ def seed_models_check(root: Path, blocks: dict[str, dict]) -> tuple[str, str]:
     return ("FAIL", "；".join(bad[:6])) if bad else \
         ("PASS", f"{len(seeds)} 条用例的 seed 与 {len(models)} 个表/模型对账通过")
 
+
+def upload_fixture_check(root: Path, blocks: dict[str, dict]) -> tuple[str, str]:
+    """`upload` 行的 fixture 引用闭环（契约 §5.5，B201-1，2026-10-12）。
+
+    值 = 相对 `product/e2e/fixtures/` 的文件路径（与 §5.8 mock 同基线、同一 fixtures 树）。
+    判据（结构门）：**值形态**（非空 / 非绝对路径 / 无 `..` 段）+ **文件存在**。无用例声明
+    `upload` ⇒ PASS（空集合法，N/A 不是通过的反面——空集就是合法形态）。生成器侧生成期
+    同款检查（缺 ⇒ exit 2 列明）——两侧同步，防「校验器放行、生成器认不得」的半通状态。
+    """
+    uploads: list[tuple[str, str]] = []
+    for cid, b in blocks.items():
+        for s in b.get("step") or []:
+            parts = s.split("#", 1)[0].strip().split(None, 2)
+            if parts and parts[0] == "upload":
+                uploads.append((cid, parts[2].strip() if len(parts) > 2 else ""))
+    if not uploads:
+        return "PASS", "无用例声明 `upload`（可选动作词）"
+    fixtures = root / "product" / "e2e" / "fixtures"
+    bad: list[str] = []
+    for cid, rel in uploads:
+        if not rel:
+            bad.append(f"{cid}: upload 缺文件路径参数")
+        elif rel.startswith("/") or ".." in rel.split("/"):
+            bad.append(f"{cid}: upload 值须为相对 fixtures/ 的路径（得 {rel!r}）")
+        elif not (fixtures / rel).is_file():
+            bad.append(f"{cid}: fixture 不存在：fixtures/{rel}")
+    return ("FAIL", "；".join(bad[:6])) if bad else \
+        ("PASS", f"{len(uploads)} 处 upload 的 fixture 引用均存在")
 
 
 def tid_owner(tid: str, pages: list[str]) -> str | None:
@@ -456,8 +473,9 @@ def validate(root: Path) -> Result:
     # 零挂靠 AC 收口（2026-10-04 实测：AC 129 / 索引已关联 80 / 已实现域零挂靠 9，其中
     # voice-library 6 条在该域独立审查 PASS + 走查单落盘之后仍在）。
     # 分级沿用 §8.1 testid 门先例：域内页面**全** `已实现` ⇒ 严判；含 `实现中` / `未开始` ⇒
-    # 该域不参与（用例尚未长出，不是缺口）。**首版 WARN 不 FAIL**——「不可验 AC」的机器可解析
-    # 豁免落点未定型（`§B36` 过早 FAIL 被量推翻的先例）；落点定形即升 FAIL。
+    # 该域不参与（用例尚未长出，不是缺口）。**豁免落点已定形（2026-10-12，`3509 §B201-3`）**：
+    # 域级 PRD §五 的「不可验 AC 清单」登记当前 UI 无观测面的 AC，本门从零挂靠清单中减去它
+    # （落点 = PRD 侧，理由：可不可验是 AC 定义（应然）的属性；自洽门见 validate_prd.py）。
     # 覆盖关系是**派生量**（真相源 = 主表 `关联AC` 列 + 域级 PRD §五 AC 定义行），不落第 4 张
     # 手工表（`single-source.md` §4：同一信息两处正文即漂移）。
     dom_status: dict[str, set[str]] = {}
@@ -469,6 +487,7 @@ def validate(root: Path) -> Result:
             if dom and dom != "—":
                 dom_status.setdefault(dom, set()).add(cells[3])
     dom_acs: dict[str, set[str]] = {}
+    dom_unver: dict[str, set[str]] = {}
     for pf in prd_files:
         seg = pf.read_text(encoding="utf-8")
         fm_text = seg.split("---")[1] if seg.startswith("---") else ""
@@ -478,19 +497,43 @@ def validate(root: Path) -> Result:
         dom_acs[m_slug.group(1)] = {
             m.group(1) for m in re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|", seg, re.M)
         }
+        # 不可验 AC 清单（豁免面，2026-10-12，`3509 §B201-3`）：只取小节内**表格行**的 AC
+        # （至下一个标题止；说明散文里的 AC 提及不构成条目）；自洽（清单 ⊆ 本文档 AC 表）
+        # 由 validate_prd.py 参数 4 检——两门分工不重叠。
+        unver: set[str] = set()
+        if UNVER_LIST_HEAD in seg:
+            tail = seg.split(UNVER_LIST_HEAD, 1)[1]
+            cut = re.search(r"^#{1,4} ", tail, re.M)
+            zone = tail[:cut.start()] if cut else tail
+            unver = {m.group(1) for m in
+                     re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|", zone, re.M)}
+        dom_unver[m_slug.group(1)] = unver
     if not dom_acs or not dom_status:
         res.add("AC 反向覆盖", "N/A", "域级 PRD 无 `domain:` 声明，或索引无页面表")
     else:
         covered_ac = {g["关联AC"] for g in grid}
         gaps: list[str] = []
+        exempted: list[str] = []
         for dom in sorted(dom_acs):
             if dom_status.get(dom) != {"已实现"}:
                 continue
-            missing = sorted(dom_acs[dom] - covered_ac)
+            missing = dom_acs[dom] - covered_ac
+            unver = dom_unver.get(dom, set())
+            hit = missing & unver
+            if hit:
+                exempted.append(f"{dom}:{len(hit)}")
+            missing = sorted(missing - unver)
             if missing:
                 gaps.append(f"{dom}:{'/'.join(missing)}")
+        detail = f"已实现域零挂靠={gaps[:6]}" if gaps else ""
+        if exempted:
+            detail += ("；" if detail else "") + f"不可验豁免={exempted}"
+        # 门级（2026-10-12，`3509 §B201-3`）：豁免落点已定形（PRD 侧「不可验 AC 清单」机器读取，
+        # 上方减法）⇒ **升 FAIL 通道就绪**；当前仍 WARN：三域残留的逐条裁决（补用例 / 登记不可验）
+        # 归 P9（随各域 B124 走查批），裁决清零即把本行级别改 FAIL（契约 §8.2 已同步改口；
+        # 过早 FAIL 被量推翻的先例见 `3509 §B36`——先让数据能过，再上严判）。
         res.add("AC 反向覆盖", "PASS" if not gaps else "WARN",
-                f"已实现域零挂靠={gaps[:6]}" if gaps else "")
+                (detail + "；残留待裁决（P9，清零后升 FAIL）") if gaps else detail)
 
     # 零证据用例须挂结构类 AC（契约 §8.2；2026-09-25 补，`3509 §B36` + `§B50`）：
     # `expected` **全部**带 `initial:` 的用例 = 零证据用例（它自己声明「不构成验证」）——
@@ -758,6 +801,9 @@ def validate(root: Path) -> Result:
     # 契约 §5.7：结构化 `seed:` 的实体 × 字段 ⇔ structure 的 data-models 事实（静态对账）
     _lvl, _det = seed_models_check(root, blocks)
     res.add("seed × models 对账", _lvl, _det)
+    # 契约 §5.5（B201-1，2026-10-12）：upload 行的 fixture 引用存在（值形态 + 文件存在）
+    _lvl, _det = upload_fixture_check(root, blocks)
+    res.add("upload fixture 引用存在", _lvl, _det)
     return res
 
 

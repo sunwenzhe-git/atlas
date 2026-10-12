@@ -35,6 +35,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+# 随包内核引导（`_support/`，2026-10-12 单源批）：行内注释剥离口径取单源实现
+# （本文件原是第三份副本；`issue_ledger_ids` 经内核加载本文件，路径同样受益）。
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.siblings import load_module  # noqa: E402
+
+strip_inline_comment = load_module("stack_profile").strip_inline_comment
+
 # 台账条目行：`| B<NN> | … |`（未决卷与归档卷同形）
 # `?…`? = ID 允许反引号包裹（实测形态：`| `B191-1` |`，2026-10-06 咬出裸正则漏抓 2 条）
 LEDGER_ROW = re.compile(r"^\|\s*`?\s*(B\d+(?:-\d+)?)\s*`?\s*\|", re.M)  # §B94：含轮次前缀形态 B<NN>-<k>
@@ -76,28 +84,6 @@ class Result:
         if "FAIL" in levels:
             return "FAIL"
         return "WARN" if "WARN" in levels else "PASS"
-
-
-def strip_inline_comment(line: str) -> str:
-    """去掉 YAML 行内注释：`#` 前有空白（或行首）且在引号外时截断。
-
-    手写解析器必须自己处理 —— 否则 `vault: /path   # 说明` 会把注释当成值的一部分
-    （实测踩到：vault 路径被读成 `/path   # 说明` ⇒ 目录不存在 ⇒ 台账卷定位不到）。
-    """
-    out, quote = [], None
-    for i, ch in enumerate(line):
-        if quote:
-            out.append(ch)
-            if ch == quote:
-                quote = None
-        elif ch in "'\"":
-            quote = ch
-            out.append(ch)
-        elif ch == "#" and (i == 0 or line[i - 1] in " \t"):
-            break
-        else:
-            out.append(ch)
-    return "".join(out).rstrip()
 
 
 def read_knowledge(root: Path) -> tuple[str | None, str]:

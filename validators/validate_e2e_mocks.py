@@ -29,13 +29,16 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-GEN_PATH = HERE.parent / "scripts" / "gen_e2e_scripts.py"
+
+# 随包内核引导（`_support/`，2026-10-12 单源批）：模块加载收敛为单源实现。
+if str(HERE.parent) not in sys.path:
+    sys.path.insert(0, str(HERE.parent))
+from _support.siblings import load_module  # noqa: E402
 
 
 class Result:
@@ -54,11 +57,8 @@ class Result:
 
 
 def load_generator():
-    """复用生成器的 mock 文法与 profile 解析（同一份解析，不写第二份——single-source §1）。"""
-    spec = importlib.util.spec_from_file_location("atlas_gen_e2e_scripts_for_mocks", GEN_PATH)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return mod
+    """复用生成器的 mock 文法（同一份解析，不写第二份——single-source §1）。"""
+    return load_module("gen_e2e_scripts")
 
 
 # ---------------------------------------------------------------- schema 收紧（子集校验）

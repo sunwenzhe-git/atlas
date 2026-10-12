@@ -33,6 +33,9 @@ AC_RE = re.compile(r"AC-[A-Z0-9]+-\d+")
 # 契约 §4「五、验收标准」（2026-09-25 补）：域级 PRD 末附**结构类 AC 清单**（只能初始态观测的 AC）。
 STRUCT_LIST_HEAD = "#### 结构类 AC 清单"
 STRUCT_AC_RE = re.compile(r"AC-[A-Z0-9]+-\d{3}")
+# 契约 §4「五、验收标准」（2026-10-12 补，`3509 §B201-3`）：**不可验 AC 清单**（当前 UI 无观测面的
+# AC——「AC 反向覆盖」门从零挂靠清单中减去它；豁免落点定形即本条的落地）。
+UNVER_LIST_HEAD = "#### 不可验 AC 清单"
 # 形态（`stack-profile.yaml` 的 `origin`）。词表与 `validate_stack_profile.py` / `validate_testids.py`
 # 同源，出厂测试逐项守恒（硬约束：同一口径的消费者数要数清）。
 ORIGINS = ("greenfield", "adopt")
@@ -303,6 +306,20 @@ def validate(root: Path) -> Result:
                 ghost = sorted(a for a in listed if a not in declared)
                 if ghost:
                     issues.append(f"{d.name} 结构类清单引用了不存在的 AC：{ghost}")
+            # 不可验 AC 清单自洽（契约 §4「五」，2026-10-12 补，`3509 §B201-3`）：与结构类同款——
+            # 清单是 E2E「AC 反向覆盖」门的豁免输入 ⇒ 幽灵豁免（引用了本域不存在的 AC）会让
+            # 一道不该豁免的 AC 静默逃过覆盖门 ⇒ FAIL。**只扫表格行**（清单 = 表格；
+            # 说明散文里的 AC 提及——如「先例 `AC-MIXING-001`」——不构成清单条目）。
+            if UNVER_LIST_HEAD in t:
+                head, tail = t.split(UNVER_LIST_HEAD, 1)
+                cut = re.search(r"^#{1,4} ", tail, re.M)
+                zone = tail[:cut.start()] if cut else tail
+                listed = set(m.group(1) for m in
+                             re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|", zone, re.M))
+                declared = set(AC_RE.findall(head))
+                ghost = sorted(a for a in listed if a not in declared)
+                if ghost:
+                    issues.append(f"{d.name} 不可验清单引用了不存在的 AC：{ghost}")
             # §五 AC 表列头（契约 §5 三列形态；2026-09-28 补，`3509 §B74`）：表列是契约承诺，
             # 无判据时文本与产物会长期不一致（实测：契约曾要求 6 列、7 份产物全 3 列，无人发现）。
             sec5d = section_of(t, "五") or ""

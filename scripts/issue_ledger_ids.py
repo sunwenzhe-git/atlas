@@ -36,22 +36,18 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import re
 import sys
 from pathlib import Path
 
-_VL = Path(__file__).resolve().parents[1] / "validators" / "validate_ledger.py"
+_PKG_ROOT = Path(__file__).resolve().parents[1]
 
+# 随包内核引导（`_support/`，2026-10-12 单源批）：模块加载收敛为单源实现。
+if str(_PKG_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PKG_ROOT))
+from _support.siblings import load_module  # noqa: E402
 
-def _load_vl():
-    spec = importlib.util.spec_from_file_location("_atlas_validate_ledger_for_ids", _VL)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-vl = _load_vl()
+vl = load_module("validate_ledger")
 
 
 def scan_texts(root: Path) -> list[tuple[str, str]]:

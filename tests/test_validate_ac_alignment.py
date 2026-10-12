@@ -11,16 +11,25 @@
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
-import sys
 import pytest
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
-if str(PKG_ROOT) not in sys.path:
-    sys.path.insert(0, str(PKG_ROOT))
 
-from validators.validate_ac_alignment import validate_ac_alignment, Result
+
+def _load(name: str, rel: str):
+    """随树加载（`atlas_check` 的出厂测试行不带 PYTHONPATH —— 直接 import 校验器包会
+    ModuleNotFoundError；本仓测试惯例 = 按 PKG_ROOT 路径加载，见 test_validators.py）。"""
+    spec = importlib.util.spec_from_file_location(name, PKG_ROOT / rel)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
+vaa = _load("validate_ac_alignment", "validators/validate_ac_alignment.py")
+validate_ac_alignment, Result = vaa.validate_ac_alignment, vaa.Result
 
 
 def create_minimal_project(

@@ -55,6 +55,15 @@ import re
 import sys
 from pathlib import Path
 
+# 随包内核引导（`_support/`，2026-10-12 单源批）：解析 / 加载口径一律经共享内核，
+# 本文件不再自持副本（此前 parse_profile 三份 / spec 加载五处，见 `_support/stack_profile.py` 头注）。
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.siblings import load_module  # noqa: E402
+
+_sp = load_module("stack_profile")
+parse_profile = _sp.parse_profile  # 单源别名（原实现已并入 `_support/stack_profile.py`）
+
 CASE_BLOCK = re.compile(r"```atlas-case\s*\n(.*?)```", re.S)
 RUNNERS = {"node-playwright": ".spec.ts"}  # 单轨（3507 BO）：python-playwright 已退役
 # 前置未声明（例：`e2e.app_base_url` 为空）的**独立退出码**（`3509 §B110`）：
@@ -70,7 +79,7 @@ APP_LOGIN_MODES = ("real", "fabricated")
 MOCK_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 
 # 分片 step / expected 的动词词表（契约 `rings/e2e/reference.md` §5.5，2026-09-23 定）
-ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "hover", "refresh", "goto", "waitFor", "download")
+ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "hover", "refresh", "goto", "waitFor", "download", "upload")
 ASSERT_VERBS = ("text", "contains", "count", "countOptions", "visible", "hidden", "enabled", "disabled", "checked", "unchecked", "value", "attr", "delta")
 NO_TESTID_VERBS = ("refresh", "goto")  # 这两个动词第二个 token 不是 testid（goto 的值是路径）
 # 契约 §5.6 R9：`expected` 行可加**行首前缀**，显式声明该断言的判据形状。
@@ -130,95 +139,11 @@ def parse_line(line: str) -> tuple[str, str, str, str]:
     return verb, (parts[1] if len(parts) > 1 else ""), (parts[2] if len(parts) > 2 else ""), note.strip()
 
 
-def _strip_inline_comment(s: str) -> str:
-    """剥行内 `#` 注释（引号外）。
-
-    与 `validate_stack_profile.py` 的口径一致：真实 profile 写作
-    `runner: node-playwright   # 唯一合法运行器（行内注释须剥）`，
-    不剥就会把整段注释当成值。
-    """
-    out: list[str] = []
-    q = None
-    for ch in s:
-        if q:
-            if ch == q:
-                q = None
-            out.append(ch)
-            continue
-        if ch in ("'", '"'):
-            q = ch
-            out.append(ch)
-            continue
-        if ch == "#":
-            break
-        out.append(ch)
-    return "".join(out).rstrip()
-
-
-def parse_profile(text: str) -> dict:
-    data: dict = {"prototype": {}, "e2e": {}}
-    section = None
-    sub = None  # 一级子块（目前只有 e2e.app_login，3509 §B101）：更深缩进的键归子块
-    for raw in text.splitlines():
-        line = _strip_inline_comment(raw.rstrip())
-        s = line.strip()
-        if not s or s.startswith("#"):
-            continue
-        if not line[:1].isspace() and line.endswith(":"):
-            section = line[:-1].strip()
-            sub = None
-            continue
-        if section not in ("prototype", "e2e"):
-            continue
-        m = re.match(r"^(\s+)([\w.-]+):\s*(.*?)\s*$", line)
-        if not m:
-            continue
-        indent, key = len(m.group(1)), m.group(2)
-        v = m.group(3).strip().strip("'\"")
-        v = None if v.lower() in ("", "null", "~") else v
-        if section == "e2e" and key == "app_login" and indent == 2 and v is None:
-            sub = "app_login"
-            data[section].setdefault("app_login", {})
-            continue
-        # `e2e.seed.hook`（契约 §5.7，2026-09-28）：数据播种通道（项目自定实现，路径相对项目根）
-        if section == "e2e" and key == "seed" and indent == 2 and v is None:
-            sub = "seed"
-            data[section].setdefault("seed", {})
-            continue
-        # `e2e.mock`（契约 §5.8，2026-10-12）：网络边界打桩开关段（mode / api_prefix）。
-        if section == "e2e" and key == "mock" and indent == 2 and v is None:
-            sub = "mock"
-            data[section].setdefault("mock", {})
-            continue
-        if sub is not None and indent > 2:
-            data[section][sub][key] = v
-            continue
-        sub = None
-        data[section][key] = v
-    return data
-
-
-def parse_block(body: str) -> dict:
-    d: dict = {"pages": [], "precondition": [], "seed": [], "mock": [], "step": [], "expected": [], "testid": []}
-    key = None
-    for line in body.splitlines():
-        s = line.strip()
-        if not s:
-            continue
-        if s.startswith("- ") and key:
-            d[key].append(s[2:].strip())
-            continue
-        if ":" in s:
-            k, v = s.split(":", 1)
-            k, v = k.strip(), v.strip()
-            if k in d:
-                key = k
-                if v:
-                    d[k].append(v)
-            else:
-                d[k] = v
-                key = None
-    return d
+# `strip_inline_comment` / `yaml_scalar` / `parse_profile` 已并入随包内核
+# `_support/stack_profile.py`（2026-10-12 单源批）；别名 `parse_profile` 见文件头部。
+# 其余消费者（validators/*）经 `_support.siblings.load_module(...)` 取用。
+# `parse_block` 同批并入 `_support/case_block.py`（原与 validate_e2e_index 逐字节双拷贝）。
+parse_block = load_module("case_block").parse_block
 
 
 def gather_cases(cases: Path) -> dict[str, list[dict]]:
@@ -480,6 +405,20 @@ def ts_case(case: dict, url: str) -> str:
                 raise ValueError(f"`download` 需要文件名 glob 参数: {s!r}（契约 §5.5）")
             actions.append(
                 f"await atlasDownload(page, '{tid}', {json.dumps(value, ensure_ascii=False)});"
+            )
+        elif verb == "upload":
+            # 契约 §5.5（B201-1，2026-10-12）：`upload <testid> <值>`，值 = 相对
+            # `product/e2e/fixtures/` 的文件路径（与 §5.8 mock 同一 fixtures 树；v1 单文件）。
+            # 路径按**脚本文件位置**解析（spec 位于 <e2e>/scripts/，'..' → <e2e>）——
+            # 两个真实载体 cwd 不同（控制台从 scripts 跑 / atlas_check 从项目根跑），
+            # 不得内联构建机绝对路径、不得依赖进程 cwd。缺值 ⇒ 中止（镜像 download）；
+            # fixture 存在性由 main() 的生成期检查把关（exit 2 列明）。
+            rel = value.strip()
+            if not rel:
+                raise ValueError(f"`upload` 需要 fixtures 相对路径参数: {s!r}（契约 §5.5）")
+            actions.append(
+                f"await page.getByTestId('{tid}').setInputFiles("
+                f"resolve(__dirname, '..', 'fixtures', {json.dumps(rel, ensure_ascii=False)}));"
             )
         else:
             raise ValueError(f"未知动作动词: {verb}（契约 §5.5）")
@@ -965,6 +904,33 @@ def main() -> int:
             print(f"  - {b}", file=sys.stderr)
         print(f"  共 {len(bad_mock)} 条", file=sys.stderr)
         return 2
+    # upload fixture 引用闭环（契约 §5.5，B201-1，2026-10-12）：值 = 相对
+    # `product/e2e/fixtures/` 的文件路径（与 §5.8 mock 同基线、同一 fixtures 树）。
+    # 生成期检查存在（缺 ⇒ exit 2 列明——镜像 §5.8 mock 的 fail-loud；校验器侧
+    # 「upload fixture 引用存在」为双保险）。
+    bad_upload: list[str] = []
+    fixtures_root = e2e_root / "fixtures"
+    for items in cases.values():
+        for c in items:
+            for s in c.get("step") or []:
+                verb, _tid, value, _ = parse_line(s)
+                if verb != "upload":
+                    continue
+                rel = value.strip()
+                if not rel:
+                    bad_upload.append(f"{c['id']}: `upload` 缺文件路径参数: {s!r}")
+                elif rel.startswith("/") or ".." in rel.split("/"):
+                    bad_upload.append(
+                        f"{c['id']}: `upload` 值须为相对 fixtures/ 的路径"
+                        f"（不得绝对路径 / `..`）: {value!r}")
+                elif not (fixtures_root / rel).is_file():
+                    bad_upload.append(f"{c['id']}: fixture 不存在：fixtures/{rel}（upload 行；契约 §5.5）")
+    if bad_upload:
+        print("ERROR: upload 行编译失败（契约 rings/e2e/reference.md §5.5）：", file=sys.stderr)
+        for b in bad_upload[:40]:
+            print(f"  - {b}", file=sys.stderr)
+        print(f"  共 {len(bad_upload)} 条", file=sys.stderr)
+        return 2
     idx_path = root / (e2e.get("index") or "product/e2e/e2e-index.md")
     urls = page_urls(idx_path.read_text(encoding="utf-8")) if idx_path.is_file() else {}
     if not cases:
@@ -1012,6 +978,10 @@ def main() -> int:
         for c in items:
             st = case_states.get(c.get("id", ""), ("", ""))
             c["_state"], c["_state_reason"] = st[0], st[1]
+        # 契约 §5.5（B201-1）：`resolve` 导入**仅 upload 页**出现（零变化承诺——
+        # 未使用 upload 的项目生成物逐字节不变）。
+        page_uses_upload = any(
+            parse_line(s)[0] == "upload" for c in items for s in (c.get("step") or []))
         # 契约 §5.6 R9（2026-09-30）：基线先于用例（与 python 侧同因：真栈用例持久化改态）。
         body = (
             "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py"
@@ -1020,7 +990,8 @@ def main() -> int:
             "的 node 载体；环境变量未设时行为与 @playwright/test 原生一致）\n"
             "import { test, expect } from './atlas-hold';\n"
             "import { readFileSync } from 'node:fs';\n"
-            "// 契约 §7.1：`waitFor` 的超时默认值（与 python 侧同值）\n"
+            + ("import { resolve } from 'node:path';\n" if page_uses_upload else "")
+            + "// 契约 §7.1：`waitFor` 的超时默认值（与 python 侧同值）\n"
             "const ATLAS_WAIT_TIMEOUT_MS = 10_000;\n\n"
             "function tsLoc(page: any, tid: string) {\n"
             "  return page.getByTestId(tid).first();\n"

@@ -303,6 +303,13 @@ PRD_DEMO = """# demo 域 PRD
 |---|---|
 {rows}
 
+#### 不可验 AC 清单
+
+> 契约（PRD 环契约 §五「验收标准」）。
+
+| AC ID | 为什么不可验 |
+|---|---|
+
 ## 六、Assumptions & Defaults
 
 ## 七、变更记录
@@ -843,6 +850,55 @@ def test_e2e_index_download_is_action_not_assertion() -> None:
         "- download home-cta-btn *.txt",
     ))
     assert bad["expected 动词合法"] == "FAIL", bad
+
+
+def test_e2e_index_upload_is_action_and_fixture_reference_closed() -> None:
+    """契约 §5.5（B201-1，2026-10-12）：`upload` 属**动作**（写在 `step` 侧），
+    值 = **相对 `product/e2e/fixtures/` 的文件路径**（与 §5.8 mock 同一 fixtures 树）。
+
+    两侧同测：① 写在 `step` ⇒ 校验器放行（`step 动词合法` PASS）；写在 `expected` ⇒
+    被拒（断言词表里没有它）—— 反向证据：它确实落在动作侧，不是两边都收（`3509 §B48`
+    的「校验器放行、生成器认不得」半通状态在本测试与生成器守恒钉子两侧同时封住）；
+    ② 「upload fixture 引用存在」门（结构门）：值形态（非空 / 非绝对路径 / 无 `..`）
+    + **文件存在**——文件在 ⇒ PASS、缺 ⇒ FAIL 并点名（镜像 §5.8 mock 的引用存在门；
+    生成器生成期同款 fail-loud 为双保险）。变异证明：摘掉校验器词表里的 `upload` ⇒
+    ① 的 step 侧断言变红。
+    """
+    ok = _levels(CASE_GOOD.replace(
+        "- click home-cta-btn          # 点击主操作按钮",
+        "- upload home-cta-btn uploads/sample.wav  # 投放音频样本",
+    ))
+    assert ok["step 动词合法"] == "PASS", ok
+
+    bad = _levels(CASE_GOOD.replace(
+        "- text home-title 首页        # 页面标题文案为「首页」",
+        "- upload home-cta-btn uploads/sample.wav",
+    ))
+    assert bad["expected 动词合法"] == "FAIL", bad
+
+    # fixture 引用存在门：文件在 ⇒ PASS；缺 ⇒ FAIL 点名；值形态越界 ⇒ FAIL
+    def upload_levels(rel: str, write: bool) -> dict:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            mk_prototype(root)
+            mk_cases(root, CASE_GOOD.replace(
+                "- click home-cta-btn          # 点击主操作按钮",
+                f"- upload home-cta-btn {rel}  # 投放音频样本",
+            ))
+            mk_index(root)
+            fx = root / "product" / "e2e" / "fixtures" / "uploads"
+            fx.mkdir(parents=True)
+            if write:
+                (fx / "sample.wav").write_text("RIFF", encoding="utf-8")
+            res = ve.validate(root)
+        return {c["check"]: c for c in res.checks}
+
+    row = upload_levels("uploads/sample.wav", True)["upload fixture 引用存在"]
+    assert row["level"] == "PASS", row
+    row = upload_levels("uploads/sample.wav", False)["upload fixture 引用存在"]
+    assert row["level"] == "FAIL" and "sample.wav" in row["detail"], row
+    row = upload_levels("../escape.wav", True)["upload fixture 引用存在"]
+    assert row["level"] == "FAIL", row  # 不得借 `..` 逃出 fixtures 树
 
 
 def test_e2e_index_initial_requires_reason() -> None:
@@ -2257,3 +2313,59 @@ def test_validate_e2e_mocks_gate_matrix() -> None:
 
     res = vm.validate(Path("/nonexistent-root"))  # 前置：E2E 资产未建 ⇒ N/A
     assert res.checks[0]["level"] == "N/A" and res.status == "PASS"
+
+
+def test_index_ac_reverse_coverage_subtracts_unverifiable_list() -> None:
+    """契约 §8.2 / PRD 环 §五（2026-10-12 补，`3509 §B201-3`）：域级 PRD「不可验 AC 清单」登记的
+    AC 从零挂靠清单中**减去**（豁免减法）——登记后门从 WARN 转 PASS 且披露豁免数。
+
+    变异证明：删掉减法（dom_unver 不读）⇒ 本用例红。
+    """
+    unverized = PRD_DEMO.format(ac="AC-HOME-001", rows="| `AC-HOME-001` | 纯渲染构成，页面初值即终态 |")
+    # 把 AC-HOME-999 登进不可验清单（行为面已被等价覆盖的半结构，先例 AC-MIXING-001）
+    unverized = unverized.replace(
+        "| AC ID | 为什么不可验 |\n|---|---|\n",
+        "| AC ID | 为什么不可验 |\n|---|---|\n| `AC-HOME-999` | 试验：下游系统可见，UI 无观测面 |\n",
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root, _with_page_table("已实现"))
+        mk_prd_raw(root, FM_GLOBAL + PRD_GLOBAL, FM_DOMAIN + unverized)
+        res = ve.validate(root)
+        row = [c for c in res.checks if c["check"] == "AC 反向覆盖"][0]
+        assert row["level"] == "PASS", row
+        assert "不可验豁免" in row["detail"] and "demo:1" in row["detail"], row
+
+
+def test_prd_unverifiable_list_ghost_fails() -> None:
+    """契约 PRD 环 §五（2026-10-12，`3509 §B201-3`）：不可验清单引用**本域不存在**的 AC
+    （幽灵豁免）⇒ validate_prd 参数 4 **FAIL**（防用幽灵条目遮掩覆盖缺口；与结构类同款自洽）。
+
+    两侧同测：真条目 ⇒ PASS；幽灵条目 ⇒ FAIL 且指名。
+    """
+    good = PRD_DEMO.format(ac="AC-HOME-001", rows="")
+    good = good.replace(
+        "| AC ID | 为什么不可验 |\n|---|---|\n",
+        "| AC ID | 为什么不可验 |\n|---|---|\n| `AC-HOME-999` | 下游可见，UI 无观测面 |\n",
+    )
+    bad = good.replace("`AC-HOME-999` | 下游可见", "`AC-GHOST-777` | 幽灵条目")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root, _with_page_table("已实现"))
+        mk_prd_raw(root, FM_GLOBAL + PRD_GLOBAL, FM_DOMAIN + good)
+        res = vpr.validate(root)
+        row = [c for c in res.checks if c["check"] == "参数4 追溯完整"][0]
+        assert row["status"] != "FAIL" or "不可验清单" not in row["detail"], row
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root, _with_page_table("已实现"))
+        mk_prd_raw(root, FM_GLOBAL + PRD_GLOBAL, FM_DOMAIN + bad)
+        res = vpr.validate(root)
+        row = [c for c in res.checks if c["check"] == "参数4 追溯完整"][0]
+        assert row["status"] == "FAIL" and "AC-GHOST-777" in row["detail"], row

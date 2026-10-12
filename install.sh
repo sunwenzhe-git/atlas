@@ -3,7 +3,7 @@
 # atlas installer —— 把 atlas 包装配到目标项目。
 #
 # 用法：
-#   bash install.sh [--target <项目根>] [--force] [--dry-run] [--no-skill] [--no-patch] [--no-wiring]
+#   bash install.sh [--target <项目根>] [--update] [--force] [--dry-run] [--no-skill] [--no-patch] [--no-wiring]
 #
 # 装配行为：
 #   1. 整包装配到 <目标>/.atlas/（shared / rings / apply / templates / adapters /
@@ -17,6 +17,9 @@
 #      hook（幂等，用 --no-wiring 跳过）。
 #      第 5、6 步属 global-rules §7 确认门动作，由本次显式安装触发。
 #
+# 模式：
+#   --update: 刷新已有项目的 .atlas/ 资产与平台 Skills 瘦桩（要求目标已初始化 .atlas/）。
+#
 # 幂等：.atlas/ 与 skill 瘦桩默认刷新（属包下发物，用 --no-skill 跳过 skill）；
 #       product/ 下的既有内容永不覆盖；workflow.md 补丁只做锚点插入、重跑即恢复；
 #       AGENTS.md 指针段与 config.yaml hook 就地更新、重跑即恢复。
@@ -26,6 +29,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 TARGET=""
+IS_UPDATE=0
 FORCE=0
 DRY_RUN=0
 INSTALL_SKILL=1
@@ -35,6 +39,7 @@ INSTALL_WIRING=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --target) TARGET="${2:-}"; shift 2 ;;
+    --update) IS_UPDATE=1; shift ;;
     --force) FORCE=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --no-skill) INSTALL_SKILL=0; shift ;;
@@ -55,10 +60,20 @@ run() { if [ "$DRY_RUN" -eq 1 ]; then say "  [dry-run] $*"; else "$@"; fi; }
 
 # ---------------------------------------------------------------- 前置检查
 
-say "atlas installer"
+if [ "$IS_UPDATE" -eq 1 ]; then
+  say "atlas updater (刷新工程线束)"
+else
+  say "atlas installer"
+fi
 say "  包目录 : $SCRIPT_DIR"
 say "  目标项目: $TARGET"
 say ""
+
+if [ "$IS_UPDATE" -eq 1 ] && [ ! -d "$TARGET/.atlas" ]; then
+  say "错误：目标项目尚未装配 atlas（$TARGET/.atlas 不存在），无法执行 update。"
+  say "      如需首次装配，请执行: atlas init"
+  exit 1
+fi
 
 if [ ! -d "$TARGET/.trellis" ]; then
   if command -v trellis >/dev/null 2>&1; then
@@ -81,7 +96,7 @@ fi
 # 背景：副本先改、源包后回灌是常态（ATLAS-UPSTREAM 规则）；分歧窗口内对已装配过的
 # 目标重跑 install，第 1 步的 rm -rf 会用旧源包整包覆盖——副本侧已落地改动被冲掉
 # （实例：原型环移除批在路，vault atlas/3508 §92）。
-if [ "$DRY_RUN" -eq 0 ] && [ -d "$TARGET/.atlas" ] && [ "${ATLAS_ALLOW_OVERWRITE:-0}" != "1" ]; then
+if [ "$DRY_RUN" -eq 0 ] && [ -d "$TARGET/.atlas" ] && [ "${ATLAS_ALLOW_OVERWRITE:-0}" != "1" ] && [ "$IS_UPDATE" -ne 1 ]; then
   say "错误：目标已装配过 atlas（$TARGET/.atlas 存在），本次运行会整包覆盖。"
   say "      副本侧可能有未回灌的本地改动（见目标项目 ATLAS-UPSTREAM.md）；覆盖会回退副本侧已落地改动。"
   say "      - 明知回退、仍要覆盖：ATLAS_ALLOW_OVERWRITE=1 重新运行"
@@ -107,7 +122,7 @@ say "[1/6] 装配 atlas 包到 .atlas/"
 ATLAS_DEST="$TARGET/.atlas"
 run rm -rf "$ATLAS_DEST"
 run mkdir -p "$ATLAS_DEST"
-for pkg_dir in shared rings apply scripts templates adapters validators patches tests; do
+for pkg_dir in shared rings apply scripts templates adapters validators patches tests _support; do
   if [ -d "$SCRIPT_DIR/$pkg_dir" ]; then
     run cp -R "$SCRIPT_DIR/$pkg_dir" "$ATLAS_DEST/$pkg_dir"
     say "      -> .atlas/$pkg_dir"
@@ -346,6 +361,10 @@ check "适配器脚手架" "$ATLAS_DEST/adapters/_scaffold.py"
 check "适配器指南" "$ATLAS_DEST/adapters/README.md"
 check "图谱后端隔离层" "$ATLAS_DEST/adapters/_graph.py"
 check "影响面基准报告器" "$ATLAS_DEST/scripts/impact_report.py"
+check "回灌助手" "$ATLAS_DEST/scripts/backflow.py"
+check "共享内核（模块加载器）" "$ATLAS_DEST/_support/siblings.py"
+check "共享内核（profile 解析）" "$ATLAS_DEST/_support/stack_profile.py"
+check "共享内核（用例块解析）" "$ATLAS_DEST/_support/case_block.py"
 check "结构模板" "$ATLAS_DEST/templates/structure/_meta.json"
 check "PRD 模板" "$ATLAS_DEST/templates/prd/domain.md"
 check "E2E 模板" "$ATLAS_DEST/templates/e2e/e2e-index.md"
@@ -408,9 +427,15 @@ else
   say "  [WARN] 版本戳落盘失败（.atlas/VERSION 未写，atlas_check 将 SKIP）"
 fi
 
-say "装配完成。"
-say ""
-say "下一步："
-say "  1. 确认 product/stack-profile.yaml（apps / role / adapters；knowledge.vault 填 vault 绝对路径以启用 Obsidian 同步）。"
-say "  2. 首建项目级资产：触发 atlas-structure / atlas-prd / atlas-e2e，或用 atlas-apply 的 all 模式按序跑三环（E1：原型环已移除）。"
-say "  3. 接需求：走 Trellis Plan，其 1.6 步会调 atlas-apply 做需求式增量。"
+if [ "$IS_UPDATE" -eq 1 ]; then
+  say "刷新完成。"
+  say ""
+  say "项目工程线束与各平台 Skills 瘦桩已对账刷新为最新版本。"
+else
+  say "装配完成。"
+  say ""
+  say "下一步："
+  say "  1. 确认 product/stack-profile.yaml（apps / role / adapters；knowledge.vault 填 vault 绝对路径以启用 Obsidian 同步）。"
+  say "  2. 首建项目级资产：触发 atlas-structure / atlas-prd / atlas-e2e，或用 atlas-apply 的 all 模式按序跑三环（E1：原型环已移除）。"
+  say "  3. 接需求：走 Trellis Plan，其 1.6 步会调 atlas-apply 做需求式增量。"
+fi

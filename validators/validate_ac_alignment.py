@@ -27,6 +27,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# 随包内核引导（`_support/`，2026-10-12 单源批）：profile 解析走单源实现
+# （本文件原持第三份手写解析，B209-1 引入时未收敛，见 `_support/stack_profile.py` 头注）。
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.siblings import load_module  # noqa: E402
+
+_sp = load_module("stack_profile")
+
 AC_ID_RE = re.compile(r"\b(AC-[A-Z0-9]+-\d+)\b")
 SKIP_DIRS = {
     "node_modules", ".git", "dist", "build", ".next", "coverage", "__pycache__",
@@ -53,32 +61,15 @@ class Result:
 
 
 def load_stack_profile(root: Path) -> dict[str, Any]:
-    """简单读取 stack-profile.yaml（纯文本轻量解析，避免外置 YAML 依赖）。"""
+    """经随包内核读取 stack-profile（单源口径，2026-10-12 单源批）。
+
+    原为本文件自持的轻量扁平解析（第三份副本，B209-1 批引入时未收敛）——已改走
+    `_support/stack_profile.py` 唯一实现（`_support.siblings.load_module` 引导）。
+    """
     path = root / "product" / "stack-profile.yaml"
     if not path.is_file():
         return {}
-    res: dict[str, Any] = {}
-    current_key: str | None = None
-    sub_dict: dict[str, Any] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.split("#", 1)[0].rstrip()
-        if not line:
-            continue
-        if not line.startswith(" ") and ":" in line:
-            if current_key and sub_dict:
-                res[current_key] = sub_dict
-            k, v = line.split(":", 1)
-            current_key = k.strip()
-            v = v.strip()
-            sub_dict = {}
-            if v:
-                res[current_key] = v
-        elif line.startswith("  ") and ":" in line and current_key:
-            k, v = line.strip().split(":", 1)
-            sub_dict[k.strip()] = v.strip().strip("'\"")
-    if current_key and sub_dict and current_key not in res:
-        res[current_key] = sub_dict
-    return res
+    return _sp.parse_profile(path.read_text(encoding="utf-8"))
 
 
 def collect_prd_acs(root: Path) -> dict[str, set[str]]:
@@ -222,8 +213,8 @@ def scan_backend_tests(test_dir: Path, root: Path) -> list[dict[str, Any]]:
 def validate_ac_alignment(root: Path) -> Result:
     res = Result()
     profile = load_stack_profile(root)
-    backend_test_cfg = profile.get("backend_test", {})
-    if isinstance(backend_test_cfg, str):
+    backend_test_cfg = profile.get("backend_test") or {}
+    if not isinstance(backend_test_cfg, dict):
         backend_test_cfg = {}
 
     test_dir_str = backend_test_cfg.get("test_dir") or "backend/tests"

@@ -119,7 +119,8 @@ atlas **只收口约束层**——项目级应然资产、唯一事实源、三�
 │   ├── shared/                      #   共享契约（三环共同遵守）
 │   ├── rings/                       #   各环执行契约 reference.md
 │   ├── apply/                       #   跨环增量契约
-│   ├── scripts/                     #   refresh_structure.py（事实区刷新；after_finish hook）
+│   ├── scripts/                     #   refresh_structure.py（事实区刷新；after_finish hook）+ backflow.py（回灌助手）
+│   ├── _support/                    #   共享内核（模块加载 / profile / 用例块单源解析）
 │   └── templates/  adapters/  validators/  patches/
 ├── README.md                        # A（技术栈 / 启动，可选）+ H（测试 / 运行，条件）
 ├── .impeccable/config.json          # impeccable detect 配置（可选外部工具；`detector.ignoreRules` 与 product/design.md 的 detect 豁免双向对账）
@@ -349,7 +350,8 @@ atlas/
 │   └── atlas-design-review/SKILL.md #   独立审查第 3 类实例（设计主张复核）
 ├── rings/                           # 各环执行契约：<ring>/reference.md（structure / prd / e2e）
 ├── apply/                           # 跨环增量契约：reference.md（apply + adopt + all）
-├── scripts/                         # refresh_structure.py（结构事实区刷新；after_finish hook）+ gen_e2e_scripts.py + gen_testid_stub.py + make_review_inputs.py + atlas_check.py + e2e_console.py + mutation_proof.py
+├── scripts/                         # refresh_structure.py（结构事实区刷新；after_finish hook）+ gen_e2e_scripts.py + gen_testid_stub.py + make_review_inputs.py + atlas_check.py + e2e_console.py + mutation_proof.py + backflow.py（回灌助手，2026-10-12）
+├── _support/                        # 共享内核（2026-10-12 单源批）：siblings.py（随包模块加载器）/ stack_profile.py（profile 单源解析）/ case_block.py（用例块单源解析）——scripts 与 validators 共同消费
 ├── patches/workflow-plan-apply/     # 锚点补丁：往 workflow.md 插 1.6 + 面包屑 enforcement
 │   ├── spec.json                    #   补丁载荷
 │   ├── apply-patches.py             #   锚点式幂等应用器（复用现有模式）
@@ -392,7 +394,7 @@ adapters:
 
 `install.sh` 在目标项目里落地：
 
-1. **整包 → `<目标>/.atlas/`**（`shared/`、`rings/`、`apply/`、`templates/`、`adapters/`、`validators/`、`patches/`、`tests/`）；属包产物，默认刷新。
+1. **整包 → `<目标>/.atlas/`**（`shared/`、`rings/`、`apply/`、`templates/`、`adapters/`、`validators/`、`patches/`、`tests/`、`_support/`）；属包产物，默认刷新。
 2. 每个 `skills/atlas-*/` → 各平台 skill 目录（瘦桩 `SKILL.md`，指回 `.atlas/`）；并清理历史单入口 `atlas` skill。
 3. `.trellis/workflow.md` 的 Plan 步骤补丁（锚点幂等；`--no-patch` 可跳过）。
 4. `product/` 目录骨架 + `stack-profile.yaml` 模板（既有内容永不覆盖）。

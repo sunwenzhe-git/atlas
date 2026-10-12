@@ -110,6 +110,10 @@ atlas init
 3. 向 `.trellis/workflow.md` 注入 `Phase 1.6` 锚点补丁与执行提示；
 4. 部署只读审查专用 Agent：`atlas-reviewer`。
 
+> 🔄 **升级与更新**：
+> - **全局 CLI 自身升级**：运行 `atlas upgrade`（自动通过 npm 拉取最新全局包，支持 `--tag beta` 或 `--dry-run`）。
+> - **项目内工程线束刷新**：在项目目录下运行 `atlas update`（安全刷新 `.atlas/` 资产与平台 Skills 瘦桩，版本戳对账更新，业务配置严格保护不覆盖）。
+
 ### 3. 配置技术栈画像 (`product/stack-profile.yaml`)
 检查并填写生成的画像草稿：
 ```yaml

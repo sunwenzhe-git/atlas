@@ -21,6 +21,18 @@ import re
 import sys
 from pathlib import Path
 
+# 随包内核引导（`_support/`，2026-10-12 单源批）：profile 解析口径取 `_support/stack_profile.py`
+# 单源实现（此前与 gen_e2e_scripts 各持一份，B197-1 曾实际漂移一次——登记行「对齐 gen 同款」）。
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.siblings import load_module  # noqa: E402
+
+_sp = load_module("stack_profile")
+# 保名兼容（出厂测试引用 `vsp.parse_profile` / `vsp.strip_inline_comment` / `vsp.yaml_scalar`）
+parse_profile = _sp.parse_profile
+strip_inline_comment = _sp.strip_inline_comment
+yaml_scalar = _sp.yaml_scalar
+
 KINDS = ("frontend", "backend", "fullstack", "mobile")
 ROLES = ("landing", "legacy")
 # 来源形态（`shared/stack-profile.md` §2）。缺省按 greenfield 处理 —— 保持既有行为，
@@ -66,100 +78,9 @@ class Result:
         return "WARN" if "WARN" in levels else "PASS"
 
 
-def strip_inline_comment(line: str) -> str:
-    """去掉行内 YAML 注释：`#` 前有空白（或行首）且在引号外时截断。
-
-    手写解析器（纯标准库）需要自己处理 YAML 合法的行内注释，
-    否则 `routes: null  # 说明` 会被当成值 `null  # 说明`。
-    """
-    out, quote = [], None
-    for i, ch in enumerate(line):
-        if quote:
-            out.append(ch)
-            if ch == quote:
-                quote = None
-        elif ch in "'\"":
-            quote = ch
-            out.append(ch)
-        elif ch == "#" and (i == 0 or line[i - 1] in " \t"):
-            break
-        else:
-            out.append(ch)
-    return "".join(out).rstrip()
-
-
-def yaml_scalar(raw: str):
-    """把 YAML 标量转成 Python 值：空 / null 家族 → None，带引号则去引号。
-
-    手写解析器需要自己识别 YAML 的 null 字面量，否则 `routes: null`
-    会被当成字符串 `"null"` 而误判为「非 null 但解析不到」。
-    """
-    v = raw.strip()
-    if len(v) >= 2 and v[0] in "'\"" and v[-1] == v[0]:
-        return v[1:-1]
-    if v in ("", "null", "Null", "NULL", "~", "none", "None"):
-        return None
-    return v
-
-
-def parse_profile(text: str) -> dict:
-    data: dict = {"product": None, "origin": None, "apps": [], "adapters": {},
-                  "prototype": {}, "e2e": {}, "graph": None, "backend_test": None}
-    section = None
-    cur = None
-    for raw in text.splitlines():
-        line = strip_inline_comment(raw.rstrip())
-        s = line.strip()
-        if not s:
-            continue
-        if not line[:1].isspace():
-            # 非缩进行 = 顶层：`key:` 开一个段；`key: value` 是标量并**结束**当前段。
-            # 「结束当前段」是必须的：否则段头之后的顶层标量（`origin:`、`prototype: null`）
-            # 会被当成上一段的子键吞掉（旧实现只在 section is None 时读标量）。
-            if s.endswith(":"):
-                section = s[:-1].strip()
-                if section == "graph":
-                    data["graph"] = {}
-                elif section == "backend_test":
-                    data["backend_test"] = {}
-                cur = None
-                continue
-            if ":" in line:
-                k, v = line.split(":", 1)
-                data[k.strip()] = yaml_scalar(v)
-                section = None
-                cur = None
-            continue
-        if section == "apps":
-            m = re.match(r"^\s*-\s*name:\s*(.+?)\s*$", line)
-            if m:
-                cur = {"name": yaml_scalar(m.group(1))}
-                data["apps"].append(cur)
-                continue
-            m = re.match(r"^\s+(path|kind|role|stack):\s*(.*?)\s*$", line)
-            if m and cur is not None:
-                cur[m.group(1)] = yaml_scalar(m.group(2))
-        elif section in ("adapters", "prototype", "e2e", "backend_test") or (section == "graph" and isinstance(data["graph"], dict)):
-            m = re.match(r"^\s+([\w.-]+):\s*(.*?)\s*$", line)
-            if m:
-                if section == "graph":
-                    data["graph"][m.group(1)] = yaml_scalar(m.group(2))
-                    continue
-                indent = len(line) - len(line.lstrip())
-                key, v = m.group(1), yaml_scalar(m.group(2))
-                # e2e 子段（2026-10-07 对齐 gen_e2e_scripts.parse_profile 的子块机制）：
-                # `app_login:` / `seed:` / `mock:` 等缩进2且值为空的键开子块，更深缩进键归子 dict——
-                # 旧实现全扁平化，`seed.mode` 会被误读成 e2e 顶层键（与子段键空间冲突）。
-                if section == "e2e" and key in ("app_login", "seed", "mock") and indent == 2 and v is None:
-                    data[section].setdefault(key, {})
-                    cur = key
-                    continue
-                if cur is not None and indent > 2:
-                    data[section][cur][key] = v
-                    continue
-                cur = None
-                data[section][key] = v
-    return data
+# `strip_inline_comment` / `yaml_scalar` / `parse_profile` 的单源实现在
+# `_support/stack_profile.py`（2026-10-12 单源批）；本文件顶部经 `_support.siblings`
+# 加载并保名（出厂测试引用 `vsp.parse_profile` 等）。判定面（白名单 / 枚举）仍在本文件自持。
 
 
 def resolvable(root: Path, name: str) -> bool:

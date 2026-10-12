@@ -64,16 +64,18 @@ CONTENT_TYPES = {
     ".json": "application/json; charset=utf-8",
 }
 
+# 随包内核引导（`_support/`，2026-10-12 单源批）：模块加载收敛为单源实现；
+# `prefer_root` 保控制台既有「项目 .atlas 优先、随包同级回落」语义。
+if str(HERE.parent) not in sys.path:
+    sys.path.insert(0, str(HERE.parent))
+from _support.siblings import load_module  # noqa: E402
+
 
 # ---------------------------------------------------------------- 用例真相源（只读）
 
 def load_validator(root: Path):
     """复用 E2E 环校验器的分片/索引解析器（同一份格式解析，不另写）。"""
-    path = root / ".atlas" / "validators" / "validate_e2e_index.py"
-    spec = importlib.util.spec_from_file_location("atlas_validate_e2e_index", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return mod
+    return load_module("validate_e2e_index", prefer_root=root)
 
 
 PROTO_DEFAULT = "http://127.0.0.1:4173"
@@ -83,19 +85,13 @@ class SnapshotError(RuntimeError):
     """用例真相源读不出来（列头与契约不一致等）——必须上报，不得静默降级为空列表。"""
 
 
-def load_generator(root: Path):
-    """复用生成器的 profile 解析器（同一份格式解析，不另写）。
+def load_profile_parser(root: Path):
+    """复用随包内核的 profile 解析器（同一份格式解析，不另写）。
 
-    优先读项目根下的 `.atlas/scripts/gen_e2e_scripts.py`；若为临时/独立运行目录，
-    回落至本控制台所在目录的 `gen_e2e_scripts.py`（随包同级分发）。
+    优先读项目根下的 `.atlas/_support/stack_profile.py`（部署副本 = 随包时同物）；
+    若为临时/独立运行目录，回落至本控制台所在包（随包同级分发）。
     """
-    gen_path = root / ".atlas" / "scripts" / "gen_e2e_scripts.py"
-    if not gen_path.is_file():
-        gen_path = Path(__file__).resolve().parent / "gen_e2e_scripts.py"
-    spec = importlib.util.spec_from_file_location("atlas_gen_e2e_scripts", gen_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return mod
+    return load_module("stack_profile", prefer_root=root)
 
 
 def read_manual(root: Path) -> list[dict]:
@@ -139,11 +135,21 @@ def page_routes(root: Path) -> dict:
     return routes
 
 
+def _e2e_section(prof: dict) -> dict:
+    """取 `e2e` 段；非映射形态（如行内流式写法）按**未声明**处理。
+
+    契约口径 = 段缺失 / `e2e: null` = 合法降级（`shared/stack-profile.md` §2）；
+    内核解析器对顶层 `key: value` 标量行按校验器口径落成字符串，这里如实归一到降级面。
+    """
+    e2e = prof.get("e2e")
+    return e2e if isinstance(e2e, dict) else {}
+
+
 def read_sources(root: Path) -> dict:
     """唯一来源（靶场，E1 单段）与它的 baseURL。地址的唯一来源是 stack-profile.yaml。"""
     profile = root / "product" / "stack-profile.yaml"
-    prof = load_generator(root).parse_profile(profile.read_text(encoding="utf-8"))
-    app = (prof.get("e2e") or {}).get("app_base_url")
+    prof = load_profile_parser(root).parse_profile(profile.read_text(encoding="utf-8"))
+    app = _e2e_section(prof).get("app_base_url")
     return {
         "app": {"label": "真实应用", "base_url": app, "configured": bool(app),
                 "why": "真实应用（e2e.app_base_url）为 null ⇒ 契约要求向用户索取，不猜默认" if not app
@@ -231,8 +237,8 @@ def resolve_pw(root: Path) -> tuple[Path | None, Path | None, str]:
     profile = root / "product" / "stack-profile.yaml"
     if not profile.is_file():
         return None, None, "无 product/stack-profile.yaml"
-    prof = load_generator(root).parse_profile(profile.read_text(encoding="utf-8"))
-    nm = (prof.get("e2e") or {}).get("node_modules")
+    prof = load_profile_parser(root).parse_profile(profile.read_text(encoding="utf-8"))
+    nm = _e2e_section(prof).get("node_modules")
     if not nm:
         return None, None, "stack-profile 未声明 e2e.node_modules（node-playwright 依赖目录，契约 §7）"
     nm_dir = (root / str(nm)).resolve()

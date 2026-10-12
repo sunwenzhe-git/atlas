@@ -746,6 +746,84 @@ def test_download_renders_register_then_click() -> None:
     assert "function atlasGlob(pattern)" in ts and "atlasGlob(pattern)" in ts, ts
 
 
+UPLOAD_CASE = CASE.replace(
+    "  - click home-cta-btn          # 点击主操作按钮",
+    "  - upload home-cta-btn uploads/sample.wav  # 投放音频样本",
+)
+
+
+def test_upload_renders_set_input_files_with_cwd_free_path() -> None:
+    """契约 §5.5 / §7.1（B201-1，2026-10-12）：`upload` 属**动作** —— 值 = 相对
+    `product/e2e/fixtures/` 的文件路径（与 §5.8 mock 同一 fixtures 树）。
+
+    渲染 pin：产物必须是 `setInputFiles(...)`，且路径**按脚本文件位置解析**
+    （`resolve(__dirname, '..', 'fixtures', …)`，spec 位于 <e2e>/scripts/）——两个真实
+    载体 cwd 不同（控制台从 scripts 跑 / atlas_check 从项目根跑），内联构建机绝对路径
+    或依赖进程 cwd 都会在其中一个载体上炸（实测两载体下 `__dirname` 方案均可跑通）。
+    缺值 / 缺 fixture 文件 ⇒ exit 2 列明（镜像 `download` / §5.8 mock 的 fail-loud）。
+    零变化承诺：未用 upload 的页不引入 `node:path` 导入。
+    """
+    gn = _load_gen()
+    case = {
+        "id": "E2E-HOME-001",
+        "_title": "投放音频样本",
+        "step": ["goto /", "upload home-cta-btn uploads/sample.wav"],
+        "expected": ["visible home-cta-btn"],
+        "testid": ["home-cta-btn"],
+    }
+    spec = gn.ts_case(case, "/")
+    assert ('await page.getByTestId(\'home-cta-btn\').setInputFiles('
+            'resolve(__dirname, \'..\', \'fixtures\', "uploads/sample.wav"));') in spec, spec
+    assert "/Users/" not in spec and "/home/" not in spec, "不得内联构建机绝对路径"
+
+    # 反向证据：缺值 ⇒ 报错（不得静默退化为「只定位不投放」）
+    try:
+        gn.ts_case({**case, "step": ["upload home-cta-btn"]}, "/")
+    except ValueError as exc:
+        assert "upload" in str(exc), exc
+    else:  # pragma: no cover
+        raise AssertionError("`upload` 缺值未报错")
+
+    # 端到端：fixture 就位 ⇒ 生成成功；产物含解析导入 + 投放行
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=UPLOAD_CASE)
+        fx = root / "product" / "e2e" / "fixtures" / "uploads"
+        fx.mkdir(parents=True)
+        (fx / "sample.wav").write_text("RIFF", encoding="utf-8")
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stdout + r.stderr
+        ts = spec_of(root)
+    assert "import { resolve } from 'node:path';" in ts, ts
+    assert ('await page.getByTestId(\'home-cta-btn\').setInputFiles('
+            'resolve(__dirname, \'..\', \'fixtures\', "uploads/sample.wav"));') in ts, ts
+
+    # 缺 fixture 文件 ⇒ exit 2 列明（fail-loud；校验器侧「引用存在」为双保险）
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=UPLOAD_CASE)
+        (root / "product" / "e2e" / "fixtures").mkdir(parents=True, exist_ok=True)
+        r = run(root, "--apply")
+        assert r.returncode == 2, (r.returncode, r.stdout + r.stderr)
+        assert "fixture 不存在" in r.stderr and "sample.wav" in r.stderr, r.stderr
+        assert not (root / "product" / "e2e" / "scripts" / "home.spec.ts").exists()
+
+    # 缺值 ⇒ exit 2（主流程口径；上面的单元 ValueError 为渲染层双保险）
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=UPLOAD_CASE.replace(" uploads/sample.wav", ""))
+        r = run(root, "--apply")
+        assert r.returncode == 2, (r.returncode, r.stdout + r.stderr)
+        assert "upload" in r.stderr, r.stderr
+
+    # 零变化承诺（页级形态）：未用 upload 的页不得引入 node:path 导入
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        assert "node:path" not in spec_of(root), "未用 upload 的页必须零变化"
+
+
 # 契约 §7.1：§5.5 的**每一个**动作动词也必须有渲染分支并配样例（与断言动词同一道守恒门）。
 ACTION_SAMPLES = {
     "click": "home-cta-btn",
@@ -759,6 +837,7 @@ ACTION_SAMPLES = {
     "goto": "/home",
     "waitFor": "home-cta-btn",
     "download": "home-cta-btn *.txt",
+    "upload": "home-cta-btn uploads/sample.txt",
 }
 
 

@@ -44,6 +44,27 @@ atlas init
 
 **两步卫生件**：清理历史遗留 / 已退役的 skill；建 `product/` 骨架（已有内容永不覆盖）。
 
+### 升级与更新机制（Update & Upgrade）
+
+类似 Trellis，Atlas 支持两层解耦的平滑升级机制：
+
+1. **升级全局 CLI（`atlas upgrade`）**：  
+   当 Atlas 官方发布了新版本时，自动通过 npm 拉取最新全局包：
+   ```bash
+   atlas upgrade              # 自动升级至 latest 标签
+   atlas upgrade --tag beta   # 升级至指定标签（如 beta）
+   atlas upgrade --dry-run    # 仅预览升级安装命令
+   ```
+
+2. **刷新项目内工程线束（`atlas update`）**：  
+   升级全局 CLI 后，进入你的项目目录，一键安全刷新 `.atlas/` 资产与平台 Skills 瘦桩：
+   ```bash
+   cd your-project
+   atlas update               # 安全刷新当前项目工程线束与平台 Skills
+   atlas update --dry-run     # 预览更新改动，不实际写入
+   ```
+   > 🛡️ **安全保证**：`atlas update` 会刷新 `.atlas/` 核心契约、校验器、模板、项目接线与平台 Skills 瘦桩，并重新对账生成 `.atlas/VERSION` 版本戳；你的业务资产（如 `product/stack-profile.yaml`、已编写的 E2E 用例与领域规格等）受到严格保护，绝不覆盖。
+
 ---
 
 ## 3. 配置技术栈画像 (`product/stack-profile.yaml`)

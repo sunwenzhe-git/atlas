@@ -16,22 +16,18 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import sys
 from pathlib import Path
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
 
+# 随包内核引导（`_support/`，2026-10-12 单源批）：模块加载收敛为单源实现。
+if str(PKG_ROOT) not in sys.path:
+    sys.path.insert(0, str(PKG_ROOT))
+from _support.siblings import load_module  # noqa: E402
 
-def _load(name: str, rel: str):
-    spec = importlib.util.spec_from_file_location(name, PKG_ROOT / rel)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-vt = _load("validate_testids", "validators/validate_testids.py")
+vt = load_module("validate_testids")
 
 STUB_REL = ".trellis/spec/conventions/testid.md"
 

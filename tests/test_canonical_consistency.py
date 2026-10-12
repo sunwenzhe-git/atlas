@@ -247,6 +247,16 @@ def check_registry_counts() -> dict:
     for m in re.finditer(r"(\d+)\s*个校验器", design):
         if int(m.group(1)) != n_vfiles:
             bad.append(f"DESIGN.md 写「{m.group(1)} 个校验器」≠ 实际 {n_vfiles}")
+    # **清单内容对账**（2026-10-12 单源批）：`DESIGN.md` 的 `validate_{a,b,…}.py` 花括号清单
+    # 必须 = `validators/validate_*.py` 文件名集合 —— 原判据只数个数，数量对、清单漏列一个
+    # 名字照样绿（「数量对、内容错」是计数门唯一能骗过它的形态）。
+    vm2 = re.search(r"`validate_\{([^}]*)\}\.py`", design)
+    if vm2:
+        listed = {x.strip() for x in vm2.group(1).split(",") if x.strip()}
+        actual = {p.stem[len("validate_"):] for p in (PKG_ROOT / "validators").glob("validate_*.py")}
+        miss, extra = sorted(actual - listed), sorted(listed - actual)
+        if miss or extra:
+            bad.append(f"DESIGN.md 校验器清单与实况不符：漏列={miss} 多列={extra}")
     skips = []
     if not install:
         skips.append("副本态无 `install.sh` ⇒ 自检项数子项跳过")
