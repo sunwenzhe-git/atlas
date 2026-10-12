@@ -36,10 +36,10 @@ def die(m: str) -> None:
     sys.exit(1)
 
 
-def load_meta(root: Path) -> dict:
+def load_meta(root: Path) -> dict | None:
     p = root / ".trellis" / "spec" / "structure" / "_meta.json"
     if not p.is_file():
-        die(f"缺少 {p}")
+        return None
     try:
         meta = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
@@ -432,6 +432,9 @@ def main() -> int:
     args = ap.parse_args()
     root = Path(args.root).resolve()
     meta = load_meta(root)
+    if meta is None:
+        log("SKIP: 缺少 .trellis/spec/structure/_meta.json（结构环尚未首建，跳过结构事实刷新）")
+        return 0
     max_total = args.max_chars or read_cfg_int(root, "max_total_chars", DEFAULT_MAX_TOTAL)
 
     outputs: list[tuple[Path, str]] = []

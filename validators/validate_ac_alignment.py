@@ -78,11 +78,11 @@ def collect_prd_acs(root: Path) -> dict[str, set[str]]:
     if not prd_dir.is_dir():
         return {}
     acs_by_file: dict[str, set[str]] = {}
-    for p in prd_dir.glob("*.md"):
+    for p in prd_dir.rglob("*.md"):
         content = p.read_text(encoding="utf-8")
         matches = set(AC_ID_RE.findall(content))
         if matches:
-            acs_by_file[p.name] = matches
+            acs_by_file[str(p.relative_to(prd_dir))] = matches
     return acs_by_file
 
 
@@ -311,12 +311,13 @@ def validate_ac_alignment(root: Path) -> Result:
     else:
         res.add("差量防回退", "PASS", f"当前挂载测试数: {len(test_with_ac)}，覆盖 AC 数: {len(all_cited_acs)}")
 
-    # 自动保存/刷新快照（若运行在工作区内）
-    try:
-        baseline_file.parent.mkdir(parents=True, exist_ok=True)
-        baseline_file.write_text(json.dumps(current_snapshot, indent=2, ensure_ascii=False), encoding="utf-8")
-    except Exception:
-        pass
+    # 自动保存/刷新快照（若运行在工作区内，且本次检查未 FAIL 时才固化新基线，防坏输入污染棘轮）
+    if res.status != "FAIL":
+        try:
+            baseline_file.parent.mkdir(parents=True, exist_ok=True)
+            baseline_file.write_text(json.dumps(current_snapshot, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
 
     return res
 

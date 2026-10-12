@@ -195,9 +195,17 @@ def check_generated(root: Path, rows: Row, py: str) -> None:
         rows.add("生成物最新", "FAIL", out.strip().splitlines()[-1][:160] if out.strip() else "",
                  command=f"{py} {gen} --root . --json", full_output=out, code=code)
         return
-    try:
-        info = json.loads(out)
-    except Exception:
+    info = None
+    for blob in (out, (re.search(r"\{.*\}", out, re.S).group(0) if re.search(r"\{.*\}", out, re.S) else "")):
+        if not blob:
+            continue
+        try:
+            info = json.loads(blob)
+            if isinstance(info, dict):
+                break
+        except Exception:
+            continue
+    if info is None or not isinstance(info, dict):
         rows.add("生成物最新", "WARN", "生成器输出非 JSON")
         return
     stale = [r["file"] for r in info.get("results", []) if r.get("changed")]

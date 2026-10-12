@@ -337,7 +337,11 @@ def validate(root: Path) -> Result:
     # 分片块
     blocks, file_page = gather_shards(cases) if cases.is_dir() else ({}, {})
     needed = ("id", "pages", "precondition", "step", "expected", "testid")
-    block_bad = [i for i, d in blocks.items() if any(not d.get(k) for k in needed)]
+    block_bad = []
+    for cid, d in blocks.items():
+        missing_keys = [k for k in needed if not d.get(k)]
+        if missing_keys:
+            block_bad.append(f"{cid}(缺:{','.join(missing_keys)})")
     res.add("分片块字段齐", "PASS" if not block_bad else "FAIL", f"缺字段={block_bad[:8]}")
 
     orphan = sorted(set(blocks) - set(ids))

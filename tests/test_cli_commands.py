@@ -7,10 +7,16 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import pytest
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
 ATLAS_BIN = PKG_ROOT / "bin" / "atlas.js"
 INSTALL_SH = PKG_ROOT / "install.sh"
+
+pytestmark = pytest.mark.skipif(
+    not ATLAS_BIN.is_file() or not INSTALL_SH.is_file(),
+    reason="副本态（.atlas/）不包含 bin/ 与 install.sh，仅在源包测试",
+)
 
 
 def run_cmd(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
