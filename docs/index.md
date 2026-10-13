@@ -13,6 +13,9 @@ hero:
       text: 🚀 30 秒快速上手
       link: /guide/quick-start
     - theme: alt
+      text: 📊 主流框架横评与选型
+      link: /guide/comparison
+    - theme: alt
       text: ⚡ 查看独门重器
       link: /innovations/e2e-console
 
