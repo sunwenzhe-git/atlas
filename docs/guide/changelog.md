@@ -4,6 +4,15 @@
 
 ---
 
+## [v0.1.0-beta.10] - 2026-10-13
+
+### 🐛 缺陷修复与体验增强 (Bug Fixes & Usability)
+
+* **PRD 规则表列序精准指路 (`validators/validate_prd.py`)**：优化 §四 业务规则表解析体验。当用户声明了「所属功能」表头但未按契约排在第 3 列时，不再输出具有误导性的“未声明所属功能”，而是明确给出友好的指路报错：指出所属功能应在第 3 列（规则 ID ｜ 规则内容 ｜ 所属功能 ｜ …）及当前实际列位，大幅提升排查效率。
+* **Playwright 运行通道环境变量覆盖 (`scripts/gen_e2e_scripts.py`)**：在生成的 `playwright.config.ts` 中增加 `channel: process.env.ATLAS_PLAYWRIGHT_CHANNEL` 覆盖机制。支持开发者在需要时直接通过环境变量（如 `ATLAS_PLAYWRIGHT_CHANNEL=chrome`）复用宿主机 Google Chrome 浏览器，免去非必要重新下载大体积 Chromium 二进制的等待。
+
+---
+
 ## [v0.1.0-beta.9] - 2026-10-13
 
 ### 🐛 缺陷修复与门禁严苛化 (Bug Fixes & Hardening)
