@@ -12,7 +12,7 @@
 用法：
     python3 .atlas/scripts/atlas_check.py [--root .] [--page <slug>] [--fast] [--json]
 
-  * 默认跑：全部校验器（VALIDATORS 9 门） → 出厂测试 → 生成物是否最新（干跑） →（有 --page 或六页全量）真跑
+  * 默认跑：全部校验器（`VALIDATORS` 全量；数量钉在 `gates.md`，见 `test_canonical_consistency` 判据⑥） → 出厂测试 → 生成物是否最新（干跑） →（有 --page 或六页全量）真跑
   * `--page voices`：只真跑该页（E1 单段：真实应用由业务侧拉起，本器不起任何服务）
   * `--fast`：跳过出厂测试与真跑（只跑校验器 + 生成物）
   * 任一 FAIL ⇒ 退出码 1；WARN 不影响退出码。
@@ -153,16 +153,17 @@ def check_validators(root: Path, rows: Row, py: str) -> None:
         detail = ""
         if code != 0:
             bad = [l for l in last if "[FAIL]" in l or "[WARN]" in l]
-            detail = (bad[0] if bad else tail)[:160]
+            detail = "; ".join(bad) if bad else tail
             rows.add(v, status, detail or tail,
                      command=f"{py} {script} --root .", full_output=out, code=code)
         elif any("[WARN]" in l for l in last):
             # WARN = 提示补不置红（退出码 0），但门总览必须可见，不得静默当 ok
             status = "WARN"
-            detail = next((l for l in last if "[WARN]" in l), tail)[:160]
+            bad = [l for l in last if "[WARN]" in l]
+            detail = "; ".join(bad) if bad else tail
             rows.add(v, status, detail or tail)
         else:
-            rows.add(v, status, detail or tail)
+            rows.add(v, status, tail)
 
 
 def check_factory(root: Path, rows: Row, py: str) -> None:
@@ -476,6 +477,7 @@ def main() -> int:
             "root": str(root),
             "ok": not rows.failed,
             "rows": rows.rows,
+            "failures": rows.failures,
             "error_log": str(error_log.relative_to(root)) if rows.failed and error_log.is_file() else None,
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -487,8 +489,20 @@ def main() -> int:
                 line += " " + r["detail"]
             print(line)
         if rows.failed:
+            print("\n" + "=" * 60)
+            print("❌ 门禁失败详情 (Failures Breakdown):")
+            for fail in rows.failures:
+                print(f"▶ [{fail['name']}] (Exit Code: {fail.get('code')})")
+                if fail.get("command"):
+                    print(f" • 命令: {fail['command']}")
+                out_lines = [l for l in fail.get("output", "").splitlines() if l.strip()]
+                key_lines = [l for l in out_lines if "[FAIL]" in l or "Error" in l or "error:" in l.lower()]
+                lines_to_show = key_lines[:20] if key_lines else out_lines[-10:]
+                for l in lines_to_show:
+                    print(f" • {l}")
+            print("=" * 60)
             rel = error_log.relative_to(root) if error_log.is_file() else error_log
-            print(f"FAIL (详细错误堆栈已落盘至: {rel})")
+            print(f"\nFAIL (详细错误堆栈已落盘至: {rel})")
         else:
             print("OK")
     return 1 if rows.failed else 0

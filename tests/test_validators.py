@@ -603,6 +603,37 @@ def test_testids_page_table_is_slug_authority() -> None:
         assert no_shard["level"] == "PASS" and "error" not in no_shard["detail"], no_shard
 
 
+def test_testids_legacy_bad_names_warn_not_fail() -> None:
+    """契约 §4 / 2026-10-13：存量实然源码里的非常规命名（下划线 / 驼峰）降 WARN 不判 FAIL；
+    分片若新声明未在源码中存在的非法命名 ⇒ 保持 FAIL 严判。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        html = HOME_HTML + '<button data-testid="login_btn">旧按钮</button>'
+        mk_prototype(root, home=html)
+        mk_cases(root)
+        mk_index(root, _with_page_table("已实现"))
+        res = vt.validate(root)
+        naming = [c for c in res.checks if c["check"] == "testid 命名规范"][0]
+        assert naming["level"] == "WARN", naming
+        assert "login_btn" in naming["detail"], naming
+
+    # 坏输入变异：分片新声明未在源码中的违规名字 ⇒ 必须 FAIL
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        bad_case = CASE_GOOD.replace(
+            "  - home-title\n",
+            "  - home-title\n  - new_bad_btn\n",
+        )
+        mk_cases(root, bad_case)
+        mk_index(root, _with_page_table("已实现"))
+        res = vt.validate(root)
+        naming = [c for c in res.checks if c["check"] == "testid 命名规范"][0]
+        assert naming["level"] == "FAIL", naming
+        assert "new_bad_btn" in naming["detail"], naming
+
+
 # ---- 模板字面量 testid（2026-10-04 互锁修复）----
 
 SHELL_TSX = """import { pageSlug } from "./lib/page-slug"

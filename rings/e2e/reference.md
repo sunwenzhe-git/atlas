@@ -442,7 +442,7 @@ testid:
 | 分页等价 | 有分片的页：两集合必须相等，多/少即 FAIL |
 | 未建分片页 | 抽取源里存在该页但无分片 → WARN |
 | **实现期薄桩存在** | `.trellis/spec/conventions/testid.md` 不存在 ⇒ **FAIL**（跑 `python3 .atlas/scripts/gen_testid_stub.py --root .` 生成；§4.1） |
-| 命名规范 | `^[a-z0-9]+(-[a-z0-9]+)+$` 且首段 == 该页 slug；否则 FAIL |
+| 命名规范 | 分片新声明须 `^[a-z0-9]+(-[a-z0-9]+)+$` 且首段 == 该页 slug（否则 FAIL）；存量实然命名降 WARN（§4 保持现状承诺） |
 | 全站唯一 | 同名 testid 出现于多页 / 多元素 → FAIL |
 | 门控态 | 无页面表或无用例目录 → N/A |
 

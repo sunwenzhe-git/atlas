@@ -31,7 +31,8 @@ vt = load_module("validate_testids")
 
 STUB_REL = ".trellis/spec/conventions/testid.md"
 
-# 祈使句按形态取（`rings/e2e/reference.md` §4.1）：`adopt` 下真实 UI 是真相源 ⇒ 方向相反。
+# 祈使句（E1 统一，`rings/e2e/reference.md` §4.1）：单一常量覆盖两义——新页按分片应然命名；
+# 既有实现保持现状（adopt 场景下真实 UI 即现状，不强制改名对齐）。
 IMPERATIVE = ("实现按**第一块（分片应然）**命名 `data-testid`，**不得自造**；"
               "既有实现保持现有 `data-testid`（见第二块实然）。")
 

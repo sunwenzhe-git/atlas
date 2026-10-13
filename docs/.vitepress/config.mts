@@ -93,6 +93,7 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: '30 秒快速上手', link: '/guide/quick-start' },
+          { text: '存量项目接入指南 (adopt)', link: '/guide/legacy-adoption' },
           { text: '主流框架横评与选型', link: '/guide/comparison' },
           { text: 'Token 节流与上下文工程', link: '/guide/token-engineering' },
           { text: '破局 Vibe Coding', link: '/guide/how-it-works' },

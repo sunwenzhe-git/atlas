@@ -30,6 +30,15 @@ import re
 import sys
 from pathlib import Path
 
+
+def _format_list(items: list[str] | set[str], max_show: int = 20) -> str:
+    lst = sorted(items) if isinstance(items, set) else list(items)
+    if not lst:
+        return ""
+    if len(lst) <= max_show:
+        return f"{lst}"
+    return f"{lst[:max_show]} (共 {len(lst)} 项，截断前 {max_show} 项)"
+
 TESTID_ATTR = re.compile(r"""data-testid\s*=\s*["']([^"']+)["']""")
 # 模板字面量 testid（2026-10-04）：`data-testid={`…${ident}…`}`——共享外壳按页派生前缀的
 # 合法形态（页 slug 与索引页面表逐字一致，可静态枚举），此前被字面量正则漏扫 ⇒
@@ -365,22 +374,50 @@ def validate(root: Path) -> Result:
         res.add("门控态", "N/A", "前端无 testid 且无分片引用")
         return res
 
-    # 命名规范（"" 桶 = 归不到任何用例页，只查 NAME_RE）
+    # 命名规范（2026-10-13 修：存量实然豁免，与契约 §4「既有实现保持现有 data-testid」对齐）。
+    # 分两层判：
+    #   ① 分片应然（声明侧）：`shard_ids` 里声明的 testid 必须守规范——**除非该名已存在于
+    #      源码实然**（`src_ids` ∪ 展开值）：这是 adopt 项目用例引用既有元素的合法形态，改名为
+    #      契约所禁；净新增的声明名必须合规 ⇒ 违规 FAIL（名字的可控权在声明者手里）；
+    #   ② 存量实然（源码侧）：`src_ids` 里的非常规命名**不再 FAIL** ⇒ WARN + 清单。
+    #      事故取证（本次）：`origin: adopt` 项目接入后，既有前端 `login_btn` / `loginButton`
+    #      这类历史命名被本门直接打成 FAIL——存量债务不可由"接入"动作清偿，会与现代码强制
+    #      改名冲突（契约明言"不强迫"）。修复后：老命名照旧活着并可见（WARN），只要新声明
+    #      不夹带新造的非规范名，门就不咬人。
+    src_all = set()
+    for ids in src_ids.values():
+        src_all |= ids
+    src_all |= expanded
     bad_name = []
-    for page, ids in src_ids.items():
+    for page, ids in shard_ids.items():
         for tid in ids:
-            if not NAME_RE.match(tid) or (page and not (tid == page or tid.startswith(page + "-"))):
+            if tid in src_all:
+                continue  # 引用既有实然（含 adopt 存量命名）⇒ 豁免
+            if not NAME_RE.match(tid) or not (tid == page or tid.startswith(page + "-")):
                 bad_name.append(f"{page or '?'}:{tid}")
-    res.add("testid 命名规范", "PASS" if not bad_name else "FAIL", f"违规={bad_name[:8]}")
+    legacy_bad = []
+    for page, ids in src_ids.items():
+        for tid in sorted(ids):
+            if not NAME_RE.match(tid):
+                legacy_bad.append(f"{page or '?'}:{tid}")
+    if bad_name:
+        res.add("testid 命名规范", "FAIL",
+                f"新声明的违规={_format_list(bad_name)} (💡 命名须满足 ^[a-z0-9]+(-[a-z0-9]+)+$ 且以所属页面 slug 为前缀；存量既有名不受此限)")
+    elif legacy_bad:
+        res.add("testid 命名规范", "WARN",
+                f"存量非常规命名={_format_list(legacy_bad)}（存量保持现状即可，不判失败；新声明命名按规范）")
+    else:
+        res.add("testid 命名规范", "PASS", "")
 
     # 全站唯一
     cross = {t for t, n in counts.items() if n > 1}
-    res.add("testid 全站唯一", "PASS" if not cross else "FAIL", f"重复={sorted(cross)[:8]}")
+    res.add("testid 全站唯一", "PASS" if not cross else "FAIL",
+            f"重复={_format_list(cross)} (💡 提示: 同一 data-testid 在全站跨页面中必须唯一)" if cross else "")
 
     # 未归属任何用例页的前端 testid（命名违规或缺分片）
     stray = sorted(src_ids.get("", set()))
     res.add("前端 testid 归属", "PASS" if not stray else "WARN",
-            f"未归属={stray[:8]}" if stray else "")
+            f"未归属={_format_list(stray)}" if stray else "")
 
     # 未实现的页：前端无该页任何 testid ⇒ SKIP（契约 §4 E1；不算失败）
     unimplemented = sorted(set(shard_ids) - set(src_ids))
@@ -398,7 +435,7 @@ def validate(root: Path) -> Result:
     if states is not None:
         bad_state = sorted(f"{p}:{s}" for p, s in states.items() if s not in PAGE_STATES)
         res.add("页面表实现状态词表", "PASS" if not bad_state else "FAIL",
-                f"非法值={bad_state[:8]}（合法值={list(PAGE_STATES)}）" if bad_state else "")
+                f"非法值={_format_list(bad_state)}（合法值={list(PAGE_STATES)}）" if bad_state else "")
         stale = []
         for p, s in sorted(states.items()):
             n_front = len(src_ids.get(p, ()))
@@ -407,7 +444,7 @@ def validate(root: Path) -> Result:
             elif s == "已实现" and not n_front and p in shard_ids:
                 stale.append(f"{p}:声明「已实现」但前端无该页 testid")
         res.add("实现状态与实然一致", "PASS" if not stale else "WARN",
-                f"{stale[:8]}" if stale else "")
+                f"{_format_list(stale)}" if stale else "")
 
     # 分页等价（`已实现` 页 FAIL；`实现中`/`未开始` 页降 WARN 并附同形清单）
     unequal, unequal_soft = [], []
@@ -436,7 +473,8 @@ def validate(root: Path) -> Result:
             else:
                 unequal_soft.append({**det, "实现状态": states[page]})
     if unequal:
-        res.add("分页双向集合相等", "FAIL", json.dumps(unequal, ensure_ascii=False))
+        hint = " (💡 提示: 动态列表项如 *-item 切勿列入用例 testid: 块，仅在 step/expected 中引用即可)" if any("item" in str(d.get("缺失(抽取源无)", [])) for d in unequal) else ""
+        res.add("分页双向集合相等", "FAIL", json.dumps(unequal, ensure_ascii=False) + hint)
     elif unequal_soft:
         res.add("分页双向集合相等", "WARN",
                 json.dumps(unequal_soft, ensure_ascii=False)

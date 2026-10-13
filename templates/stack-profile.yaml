@@ -84,5 +84,16 @@ e2e:
   # 需要指定档位时写成映射：review: { model: <档位> }（model: null = 会话当前模型）。
   review: null
 
+# 后端测试调度与 AC 对账（可选段，2026-10-12 补，3507 BT / B209-1）。**段缺失 = 合法降级**
+# （项目自行执行原生测试；validate_ac_alignment 按降级通过）。启用后：测试代码挂载 AC
+# （如 @pytest.mark.ac("AC-xxx")）参与四项对账——无主 AC 拦截 / 无豁免跳过拦截 / 覆盖报告 /
+# 差量防退化。契约见 shared/stack-profile.md §2。
+# backend_test:
+#   command: pytest backend/tests   # 测试执行命令（收口核验命令保管）
+#   test_dir: backend/tests         # AC 挂载点扫描根（相对项目根，缺省 backend/tests）
+#   framework: pytest               # 提取器枚举：pytest（v1 仅支持）
+#   mode: advisory                  # advisory（缺省，报告不阻断）| enforce（缺口硬阻断）
+#   ac_marker: pytest_mark          # 挂载形态
+
 # 已退役（E1，2026-09-27，原型环移除）：`prototype` 段 —— atlas 不再消费任何字段；
 # 存量项目可保留（历史）或删除。见 shared/stack-profile.md §2 与知识库 `3508 §92`。

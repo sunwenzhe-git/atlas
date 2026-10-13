@@ -38,6 +38,14 @@ import re
 import sys
 from pathlib import Path
 
+
+def _format_list(items: list[str], max_show: int = 20) -> str:
+    if not items:
+        return ""
+    if len(items) <= max_show:
+        return f"{items}"
+    return f"{items[:max_show]} (共 {len(items)} 项，截断前 {max_show} 项)"
+
 # 随包内核引导（`_support/`，2026-10-12 单源批）：用例块解析取 `_support/case_block.py`
 # 单源实现（原与 gen_e2e_scripts 逐字节双拷贝；本文件被控制台经内核加载，见 _support/siblings.py）。
 if str(Path(__file__).resolve().parents[1]) not in sys.path:
@@ -287,6 +295,7 @@ def gather_shards(cases: Path) -> tuple[dict[str, dict], dict[str, str]]:
             if not b:
                 continue
             d = parse_block(b.group(1))
+            d["_file"] = md.name
             blocks[m.group(1)] = d
     return blocks, pages
 
@@ -332,7 +341,7 @@ def validate(root: Path) -> Result:
         reason_ok = (g["状态"] in ("blocked", "skipped")) == bool(g["状态原因"])
         if not reason_ok:
             field_bad.append(f"{g['用例ID']}:状态原因/状态不匹配")
-    res.add("行字段完整", "PASS" if not field_bad else "FAIL", f"{field_bad[:8]}")
+    res.add("行字段完整", "PASS" if not field_bad else "FAIL", f"{_format_list(field_bad)}")
 
     # 分片块
     blocks, file_page = gather_shards(cases) if cases.is_dir() else ({}, {})
@@ -341,13 +350,13 @@ def validate(root: Path) -> Result:
     for cid, d in blocks.items():
         missing_keys = [k for k in needed if not d.get(k)]
         if missing_keys:
-            block_bad.append(f"{cid}(缺:{','.join(missing_keys)})")
-    res.add("分片块字段齐", "PASS" if not block_bad else "FAIL", f"缺字段={block_bad[:8]}")
+            block_bad.append(f"{cid}在{d.get('_file', '')}(缺:{','.join(missing_keys)})")
+    res.add("分片块字段齐", "PASS" if not block_bad else "FAIL", f"缺字段={_format_list(block_bad)}")
 
     orphan = sorted(set(blocks) - set(ids))
     dead = sorted(set(ids) - set(blocks))
     res.add("索引↔分片无孤儿/死链", "PASS" if not orphan and not dead else "FAIL",
-             f"孤儿(分片有索引无)={orphan[:6]} 死链(索引有分片无)={dead[:6]}")
+             f"孤儿(分片有索引无)={_format_list(orphan)} 死链(索引有分片无)={_format_list(dead)}")
 
     # 分片链接可达 + 锚点标题
     # 索引↔分片标题一致（契约 §8.2，2026-09-25 补，依据 `3509 §B31`）：
@@ -372,8 +381,8 @@ def validate(root: Path) -> Result:
         shard_title = hit.group(1) if hit else ""
         if _norm_title(shard_title) != _norm_title(g["中文标题"]):
             title_bad.append(f"{g['用例ID']}:索引={g['中文标题']!r} 分片={shard_title!r}")
-    res.add("分片链接可达", "PASS" if not link_bad else "FAIL", f"{link_bad[:8]}")
-    res.add("索引↔分片标题一致", "PASS" if not title_bad else "FAIL", f"{title_bad[:8]}")
+    res.add("分片链接可达", "PASS" if not link_bad else "FAIL", f"{_format_list(link_bad)}")
+    res.add("索引↔分片标题一致", "PASS" if not title_bad else "FAIL", f"{_format_list(title_bad)}")
 
     # pages 合法性（E1：页清单唯一来源 = 索引页面表 §3.2；无页面表时退化为分片文件名）
     idx_text = text
@@ -776,32 +785,33 @@ def validate(root: Path) -> Result:
             if not any(w in code for w in UNCHANGED_ACTION_WORDS):
                 unchanged_no_action.append(g["用例ID"])
 
-    res.add("expected 非空且无占位", "PASS" if not empty_exp else "FAIL", f"{empty_exp[:8]}")
-    res.add("step 动词合法", "PASS" if not verb_bad else "FAIL", f"词表外={verb_bad[:8]}")
-    res.add("goto 不带查询参数", "PASS" if not goto_param else "FAIL", f"依原型调试参数的用例={goto_param[:8]}")
-    res.add("goto 路径 ∈ 页面表", "PASS" if not goto_path else "FAIL", f"页面表外路径={goto_path[:8]}")
-    res.add("auth 取值合法", "PASS" if not auth_bad else "FAIL", f"白名单外（允许 preset|none）={auth_bad[:8]}")
+    res.add("expected 非空且无占位", "PASS" if not empty_exp else "FAIL", f"{_format_list(empty_exp)}")
+    res.add("step 动词合法", "PASS" if not verb_bad else "FAIL", f"词表外={_format_list(verb_bad)}")
+    res.add("goto 不带查询参数", "PASS" if not goto_param else "FAIL", f"依原型调试参数的用例={_format_list(goto_param)}")
+    res.add("goto 路径 ∈ 页面表", "PASS" if not goto_path else "FAIL", f"页面表外路径={_format_list(goto_path)}")
+    res.add("auth 取值合法", "PASS" if not auth_bad else "FAIL", f"白名单外（允许 preset|none）={_format_list(auth_bad)}")
     res.add("断言不自相矛盾", "PASS" if not contradict else "FAIL",
-            f"同一 testid 既断言可见又断言不可见={contradict[:8]}")
-    res.add("expected 动词合法", "PASS" if not assert_bad else "FAIL", f"词表外={assert_bad[:8]}")
+            f"同一 testid 既断言可见又断言不可见={_format_list(contradict)}")
+    res.add("expected 动词合法", "PASS" if not assert_bad else "FAIL", f"词表外={_format_list(assert_bad)}")
     res.add("waitFor 属动作", "PASS" if not waitfor_assert else "FAIL",
-            f"`waitFor` 出现在 expected（应写在 step）= {waitfor_assert[:8]}")
+            f"`waitFor` 出现在 expected（应写在 step）= {_format_list(waitfor_assert)}")
     res.add("delta 相对断言形态", "PASS" if not delta_bad else "FAIL",
-            f"`delta` 值须为 `±N` 且不得与豁免通道/步骤锚叠写 = {delta_bad[:8]}")
-    res.add("豁免前缀不嵌套", "PASS" if not nested_prefix else "FAIL", f"{nested_prefix[:8]}")
-    res.add("步骤锚合法", "PASS" if not after_bad else "FAIL", f"{after_bad[:8]}")
-    res.add("跨页终态断言落首列页", "PASS" if not cross_page_bad else "FAIL", f"{cross_page_bad[:8]}")
-    res.add("initial 豁免带理由", "PASS" if not initial_no_reason else "WARN", f"{initial_no_reason[:8]}")
+            f"`delta` 值须为 `±N` 且不得与豁免通道/步骤锚叠写 = {_format_list(delta_bad)}")
+    res.add("豁免前缀不嵌套", "PASS" if not nested_prefix else "FAIL", f"{_format_list(nested_prefix)}")
+    res.add("步骤锚合法", "PASS" if not after_bad else "FAIL", f"{_format_list(after_bad)}")
+    res.add("跨页终态断言落首列页", "PASS" if not cross_page_bad else "FAIL", f"{_format_list(cross_page_bad)}")
+    res.add("initial 豁免带理由", "PASS" if not initial_no_reason else "WARN", f"{_format_list(initial_no_reason)}")
     res.add("unchanged 用例有提交性动作", "PASS" if not unchanged_no_action else "FAIL",
-            f"无动作可验={unchanged_no_action[:8]}")
-    res.add("断言数 ≥ 1", "PASS" if not n_assert else "FAIL", f"{n_assert[:8]}")
-    res.add("expected 可判定", "PASS" if not black_exp else "WARN", f"黑名单={black_exp[:8]}")
-    res.add("intent 完整", "PASS" if not intent_bad else "FAIL", f"缺失/模糊={intent_bad[:8]}")
-    res.add("intent 长度", "PASS" if not intent_short else "WARN", f"过短={intent_short[:8]}")
-    res.add("非瞬时断言", "PASS" if not transient else "WARN", f"{transient[:8]}")
-    res.add("持久化写复断言", "PASS" if not persist_unverified else "WARN", f"{persist_unverified[:8]}")
-    res.add("步骤非二选一", "PASS" if not or_step else "WARN", f"{or_step[:8]}")
-    res.add("文案为渲染后文案", "PASS" if not i18n else "WARN", f"疑似 i18n/枚举={i18n[:8]}")
+            f"无动作可验={_format_list(unchanged_no_action)}")
+    res.add("断言数 ≥ 1", "PASS" if not n_assert else "FAIL", f"{_format_list(n_assert)}")
+    res.add("expected 可判定", "PASS" if not black_exp else "WARN", f"黑名单={_format_list(black_exp)}")
+    res.add("intent 完整", "PASS" if not intent_bad else "FAIL", f"缺失/模糊={_format_list(intent_bad)}")
+    res.add("intent 长度", "PASS" if not intent_short else "WARN", f"过短={_format_list(intent_short)}")
+    res.add("非瞬时断言", "PASS" if not transient else "WARN", f"{_format_list(transient)}")
+    res.add("持久化写复断言", "PASS" if not persist_unverified else "WARN",
+            f"{_format_list(persist_unverified)} (💡 提示: 包含写入/提交动作后，建议在 step 补充 `refresh` 并在 expected 复查断言，防乐观更新假阳性)" if persist_unverified else "")
+    res.add("步骤非二选一", "PASS" if not or_step else "WARN", f"{_format_list(or_step)}")
+    res.add("文案为渲染后文案", "PASS" if not i18n else "WARN", f"疑似 i18n/枚举={_format_list(i18n)}")
     # 契约 §5.7：结构化 `seed:` 的实体 × 字段 ⇔ structure 的 data-models 事实（静态对账）
     _lvl, _det = seed_models_check(root, blocks)
     res.add("seed × models 对账", _lvl, _det)
