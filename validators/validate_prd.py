@@ -378,20 +378,34 @@ def validate(root: Path) -> Result:
             if col_missing:
                 issues.append(f"{d.name} 规则表缺「{RULE_FUNC_COL}」列")
             else:
-                for m in RULE_FUNC_ROW.finditer(t):
-                    rid, cells = m.group(1), set(FN_RE.findall(m.group(2)))
-                    if not cells:
-                        no_func.append(rid)
-                        continue
-                    ghost += [f"{rid}→{x}" for x in cells if x not in decl_fn]
-                    frow[rid] = cells
-                if no_func:
-                    issues.append(f"{d.name} 规则未声明所属功能：{sorted(no_func)[:8]}")
-                if ghost:
-                    issues.append(f"{d.name} 所属功能引用了不存在的功能：{ghost[:8]}")
+                # 契约 rings/prd/reference.md §四：所属功能必须在第 3 列（规则 ID ｜ 规则内容 ｜ 所属功能 ｜ …）
+                sec4 = section_of(t, "四") or t
+                header_match = re.search(r"^\|\s*([^|\n]+\|)+", sec4, re.M)
+                wrong_col_order = False
+                if header_match:
+                    cols = [c.strip().strip("`") for c in header_match.group(0).split("|")[1:-1]]
+                    if RULE_FUNC_COL in cols:
+                        col_idx = cols.index(RULE_FUNC_COL) + 1  # 1-based
+                        if col_idx != 3:
+                            wrong_col_order = True
+                            issues.append(
+                                f"{d.name} 规则表列序不符契约 §四：「{RULE_FUNC_COL}」应在第 3 列（规则 ID ｜ 规则内容 ｜ 所属功能 ｜ …），当前在第 {col_idx} 列"
+                            )
+                if not wrong_col_order:
+                    for m in RULE_FUNC_ROW.finditer(t):
+                        rid, cells = m.group(1), set(FN_RE.findall(m.group(2)))
+                        if not cells:
+                            no_func.append(rid)
+                            continue
+                        ghost += [f"{rid}→{x}" for x in cells if x not in decl_fn]
+                        frow[rid] = cells
+                    if no_func:
+                        issues.append(f"{d.name} 规则未声明所属功能：{sorted(no_func)[:8]}")
+                    if ghost:
+                        issues.append(f"{d.name} 所属功能引用了不存在的功能：{ghost[:8]}")
             if decl_fn and not own_rules:
                 issues.append(f"{d.name} 缺 §四 规则表：功能无法与规则/AC 建链")
-            elif not col_missing:
+            elif not col_missing and not wrong_col_order:
                 served = set().union(*frow.values()) if frow else set()
                 orphan_fn = sorted(f for f in decl_fn if f not in served)
                 if orphan_fn:

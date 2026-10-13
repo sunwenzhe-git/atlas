@@ -1147,8 +1147,8 @@ def main() -> int:
         "      name: 'chromium',\n"
         "      dependencies: ['setup'],\n"
         "      use: { storageState: "
-        + json.dumps(state_rel) +
-        " },\n"
+        + json.dumps(state_rel)
+        + ", ...(process.env.ATLAS_PLAYWRIGHT_CHANNEL ? { channel: process.env.ATLAS_PLAYWRIGHT_CHANNEL } : {}) },\n"
         "    },\n"
         "  ],\n"
         "});\n"
