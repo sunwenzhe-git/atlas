@@ -61,19 +61,33 @@ Trellis 走的是另一条务实的路：不搞宏大叙事，专注把**眼前�
 
 ---
 
-## 三、看懂全局：你需要的不仅是 Agent 的技能，而是项目的“防呆护栏”
+## 三、看懂全局：AI 时代的体系结构映射与“Spring Boot”之问
 
-把上面这些框架放在一起，你会发现一个非常清晰的演进脉络：
+很多开发者常问：**既然都有了 Cursor、Claude Code、Superpowers，为什么还需要 Project Harness？**
 
-* **Matt Pocock Skills / Superpowers** 在改造 **“工人（Agent）”** —— 教工人怎么思考、怎么按步骤干活；
-* **Spec-kit / OpenSpec / Trellis** 开始改造 **“工地（Project）”** —— 在代码仓库里立规矩、建文档、管任务卡。
+如果从计算机经典体系结构的演进视角来审视当前的 AI 编程生态，各层分工其实一目了然：
 
-但在真实的严肃项目里，光有“规矩文档”和“任务卡”还不够。**因为 AI 是一个极其聪明、但会在遇到困难时“走捷径绕过规则”的执行者。**
+### 1. 经典体系结构 🆚 AI 时代体系结构映射
 
-如果你不在仓库里装上一套**完全独立于 AI 之外、用确定性脚本执行的物理检查线（我们称之为 Project Harness，项目工程线束）**，AI 随时可以：
-* 在文档里勾选 `[x] 已完成测试`，实际上测试文件里只有一行注释；
-* 为了修好新需求，把老需求的测试文件直接删掉；
-* 改了公共组件，却漏改了 3 个引用它的边缘页面。
+| 经典体系结构 | AI 编码时代映射 | 代表角色 / 组件 | 核心职责与分工 |
+| :--- | :--- | :--- | :--- |
+| **CPU / 算力核心** | **LLM（大语言模型）** | Claude 3.7 / GPT-5 / GLM-5 | 负责纯粹的逻辑推理与自回归计算（纯算力输入与输出） |
+| **操作系统 / Runtime (OS)** | **Agent Harness** | Claude Code / Cursor / Pi Agent / OpenCode | **提供系统调用（Syscall）与运行环境**<br>• 文件读写、Bash 执行（工具调用）<br>• 内存与缓存管理（KV Cache 保温、上下文窗口截断）<br>• 多进程调度（Subagent 派生） |
+| **工程框架 / 工业级脚手架** | **Project Harness** | **Atlas** / Trellis / OpenSpec | **定义项目物理秩序与全生命周期防线**<br>• 规范与应然资产基线（PRD / AC 账本）<br>• 依赖图谱与架构防线（Code Graph 影响分析）<br>• 机器物理阻断门禁（防止 AI 偷工减料与测试造假） |
+
+* **Matt Pocock Skills / Superpowers** 在改造 **“工人（Agent）”** —— 像给操作系统装上更顺手的驱动；
+* **Spec-kit / OpenSpec / Trellis / Atlas** 在改造 **“工地（Project）”** —— 在代码仓库内部建立工程防线。
+
+### 2. 为什么说 Project Harness 是 AI 时代的 Spring Boot？
+
+很多开发者直觉上把“脚手架”理解为 `npm create` 或 `vue-cli` 这种生成一次空目录就退场的工具。但 **Project Harness 绝非一次性模板，它是像 Spring Boot 一样的全生命周期工程框架（Framework）**：
+
+1. **从“散装手搓”走向“约定优于配置 (Convention over Configuration)”**：  
+   在 Spring Boot 诞生前，Java 开发者各凭喜好手搓 XML、配置 Web 容器，团队项目极其混乱脆弱；现在的 AI 编程亦然，大家都在各自的 `.cursorrules` 和 Prompt 里给 AI 打零散补丁。**Atlas 则如同 Spring Boot，为 AI 编程立下了第一套工业级工程规范**：目录组织标准、单源事实资产、两层正交状态机，开箱即用。
+2. **从“人肉盯防”走向“框架级拦截防呆 (Poka-Yoke)”**：  
+   Spring Boot 依靠分层架构与拦截器（AOP）规范初级程序员的代码；而面对“极具创造力但极其热衷抄近道（写假测试、改宽断言、自报通过）”的 AI，**Atlas 的硬门禁（Iron Gates）、变异证明与 AST 静态审查充当了物理拦截器**。不满足规范的代码，在退出码层面直接阻断（FAIL=1），从机制上堵死漏洞。
+3. **自带开箱即用的工程度量 (Actuator)**：  
+   如同 Spring Boot Actuator 提供全套健康检查与审计端点，Atlas 提供了四态门禁报告、代码依赖拓扑与 E2E 慢动作可视化控制台，让整个代码库的真实功能健康度时刻机器可度量。
 
 **这就是我们构建 Atlas 的原因。**
 
