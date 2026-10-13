@@ -12,6 +12,7 @@
 | `<项目根>/.trellis/spec/conventions/` | **约定类注入薄桩**（当前仅 `testid.md`；派生视图，正文归 E2E 环契约） | 由 E2E 环维护 |
 
 - `.atlas/` 是包在本项目的唯一副本；平台 skill 目录里只放瘦桩 `SKILL.md`，指回 `.atlas/`。
+- **`product/adr/`（架构决策记录，2026-10-13 登记）**：项目级长效架构裁决，落点为 `product/adr/NNNN-<slug>.md`。按需落笔，永不覆盖。跨需求长效架构决策归此；需求内微观取舍归域级 PRD。
 - **`product/design.md`（视觉设计档案，2026-10-08 登记 `#182`）**：写者 = frontend-design skill（design read / 旋钮 / 设计系统 / 强调色 / detect 豁免），atlas 不生产不覆盖；只读触点两个——走查单确认门前对照视觉方向（`rings/prd/reference.md` §4·八）+ detect 豁免 ⇔ `.impeccable/config.json` `detector.ignoreRules` 双向对账（`validators/validate_design_exemptions.py`）。
 - **结构事实落 `.trellis/spec/structure/`**：既是项目级事实，又能被 Trellis 任务**原生注入**消费。仅 `tour.md`（`paths: ['**']`）与 `domains/<domain>.md`（域 globs）带 `paths:`；其余事实文档无 `paths`、按需 Read。
 - **testid 薄桩落 `.trellis/spec/conventions/`**：`testid.md` 带 `paths:`（前端 app globs），供实现任务注入；它是**派生视图**（祈使句 + 指针 + 由**用例分片应然清单**派生的清单），命名规则正文归 E2E 环契约。
@@ -41,6 +42,7 @@
 ├── .atlas/                         # atlas 包（由 install.sh 装配）
 ├── .impeccable/                    # impeccable detect 配置（可选外部工具；config.json 的 detector.ignoreRules 须与 product/design.md 的 detect 豁免双向一致）
 └── product/                        # atlas 项目级文档
+    ├── adr/                        # NNNN-<slug>.md（项目级长效架构决策记录，按需落笔，永不覆盖）
     ├── stack-profile.yaml          # 技术栈画像（字段契约见 stack-profile.md）
     ├── design.md                   # 视觉设计档案（frontend-design skill 写；atlas 只读——走查对照 + 豁免对账）
     ├── reviews/                    # <日期>-<主题>/（人工缺口清单 + plans/）+ calibration.jsonl（审查校准账本，append-only）

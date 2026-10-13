@@ -427,7 +427,7 @@ adapters:
 
 默认在 atlas 各环与 `apply` 时跑；**可选**再加 git pre-commit 钩子做兜底。
 
-**实现状态**：9 个校验器（`validate_{structure,stack_profile,prd,testids,e2e_index,ledger,design_exemptions,e2e_mocks,ac_alignment}.py`）+ `scripts/atlas_check.py`（门总览：校验器 / 出厂测试 / 生成物 / 真跑，**一门一行 `ok|FAIL|WARN|SKIP`**）。
+**实现状态**：10 个校验器（`validate_{structure,stack_profile,prd,testids,e2e_index,ledger,design_exemptions,e2e_mocks,ac_alignment,adr}.py`）+ `scripts/atlas_check.py`（门总览：校验器 / 出厂测试 / 生成物 / 真跑，**一门一行 `ok|FAIL|WARN|SKIP`**）。
 
 **门总账与收口清单（2026-09-28 落地，`3509 §B112`/`§B114`）**：所有门登记在 `shared/gates.md`（含**对账平面 / 显式盲区 / 验证预算 / 假绿测试取证等级**三列）—— **不在表 = 不存在**；人侧收口步骤表 = `shared/closeout.md`（此前被多处定形引用却长期不存在）。`SKIP` 是**一等结论**（未就绪），不是通过。
 
