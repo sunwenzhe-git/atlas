@@ -190,3 +190,33 @@ def test_only_one():
     delta_check = [c for c in res.checks if c["check"] == "差量防回退"][0]
     assert delta_check["status"] == "WARN"
     assert "挂载测试数退化" in delta_check["detail"]
+
+
+def test_ac_alignment_ignores_reviews_and_subdirectories(tmp_path: Path):
+    """验证 collect_prd_acs 严格收敛于平铺规范（prd.md 与 *-prd.md），
+    不会将 reviews/ 评审历史目录中的废弃 AC 误当成合法声明。
+    """
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001")
+def test_valid():
+    assert True
+"""
+    proj = create_minimal_project(
+        tmp_path, prd_acs=["AC-TEST-001"], test_code=test_code
+    )
+    # 在 product/prd/ 下注入 reviews/ 子目录，内含未覆盖的幽灵/旧 AC
+    reviews_dir = proj / "product" / "prd" / "reviews"
+    reviews_dir.mkdir(parents=True, exist_ok=True)
+    (reviews_dir / "review-old.md").write_text(
+        "# Review\n- 曾经提议的 `AC-OBSOLETE-999` 已废弃\n", encoding="utf-8"
+    )
+
+    # 如果 collect_prd_acs 错误递归扫了 reviews，已声明 AC 会变成 2 个，未覆盖率会导致对账失败
+    res = validate_ac_alignment(proj)
+    assert res.status == "PASS"
+    cov_check = [c for c in res.checks if c["check"] == "AC覆盖对账"][0]
+    assert cov_check["status"] == "PASS"
+    assert "已声明 AC: 1" in cov_check["detail"]
+

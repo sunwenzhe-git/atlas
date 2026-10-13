@@ -43,7 +43,8 @@ VALIDATORS = (
     "validate_prd",
     "validate_ledger",
     "validate_design_exemptions",
-)  # E1：validate_prototype 随原型环退役；§B120：stack_profile / structure 纳入；#182：design_exemptions 纳入；§5.8：e2e_mocks 纳入；B209-1（3507 BT）：validate_ac_alignment 纳入（后端与全栈 AC 对账门）
+    "validate_adr",
+)  # E1：validate_prototype 随原型环退役；§B120：stack_profile / structure 纳入；#182：design_exemptions 纳入；§5.8：e2e_mocks 纳入；B209-1（3507 BT）：validate_ac_alignment 纳入；2026-10-13：validate_adr 纳入（架构决策资产门）
 
 # §B120：三态前置 —— 前置未声明 ⇒ SKIP（不是通过，且必须带原因）；标记存在才真正跑。
 _GATE_PRECONDITIONS = {
@@ -67,6 +68,10 @@ _GATE_PRECONDITIONS = {
     "validate_ac_alignment": (
         "product/prd/prd.md",
         "前置未声明（未就绪，非失败）：PRD 资产未建（无 product/prd/prd.md）"),
+    # 架构决策资产未建 ⇒ 未走到这一步（2026-10-13）
+    "validate_adr": (
+        "product/adr",
+        "前置未声明（未就绪，非失败）：无 product/adr/（尚未创建任何 ADR）"),
 }
 
 GEN_NOT_READY = 3
@@ -332,12 +337,15 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     # 可执行文件，经 NODE_PATH 解析生成物里的 @playwright/test；
     # 未找到 ⇒ FAIL 列原因（不静默降级）。
     nm = re.search(r"^[^\S\n]*node_modules:[^\S\n]*(\S+)", text, re.M)
-    nm_dir = Path(nm.group(1)) if nm else None
+    nm_rel = Path(nm.group(1)) if nm else None
+    nm_dir = (root / nm_rel) if nm_rel else None
     pw_bin = (nm_dir / ".bin" / "playwright") if nm_dir else None
     if not pw_bin or not pw_bin.is_file():
+        disp_bin = (nm_rel / ".bin" / "playwright") if nm_rel else "未配置"
+        hint = f"（提示：请在 {nm_rel.parent if nm_rel else '.'} 执行 npm i -D @playwright/test）"
         rows.add("E2E 真跑", "FAIL",
-                 f"node-playwright 可执行文件不存在：{pw_bin}（stack-profile e2e.node_modules）",
-                 command="", full_output=f"pw_bin not found: {pw_bin}")
+                 f"node-playwright 可执行文件不存在：{disp_bin}（stack-profile e2e.node_modules）{hint}",
+                 command="", full_output=f"pw_bin not found: {pw_bin}\n提示：请先在对应目录安装 @playwright/test")
         return
     spec_arg = f"{page}.spec.ts" if page else ""
     cmd = (f"NODE_PATH={nm_dir} {pw_bin} test -c "

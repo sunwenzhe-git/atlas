@@ -285,6 +285,33 @@ def test_check_e2e_fails_loudly_when_node_playwright_missing() -> None:
         assert "node-playwright" in row["detail"] and "node_modules" in row["detail"], row
 
 
+def test_check_e2e_node_modules_anchored_to_root() -> None:
+    """验证 node_modules 相对路径能够正确以 root 为基准锚定并寻找 playwright。"""
+    mod = _load_check()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        scripts = root / "product" / "e2e" / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "login.spec.ts").write_text("// dummy\n", encoding="utf-8")
+        # 伪造存在于 root / custom_nm / .bin / playwright 的可执行文件
+        pw_mock = root / "custom_nm" / ".bin" / "playwright"
+        pw_mock.parent.mkdir(parents=True)
+        pw_mock.write_text("#!/bin/sh\necho '1 passed'\n", encoding="utf-8")
+        pw_mock.chmod(0o755)
+
+        (root / "product" / "stack-profile.yaml").write_text(
+            f"e2e:\n  runner: node-playwright\n  node_modules: custom_nm\n  app_base_url: {_live_base()}\n",
+            encoding="utf-8")
+        (scripts / "playwright.config.ts").write_text("// dummy config", encoding="utf-8")
+        
+        rows = mod.Row()
+        mod.check_e2e(root, rows, "login")
+        row = [r for r in rows.rows if r["name"].startswith("E2E 真跑")][0]
+        # 因为 mock playwright 成功存在并被找到且返回 1 passed，不会报 node-playwright 缺失 FAIL
+        assert "node-playwright 可执行文件不存在" not in row["detail"], row
+
+
+
 def test_drift_gate_reads_marker() -> None:
     """「结构漂移」门（gates.md §2.2，2026-10-04 登记）：只读标记、不做二次判定。
     变异：从 main 摘掉 `check_drift` 调用 ⇒ `test_atlas_check_cli_lists_every_gate_once` 红。

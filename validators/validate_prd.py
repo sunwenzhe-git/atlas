@@ -191,6 +191,22 @@ def validate(root: Path) -> Result:
 
     prd_text = prd.read_text(encoding="utf-8")
 
+    # ---- 参数 0：目录规范（平铺契约，rings/prd/reference.md §2）
+    illegal: list[str] = []
+    for item in sorted(prd_dir.iterdir()):
+        if item.name.startswith("."):
+            continue
+        if item.is_dir():
+            illegal.append(f"子目录:{item.name}/")
+        elif item.is_file():
+            if item.suffix == ".md" and item.name not in ("prd.md", "README.md") and not item.name.endswith("-prd.md"):
+                illegal.append(f"非标准文件:{item.name}")
+    if illegal:
+        res.add("参数0 目录规范", "FAIL",
+                f"发现非契约目录层级或非标准文件：{illegal}（契约 rings/prd/reference.md §2 规定 PRD 必须为平铺目录 product/prd/prd.md 与 *-prd.md，严禁子目录）")
+    else:
+        res.add("参数0 目录规范", "PASS", "")
+
     # ---- 参数 1：文档头完整
     fm = frontmatter(prd_text)
     need_global = ("doc", "product", "version", "date", "status")

@@ -2376,3 +2376,32 @@ def test_prd_unverifiable_list_ghost_fails() -> None:
         res = vpr.validate(root)
         row = [c for c in res.checks if c["check"] == "参数4 追溯完整"][0]
         assert row["status"] == "FAIL" and "AC-GHOST-777" in row["detail"], row
+
+
+def test_prd_illegal_nested_directories_fails() -> None:
+    """契约 rings/prd/reference.md §2（平铺规范）：
+    product/prd/ 严禁子目录（如 domains/）或散落非标准 markdown 文件。
+    存在非法子目录或非标准文件时，参数0 目录规范门必须 FAIL（防静默穿透门控）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root, _with_page_table("已实现"))
+        mk_prd_raw(root, FM_GLOBAL + PRD_GLOBAL, FM_DOMAIN + PRD_DEMO.format(ac="AC-HOME-001", rows=""))
+        
+        # 正常平铺基线：PASS
+        res = vpr.validate(root)
+        row0 = [c for c in res.checks if c["check"] == "参数0 目录规范"][0]
+        assert row0["status"] == "PASS"
+
+        # 变异注入：创建非法子目录 domains/ 并放置 markdown
+        nested_dir = root / "product" / "prd" / "domains"
+        nested_dir.mkdir(parents=True, exist_ok=True)
+        (nested_dir / "nested.md").write_text("# nested", encoding="utf-8")
+
+        res_bad = vpr.validate(root)
+        row0_bad = [c for c in res_bad.checks if c["check"] == "参数0 目录规范"][0]
+        assert row0_bad["status"] == "FAIL"
+        assert "domains" in row0_bad["detail"]
+

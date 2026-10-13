@@ -73,16 +73,25 @@ def load_stack_profile(root: Path) -> dict[str, Any]:
 
 
 def collect_prd_acs(root: Path) -> dict[str, set[str]]:
-    """收集 product/prd/ 目录下所有已声明的 AC ID。返回 {文件名: {AC_ID, ...}}。"""
+    """收集 product/prd/ 目录下所有已声明的 AC ID。返回 {文件名: {AC_ID, ...}}。
+
+    契约（rings/prd/reference.md §2）：仅扫平铺规范文件（prd.md 与 *-prd.md），
+    显式排除 reviews/ 等子目录及 README.md，避免历史评审或说明文档中残留的旧 AC 污染。
+    """
     prd_dir = root / "product" / "prd"
     if not prd_dir.is_dir():
         return {}
     acs_by_file: dict[str, set[str]] = {}
-    for p in prd_dir.rglob("*.md"):
+    valid_files = sorted(prd_dir.glob("*-prd.md"))
+    prd_global = prd_dir / "prd.md"
+    if prd_global.is_file():
+        valid_files.insert(0, prd_global)
+
+    for p in valid_files:
         content = p.read_text(encoding="utf-8")
         matches = set(AC_ID_RE.findall(content))
         if matches:
-            acs_by_file[str(p.relative_to(prd_dir))] = matches
+            acs_by_file[p.name] = matches
     return acs_by_file
 
 
