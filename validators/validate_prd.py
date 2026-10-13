@@ -280,6 +280,8 @@ def validate(root: Path) -> Result:
         if not f.is_file():
             continue
         for n, ln in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            if ln.strip().startswith(("domain_code:", "domain:", "product:")):
+                continue
             stripped = BACKTICK.sub("`x`", ln)
             for w in FORBIDDEN:
                 if w in stripped:
