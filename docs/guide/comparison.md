@@ -1,3 +1,8 @@
+---
+title: 用遍了 Superpowers、OpenSpec、Spec-kit 和 Trellis 后，我为什么还是写了个 Atlas？
+description: 拆解主流 AI 编程框架（Skills、Superpowers、OpenSpec、Spec-kit、Trellis、Atlas）的底层机制、适用边界与选型指南。
+---
+
 # 用遍了 Superpowers、OpenSpec、Spec-kit 和 Trellis 后，我为什么还是写了个 Atlas？
 
 > **写在前面**：  

@@ -8,6 +8,32 @@ export default defineConfig({
   cleanUrls: true,
   lastUpdated: true,
 
+  head: [
+    ['link', { rel: 'icon', href: '/atlas/images/e2e-console.png' }],
+    ['meta', { property: 'og:site_name', content: 'Atlas' }],
+    ['meta', { property: 'og:type', content: 'article' }],
+    ['meta', { property: 'og:image', content: 'https://sunwenzhe-git.github.io/atlas/images/e2e-console.png' }],
+    ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
+    ['meta', { name: 'twitter:image', content: 'https://sunwenzhe-git.github.io/atlas/images/e2e-console.png' }],
+  ],
+
+  transformHead({ pageData }) {
+    const title = pageData.title
+      ? `${pageData.title} | Atlas`
+      : 'Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎'
+    const description = pageData.description || '践行 Project Harness 的全流程 AI 编程工作流治理引擎'
+    const pagePath = pageData.relativePath.replace(/((^|\/)index)?\.md$/, '$2').replace(/\.md$/, '')
+    const url = `https://sunwenzhe-git.github.io/atlas/${pagePath}`
+
+    return [
+      ['meta', { property: 'og:title', content: title }],
+      ['meta', { property: 'og:description', content: description }],
+      ['meta', { property: 'og:url', content: url }],
+      ['meta', { name: 'twitter:title', content: title }],
+      ['meta', { name: 'twitter:description', content: description }],
+    ]
+  },
+
   themeConfig: {
     siteTitle: "Atlas",
     logo: '/images/e2e-console.png',
