@@ -62,6 +62,7 @@ export default defineConfig({
     nav: [
       { text: '快速开始', link: '/guide/quick-start' },
       { text: '框架横评', link: '/guide/comparison' },
+      { text: 'Token 工程', link: '/guide/token-engineering' },
       { text: '核心架构', link: '/concepts/architecture' },
       { text: '独门重器', link: '/innovations/e2e-console' },
       { text: '机器门禁', link: '/gates/iron-gates' },
@@ -93,6 +94,7 @@ export default defineConfig({
         items: [
           { text: '30 秒快速上手', link: '/guide/quick-start' },
           { text: '主流框架横评与选型', link: '/guide/comparison' },
+          { text: 'Token 节流与上下文工程', link: '/guide/token-engineering' },
           { text: '破局 Vibe Coding', link: '/guide/how-it-works' },
           { text: '更新日志 (Changelog)', link: '/guide/changelog' }
         ]
@@ -119,7 +121,8 @@ export default defineConfig({
         text: '🧰 技能与生态',
         collapsed: false,
         items: [
-          { text: '自带技能全家桶', link: '/ecosystem/skills' }
+          { text: '自带技能全家桶', link: '/ecosystem/skills' },
+          { text: 'Pi Agent 扩展实践', link: '/ecosystem/pi-extensions' }
         ]
       },
       {
