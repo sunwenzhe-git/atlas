@@ -215,3 +215,44 @@ def test_resolve_pw_and_runner_fail_loud_on_missing_executable() -> None:
         ok, reason = runner.start({"id": "E2E-DEMO-001"}, "demo.spec.ts:3", 500, "app", "http://127.0.0.1:8000")
         assert not ok
         assert "node-playwright 不可用" in reason
+
+
+def test_runner_injects_slowmo_via_env_not_cli_flag() -> None:
+    """F11（2026-10-14）：Playwright `test` 子命令**没有** `--slowmo` 旗标
+    （1.64 实测 `unknown option '--slowmo=…'`，回放直接 exit 1）——慢动作经
+    `ATLAS_SLOWMO` 环境变量注入生成配置的 `launchOptions.slowMo`。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    captured: dict = {}
+
+    class FakeProc:
+        stdout = iter(())
+        returncode = 0
+
+        def poll(self) -> int:
+            return 0
+
+        def kill(self) -> None:
+            pass
+
+    def fake_popen(cmd, cwd=None, stdout=None, stderr=None, text=None, bufsize=None, env=None):
+        captured["cmd"] = list(cmd)
+        captured["env"] = dict(env or {})
+        return FakeProc()
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        ledger = cons.Ledger(root, "tester")
+        runner = cons.Runner(root, ledger, timeout=60, head=True, keep_open=False)
+        orig = cons.subprocess.Popen
+        cons.subprocess.Popen = fake_popen
+        try:
+            runner._run({"id": "E2E-DEMO-001"}, "demo.spec.ts:3", 700, "app",
+                        "http://127.0.0.1:8000",
+                        Path("/nonexistent/playwright"), Path("/nonexistent/nm"))
+        finally:
+            cons.subprocess.Popen = orig
+
+    assert not any(str(a).startswith("--slowmo") for a in captured["cmd"]), captured["cmd"]
+    assert "--headed" in captured["cmd"], captured["cmd"]
+    assert captured["env"].get("ATLAS_SLOWMO") == "700", captured["env"]
+    assert captured["env"].get("ATLAS_BASE_URL") == "http://127.0.0.1:8000"
