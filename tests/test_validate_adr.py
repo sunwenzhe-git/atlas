@@ -130,3 +130,24 @@ def test_validate_adr_warn_accepted_empty_decision(tmp_path: Path):
     res = MOD.validate_adr(tmp_path)
     assert res.status == "WARN"
     assert any("决策章节内容为空" in c["detail"] for c in res.checks)
+
+
+def test_validate_adr_warn_cycle_detected(tmp_path: Path):
+    """ADR 演进链成环检测：0001 -> 0002 -> 0003 -> 0001 拓扑成环 ⇒ WARN adr_cycle_detected。"""
+    adr1 = VALID_ADR_SAMPLE.replace('status: "accepted"', 'status: "superseded"\nsuperseded_by: "0002"')
+    adr2 = VALID_ADR_SAMPLE.replace('id: "0001"', 'id: "0002"').replace(
+        'ADR-0001: 服务端 ffmpeg 多轨混音', 'ADR-0002: 二代音频'
+    ).replace('status: "accepted"', 'status: "superseded"\nsuperseded_by: "0003"')
+    adr3 = VALID_ADR_SAMPLE.replace('id: "0001"', 'id: "0003"').replace(
+        'ADR-0001: 服务端 ffmpeg 多轨混音', 'ADR-0003: 三代音频'
+    ).replace('status: "accepted"', 'status: "superseded"\nsuperseded_by: "0001"')
+
+    _make_adr_file(tmp_path, "0001-audio-v1.md", adr1)
+    _make_adr_file(tmp_path, "0002-audio-v2.md", adr2)
+    _make_adr_file(tmp_path, "0003-audio-v3.md", adr3)
+
+    res = MOD.validate_adr(tmp_path)
+    assert res.status == "WARN"
+    cycle_checks = [c for c in res.checks if c["check"] == "adr_cycle_detected"]
+    assert cycle_checks, res.checks
+    assert "演进链存在循环引用环路: 0001->0002->0003->0001" in cycle_checks[0]["detail"], cycle_checks

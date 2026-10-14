@@ -1225,7 +1225,15 @@ def test_mock_requires_explicit_mode_on_and_prefix() -> None:
         root = Path(td)
         make_mock(root)
         (root / "product" / "stack-profile.yaml").write_text(
-            PROFILE + "  mock:\n    mode: on\n", encoding="utf-8")  # on 而 prefix 缺
+            PROFILE + "  mock:\n    mode: on\n", encoding="utf-8")  # on 而 prefix 缺 ⇒ 默认兜底为 /
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stderr
+        assert 'const ATLAS_MOCK_PREFIX = "/";' in spec_of(root)
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make_mock(root)
+        (root / "product" / "stack-profile.yaml").write_text(
+            PROFILE + "  mock:\n    mode: on\n    api_prefix: bad prefix\n", encoding="utf-8")
         r = run(root, "--apply")
         assert r.returncode == 2 and "api_prefix" in r.stderr, r.stderr
 

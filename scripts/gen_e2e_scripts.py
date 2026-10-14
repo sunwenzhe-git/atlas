@@ -218,17 +218,23 @@ def parse_mock_line(line: str, api_prefix: str | None = None) -> dict:
     code, _, _note = line.partition("#")
     left, arrow, rhs = code.partition("->")
     if not arrow:
-        raise ValueError(f"mock 行缺 `->`：{line!r}（契约 §5.8）")
+        toks = code.strip().split(None, 2)
+        if len(toks) == 3 and toks[0].upper() in MOCK_METHODS:
+            left, rhs = f"{toks[0]} {toks[1]}", toks[2]
+        else:
+            raise ValueError(f"mock 行缺 `->`：{line!r}（契约 §5.8）")
     toks = left.strip().split()
     if len(toks) != 2:
         raise ValueError(f"mock 行左段应为 `<METHOD> <path>`：{line!r}（契约 §5.8）")
     method, path = toks[0].upper(), toks[1]
     if method not in MOCK_METHODS:
         raise ValueError(f"mock 方法 {toks[0]!r} 不在 {MOCK_METHODS} 内（契约 §5.8）")
-    if not path.startswith("/"):
-        raise ValueError(f"mock 路径须以 / 开头：{path!r}（契约 §5.8）")
-    if api_prefix is not None and not path.startswith(api_prefix):
-        raise ValueError(f"mock 路径 {path!r} 不在 api_prefix {api_prefix!r} 内（锚定门，契约 §5.8）")
+    is_external = path.startswith("http://") or path.startswith("https://")
+    if not is_external:
+        if not path.startswith("/"):
+            raise ValueError(f"mock 路径须以 / 开头或为全量外部 URL（以 http://、https:// 开头）：{path!r}（契约 §5.8）")
+        if api_prefix is not None and not path.startswith(api_prefix):
+            raise ValueError(f"mock 路径 {path!r} 不在 api_prefix {api_prefix!r} 内（锚定门，契约 §5.8）")
     r = rhs.strip()
     m = re.fullmatch(MOCK_FIXTURE_RE, r)
     if m:
@@ -607,14 +613,13 @@ def ts_mock_helpers(api_prefix: str) -> str:
         "  const table = entries.map((e) => ({ ...e, queue: e.seq ? e.seq.slice() : null }));\n"
         "  await page.context().route('**' + ATLAS_MOCK_PREFIX + '**',\n"
         "    (route: any) => atlasMockDispatch(route, table, audit));\n"
+        "  await page.route(\"https://**/*\",\n"
+        "    (route: any) => atlasMockDispatch(route, table, audit));\n"
         "  return audit;\n"
         "}\n"
         "async function atlasMockDispatch(route: any, table: any[], audit: any) {\n"
-        "  const u = new URL(route.request().url());\n"
-        "  if (!u.pathname.startsWith(ATLAS_MOCK_PREFIX)) {\n"
-        "    await route.continue();  // 前缀外（如 /static/api/… 静态资源）：放行\n"
-        "    return;\n"
-        "  }\n"
+        "  const reqUrl = route.request().url();\n"
+        "  const u = new URL(reqUrl);\n"
         "  const method = route.request().method().toUpperCase();\n"
         "  if (method === 'OPTIONS') {  // 跨源预检：自动 204 + CORS 头（防浏览器层白屏）\n"
         "    await route.fulfill({\n"
@@ -628,8 +633,22 @@ def ts_mock_helpers(api_prefix: str) -> str:
         "    });\n"
         "    return;\n"
         "  }\n"
-        "  const ent = table.find((e) => e.method === method && e.path === u.pathname);\n"
+        "  const ent = table.find((e) => e.method === method && (\n"
+        "    (e.path === 'https://*' && reqUrl.startsWith('https://')) ||\n"
+        "    (e.path === 'http://*' && reqUrl.startsWith('http://')) ||\n"
+        "    ((e.path.startsWith('http://') || e.path.startsWith('https://')) &&\n"
+        "      (e.path.endsWith('*') ? reqUrl.startsWith(e.path.slice(0, -1)) : (reqUrl === e.path || (u.origin + u.pathname) === e.path))) ||\n"
+        "    e.path === u.pathname\n"
+        "  ));\n"
         "  if (!ent) {\n"
+        "    if (!u.pathname.startsWith(ATLAS_MOCK_PREFIX)) {\n"
+        "      await route.continue();  // 前缀外（如 /static/api/… 静态资源）：放行\n"
+        "      return;\n"
+        "    }\n"
+        "    if (ATLAS_MOCK_PREFIX === '/' && route.request().resourceType() !== 'fetch' && route.request().resourceType() !== 'xhr') {\n"
+        "      await route.continue();\n"
+        "      return;\n"
+        "    }\n"
         "    audit.errors.push('未桩 API 命中（fail-loud）：' + method + ' ' + u.pathname);\n"
         "    await route.abort('failed');\n"
         "    return;\n"
@@ -852,7 +871,9 @@ def main() -> int:
               "——契约见 shared/stack-profile.md §2 + rings/e2e/reference.md §5.8", file=sys.stderr)
         return 2
     mock_prefix = mock_cfg.get("api_prefix")
-    if mock_mode == "on" and (not mock_prefix or not str(mock_prefix).startswith("/")
+    if mock_mode == "on" and not mock_prefix:
+        mock_prefix = "/"
+    if mock_mode == "on" and (not str(mock_prefix).startswith("/")
                               or " " in str(mock_prefix)):
         print(f"ERROR: e2e.mock.mode=on 须同时声明合法 api_prefix（以 / 开头、无空白），"
               f"得 {mock_prefix!r}（契约 §5.8）", file=sys.stderr)

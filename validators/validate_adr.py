@@ -119,7 +119,10 @@ def validate_adr(root: Path) -> Result:
     all_ids = set(ids_map.keys())
 
     # 2. 逐文件内容与状态校验
+    superseded_graph: dict[str, list[str]] = {}
     for f in sorted(adr_files):
+        m = ADR_FILENAME_PATTERN.match(f.name)
+        seq = m.group(1) if m else f.stem.split("-")[0]
         try:
             content = f.read_text(encoding="utf-8")
         except UnicodeDecodeError:
@@ -141,6 +144,8 @@ def validate_adr(root: Path) -> Result:
                 sub_match = re.search(r"\d{4}", sub_by)
                 if not sub_match or sub_match.group(0) not in all_ids:
                     res.add(f"superseded_chain:{f.name}", "WARN", f"superseded 状态未指向有效的新 ADR 编号 (指向: '{sub_by}')")
+                else:
+                    superseded_graph.setdefault(seq, []).append(sub_match.group(0))
 
         # 关键章节存在性检查
         has_context = bool(re.search(r"^##\s+.*(Context|背景)", content, re.M | re.I))
@@ -170,6 +175,30 @@ def validate_adr(root: Path) -> Result:
             else:
                 res.add(f"content:{f.name}", "PASS", "章节完整")
 
+    # 3. 演进链有向图成环检测 (Cycle Detection)
+    adj: dict[str, list[str]] = superseded_graph
+    color: dict[str, int] = {}
+    cycles: list[str] = []
+
+    def _dfs(u: str, stack: list[str]) -> None:
+        color[u] = 1
+        for v in adj.get(u, []):
+            if color.get(v) == 1:
+                cycles.append("->".join(stack[stack.index(v):] + [v]))
+            elif color.get(v) is None:
+                _dfs(v, stack + [v])
+        color[u] = 2
+
+    for n in sorted(adj):
+        if color.get(n) is None:
+            _dfs(n, [n])
+
+    seen_cycles = set()
+    for c in cycles:
+        if c not in seen_cycles:
+            seen_cycles.add(c)
+            res.add("adr_cycle_detected", "WARN", f"演进链存在循环引用环路: {c}")
+
     return res
 
 
@@ -189,7 +218,8 @@ def main() -> int:
         }, ensure_ascii=False, indent=2))
     else:
         for c in res.checks:
-            print(f"[{c['status']}] {c['check']}: {c['detail']}")
+            detail = f" —— {c['detail']}" if c.get("detail") else ""
+            print(f"[{c['status']}] {c['check']}{detail}")
         print(f"\nFinal status: {res.status}")
 
     return 0 if res.ok else 1

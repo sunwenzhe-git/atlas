@@ -172,7 +172,8 @@ def validate(root: Path) -> Result:
         res.add("e2e.mock 段形态", "FAIL", f"值={mock_cfg!r}（应为映射；契约 §5.8 / shared/stack-profile.md §2）")
         return res
     mode = mock_cfg.get("mode") or "off"
-    prefix = mock_cfg.get("api_prefix")
+    raw_prefix = mock_cfg.get("api_prefix")
+    prefix = raw_prefix if raw_prefix is not None else ("/" if mode == "on" else None)
 
     shards = gen.gather_cases(cases_dir)
     mock_pages = sorted(p for p, items in shards.items() if any(c.get("mock") for c in items))
@@ -193,8 +194,9 @@ def validate(root: Path) -> Result:
     # —— api_prefix 前置
     if mode == "on":
         ok = bool(prefix) and str(prefix).startswith("/") and " " not in str(prefix)
-        res.add("api_prefix 前置", "PASS" if ok else "FAIL",
-                f"值={prefix!r}（mode: on 时必填、以 / 开头且无空白）")
+        msg = (f"值={prefix!r}（未配置默认兜底为 /；以 / 开头且无空白）" if raw_prefix is None
+               else f"值={prefix!r}（mode: on 时必填、以 / 开头且无空白）")
+        res.add("api_prefix 前置", "PASS" if ok else "FAIL", msg)
 
     # —— 行语法 + 锚定（复用生成器 parse_mock_line；mode off 时 prefix 未知 ⇒ 只查文法）
     anchor = str(prefix) if (mode == "on" and prefix) else None
