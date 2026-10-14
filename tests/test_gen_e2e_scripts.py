@@ -1238,6 +1238,22 @@ def test_mock_requires_explicit_mode_on_and_prefix() -> None:
         assert r.returncode == 2 and "api_prefix" in r.stderr, r.stderr
 
 
+def test_mock_mode_auto_continue_passthrough() -> None:
+    """验证 mode: auto 下生成物具备未命中路由 route.continue() 穿透逻辑。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make_mock(root)
+        (root / "product" / "stack-profile.yaml").write_text(
+            PROFILE + "  mock:\n    mode: auto\n", encoding="utf-8"
+        )
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stderr
+        spec = spec_of(root)
+        assert 'const ATLAS_MOCK_MODE = "auto";' in spec
+        assert 'const ATLAS_MOCK_PREFIX = "/";' in spec
+        assert "if (ATLAS_MOCK_MODE === 'auto') {\n      await route.continue();\n      return;\n    }" in spec
+
+
 def test_mock_grammar_anchor_fixture_fail_loud() -> None:
     """契约 §5.8 文法封闭 + 锚定门 + fixture 存在：三口均 exit 2 并点名（fail-loud，
     不静默降级）。"""

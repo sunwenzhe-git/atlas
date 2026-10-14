@@ -192,9 +192,12 @@ def test_node_ids_extracts_ts_lines_and_skips_blocked() -> None:
         assert mapping == {"E2E-DEMO-001": "demo.spec.ts:3"}, mapping
 
 
-def test_resolve_pw_and_runner_fail_loud_on_missing_executable() -> None:
+def test_resolve_pw_and_runner_fail_loud_on_missing_executable(monkeypatch) -> None:
     """契约 §10.1：Runner 解析不到可执行文件时诚实拒绝，不起盲目失败的子进程。"""
     cons = load("e2e_console", "scripts/e2e_console.py")
+    monkeypatch.setattr(cons.shutil, "which", lambda cmd: None)
+    monkeypatch.delenv("NODE_PATH", raising=False)
+    monkeypatch.setattr(cons.subprocess, "run", lambda *args, **kwargs: type("Proc", (), {"returncode": 1, "stdout": ""})())
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         # 无 profile
@@ -288,4 +291,27 @@ def test_resolve_pw_global_playwright(monkeypatch) -> None:
         assert why == "", why
         assert pw == fake_pw, pw
         assert nm == fake_global_nm, nm
+
+
+def test_resolve_pw_ignores_python_playwright_without_node_module(monkeypatch) -> None:
+    """F19 加固：当系统命中 Python Playwright CLI 时，若无 Node 全局模块，不得采信该 global_pw。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product").mkdir(parents=True)
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: legacy-python\napps: []\ne2e:\n  runner: node-playwright\n", encoding="utf-8"
+        )
+        fake_py_pw = root / "fake-python-bin" / "playwright"
+        fake_py_pw.parent.mkdir(parents=True)
+        fake_py_pw.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        fake_py_pw.chmod(0o755)
+
+        monkeypatch.setattr(cons.shutil, "which", lambda cmd: str(fake_py_pw) if cmd == "playwright" else None)
+        monkeypatch.delenv("NODE_PATH", raising=False)
+        monkeypatch.setattr(cons.subprocess, "run", lambda *args, **kwargs: type("Proc", (), {"returncode": 1, "stdout": ""})())
+
+        pw, nm, why = cons.resolve_pw(root)
+        assert pw is None, f"不应采信 Python Playwright: {pw}"
+        assert "stack-profile 未声明 e2e.node_modules" in why, why
 

@@ -264,7 +264,7 @@ def parse_mock_line(line: str, api_prefix: str | None = None) -> dict:
     raise ValueError(f"mock 行右段语法不识：{r!r}（契约 §5.8）")
 
 
-def compile_mock_entries(case: dict, api_prefix: str, e2e_root: Path) -> list[dict] | None:
+def compile_mock_entries(case: dict, api_prefix: str, e2e_root: Path, fixtures_root: Path | None = None) -> list[dict] | None:
     """把用例的 `mock:` 行编译为派发表条目（fixture 内容生成期内联；契约 §5.8）。
 
     内联而非运行期读盘：生成物 = **确定性派生物**，`atlas_check` 的「生成物最新」门
@@ -274,8 +274,16 @@ def compile_mock_entries(case: dict, api_prefix: str, e2e_root: Path) -> list[di
     if not lines:
         return None
 
+    f_root = fixtures_root or (e2e_root / "fixtures")
+
     def body_of(ref: str) -> str:
-        p = e2e_root / ref
+        if ref.startswith("fixtures/"):
+            rel = ref[len("fixtures/"):]
+            p = f_root / rel
+            if not p.is_file() and (e2e_root / ref).is_file():
+                p = e2e_root / ref
+        else:
+            p = f_root / ref
         if not p.is_file():
             raise ValueError(f"fixture 不存在：{ref}（{case.get('id')} 的 mock 行；契约 §5.8）")
         return p.read_text(encoding="utf-8")
@@ -597,17 +605,19 @@ def ts_assert_expr(line: str) -> str:
     raise ValueError(f"未知断言动词: {verb}（契约 §5.5）")
 
 
-def ts_mock_helpers(api_prefix: str) -> str:
+def ts_mock_helpers(api_prefix: str, mode: str = "on") -> str:
     """契约 §5.8（2026-10-12）：网络边界打桩的页面头部 helper（**只出现在 mock 页脚本**——
     未启用项目的生成物零变化）。
 
     单条 `context.route` 派发表（pathname+method 命中、query 免疫；不逐行注册 glob——
     注册逆序 + query 不匹配 = 两类静默穿透）；前缀内未命中 fail-loud abort、前缀外放行、
     OPTIONS 自动 204 + CORS 头；命中留痕 = `atlas-mock` 注记 + `[atlas-mock]` 日志（证据披露）。
+    mode === 'auto' 时，未命中规则表直接 route.continue() 穿透访问真实后端。
     """
     return (
         "// 契约 §5.8：网络边界打桩（单条 context.route 派发表；随用例 context 生灭）\n"
         "const ATLAS_MOCK_PREFIX = " + json.dumps(api_prefix) + ";\n"
+        "const ATLAS_MOCK_MODE = " + json.dumps(mode) + ";\n"
         "async function atlasMockTable(page: any, entries: any[]) {\n"
         "  const audit = { errors: [] as string[], hits: [] as string[] };\n"
         "  const table = entries.map((e) => ({ ...e, queue: e.seq ? e.seq.slice() : null }));\n"
@@ -641,6 +651,10 @@ def ts_mock_helpers(api_prefix: str) -> str:
         "    e.path === u.pathname\n"
         "  ));\n"
         "  if (!ent) {\n"
+        "    if (ATLAS_MOCK_MODE === 'auto') {\n"
+        "      await route.continue();\n"
+        "      return;\n"
+        "    }\n"
         "    if (!u.pathname.startsWith(ATLAS_MOCK_PREFIX)) {\n"
         "      await route.continue();  // 前缀外（如 /static/api/… 静态资源）：放行\n"
         "      return;\n"
@@ -862,20 +876,20 @@ def main() -> int:
               "——契约见 shared/stack-profile.md §2 + rings/e2e/reference.md §5.7", file=sys.stderr)
         return 2
 
-    # 网络边界打桩通道（契约 §5.8，2026-10-12）：mode off（缺省 = 现行为）/ on（放行 mock: 行）。
+    # 网络边界打桩通道（契约 §5.8，2026-10-12）：mode off（缺省 = 现行为）/ on（放行 mock: 行）/ auto（混合穿透）。
     # 与 seed 通道**正交**：seed 的 declare 豁免辖环境播种声明，mock 是运行期网络行为、无豁免态。
     mock_cfg = e2e.get("mock") or {}
     mock_mode = mock_cfg.get("mode") or "off"
-    if mock_mode not in ("off", "on"):
-        print(f"ERROR: e2e.mock.mode 非法: {mock_mode!r}（允许 off|on；缺省 off）"
+    if mock_mode not in ("off", "on", "auto"):
+        print(f"ERROR: e2e.mock.mode 非法: {mock_mode!r}（允许 off|on|auto；缺省 off）"
               "——契约见 shared/stack-profile.md §2 + rings/e2e/reference.md §5.8", file=sys.stderr)
         return 2
     mock_prefix = mock_cfg.get("api_prefix")
-    if mock_mode == "on" and not mock_prefix:
+    if mock_mode in ("on", "auto") and not mock_prefix:
         mock_prefix = "/"
-    if mock_mode == "on" and (not str(mock_prefix).startswith("/")
+    if mock_mode in ("on", "auto") and (not str(mock_prefix).startswith("/")
                               or " " in str(mock_prefix)):
-        print(f"ERROR: e2e.mock.mode=on 须同时声明合法 api_prefix（以 / 开头、无空白），"
+        print(f"ERROR: e2e.mock.mode={mock_mode} 须同时声明合法 api_prefix（以 / 开头、无空白），"
               f"得 {mock_prefix!r}（契约 §5.8）", file=sys.stderr)
         return 2
 
@@ -900,23 +914,30 @@ def main() -> int:
     # 网络边界打桩门 + 编译趟（契约 §5.8，2026-10-12）：
     # ① mode 未开而分片有 mock: 行 ⇒ 中止（防全后端项目静默屏蔽真 API 回归——
     #    镜像 seed 的 enforce/declare 先例：缺省 = 现行为，显式声明才放行）；
-    # ② mode on ⇒ 编译全部 mock 行（语法 + 锚定 + fixture 存在，fail-loud 不静默降级）。
+    # ② mode on/auto ⇒ 编译全部 mock 行（语法 + 锚定 + fixture 存在，fail-loud 不静默降级）。
     mock_lines_present = [c["id"] for items in cases.values() for c in items if c.get("mock")]
-    if mock_lines_present and mock_mode != "on":
-        print("ERROR: 分片出现 mock: 行但 e2e.mock 未声明 mode: on（契约 §5.8——"
-              "防全后端项目静默屏蔽真实 API 回归；纯前端桩项目显式声明后放行）：", file=sys.stderr)
+    if mock_lines_present and mock_mode not in ("on", "auto"):
+        print("ERROR: 分片出现 mock: 行但 e2e.mock 未声明 mode: on 或 auto（契约 §5.8——"
+              "防全后端项目静默屏蔽真实 API 回归；纯前端桩或混合穿透项目显式声明后放行）：", file=sys.stderr)
         for cid in mock_lines_present[:10]:
             print(f"  - {cid}", file=sys.stderr)
         print(f"  共 {len(mock_lines_present)} 条用例", file=sys.stderr)
         return 2
     e2e_root = (root / (e2e.get("cases_dir") or "product/e2e/cases")).parent
+    custom_fdir = mock_cfg.get("fixtures_dir")
+    if custom_fdir:
+        fixtures_root = Path(custom_fdir)
+        if not fixtures_root.is_absolute():
+            fixtures_root = root / custom_fdir
+    else:
+        fixtures_root = e2e_root / "fixtures"
     bad_mock: list[str] = []
     for items in cases.values():
         for c in items:
             c["_mock"] = None
-            if mock_mode == "on" and c.get("mock"):
+            if mock_mode in ("on", "auto") and c.get("mock"):
                 try:
-                    c["_mock"] = compile_mock_entries(c, mock_prefix or "", e2e_root)
+                    c["_mock"] = compile_mock_entries(c, mock_prefix or "", e2e_root, fixtures_root)
                 except ValueError as exc:
                     bad_mock.append(f"{c['id']}: {exc}")
     if bad_mock:
@@ -1128,7 +1149,7 @@ def main() -> int:
             "  const name = download.suggestedFilename();\n"
             "  expect(name, `下载文件名 ${name} 不匹配 ${pattern}`).toMatch(atlasGlob(pattern));\n"
             "}\n\n"
-            + (ts_mock_helpers(mock_prefix) if (page_has_mocks := any(c.get("_mock") for c in items)) else "")
+            + (ts_mock_helpers(mock_prefix, mock_mode) if (page_has_mocks := any(c.get("_mock") for c in items)) else "")
             + ts_zero_step_baseline(page, url, items, mock_vacuous=page_has_mocks) + "\n"
             + "\n".join(ts_case(c, url) for c in items)
         )

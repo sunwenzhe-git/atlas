@@ -267,9 +267,12 @@ def test_check_e2e_reachable_target_is_not_skipped() -> None:
         data = json.loads(summary_file.read_text(encoding="utf-8"))
         assert data["status"] == "ok" and data["page"] == "login"
 
-def test_check_e2e_fails_loudly_when_node_playwright_missing() -> None:
+def test_check_e2e_fails_loudly_when_node_playwright_missing(monkeypatch) -> None:
     """单轨化（B201-4）：node 可执行缺失 ⇒ FAIL 点名（不静默降级、不猜别的运行器）。"""
     mod = _load_check()
+    monkeypatch.setattr(mod.shutil, "which", lambda cmd: None)
+    monkeypatch.delenv("NODE_PATH", raising=False)
+    monkeypatch.setattr(mod.subprocess, "run", lambda *args, **kwargs: type("Proc", (), {"returncode": 1, "stdout": ""})())
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         scripts = root / "product" / "e2e" / "scripts"
@@ -344,6 +347,36 @@ def test_check_e2e_global_playwright_detected(monkeypatch) -> None:
         row = [r for r in rows.rows if r["name"].startswith("E2E 真跑")][0]
         assert "node-playwright 可执行文件不存在" not in row["detail"], row
         assert row["status"] == "ok", row
+
+
+def test_check_e2e_ignores_python_playwright_without_node_module(monkeypatch) -> None:
+    """F19 加固：当系统命中 Python Playwright CLI 时，若无 Node 全局模块，不得采信该 global_pw。"""
+    mod = _load_check()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        scripts = root / "product" / "e2e" / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "login.spec.ts").write_text("// dummy\n", encoding="utf-8")
+        (scripts / "playwright.config.ts").write_text("// dummy config", encoding="utf-8")
+
+        fake_bin = root / "fake-python-bin" / "playwright"
+        fake_bin.parent.mkdir(parents=True)
+        fake_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        fake_bin.chmod(0o755)
+
+        monkeypatch.setattr(mod.shutil, "which", lambda cmd: str(fake_bin) if cmd == "playwright" else None)
+        monkeypatch.delenv("NODE_PATH", raising=False)
+        monkeypatch.setattr(mod.subprocess, "run", lambda *args, **kwargs: type("Proc", (), {"returncode": 1, "stdout": ""})())
+
+        (root / "product" / "stack-profile.yaml").write_text(
+            f"e2e:\n  runner: node-playwright\n  app_base_url: {_live_base()}\n",
+            encoding="utf-8")
+
+        rows = mod.Row()
+        mod.check_e2e(root, rows, "login")
+        row = [r for r in rows.rows if r["name"].startswith("E2E 真跑")][0]
+        assert "node-playwright 可执行文件不存在" in row["detail"], row
+        assert row["status"] == "FAIL", row
 
 
 

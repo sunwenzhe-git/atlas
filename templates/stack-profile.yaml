@@ -69,8 +69,9 @@ e2e:
   # **缺省 off = 分片出现 mock: 行即 FAIL**（防全后端项目静默屏蔽真 API 回归）；
   # 纯前端 / 无后端项目的确定性 UI 验收显式声明 on 放行。
   # mock:
-  #   mode: off            # off | on
+  #   mode: off            # off | on | auto
   #   api_prefix: /api/    # mode: on 时必填：桩路径锚定前缀 + 运行期拦截范围（以 / 开头）
+  #   fixtures_dir: fixtures
   # 独立审查执行器（2026-09-26 补）。null = 会话环境默认子代理机制；
   # 需要指定档位时写成映射：review: { model: <档位> }（model: null = 会话当前模型）。
   review: null

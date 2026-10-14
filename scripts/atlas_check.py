@@ -290,6 +290,21 @@ def check_version(root: Path, rows: Row) -> None:
              f"源包已前进/落后于装配态（装配 {stamped} → 当前 {current}）——重跑 install.sh 前先回灌对账（ATLAS-UPSTREAM）")
 
 
+def _is_node_playwright(p: Path | str) -> bool:
+    try:
+        path = Path(p).resolve()
+        if not path.is_file():
+            return False
+        if "node_modules" in str(path) or path.suffix in (".js", ".mjs", ".cjs"):
+            return True
+        head = path.read_text(encoding="utf-8", errors="ignore")[:300]
+        if "python" in head.lower() or "playwright.__main__" in head:
+            return False
+        return True
+    except Exception:
+        return True
+
+
 def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     prof = root / "product" / "stack-profile.yaml"
     text = prof.read_text(encoding="utf-8") if prof.is_file() else ""
@@ -343,26 +358,50 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     pw_bin = (nm_dir / ".bin" / "playwright") if nm_dir else None
     node_path = nm_dir
     if not pw_bin or not pw_bin.is_file():
-        global_pw = shutil.which("playwright")
-        if global_pw:
-            g_node_path = os.environ.get("NODE_PATH")
-            if not g_node_path:
-                try:
-                    res = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=5)
-                    if res.returncode == 0 and res.stdout.strip():
-                        g_node_path = res.stdout.strip()
-                except Exception:
-                    pass
-            has_pw_module = False
-            if g_node_path:
-                gnp = Path(g_node_path)
+        # F19: 全局 Playwright 探测（防 Python Playwright CLI 误判）
+        g_node_path = os.environ.get("NODE_PATH")
+        if not g_node_path:
+            try:
+                res = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=5)
+                if res.returncode == 0 and res.stdout.strip():
+                    g_node_path = res.stdout.strip()
+            except Exception:
+                pass
+        has_pw_module = False
+        if g_node_path:
+            for p in g_node_path.split(os.pathsep):
+                gnp = Path(p).resolve()
                 if (gnp / "@playwright" / "test").exists() or (gnp / "playwright").exists():
                     has_pw_module = True
-                elif os.environ.get("NODE_PATH"):
-                    has_pw_module = True
-            if has_pw_module:
-                pw_bin = Path(global_pw)
-                node_path = Path(g_node_path) if g_node_path else None
+                    break
+        global_pw = None
+        if has_pw_module:
+            cand = shutil.which("playwright")
+            if cand and _is_node_playwright(cand):
+                global_pw = cand
+            else:
+                candidates = []
+                if g_node_path:
+                    for p in g_node_path.split(os.pathsep):
+                        gnp = Path(p).resolve()
+                        pw_name = "playwright.cmd" if sys.platform == "win32" else "playwright"
+                        candidates.append(gnp.parent / "bin" / pw_name)
+                        candidates.append(gnp.parent.parent / "bin" / pw_name)
+                        candidates.append(gnp / ".bin" / pw_name)
+                try:
+                    res_bin = subprocess.run(["npm", "prefix", "-g"], capture_output=True, text=True, timeout=5)
+                    if res_bin.returncode == 0 and res_bin.stdout.strip():
+                        pw_name = "playwright.cmd" if sys.platform == "win32" else "playwright"
+                        candidates.append(Path(res_bin.stdout.strip()) / "bin" / pw_name)
+                except Exception:
+                    pass
+                for c in candidates:
+                    if c.is_file() and _is_node_playwright(c):
+                        global_pw = str(c)
+                        break
+        if has_pw_module and global_pw:
+            pw_bin = Path(global_pw)
+            node_path = Path(g_node_path) if g_node_path else None
     if not pw_bin or not pw_bin.is_file():
         disp_bin = (nm_rel / ".bin" / "playwright") if nm_rel else "未配置"
         hint = f"（提示：请在 {nm_rel.parent if nm_rel else '.'} 执行 npm i -D @playwright/test）"

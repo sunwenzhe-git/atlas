@@ -230,6 +230,21 @@ def node_ids(scripts_dir: Path) -> dict:
     return out
 
 
+def _is_node_playwright(p: Path | str) -> bool:
+    try:
+        path = Path(p).resolve()
+        if not path.is_file():
+            return False
+        if "node_modules" in str(path) or path.suffix in (".js", ".mjs", ".cjs"):
+            return True
+        head = path.read_text(encoding="utf-8", errors="ignore")[:300]
+        if "python" in head.lower() or "playwright.__main__" in head:
+            return False
+        return True
+    except Exception:
+        return True
+
+
 def resolve_pw(root: Path) -> tuple[Path | None, Path | None, str]:
     """node 单轨运行器解析——与 `atlas_check`「E2E 真跑」门**同一规则**（不造第二份）：
     stack-profile 的 `e2e.node_modules` → `<该目录>/.bin/playwright` + `NODE_PATH=<该目录>`。
@@ -247,28 +262,52 @@ def resolve_pw(root: Path) -> tuple[Path | None, Path | None, str]:
     if pw_bin and pw_bin.is_file():
         return pw_bin, nm_dir, ""
 
-    # F19: 支持全局 Playwright（npm i -g @playwright/test）执行与 PATH 探测
-    global_pw = shutil.which("playwright")
-    if global_pw:
-        g_node_path = os.environ.get("NODE_PATH")
-        if not g_node_path:
-            try:
-                res = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=5)
-                if res.returncode == 0 and res.stdout.strip():
-                    g_node_path = res.stdout.strip()
-            except Exception:
-                pass
-        has_pw_module = False
-        if g_node_path:
-            gnp = Path(g_node_path)
+    # F19: 支持全局 Playwright（npm i -g @playwright/test）执行与 PATH 探测（防 Python Playwright CLI 误判）
+    g_node_path = os.environ.get("NODE_PATH")
+    if not g_node_path:
+        try:
+            res = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=5)
+            if res.returncode == 0 and res.stdout.strip():
+                g_node_path = res.stdout.strip()
+        except Exception:
+            pass
+    has_pw_module = False
+    if g_node_path:
+        for p in g_node_path.split(os.pathsep):
+            gnp = Path(p).resolve()
             if (gnp / "@playwright" / "test").exists() or (gnp / "playwright").exists():
                 has_pw_module = True
-            elif os.environ.get("NODE_PATH"):
-                has_pw_module = True
+                break
+        global_pw = None
         if has_pw_module:
-            g_pw_bin = Path(global_pw)
-            g_nm_dir = Path(g_node_path) if g_node_path else None
-            return g_pw_bin, g_nm_dir, ""
+            cand = shutil.which("playwright")
+            if cand and _is_node_playwright(cand):
+                global_pw = cand
+            else:
+                candidates = []
+                if g_node_path:
+                    for p in g_node_path.split(os.pathsep):
+                        gnp = Path(p).resolve()
+                        pw_name = "playwright.cmd" if sys.platform == "win32" else "playwright"
+                        candidates.append(gnp.parent / "bin" / pw_name)
+                        candidates.append(gnp.parent.parent / "bin" / pw_name)
+                        candidates.append(gnp / ".bin" / pw_name)
+                try:
+                    res_bin = subprocess.run(["npm", "prefix", "-g"], capture_output=True, text=True, timeout=5)
+                    if res_bin.returncode == 0 and res_bin.stdout.strip():
+                        pw_name = "playwright.cmd" if sys.platform == "win32" else "playwright"
+                        candidates.append(Path(res_bin.stdout.strip()) / "bin" / pw_name)
+                except Exception:
+                    pass
+                for c in candidates:
+                    if c.is_file() and _is_node_playwright(c):
+                        global_pw = str(c)
+                        break
+
+    if has_pw_module and global_pw:
+        g_pw_bin = Path(global_pw)
+        g_nm_dir = Path(g_node_path) if g_node_path else None
+        return g_pw_bin, g_nm_dir, ""
 
     if not nm:
         return None, None, "stack-profile 未声明 e2e.node_modules（node-playwright 依赖目录，契约 §7）"

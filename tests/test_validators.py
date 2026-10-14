@@ -2315,12 +2315,31 @@ e2e:
     assert rows["e2e.mock.mode 枚举"]["level"] == "FAIL" and "maybe" in rows["e2e.mock.mode 枚举"]["detail"], rows
     rows = _gate(base + "  mock:\n    mode: on\n    api_prefix: /api/\n    zombie: 1\n")
     assert rows["e2e.mock 键白名单"]["level"] == "FAIL", rows
+    rows = _gate(base + "  mock:\n    mode: auto\n    fixtures_dir: product/e2e/fixtures\n")
+    assert rows["e2e.mock 键白名单"]["level"] == "PASS", rows
+    assert rows["e2e.mock.mode 枚举"]["level"] == "PASS", rows
     rows = _gate(base + "  mock: on\n")  # 标量形态（非映射）
     assert rows["e2e.mock 段形态"]["level"] == "FAIL", rows
     rows = _gate(base + "  app_login:\n    mode: fabricated\n    storage_key: k\n")
     assert rows["e2e.app_login.mode 枚举"]["level"] == "PASS", rows
     rows = _gate(base + "  app_login:\n    mode: magic\n")
     assert rows["e2e.app_login.mode 枚举"]["level"] == "FAIL", rows
+
+
+def test_stack_profile_mock_auto_and_fixtures_dir() -> None:
+    """验证 mock.mode: auto 与 fixtures_dir 在 validate_stack_profile 中判定为 PASS。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_profile(
+            root,
+            PROFILE_BASE.format(origin="greenfield")
+            + "  mock:\n    mode: auto\n    fixtures_dir: product/e2e/fixtures\n",
+        )
+        res = vsp.validate(root)
+        assert res.status == "PASS", [(c["check"], c["level"], c["detail"]) for c in res.checks]
+        checks = {c["check"]: c for c in res.checks}
+        assert checks["e2e.mock 键白名单"]["level"] == "PASS"
+        assert checks["e2e.mock.mode 枚举"]["level"] == "PASS"
 
 
 MOCK_SHARD = """# users 页面用例
@@ -2423,6 +2442,15 @@ def test_validate_e2e_mocks_gate_matrix() -> None:
         _mk_mocks_project(root, shard=late)
         row = _rows(root)["mock 先于 step"]
         assert row["level"] == "FAIL" and "late" in row["detail"], row
+
+    with tempfile.TemporaryDirectory() as td:  # mode: auto 与 fixtures_dir 动态支持
+        root = Path(td)
+        _mk_mocks_project(root, mock_section="  mock:\n    mode: auto\n    fixtures_dir: product/e2e/fixtures\n")
+        rows = _rows(root)
+        assert rows["mode 开关（防误用）"]["level"] == "PASS"
+        assert rows["api_prefix 前置"]["level"] == "PASS"
+        assert rows["fixture 引用存在"]["level"] == "PASS"
+        assert rows["fixture 孤儿"]["level"] == "PASS"
 
     res = vm.validate(Path("/nonexistent-root"))  # 前置：E2E 资产未建 ⇒ N/A
     assert res.checks[0]["level"] == "N/A" and res.status == "PASS"

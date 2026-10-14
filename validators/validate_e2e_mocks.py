@@ -173,33 +173,33 @@ def validate(root: Path) -> Result:
         return res
     mode = mock_cfg.get("mode") or "off"
     raw_prefix = mock_cfg.get("api_prefix")
-    prefix = raw_prefix if raw_prefix is not None else ("/" if mode == "on" else None)
+    prefix = raw_prefix if raw_prefix is not None else ("/" if mode in ("on", "auto") else None)
 
     shards = gen.gather_cases(cases_dir)
     mock_pages = sorted(p for p, items in shards.items() if any(c.get("mock") for c in items))
     mock_case_ids = [c["id"] for items in shards.values() for c in items if c.get("mock")]
 
     # —— mode 开关门（防全后端项目误用）
-    if mode not in ("off", "on"):
-        res.add("e2e.mock.mode 枚举", "FAIL", f"值={mode!r} 允许=['off', 'on']（缺省 off；契约 §5.8）")
-    elif mock_case_ids and mode != "on":
+    if mode not in ("off", "on", "auto"):
+        res.add("e2e.mock.mode 枚举", "FAIL", f"值={mode!r} 允许=['off', 'on', 'auto']（缺省 off；契约 §5.8）")
+    elif mock_case_ids and mode not in ("on", "auto"):
         res.add("mode 开关（防误用）", "FAIL",
-                f"分片出现 mock: 行但 e2e.mock.mode != on：{mock_case_ids[:8]}"
+                f"分片出现 mock: 行但 e2e.mock.mode not in ('on', 'auto')：{mock_case_ids[:8]}"
                 f"{'…' if len(mock_case_ids) > 8 else ''}（共 {len(mock_case_ids)} 条；"
-                "真实后端健在时写桩 = 静默屏蔽真 API 回归——纯前端桩项目显式声明 mode: on 放行）")
+                "真实后端健在时写桩 = 静默屏蔽真 API 回归——纯前端桩或混合穿透项目显式声明 mode: on/auto 放行）")
     else:
         res.add("mode 开关（防误用）", "PASS",
-                "mode=on 放行" if mode == "on" else "无 mock: 行（未启用打桩 = 合态）")
+                f"mode={mode} 放行" if mode in ("on", "auto") else "无 mock: 行（未启用打桩 = 合态）")
 
     # —— api_prefix 前置
-    if mode == "on":
+    if mode in ("on", "auto"):
         ok = bool(prefix) and str(prefix).startswith("/") and " " not in str(prefix)
         msg = (f"值={prefix!r}（未配置默认兜底为 /；以 / 开头且无空白）" if raw_prefix is None
-               else f"值={prefix!r}（mode: on 时必填、以 / 开头且无空白）")
+               else f"值={prefix!r}（mode: {mode} 时以 / 开头且无空白）")
         res.add("api_prefix 前置", "PASS" if ok else "FAIL", msg)
 
     # —— 行语法 + 锚定（复用生成器 parse_mock_line；mode off 时 prefix 未知 ⇒ 只查文法）
-    anchor = str(prefix) if (mode == "on" and prefix) else None
+    anchor = str(prefix) if (mode in ("on", "auto") and prefix) else None
     grammar_bad: list[str] = []
     refs: list[str] = []
     for _page, items in shards.items():
@@ -215,12 +215,34 @@ def validate(root: Path) -> Result:
             "；".join(grammar_bad[:6]) + (f"（共 {len(grammar_bad)} 条）" if len(grammar_bad) > 6 else ""))
 
     # —— fixture 引用闭环（存在 / 孤儿）
-    fixtures_root = cases_dir.parent / "fixtures"
-    missing = sorted({r for r in refs if not (cases_dir.parent / r).is_file()})
+    custom_fdir = mock_cfg.get("fixtures_dir")
+    if custom_fdir:
+        fixtures_root = Path(custom_fdir)
+        if not fixtures_root.is_absolute():
+            fixtures_root = root / custom_fdir
+    else:
+        fixtures_root = cases_dir.parent / "fixtures"
+
+    def _resolve_fixture(ref: str) -> Path:
+        if ref.startswith("fixtures/"):
+            rel = ref[len("fixtures/"):]
+            p_custom = fixtures_root / rel
+            if p_custom.is_file():
+                return p_custom
+            p_default = cases_dir.parent / ref
+            if p_default.is_file():
+                return p_default
+            return p_custom
+        return fixtures_root / ref
+
+    missing = sorted({r for r in refs if not _resolve_fixture(r).is_file()})
     res.add("fixture 引用存在", "PASS" if not missing else "FAIL",
             f"缺={missing[:8]}（引用相对 product/e2e/，须以 fixtures/ 开头）")
-    on_disk = sorted(str(p.relative_to(cases_dir.parent))
-                     for p in fixtures_root.glob("**/*.json")) if fixtures_root.is_dir() else []
+    if fixtures_root.is_dir():
+        on_disk = sorted("fixtures/" + p.relative_to(fixtures_root).as_posix()
+                         for p in fixtures_root.glob("**/*.json"))
+    else:
+        on_disk = []
     fixtures_on_disk = [p for p in on_disk if not p.endswith(".schema.json")]
     orphans = [p for p in fixtures_on_disk if p not in set(refs)]
     res.add("fixture 孤儿", "PASS" if not orphans else "FAIL",
@@ -234,12 +256,14 @@ def validate(root: Path) -> Result:
     # —— fixture schema 收紧（可选伴生；存在即校验）
     schema_bad: list[str] = []
     for rel in fixtures_on_disk:
-        schema_path = cases_dir.parent / (rel[: -len(".json")] + ".schema.json")
+        sub = rel[len("fixtures/"):] if rel.startswith("fixtures/") else rel
+        schema_path = fixtures_root / (sub[: -len(".json")] + ".schema.json")
+        fixture_path = _resolve_fixture(rel)
         if not schema_path.is_file():
             continue
         try:
             schema = json.loads(schema_path.read_text(encoding="utf-8"))
-            fixture = json.loads((cases_dir.parent / rel).read_text(encoding="utf-8"))
+            fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
         except Exception as exc:  # noqa: BLE001 — 报出原因即可
             schema_bad.append(f"{rel}: 解析失败 {exc}")
             continue

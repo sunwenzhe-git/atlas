@@ -49,9 +49,9 @@ GRAPH_KEYS = ("backend", "pinned")
 SEED_KEYS = ("hook", "mode")
 SEED_MODES = ("declare", "enforce")
 # 网络边界打桩通道词表（`shared/stack-profile.md` §2 `e2e.mock` 段同源，rings/e2e §5.8；
-# 2026-10-12）。mode：off（缺省 = 现行为：mock: 行即 FAIL，防全后端项目误用）/ on（放行）。
-MOCK_KEYS = ("mode", "api_prefix")
-MOCK_MODES = ("off", "on")
+# 2026-10-12）。mode：off（缺省 = 现行为：mock: 行即 FAIL，防全后端项目误用）/ on（放行）/ auto（混合穿透）。
+MOCK_KEYS = ("mode", "api_prefix", "fixtures_dir")
+MOCK_MODES = ("off", "on", "auto")
 # 登录预置形态（rings/e2e §5.8 / §7.1，2026-10-12）：real（缺省 = 真实登录语义）/
 # fabricated（纯前端桩项目：setup 不发请求直写假令牌，必填收窄为 storage_key）。
 APP_LOGIN_MODES = ("real", "fabricated")
@@ -190,13 +190,16 @@ def validate(root: Path) -> Result:
         res.add("e2e.mock.mode 枚举", "PASS" if mode is None or mode in MOCK_MODES else "FAIL",
                 f"值={mode!r} 允许={list(MOCK_MODES)}（缺省 off = 分片出现 mock: 行即 FAIL，防全后端项目误用；"
                 "rings/e2e §5.8）")
-        if mode in (None, "on"):
+        if mode in ("on", "auto"):
             prefix = mock.get("api_prefix")
-            bad_prefix = mode == "on" and (
-                not prefix or not str(prefix).startswith("/") or " " in str(prefix))
             if mode == "on":
+                bad_prefix = not prefix or not str(prefix).startswith("/") or " " in str(prefix)
                 res.add("e2e.mock.api_prefix 前置", "PASS" if not bad_prefix else "FAIL",
                         f"值={prefix!r}（mode: on 时必填、以 / 开头且无空白）")
+            elif mode == "auto" and prefix is not None:
+                bad_prefix = not str(prefix).startswith("/") or " " in str(prefix)
+                res.add("e2e.mock.api_prefix 前置", "PASS" if not bad_prefix else "FAIL",
+                        f"值={prefix!r}（mode: auto 时若指定须以 / 开头且无空白）")
     elif mock:
         # 非映射真值（字符串等）= 形态非法；空 dict / null 与未声明同判（显式不用 = 合法降级）。
         res.add("e2e.mock 段形态", "FAIL", f"值={mock!r}（应为映射或 null）")
