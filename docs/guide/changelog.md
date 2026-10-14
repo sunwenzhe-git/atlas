@@ -4,6 +4,26 @@
 
 ---
 
+## [v0.1.0-beta.13] - 2026-10-14
+
+### 🚀 核心协议全栈化与沙箱前沿加固 (Core Protocols & Usability)
+
+* **`e2e.mock` 协议支持 `mode: auto` 混合穿透与白名单扩充 (`scripts/gen_e2e_scripts.py`, `validators/validate_stack_profile.py`, `validators/validate_e2e_mocks.py`)**：
+  - 正式支持 `e2e.mock.mode: auto`，在全栈/混合测试场景下，未命中桩表的路由自动调用 `await route.continue();` 穿透访问真实后端，彻底解决纯前端 fail-loud 误掐真实 API 的问题；
+  - `stack-profile` 的 `e2e.mock` 白名单正式扩充收录 `fixtures_dir` 并支持动态目录路径解析；
+  - 增强网络 Mock 外部 URL（`https://*`）通配匹配与 `api_prefix` 智能兜底。
+* **全局 Node Playwright 健壮探测与 Python CLI 防御 (`scripts/atlas_check.py`, `scripts/e2e_console.py`, F19)**：
+  - 支持纯 Python/存量项目（`node_modules: null`）通过全局 Node 模块（`npm i -g @playwright/test`）直接运行 E2E 真跑；
+  - 引入 `_is_node_playwright()` 文件内容特征检测，精准过滤 PATH 中同名的 Python Playwright CLI；
+  - 增加对标准 Unix `<prefix>/bin` 与现代 `npm prefix -g` 的候选路径推导。
+* **存量沙箱 `origin: adopt` testid 单向子集校验 (`validators/validate_testids.py`, F20)**：
+  - 在存量接管模式下，用例未引用的存量历史 testid 降级为 WARN/INFO 记录，彻底解除对未改动老元素的强制绑架；
+  - 对新需求用例中声明的 testid 依然维持严格双向闭环。
+* **架构决策记录（ADR）演进链拓扑成环拦截 (`validators/validate_adr.py`)**：
+  - 校验器内置 DFS 染色法有向无环图（DAG）检测，精准捕获 `0001 -> 0002 -> 0001` 等循环废弃回环（`adr_cycle_detected: WARN`），守卫架构演进终态健康。
+
+---
+
 ## [v0.1.0-beta.12] - 2026-10-14
 
 ### 🐛 缺陷修复与沙箱实测回灌 (Bug Fixes & Usability)
