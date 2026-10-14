@@ -4,6 +4,19 @@
 
 ---
 
+## [v0.1.0-beta.12] - 2026-10-14
+
+### 🐛 缺陷修复与沙箱实测回灌 (Bug Fixes & Usability)
+
+* **`seed × models` 对账门字段解析缺陷修复 (`validators/validate_e2e_index.py`, F14)**：重构数据模型解析存储为 `dict[str, set[str]]`，支持单表多行多字段累加收集与精确成员判定，根治以往首行 `setdefault` 遗漏后续字段及子串模糊匹配引发的校验误杀。
+* **`install.sh` 刷新时保留 `.atlas/runs/` 运行态数据 (`install.sh`, F18)**：装配刷新逻辑由整包物理删除改为白名单子目录清理（`shared rings apply scripts templates adapters validators patches tests _support`），避免冲掉包含后端 AC 覆盖率基线及控制台快照的非 git 跟踪运行态数据。
+* **结构环 `categories` A/H 键值解析前缀容错 (`validators/validate_structure.py`, F17)**：引入关键字前缀扫描提取器 `_cat_token`，优先匹配 `covered`、`skipped`、`added` 合法状态词，兼容形如 `"H": "H: skipped"` 的书写习惯。
+* **适配器空产物避免意外清空既有结构事实 (`scripts/refresh_structure.py`, F16)**：在 `render_routes` 中增加空产物守卫，当 routes 适配器在非支持技术栈上输出 `{"items": []}` 且目标 `routes.md` 已存在有效手工事实行时，自动保留既有内容并输出告警，防止静默清空事实表。
+* **存量接入指南补充实现期薄桩步骤 (`docs/guide/legacy-adoption.md`, F15)**：在存量接入步骤 Checklist 与命令指引中显式补充 `python3 .atlas/scripts/gen_testid_stub.py --root .` 生成实现期薄桩（`.trellis/spec/conventions/testid.md`），闭环开户标准，避免首日 `validate_testids.py` 硬门禁报红。
+* **官网架构设计文档标题归一 (`docs/design/`)**：结构环设计文档标题统一归一为《结构（逆向）环设计与实体边界治理》，规范文档体系表达。
+
+---
+
 ## [v0.1.0-beta.11] - 2026-10-14
 
 ### 🚀 架构解耦与官网升级 (Architecture & Documentation)
