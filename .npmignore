@@ -1,6 +1,9 @@
-__pycache__/
+**/__pycache__/**
+**/__pycache__
+**/*.pyc
 *.pyc
 .pytest_cache/
+.pytest_cache/**
 docs/.vitepress/dist/
 docs/.vitepress/cache/
 .DS_Store
