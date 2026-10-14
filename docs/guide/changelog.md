@@ -4,6 +4,22 @@
 
 ---
 
+## [v0.1.0-beta.11] - 2026-10-14
+
+### 🚀 架构解耦与官网升级 (Architecture & Documentation)
+
+* **彻底解耦 open-zk-kb（知识库与台账子系统退役）**：移除开发期自举的 `kb_*` 脚本与 `validate_ledger.py`（核心门禁校验器精简为 9 个）；域级 AC 编号唯一性强校验契约完整归位至 `validators/validate_prd.py`；全量清理契约、装配脚本 `install.sh` 与门禁清单中对旧台账的冗余依赖。
+* **官网全新上线「设计方案」栏目 (`docs/design/`)**：新增 5 篇高质量深度架构设计解析（《架构总览与分层设计》《结构环与实体边界治理》《PRD 环与业务规则闭环》《E2E 环与确定性断言工程》《工程分发与线束装配体系》），全面解密 Atlas 核心实现机理。
+* **工程叙事严谨化与概念术语对齐**：全面摒弃情绪化修辞，回归务实的第一人称工程手记风格；对齐「双线束模型」（项目级工程线束 vs 需求级业务线束）与「两道全局护栏」概念体系；完善内置 7 大技能清单与 Pi Agent 扩展硬化指南（rtk 退出码保真性告警与 warm-cache 真实计费口径）。
+
+### 🐛 缺陷修复与沙箱实测加固 (Bug Fixes & Usability)
+
+* **Playwright 慢动作回放改由环境变量注入 (`scripts/e2e_console.py`)**：修复 `e2e_console` 回放时拼接 `--slowmo=<N>` CLI 旗标导致 Playwright 1.64 `test` 子命令报 `unknown option`（exit 1）的缺陷。改由 `ATLAS_SLOWMO` 环境变量向 Playwright 配置文件的 `launchOptions.slowMo` 注入，保障无头/有头慢动作回放稳定性。
+* **E2E 生成器清扫退役页孤儿 spec (`scripts/gen_e2e_scripts.py`)**：修复 `--apply` 模式未清扫已退役页面用例导致孤儿 spec 遗留并在后续被测试拾起报错的问题。dry-run 显式上报退役变更，`--apply` 精准只清理带 `AUTO-GENERATED` 标记的孤儿用例。
+* **存量非规范 testid 兼容性放行 (`validators/validate_testids.py`)**：对遗留存量非标 testid 降级为 WARN 警告放行，仅在新增违规分片时硬阻断，降低既有存量工程（Adopt 模式）接入阻力。
+
+---
+
 ## [v0.1.0-beta.10] - 2026-10-13
 
 ### 🐛 缺陷修复与体验增强 (Bug Fixes & Usability)

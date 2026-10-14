@@ -5,3 +5,5 @@ docs/.vitepress/dist/
 docs/.vitepress/cache/
 .DS_Store
 *.log
+_support/reviews/**
+_support/reviews
