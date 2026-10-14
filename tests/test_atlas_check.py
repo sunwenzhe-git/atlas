@@ -311,6 +311,42 @@ def test_check_e2e_node_modules_anchored_to_root() -> None:
         assert "node-playwright 可执行文件不存在" not in row["detail"], row
 
 
+def test_check_e2e_global_playwright_detected(monkeypatch) -> None:
+    """F19: stack-profile 未声明 node_modules 时，通过全局 playwright 探测执行真跑。"""
+    mod = _load_check()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        scripts = root / "product" / "e2e" / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "login.spec.ts").write_text("// dummy\n", encoding="utf-8")
+        (scripts / "playwright.config.ts").write_text("// dummy config", encoding="utf-8")
+
+        # 伪造全局 Playwright 可执行文件与全局 node_modules
+        fake_bin = root / "fake-bin" / "playwright"
+        fake_bin.parent.mkdir(parents=True)
+        fake_bin.write_text("#!/bin/sh\necho '1 passed'\n", encoding="utf-8")
+        fake_bin.chmod(0o755)
+
+        fake_global_nm = root / "fake-global-nm"
+        fake_global_nm.mkdir(parents=True)
+        (fake_global_nm / "@playwright" / "test").mkdir(parents=True)
+
+        monkeypatch.setattr(mod.shutil, "which", lambda cmd: str(fake_bin) if cmd == "playwright" else None)
+        monkeypatch.setenv("NODE_PATH", str(fake_global_nm))
+
+        # 未声明 node_modules
+        (root / "product" / "stack-profile.yaml").write_text(
+            f"e2e:\n  runner: node-playwright\n  app_base_url: {_live_base()}\n",
+            encoding="utf-8")
+
+        rows = mod.Row()
+        mod.check_e2e(root, rows, "login")
+        row = [r for r in rows.rows if r["name"].startswith("E2E 真跑")][0]
+        assert "node-playwright 可执行文件不存在" not in row["detail"], row
+        assert row["status"] == "ok", row
+
+
+
 
 def test_drift_gate_reads_marker() -> None:
     """「结构漂移」门（gates.md §2.2，2026-10-04 登记）：只读标记、不做二次判定。

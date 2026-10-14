@@ -448,6 +448,7 @@ def validate(root: Path) -> Result:
 
     # 分页等价（`已实现` 页 FAIL；`实现中`/`未开始` 页降 WARN 并附同形清单）
     unequal, unequal_soft = [], []
+    origin = read_origin(root)
     for page, ids in shard_ids.items():
         if page not in src_ids:
             continue  # 未实现页已按 SKIP 记录
@@ -468,17 +469,31 @@ def validate(root: Path) -> Result:
                             if t2 in u2 or t2 in l2:
                                 where.setdefault(t2, []).append(c2)
                 det["引用过它的用例"] = where
-            if (states or {}).get(page, DEFAULT_PAGE_STATE) == "已实现":
-                unequal.append(det)
+            page_state = (states or {}).get(page, DEFAULT_PAGE_STATE)
+            if origin == "adopt":
+                # F20: 存量 Adopt 模式下单向子集校验（以用例为准）
+                # 正向（用例引用的代码必须有）继续严格判 FAIL；
+                # 反向（代码有多余未引 testid）降级为 WARN/INFO，不判 FAIL！
+                if missing and page_state == "已实现":
+                    unequal.append(det)
+                else:
+                    unequal_soft.append({**det, "实现状态": page_state})
             else:
-                unequal_soft.append({**det, "实现状态": states[page]})
+                if page_state == "已实现":
+                    unequal.append(det)
+                else:
+                    unequal_soft.append({**det, "实现状态": page_state})
     if unequal:
         hint = " (💡 提示: 动态列表项如 *-item 切勿列入用例 testid: 块，仅在 step/expected 中引用即可)" if any("item" in str(d.get("缺失(抽取源无)", [])) for d in unequal) else ""
         res.add("分页双向集合相等", "FAIL", json.dumps(unequal, ensure_ascii=False) + hint)
     elif unequal_soft:
+        hint_msg = (
+            "（存量 adopt 模式未引 testid 降级为 WARN，或页实现状态非「已实现」⇒ 缺口列此）"
+            if origin == "adopt" else
+            "（页实现状态非「已实现」⇒ 缺口列此；实现落地并复核后改回「已实现」严判）"
+        )
         res.add("分页双向集合相等", "WARN",
-                json.dumps(unequal_soft, ensure_ascii=False)
-                + "（页实现状态非「已实现」⇒ 缺口列此；实现落地并复核后改回「已实现」严判）")
+                json.dumps(unequal_soft, ensure_ascii=False) + hint_msg)
     else:
         res.add("分页双向集合相等", "PASS", "")
 

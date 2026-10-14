@@ -256,3 +256,36 @@ def test_runner_injects_slowmo_via_env_not_cli_flag() -> None:
     assert "--headed" in captured["cmd"], captured["cmd"]
     assert captured["env"].get("ATLAS_SLOWMO") == "700", captured["env"]
     assert captured["env"].get("ATLAS_BASE_URL") == "http://127.0.0.1:8000"
+
+
+def test_resolve_pw_global_playwright(monkeypatch) -> None:
+    """F19: 支持全局 Playwright（npm i -g @playwright/test）执行与 PATH 探测。
+
+    当 stack-profile 未声明 node_modules 时，通过 shutil.which("playwright") 探测系统全局命令，
+    并经 NODE_PATH 解析全局路径赋值给 NODE_PATH。
+    """
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product").mkdir(parents=True)
+        # 纯 Python 或存量项目：未声明 e2e.node_modules
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: legacy-python\napps: []\ne2e:\n  runner: node-playwright\n", encoding="utf-8"
+        )
+        fake_pw = root / "fake-global-bin" / "playwright"
+        fake_pw.parent.mkdir(parents=True)
+        fake_pw.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        fake_pw.chmod(0o755)
+
+        fake_global_nm = root / "fake-global-node-modules"
+        fake_global_nm.mkdir(parents=True)
+        (fake_global_nm / "@playwright" / "test").mkdir(parents=True)
+
+        monkeypatch.setattr(cons.shutil, "which", lambda cmd: str(fake_pw) if cmd == "playwright" else None)
+        monkeypatch.setenv("NODE_PATH", str(fake_global_nm))
+
+        pw, nm, why = cons.resolve_pw(root)
+        assert why == "", why
+        assert pw == fake_pw, pw
+        assert nm == fake_global_nm, nm
+

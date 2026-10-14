@@ -233,6 +233,8 @@ def node_ids(scripts_dir: Path) -> dict:
 def resolve_pw(root: Path) -> tuple[Path | None, Path | None, str]:
     """node 单轨运行器解析——与 `atlas_check`「E2E 真跑」门**同一规则**（不造第二份）：
     stack-profile 的 `e2e.node_modules` → `<该目录>/.bin/playwright` + `NODE_PATH=<该目录>`。
+    当 stack-profile 的 node_modules 未声明或本地 .bin/playwright 不存在时，通过 shutil.which("playwright") 探测系统全局命令；
+    找到后通过 npm root -g（或 NODE_PATH 环境变量）解析全局路径赋值给 NODE_PATH。
     解析不到 ⇒ (None, None, 原因)——控制台如实拒绝，不静默降级。
     """
     profile = root / "product" / "stack-profile.yaml"
@@ -240,13 +242,37 @@ def resolve_pw(root: Path) -> tuple[Path | None, Path | None, str]:
         return None, None, "无 product/stack-profile.yaml"
     prof = load_profile_parser(root).parse_profile(profile.read_text(encoding="utf-8"))
     nm = _e2e_section(prof).get("node_modules")
+    nm_dir = (root / str(nm)).resolve() if nm else None
+    pw_bin = (nm_dir / ".bin" / "playwright") if nm_dir else None
+    if pw_bin and pw_bin.is_file():
+        return pw_bin, nm_dir, ""
+
+    # F19: 支持全局 Playwright（npm i -g @playwright/test）执行与 PATH 探测
+    global_pw = shutil.which("playwright")
+    if global_pw:
+        g_node_path = os.environ.get("NODE_PATH")
+        if not g_node_path:
+            try:
+                res = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=5)
+                if res.returncode == 0 and res.stdout.strip():
+                    g_node_path = res.stdout.strip()
+            except Exception:
+                pass
+        has_pw_module = False
+        if g_node_path:
+            gnp = Path(g_node_path)
+            if (gnp / "@playwright" / "test").exists() or (gnp / "playwright").exists():
+                has_pw_module = True
+            elif os.environ.get("NODE_PATH"):
+                has_pw_module = True
+        if has_pw_module:
+            g_pw_bin = Path(global_pw)
+            g_nm_dir = Path(g_node_path) if g_node_path else None
+            return g_pw_bin, g_nm_dir, ""
+
     if not nm:
         return None, None, "stack-profile 未声明 e2e.node_modules（node-playwright 依赖目录，契约 §7）"
-    nm_dir = (root / str(nm)).resolve()
-    pw_bin = nm_dir / ".bin" / "playwright"
-    if not pw_bin.is_file():
-        return None, None, f"node-playwright 可执行文件不存在：{pw_bin}（e2e.node_modules）"
-    return pw_bin, nm_dir, ""
+    return None, None, f"node-playwright 可执行文件不存在：{pw_bin}（e2e.node_modules）"
 
 
 # ---------------------------------------------------------------- 账本（append-only 唯一真相源）
@@ -437,8 +463,9 @@ class Runner:
         sentinel.unlink()
         # F11（2026-10-14）：Playwright `test` CLI 无 `--slowmo` 旗标（1.64 实测 unknown
         # option）⇒ 慢动作经 `ATLAS_SLOWMO` 注入生成配置的 launchOptions.slowMo；未设 ⇒ 0。
-        env = {**os.environ, "ATLAS_BASE_URL": base_url, "NODE_PATH": str(nm_dir),
-               "ATLAS_SLOWMO": str(slowmo)}
+        env = {**os.environ, "ATLAS_BASE_URL": base_url, "ATLAS_SLOWMO": str(slowmo)}
+        if nm_dir:
+            env["NODE_PATH"] = str(nm_dir)
         if self.keep_open:
             env["ATLAS_KEEP_OPEN"] = "1"
             env["ATLAS_RESULT_FILE"] = str(sentinel)

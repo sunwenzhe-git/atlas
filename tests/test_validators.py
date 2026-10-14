@@ -1836,6 +1836,63 @@ def test_testids_adopt_extracts_from_real_ui() -> None:
         assert res["分页双向集合相等"]["level"] == "FAIL", res
 
 
+def test_testids_adopt_unidirectional_subset_check() -> None:
+    """F20: 存量 Adopt 模式下 testid 双向全等降级为单向子集校验。
+
+    - origin == 'adopt' 时：代码有多余未引 testid 降级为 WARN（不判 FAIL）；
+    - origin == 'greenfield' 时：同等情况维持严格全等判定 FAIL；
+    - origin == 'adopt' 时：用例引用的 testid 代码中缺失仍判严格 FAIL。
+    """
+    adopt_profile = ("product: 老项目\norigin: adopt\napps:\n"
+                     "  - name: web\n    path: web\n    kind: frontend\n    role: landing\n"
+                     "    stack: 仅展示\nadapters:\n  routes: null\n")
+    greenfield_profile = adopt_profile.replace("origin: adopt\n", "origin: greenfield\n")
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product").mkdir(parents=True, exist_ok=True)
+        (root / "product" / "stack-profile.yaml").write_text(adopt_profile, encoding="utf-8")
+        mk_stub(root)
+        src = root / "web" / "src"
+        src.mkdir(parents=True)
+        # 页面包含用例引用的 testid，外加存量历史多余未引 testid
+        (src / "HomePage.tsx").write_text(
+            '<button data-testid="home-cta-btn">去</button>\n'
+            "<h1 data-testid='home-title'>首页</h1>\n"
+            "<div data-testid='home-extra-legacy'>历史存量未引组件</div>\n",
+            encoding="utf-8",
+        )
+        d = root / "product" / "e2e" / "cases"
+        d.mkdir(parents=True)
+        (d / "home.md").write_text(CASE_GOOD, encoding="utf-8")
+
+        # 1. adopt 模式：多余未引降级为 WARN，整体不判 FAIL
+        res = vt.validate(root)
+        checks = {c["check"]: c for c in res.checks}
+        assert checks["分页双向集合相等"]["level"] == "WARN", checks
+        assert "home-extra-legacy" in checks["分页双向集合相等"]["detail"]
+        assert res.status != "FAIL", res.status
+
+        # 2. greenfield 模式：多余未引严格判 FAIL
+        (root / "product" / "stack-profile.yaml").write_text(greenfield_profile, encoding="utf-8")
+        res_gf = vt.validate(root)
+        checks_gf = {c["check"]: c for c in res_gf.checks}
+        assert checks_gf["分页双向集合相等"]["level"] == "FAIL", checks_gf
+        assert "home-extra-legacy" in checks_gf["分页双向集合相等"]["detail"]
+        assert res_gf.status == "FAIL"
+
+        # 3. 切回 adopt 模式：若用例引用的代码缺失（正向缺失），依然严格判 FAIL
+        (root / "product" / "stack-profile.yaml").write_text(adopt_profile, encoding="utf-8")
+        (src / "HomePage.tsx").write_text(
+            "<h1 data-testid='home-title'>首页</h1>\n",  # 缺少 home-cta-btn
+            encoding="utf-8",
+        )
+        res_missing = vt.validate(root)
+        checks_missing = {c["check"]: c for c in res_missing.checks}
+        assert checks_missing["分页双向集合相等"]["level"] == "FAIL", checks_missing
+        assert res_missing.status == "FAIL"
+
+
 def test_testids_origin_readers_agree() -> None:
     """`origin` 的**词表守恒**（硬约束 7：同一口径的消费者数要先数清，并逐项守恒）。
 

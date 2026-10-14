@@ -335,11 +335,34 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
             return
     # node 单轨（3507 BO）：探测项目声明位置（e2e.node_modules）的 playwright
     # 可执行文件，经 NODE_PATH 解析生成物里的 @playwright/test；
-    # 未找到 ⇒ FAIL 列原因（不静默降级）。
+    # 未找到本地时，通过 shutil.which("playwright") 探测系统全局命令（F19）。
+    # 全局探测命中后，经 npm root -g / NODE_PATH 环境变量解析全局路径；全不可用 ⇒ FAIL 列原因。
     nm = re.search(r"^[^\S\n]*node_modules:[^\S\n]*(\S+)", text, re.M)
     nm_rel = Path(nm.group(1)) if nm else None
     nm_dir = (root / nm_rel) if nm_rel else None
     pw_bin = (nm_dir / ".bin" / "playwright") if nm_dir else None
+    node_path = nm_dir
+    if not pw_bin or not pw_bin.is_file():
+        global_pw = shutil.which("playwright")
+        if global_pw:
+            g_node_path = os.environ.get("NODE_PATH")
+            if not g_node_path:
+                try:
+                    res = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=5)
+                    if res.returncode == 0 and res.stdout.strip():
+                        g_node_path = res.stdout.strip()
+                except Exception:
+                    pass
+            has_pw_module = False
+            if g_node_path:
+                gnp = Path(g_node_path)
+                if (gnp / "@playwright" / "test").exists() or (gnp / "playwright").exists():
+                    has_pw_module = True
+                elif os.environ.get("NODE_PATH"):
+                    has_pw_module = True
+            if has_pw_module:
+                pw_bin = Path(global_pw)
+                node_path = Path(g_node_path) if g_node_path else None
     if not pw_bin or not pw_bin.is_file():
         disp_bin = (nm_rel / ".bin" / "playwright") if nm_rel else "未配置"
         hint = f"（提示：请在 {nm_rel.parent if nm_rel else '.'} 执行 npm i -D @playwright/test）"
@@ -348,7 +371,8 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
                  command="", full_output=f"pw_bin not found: {pw_bin}\n提示：请先在对应目录安装 @playwright/test")
         return
     spec_arg = f"{page}.spec.ts" if page else ""
-    cmd = (f"NODE_PATH={nm_dir} {pw_bin} test -c "
+    node_path_env = f"NODE_PATH={node_path} " if node_path else ""
+    cmd = (f"{node_path_env}{pw_bin} test -c "
            f"{scripts.relative_to(root) / 'playwright.config.ts'} {spec_arg}".strip())
     code, out = run(cmd, root, timeout=1800, shell=True)
     m2 = re.findall(r"(\d+) (passed|failed|error)", out)
