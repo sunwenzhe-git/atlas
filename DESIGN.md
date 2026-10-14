@@ -1,6 +1,6 @@
 # atlas — 项目级工作流设计
 
-> 状态：设计定稿 + 决策记录（**历史与依据**）。**操作契约的唯一权威** = `.atlas/shared/` + `.atlas/rings/*/reference.md` + `.atlas/apply/reference.md` + `.atlas/skills/*/SKILL.md`；本文与它们冲突时以操作契约为准，设计依据见知识库（vault `atlas/`）。
+> 状态：设计定稿 + 决策记录（**历史与依据**）。**操作契约的唯一权威** = `.atlas/shared/` + `.atlas/rings/*/reference.md` + `.atlas/apply/reference.md` + `.atlas/skills/*/SKILL.md`；本文与它们冲突时以操作契约为准，设计依据见 `3507` 决策记录。
 > **现行口径**：atlas = **三环（structure / prd / e2e）+ apply**；testid **应然 = 用例分片**、**实然 = 前端源码**；E2E **单段**执行（`e2e.app_base_url`）。
 > 依附上游：Trellis（已初始化于业务仓库 `.trellis/`）。版本对齐见 `RUNBOOK.md` §0（**不在此处写死版本号**）。
 
@@ -427,7 +427,7 @@ adapters:
 
 默认在 atlas 各环与 `apply` 时跑；**可选**再加 git pre-commit 钩子做兜底。
 
-**实现状态**：10 个校验器（`validate_{structure,stack_profile,prd,testids,e2e_index,ledger,design_exemptions,e2e_mocks,ac_alignment,adr}.py`）+ `scripts/atlas_check.py`（门总览：校验器 / 出厂测试 / 生成物 / 真跑，**一门一行 `ok|FAIL|WARN|SKIP`**）。
+**实现状态**：9 个校验器（`validate_{structure,stack_profile,prd,testids,e2e_index,design_exemptions,e2e_mocks,ac_alignment,adr}.py`）+ `scripts/atlas_check.py`（门总览：校验器 / 出厂测试 / 生成物 / 真跑，**一门一行 `ok|FAIL|WARN|SKIP`**）。
 
 **门总账与收口清单（2026-09-28 落地，`3509 §B112`/`§B114`）**：所有门登记在 `shared/gates.md`（含**对账平面 / 显式盲区 / 验证预算 / 假绿测试取证等级**三列）—— **不在表 = 不存在**；人侧收口步骤表 = `shared/closeout.md`（此前被多处定形引用却长期不存在）。`SKIP` 是**一等结论**（未就绪），不是通过。
 
@@ -437,7 +437,7 @@ adapters:
 
 **最小可用基线**（不必等全站建完）：
 
-1. `stack-profile.yaml` + 约定类结构（A / G / I）；可选启用知识库同步（`knowledge` 段，见 D71 / `shared/knowledge.md`）。
+1. `stack-profile.yaml` + 约定类结构（A / G / I）。
 2. PRD 骨架（定位 + 用户 + 已有功能条目）或（绿地时）仅产品定位。
 3. E2E：空索引 + **页面表**（未实现页记 `未开始`）+ 校验脚本可用。
 
@@ -457,7 +457,7 @@ adapters:
 
 ## 12. 决策记录
 
-> **E1（2026-09-27，原型环移除）作废的决策**：D8（两段式执行模型）、D45（依据来源含原型）、D46/D47（页面 = 原型文件名 / testid 双向锚原型）、D48（`执行目标` 字段，另已于 2026-09-23 退役）、D49–D53 中依赖原型的部分、D54–D59（原型产物布局 / URL / 交互分级 / 生成流程 / 应然 token / 原型环范围）、D67（`validate_prototype.py` / `serve_prototype.py`）。**D68 部分有效**（生成器已落地，两段式部分作废）。**现行口径**见 `.atlas/shared/` + `rings/*/reference.md`；历史依据见知识库 `3508 §92`。下表保留原文，供追溯「当初为什么这么定」。
+> **E1（2026-09-27，原型环移除）作废的决策**：D8（两段式执行模型）、D45（依据来源含原型）、D46/D47（页面 = 原型文件名 / testid 双向锚原型）、D48（`执行目标` 字段，另已于 2026-09-23 退役）、D49–D53 中依赖原型的部分、D54–D59（原型产物布局 / URL / 交互分级 / 生成流程 / 应然 token / 原型环范围）、D67（`validate_prototype.py` / `serve_prototype.py`）。**D68 部分有效**（生成器已落地，两段式部分作废）。**现行口径**见 `.atlas/shared/` + `rings/*/reference.md`；历史依据见 `3508 §92`。下表保留原文，供追溯「当初为什么这么定」。
 
 | # | 决策 | 结论 |
 |---|---|---|
@@ -531,20 +531,20 @@ adapters:
 | D68 | E2E 脚本生成器 | `scripts/gen_e2e_scripts.py`：产**可运行的 testid 冒烟骨架**（`goto(<页面 URL>)` + 分片 `testid` 存在性断言；中文 `step`/`expected` 作注释）；**深断言放 `_support/`**（不覆盖，`hooks.deep_assert`）；地址**不硬编码**、由运行器原生配置承载（`--target` 选 `prototype.base_url` / `e2e.app_base_url`）；一页一脚本、派生可重生成、dry-run 缺省 |
 | D69 | 事实区自动渲染（C7） | `refresh_structure.py --apply` 读 `.adapter-out/*.json` 自动重写事实区表：**行键级单元格合并**（适配器填可枚举列、既有行**语义列保留**、新增行语义列留空→校验器 WARN、消失行移除）；归属 = 条目 `source_file` → app（最长 path 前缀）→ role（`landing`→`current/`）→ 域 globs（最长命中），**无命中落 `global/{apis,data-models}-shared.md`**；无 `.adapter-out/` 时跳过（agent 维持） |
 | D70 | 适配器脚手架与指南 | 新增 `adapters/_scaffold.py`（可复制填空的适配器模板，强制 `source_file`）+ `adapters/README.md`（契约 §3 落成步骤）；把「无适配器 → `null` → agent 撰写」作为**一等降级**；`models` 条目补 `source_file`（支撑 D69 域归属）。**框架知识只允许出现在适配器内** |
-| D71 | 知识库（Obsidian）维护契约（2026-09-20） | 新增 `shared/knowledge.md`：知识库保存**设计依据与讨论**（「为什么这么定」），与产物分层、不复制正文。**可选增强**——`stack-profile.knowledge.vault` 为 `null`/缺省 ⇒ 整体跳过、不阻断任何环。写入/检索**经 open-zk-kb MCP**（不手写 vault 文件）；vault 内**唯一 atlas 设计目录**（跨项目共用，不按项目分目录）。四环与 `apply` **收口必做**（`global-rules.md` §9）；只写持久设计与依据（决策/讨论/被否/纠正/未决），不写进度与产物正文；契约变更**仓库 canonical 与知识库两处同改**。`stack-profile` 增 `knowledge` 段（`tool/vault/dir/project`）；`install.sh` **不写用户 vault**（只落 profile 草稿 + 自检契约存在） |
+| ~~D71~~ | **【已退役 2026-10-14】** 知识库（Obsidian）维护契约（2026-09-20） | 新增 `shared/knowledge.md`：知识库保存**设计依据与讨论**（「为什么这么定」），与产物分层、不复制正文。**可选增强**——`stack-profile.knowledge.vault` 为 `null`/缺省 ⇒ 整体跳过、不阻断任何环。写入/检索**经 open-zk-kb MCP**（不手写 vault 文件）；vault 内**唯一 atlas 设计目录**（跨项目共用，不按项目分目录）。四环与 `apply` **收口必做**（`global-rules.md` §9）；只写持久设计与依据（决策/讨论/被否/纠正/未决），不写进度与产物正文；契约变更**仓库 canonical 与知识库两处同改**。`stack-profile` 增 `knowledge` 段（`tool/vault/dir/project`）；`install.sh` **不写用户 vault**（只落 profile 草稿 + 自检契约存在） |
 | D76 | 设计档案契约登记 + 豁免机器对账门（2026-10-08，`3508 §200` / `ATLAS-UPSTREAM #182`） | `product/design.md`（视觉设计档案）登记为项目级应然文件：**写者 = frontend-design skill**（atlas 包外；atlas 不生产、不覆盖、只读两个触点）——① 走查单确认门前对照视觉方向一致性（`rings/prd/reference.md` §4·八）；② 档案「已有豁免」的 `detect:<rule-id>` 必须与 `.impeccable/config.json` 的 `detector.ignoreRules` **双向集合相等**，新校验器 `validate_design_exemptions.py`（无档案 ⇒ SKIP 三态；变异 M43）。缘起：档案生于 frontend-design skill 吸收 impeccable 精华（`3508 §199`），项目根落点撞 atlas 产物归属与 `DESIGN.md` 契约名 ⇒ 用户拍板固定落 `product/`。被否：按 `.atlas/` 存在与否嗅探两种落点（双落点 = 漂移面）；校验器内嵌 impeccable 规则表（第三方升级会误伤） |
 
 | D72 | 职责边界 = 约束层（2026-09-22，对标 Harness） | atlas **只收口约束层**（应然资产 / 唯一事实源 / 三类入口），Harness 其余四层按阶段分工、不并入：① 对抗验证——atlas 只审自身产物（当前 `prd review`），实现代码审查归 Trellis；② 证据层——只留确定性校验器 + E2E 状态机，可视化报告与「测试覆盖状态跳转」检测延后（依赖 B4）；③ 状态写入——只记影响面与 `atlas-apply.md`，目标复述 / 长任务持久化归 Trellis；④ 边界对齐——atlas 侧 = 确认门 + 完成门 + apply 覆盖门，CI 分级与回滚延后（依赖 B4）。**G1 原型/E2E 审查、G2 可视化证据、G3 CI·回滚登记为未决（`3509 §C8–C10`），实跑后按证据 promote**。理由：Harness 是项目跑了两个月的事后归纳（非蓝图），atlas 尚未端到端跑通一条需求（`3509` 批 6 登记（该机制原属 §13 待实现事项；§13 现只放指针，逐项状态以 `3509` 为准）），在未运行的设计上预置机制是拿猜测赌契约。详见 §3.1 |
 | D73 | 项目接线自动化（2026-09-22） | 新增 `patches/project-wiring/`（`apply-wiring.py` + `agent-pointer.md` + README），`install.sh` 作为第 6 步装配（幂等、`--no-wiring` 可跳过）：① `<目标>/AGENTS.md` 在 `<!-- TRELLIS:END -->` **之后**写 `<!-- ATLAS:START/END -->` 指针段——位于 Trellis 区块**外**故不被 `trellis update` 覆盖；② `.trellis/config.yaml` 幂等登记 `after_finish` hook。**修的是两处此前靠手工、且升级会被冲掉的接线**（install.sh 原本完全不碰 AGENTS.md）。回归测试 `tests/test_project_wiring.py`（11 用例）。属 `global-rules.md §7` 确认门动作，由显式安装触发 |
 | D74 | 定位表述定稿：身份 ≠ 实现分工（2026-09-29，`3508 §129` 设计树 A–F） | **身份** = atlas 是覆盖「立项 → 需求 → 应然资产 → 实现 → 验收 → 收口」的**全流程 vibecoding 工作流**，项目级应然资产跨项目分发、机器可校验；**实现分工** = 「需求级执行」由执行器承担（**当前 = Trellis**，依附其官方可改面，不改状态机与 hook 解析），执行器可替换是未来可能而非现行契约。改面：`README.md` 开场 + §定位（删「分层正交」作身份表述——它降为产物分层的实施细节，归 `DESIGN.md` §3/§8）；`patches/project-wiring/agent-pointer.md` 标题与首行同步（重装配后注入各业务仓库 AGENTS.md）。被否：把「atlas = 项目级资产层」当身份（一次分工决策 D72 静默改写身份，实证 `3508 §129`）；「执行器 adapter」先行（无实跑取证） |
-| D75 | 知识库双通道 + KB 投影对账门（2026-09-29，`3509 §B116`/`§B121` 拍板「按推荐走」） | **双通道**：短 note 经 MCP（store/get），**长 note 定点/批量修订直接编辑文件** + 收口跑 `kb_index_refresh.mjs` + `kb_projection_check.mjs` 对账（`shared/knowledge.md` §3 重写；原「不手写 vault 文件」与历轮实践矛盾，且 open-zk-kb 无文件监听 ⇒ 手改不重索引会静默漂）。**对账门**：`atlas/scripts/kb_projection_check.mjs` 用包内解析器逐篇逐字段比对投影（`.index/knowledge.db`）⇔ vault 本体，四类漂移指名，入 `gates.md` 2.1（测试 + 三类变异咬合）；`atlas_check` 对校验器 WARN 行从静默当 ok 改为显式 `WARN` 行。配套：`embeddings:{enabled:false}` 落 `~/.config/open-zk-kb/config.yaml`（本机不可达 HF CDN，local 兜底使 rebuild/embed 每次白试下载 = MCP 超时根因）。被否：坚持 MCP 单一通道（唯一可行通道就是直接编辑，实证 `§B116` 硬证据）；拆短 note 方案（丢历史、覆盖风险） |
+| ~~D75~~ | **【已退役 2026-10-14】** 知识库双通道 + KB 投影对账门（2026-09-29，`3509 §B116`/`§B121` 拍板「按推荐走」） | **双通道**：短 note 经 MCP（store/get），**长 note 定点/批量修订直接编辑文件** + 收口跑 `kb_index_refresh.mjs` + `kb_projection_check.mjs` 对账（`shared/knowledge.md` §3 重写；原「不手写 vault 文件」与历轮实践矛盾，且 open-zk-kb 无文件监听 ⇒ 手改不重索引会静默漂）。**对账门**：`atlas/scripts/kb_projection_check.mjs` 用包内解析器逐篇逐字段比对投影（`.index/knowledge.db`）⇔ vault 本体，四类漂移指名，入 `gates.md` 2.1（测试 + 三类变异咬合）；`atlas_check` 对校验器 WARN 行从静默当 ok 改为显式 `WARN` 行。配套：`embeddings:{enabled:false}` 落 `~/.config/open-zk-kb/config.yaml`（本机不可达 HF CDN，local 兜底使 rebuild/embed 每次白试下载 = MCP 超时根因）。被否：坚持 MCP 单一通道（唯一可行通道就是直接编辑，实证 `§B116` 硬证据）；拆短 note 方案（丢历史、覆盖风险） |
 
 ---
 
 ## 13. 待实现事项
 
 > **状态单一真相源（硬）**：本节**不复述各项的推进状态** —— 复述必漂，实例：2026-09-28 两轮独立审计都在本节抓到**陈述与实况相反**。
-> **批 6（契约改造批）的逐项状态 = 知识库 `3509` 的「批 6 登记」节**；进度与下一步 = 知识库 `3508` 顶部的「当前进度 / 待办」节；门的取证等级 = `shared/gates.md`。
+> **进度与下一步**随每轮实际产出就近登记；门的取证等级 = `shared/gates.md`。
 > 本节只留**确知仍开、且不属批 6** 的项（机器判据：本节不得出现落地状态词，见 `tests/test_canonical_consistency.py` 判据 ④）。
 
 1. **首次真栈执行**（E1 单段）：`e2e.app_base_url` 就绪后重生成 `product/e2e/scripts/` 并跑全量用例（首跑分类协议见 `rings/e2e/reference.md` §5.4）。当前**未发生**（用户 2026-09-28 裁定暂不真跑，`3508 §111`）。

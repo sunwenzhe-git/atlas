@@ -31,7 +31,7 @@ def strip_inline_comment(line: str) -> str:
     """去掉 YAML 行内注释：`#` 前有空白（或行首）且在引号外时截断。
 
     手写解析器必须自己处理 —— 否则 `vault: /path   # 说明` 会把注释当成值的一部分。
-    与 `validate_stack_profile` / `validate_ledger` 既有口径逐字一致（收敛前它们各自维护同一实现）。
+    与 `validate_stack_profile` 既有口径逐字一致（收敛前它们各自维护同一实现）。
     """
     out, quote = [], None
     for i, ch in enumerate(line):

@@ -64,6 +64,7 @@ export default defineConfig({
       { text: '框架横评', link: '/guide/comparison' },
       { text: 'Token 工程', link: '/guide/token-engineering' },
       { text: '核心架构', link: '/concepts/architecture' },
+      { text: '设计方案', link: '/design/overview' },
       { text: '创新设计', link: '/innovations/e2e-console' },
       { text: '门禁系统', link: '/gates/iron-gates' },
       { text: '技能生态', link: '/ecosystem/skills' },
@@ -77,6 +78,17 @@ export default defineConfig({
     ],
 
     sidebar: [
+      {
+        text: '📐 设计方案',
+        collapsed: false,
+        items: [
+          { text: '全流程设计总览', link: '/design/overview' },
+          { text: '逆向（结构）环设计', link: '/design/structure-ring' },
+          { text: '产品（PRD）环设计', link: '/design/prd-ring' },
+          { text: 'E2E 环设计', link: '/design/e2e-ring' },
+          { text: '跨项目分发设计', link: '/design/distribution' }
+        ]
+      },
       {
         text: '🏛️ 核心架构',
         collapsed: false,

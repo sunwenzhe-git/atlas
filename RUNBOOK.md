@@ -1,7 +1,7 @@
 # atlas 复现手册（RUNBOOK）
 
 > **换工作区 / 重跑整个 atlas 时先读本文件**，按 §0 → §1 → §2 → §3 → §4 顺序执行。
-> 只记**可操作步骤与前置**；设计依据见 `DESIGN.md` 与知识库（vault 内 `<vault>/atlas/`，契约 `shared/knowledge.md`），执行契约见 `shared/` + `rings/*/reference.md` + `apply/reference.md`。
+> 只记**可操作步骤与前置**；设计依据见 `DESIGN.md`，执行契约见 `shared/` + `rings/*/reference.md` + `apply/reference.md`。
 
 ---
 
@@ -76,7 +76,7 @@ python3 atlas/patches/workflow-plan-apply/apply-patches.py \
 
 ## 4. 收口
 
-**收口按 `.atlas/shared/closeout.md` 逐步跑**（门自检 → 装配面核对 → 台账对账 → vault 同步 → 回灌登记 → 知识库 rebuild → 提交）；**门总账** = `.atlas/shared/gates.md`（一门一行、含显式盲区与取证等级；**不在表 = 不存在**）。
+**收口按 `.atlas/shared/closeout.md` 逐步跑**（门自检 → 装配面核对 → 回灌登记 → 提交）；**门总账** = `.atlas/shared/gates.md`（一门一行、含显式盲区与取证等级；**不在表 = 不存在**）。
 
 实现后：真实应用跑 E2E（**E1 单段**：`stack-profile.yaml` 的 `e2e.app_base_url`）→ 全 `green`（或 `blocked` 带原因）→ `after_finish` hook 刷结构事实（`refresh_structure.py`）→ Trellis `update-spec` + `finish`。
 
@@ -87,7 +87,7 @@ python3 atlas/patches/workflow-plan-apply/apply-patches.py \
 
 ## 5. 状态自检（换机 / 接手先跑；**不在此处写死状态**）
 
-状态随每轮变化，写死即过期（实例：本节曾是 2026-09-20 的快照，三轮后仍在报“四环已就绪 / 原型待跑”）。**当前进度与下一步的唯一落点** = 知识库 `<vault>/atlas/2026091715433508-atlas-discussion-log` 顶部的「当前进度 / 待办」节（vault 路径从 `product/stack-profile.yaml` 的 `knowledge.vault` 读）。
+状态随每轮变化，写死即过期（实例：本节曾是 2026-09-20 的快照，三轮后仍在报“四环已就绪 / 原型待跑”）。**当前进度与下一步的落点** = 项目内任务/评审记录，按当轮实际产出就近登记。
 
 ```bash
 trellis --version && cat .trellis/.version      # 版本对齐（§0）
@@ -105,7 +105,6 @@ python3 .atlas/scripts/atlas_check.py --root . --fast   # 门一行一门：ok|F
 - 改契约 / 模板 / 校验器：先改 `atlas/`（canonical），再重跑 `install.sh` 同步到目标项目（已装配过的目标需 `ATLAS_ALLOW_OVERWRITE=1`）。
 - 跑回归：`python3 check-all.py`（或 `--only atlas`）。
 - **容器与装配面是同一条判据面**：`install.sh` 的自检只检查“它在装配时声称会落下的文件” ⇔ 包内确实存在（`tests/test_install_selfcheck.py`）。新增/删除包内件时它必须一起绿，否则新项目开户会以“装配失败”退出。
-- 同步知识库：按 `shared/knowledge.md`，写 vault 内 `<vault>/atlas/`（改契约 → 对应环 note + 3507/3508；未决变化 → 3509）。
 
 ### 机器校验命令（改过 `product/` 后跑）
 
@@ -125,4 +124,4 @@ python3 .atlas/scripts/refresh_structure.py         --root . --apply
 
 ## Guidance
 
-换工作区重跑时**按 §0 → §1 → §2 → §3 → §4 顺序**；**§0 的 CLI 版本核对不能跳**——否则 `trellis update` 会冲掉 `#### 1.6` 挂载补丁。改动 `atlas/` 后跑 `python3 check-all.py` 并同步 Obsidian。
+换工作区重跑时**按 §0 → §1 → §2 → §3 → §4 顺序**；**§0 的 CLI 版本核对不能跳**——否则 `trellis update` 会冲掉 `#### 1.6` 挂载补丁。改动 `atlas/` 后跑 `python3 check-all.py`。

@@ -1,7 +1,7 @@
 # atlas e2e — 验收用例环
 
 > 本环为 atlas 独立 skill `atlas-e2e` 的执行契约，位于 `.atlas/rings/e2e/reference.md`。
-> 执行前先读共享契约：`.atlas/shared/global-rules.md`、`stack-profile.md`、`single-source.md`、`layout.md`、`knowledge.md`。
+> 执行前先读共享契约：`.atlas/shared/global-rules.md`、`stack-profile.md`、`single-source.md`、`layout.md`。
 
 ## 0. 一句话
 

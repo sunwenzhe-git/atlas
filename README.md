@@ -1,9 +1,9 @@
 # Atlas — 践行 Project Harness 的全流程 AI 编程工作流
 
 <p align="left">
-  <img src="https://img.shields.io/badge/version-0.1.0--beta.8-blue.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.1.0--beta.10-blue.svg" alt="Version" />
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License" />
-  <img src="https://img.shields.io/badge/tests-334%20passed-success.svg" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-349%20passed-success.svg" alt="Tests" />
   <a href="https://sunwenzhe-git.github.io/atlas/"><img src="https://img.shields.io/badge/docs-VitePress-green.svg" alt="Docs" /></a>
 </p>
 
@@ -73,7 +73,7 @@ NBER（美国国家经济研究局）2026 年工作论文 35275 追踪了超过 
 
 ### 3. 为什么说 Project Harness 是 AI 时代的 Spring Boot？
 
-很多开发者直觉上把“脚手架”理解为 `npm create` 或 `vue-cli` 这种生成一次空目录就退场的工具。但 **Project Harness 绝非一次性模板，它是像 Spring Boot 一样的全生命周期工程框架（Framework）**：
+“脚手架”常被理解为 `npm create` 或 `vue-cli` 这种生成一次空目录就退场的工具。但 **Project Harness 不是一次性模板，它是像 Spring Boot 一样的全生命周期工程框架（Framework）**：
 
 1. **从“散装手搓”走向“约定优于配置 (Convention over Configuration)”**：  
    在 Spring Boot 诞生前，Java 开发者各凭喜好手搓 XML、配置 Web 容器，团队项目极其混乱脆弱；现在的 AI 编程亦然，大家都在各自的 `.cursorrules` 和 Prompt 里给 AI 打零散补丁。**Atlas 则如同 Spring Boot，为 AI 编程立下了第一套工业级工程规范**：目录组织标准、单源事实资产、两层正交状态机，开箱即用。
@@ -119,7 +119,7 @@ NBER（美国国家经济研究局）2026 年工作论文 35275 追踪了超过 
 ```
 
 ### 1. 两层正交模型（项目级平面 🆚 需求级平面）
-1. **项目级（应然资产层）**：定义“这个系统是什么、长什么样、怎么算做对”。包含**结构事实**（图谱与 AST 逆向抽取）、**项目级 PRD**（业务规则单源）与 **E2E 验收用例**（真实靶场可证伪用例）。
+1. **项目级（应然资产层）**：定义“这个系统是什么、长什么样、怎么算做对”。包含**结构事实**（图谱与 AST 逆向抽取）、**项目级 PRD**（业务规则单源）、**E2E 验收用例**（真实靶场可证伪用例），以及跨需求生效的**架构决策记录**（`product/adr/NNNN-<slug>.md`）。
 2. **需求级（小需求执行层）**：定义“这次改动改什么、怎么写代码”。由内置的 **Trellis** 任务系统承担，Atlas 本身**不侵入业务代码实现**。
 3. **`apply` 单向衔接**：需求在进入实现前，先由 Agent 唤起 `atlas-apply <需求ID>` 技能将需求增量合并入项目级应然资产，坚决杜绝“先写代码、事后补文档”的失控循环。
 
@@ -138,8 +138,8 @@ Atlas 的核心由 **三环（Rings）** 构筑成不可逾越的应然防线：
 > 💡 **提示**：`apply` 是由 Agent 在会话中执行的认知编排技能（Skill），通过 `/atlas-apply <模式>` 或大白话唤起，终端无独立的 `atlas apply` 命令：
 * `atlas-apply <需求ID>`：**需求增量模式**。识别受影响的 PRD 与 E2E 页面分片，增量生成用例资产并跑门禁；
 * `atlas-apply adopt`：**存量项目开户模式**。面向既有代码库，先逆向抽取结构基线，PRD 开到“开户最小集”，不预设虚拟 E2E，由后续需求逐步长出；
-* `atlas-apply init`：**绿地从零立项模式**。从愿景文档编译出初始结构基线与首批 PRD 需求；
-* `atlas-apply sync`：**被动同步模式**。代码变更后刷新结构基线。
+* `atlas-apply all`：**绿地从零立项模式**。按序全量串行初始化 `structure → prd → e2e`，幂等、断点续跑；
+* `atlas-apply backfill`：**反向回流模式**。把实现期发现的上游缺口裁决条目攒批（≤10 条/批）灌回 PRD 用例并重跑门禁。
 
 ---
 
@@ -411,6 +411,8 @@ Atlas 坚持**变异证明（Mutation Proving / M 系列钉子测试）**原则�
    * 设计档案中的豁免理由必须与代码扫描器中的忽略规则双向集合相等，关掉报警必须有台账，杜绝无台账的私自豁免。
 6. **装配版本完整性门 (`.atlas/VERSION`)**：
    * 目标项目中的装配态与 Atlas 源包内容哈希实时对账，源码更新未重新同步时明确报警。
+7. **架构决策记录对账门 (`validate_adr.py`)**：
+   * 项目级长效架构决策唯一落 `product/adr/NNNN-<slug>.md`；校验编号唯一、状态枚举合法、演进链闭环（`superseded` 必指有效后继）、核心章节（Context / Decision / Consequences）完整，杜绝决策散落多处或私自改写。
 
 ---
 

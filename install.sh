@@ -330,7 +330,6 @@ check() {
 
 check "共享契约" "$ATLAS_DEST/shared/global-rules.md"
 check "stack-profile 契约" "$ATLAS_DEST/shared/stack-profile.md"
-check "知识库契约" "$ATLAS_DEST/shared/knowledge.md"
 check "单一真相源契约" "$ATLAS_DEST/shared/single-source.md"
 check "布局契约" "$ATLAS_DEST/shared/layout.md"
 check "门登记表" "$ATLAS_DEST/shared/gates.md"
@@ -346,7 +345,6 @@ check "校验器 validate_stack_profile" "$ATLAS_DEST/validators/validate_stack_
 check "校验器 validate_prd" "$ATLAS_DEST/validators/validate_prd.py"
 check "校验器 validate_testids" "$ATLAS_DEST/validators/validate_testids.py"
 check "校验器 validate_e2e_index" "$ATLAS_DEST/validators/validate_e2e_index.py"
-check "校验器 validate_ledger" "$ATLAS_DEST/validators/validate_ledger.py"
 check "校验器 validate_design_exemptions" "$ATLAS_DEST/validators/validate_design_exemptions.py"
 check "校验器 validate_e2e_mocks" "$ATLAS_DEST/validators/validate_e2e_mocks.py"
 check "校验器 validate_adr" "$ATLAS_DEST/validators/validate_adr.py"
@@ -437,7 +435,7 @@ else
   say "装配完成。"
   say ""
   say "下一步："
-  say "  1. 确认 product/stack-profile.yaml（apps / role / adapters；knowledge.vault 填 vault 绝对路径以启用 Obsidian 同步）。"
+  say "  1. 确认 product/stack-profile.yaml（apps / role / adapters）。"
   say "  2. 首建项目级资产：触发 atlas-structure / atlas-prd / atlas-e2e，或用 atlas-apply 的 all 模式按序跑三环（E1：原型环已移除）。"
   say "  3. 接需求：走 Trellis Plan，其 1.6 步会调 atlas-apply 做需求式增量。"
 fi

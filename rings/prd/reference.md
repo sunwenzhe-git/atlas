@@ -1,7 +1,7 @@
 # atlas prd — 项目级 PRD
 
 > 本环为 atlas 独立 skill `atlas-prd` 的执行契约，位于 `.atlas/rings/prd/reference.md`。
-> 执行前先读共享契约：`.atlas/shared/global-rules.md`、`stack-profile.md`、`single-source.md`、`layout.md`、`knowledge.md`。
+> 执行前先读共享契约：`.atlas/shared/global-rules.md`、`stack-profile.md`、`single-source.md`、`layout.md`。
 
 ## 0. 一句话
 

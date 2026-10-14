@@ -7,6 +7,8 @@
 - 2026-09-26：删除原「参数 5 Waste Test」——实测它是一条**恒 PASS 的空门**（`warn` 列表从未被写过）。
   可机器判的两条并入参数 4（**规则↔AC 双向**、域清单↔域级文件），语义项转 §8 人工审查；
   参数 4 另增三项：**范围形态声明合法** / **声明与 §六 表形态一致** / **最小必填集**。
+- 2026-10-14：并入「**AC 号唯一**」判据（域级 PRD 内 AC 号跨文件 / 同文件不得重复）；
+  原属地 `validate_ledger.py` 的项目侧判据随「知识库 / 台账子系统」退役归位本环。
 - 判定：PASS / WARN / FAIL；FAIL → 退出码 1，其余 0。
 
 用法：
@@ -169,6 +171,33 @@ def table_with_all_cols(section: str, cols: tuple[str, ...]) -> bool:
         if all(c in cells for c in cols):
             return True
     return False
+
+
+# AC 号**定义行**：表格首格 = 该 ID 且**至少 3 列**（`| ID | 场景 | 回指规则 |`）。
+# 必须排除引用行（跨域回指 / 规则→AC 列）与结构类 AC 清单（只有 2 列）。**`[^|\n]` 不能写成 `[^|]`**
+# （后者会跨行吃掉后续内容 ⇒ 把 2 列行也当 3 列）。
+AC_DEF_ROW = re.compile(r"^\|\s*`?(AC-[A-Z0-9]+-\d+)`?\s*\|[^|\n]*\|[^|\n]*\|", re.M)
+
+
+def ac_id_collisions(domains: list[Path]) -> list[str]:
+    """AC 号**定义**跨文件 / 同文件重复（域级 PRD 是 AC 的应然资产落点）。
+
+    只数**定义行**（`^| AC-… |`）：引用（跨域回指 / 结构类清单 / 规则→AC 列）不是撞号。
+    原 `validators/validate_ledger.py` 的项目侧判据，2026-10-14 随知识库 / 台账子系统退役归位本环。
+    """
+    where: dict[str, list[str]] = {}
+    bad: list[str] = []
+    for f in domains:
+        ids = AC_DEF_ROW.findall(f.read_text(encoding="utf-8", errors="replace"))
+        for i in set(ids):
+            where.setdefault(i, []).append(f.name)
+        inner = sorted({i for i in ids if ids.count(i) > 1})
+        if inner:
+            bad.append(f"{f.name} 内定义重复：{'、'.join(inner)}")
+    for i, files in sorted(where.items()):
+        if len(files) > 1:
+            bad.append(f"{i} 被 {len(files)} 份文件定义：{'、'.join(files)}")
+    return bad
 
 
 def validate(root: Path) -> Result:
@@ -558,6 +587,11 @@ def validate(root: Path) -> Result:
                 f"{d}(frontmatter={sorted(dep.get(d, set()))} ≠ 实线={sorted(mer_dep.get(d, set()))})"
                 for d in mism[:4]))
         res.add("参数4 域间依赖", "PASS" if not issues else "FAIL", "；".join(issues))
+
+    # ---- AC 号唯一（域级 PRD 内 AC 号跨文件 / 同文件不得重复；2026-10-14 归位自 validate_ledger）
+    ac_bad = ac_id_collisions(domains)
+    res.add("AC 号唯一", "FAIL" if ac_bad else "PASS",
+            "；".join(ac_bad) if ac_bad else "域级 PRD 内 AC 号无跨文件 / 同文件重复")
 
     # ---- 判定
     statuses = [c["status"] for c in res.checks]

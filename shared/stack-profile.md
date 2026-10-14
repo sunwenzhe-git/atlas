@@ -53,17 +53,6 @@
 - 值为 `null` → 该类别降级为 agent 撰写，结构基线 `README.md` 标 `maintained_by: agent`。
 - 值为非空 → 必须能被解析到 `adapters/` 下的可执行脚本（解析规则见 §3.3）。
 
-### `knowledge`
-
-知识库（Obsidian）同步声明。**可选增强**：缺省或 `vault: null` ⇒ 跳过知识库同步，不阻断任何环。契约见 `shared/knowledge.md`。
-
-| 字段 | 必填 | 说明 |
-|---|---|---|
-| `tool` | 否 | 固定 `open-zk-kb`；写入 / 检索经该 MCP |
-| `vault` | 否 | vault 根绝对路径；`null` = 不启用 |
-| `dir` | 否 | vault 内**唯一**的 atlas 设计目录（相对 vault 根），所有项目共用 |
-| `project` | 否 | open-zk-kb 的 project 作用域 |
-
 ### `graph`（可选：代码图谱后端）
 
 **可选增强**（2026-10-05 图谱批 1）：声明后，文件枚举 / 影响面基准等消费者走代码图谱；

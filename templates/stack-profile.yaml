@@ -33,15 +33,6 @@ adapters:
   models: null      # 数据模型清单
   tests: null       # 测试现状
 
-# 知识库（Obsidian）同步。可选增强：缺省 / null 时跳过，不阻断任何环。
-# 契约见 shared/knowledge.md（安装后位于 .atlas/shared/knowledge.md）。
-# dir 是 vault 内**唯一**的 atlas 设计目录，所有项目共用，不按项目分目录。
-knowledge:
-  tool: open-zk-kb          # 固定；写入/检索经该 MCP
-  vault: null               # vault 根绝对路径；null = 不启用知识库同步
-  dir: atlas                # vault 内 atlas 设计目录（相对 vault 根）
-  project: null             # open-zk-kb 的 project 作用域，可选
-
 # 代码图谱后端（可选增强，2026-10-05 图谱批 1）。段缺失 / graph: null = 不用图谱（合法降级）。
 # 声明后：routes 适配器走图谱文件枚举（用前现刷）、apply 影响面推导先跑 impact_report。
 # 后端未安装 ⇒ 消费者显式 not_ready / 降级（绝不静默）。契约见 shared/stack-profile.md §2/§3.6。

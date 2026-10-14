@@ -4,19 +4,18 @@
 为什么单独一个文件：批 1（E1 契约面）与批 5 的复核都证明「canonical ↔ canonical」这条线上
 **没人看** —— `shared/single-source.md` 的 testid 真相源与 `rings/e2e` 相反、`apply/reference.md`
 第 29 行说「可临时启用原型环」而第 9 行说「环已移除」、模板的 `prototype:` 段头被删而两个子键
-变成孤儿挂在 `knowledge:` 下。三类都属「文本之间互相否定」，而 vault↔canonical 与
-装配面两条对账面都照不到它们。
+变成孤儿挂在相邻段下。三类都属「文本之间互相否定」，而 canonical 装配面这条对账面照不到它们。
 
 三条判据（全部可机器判）：
 
   1. **环引用自明**：文本里的 `rings/<x>/`，若 `<x>` 不是现存环 ⇒ **该行必须带退役/历史标记**
      （否则就是「活口径引用已删环」——批次 1/5 缺陷的本体）；
   2. **模板键 ⊆ 契约字段**：`templates/stack-profile.yaml` 的段与子键必须是
-     `shared/stack-profile.md` §2 声明过的（实测缺陷：孤儿键 `base_url` / `review` 挂在 `knowledge:` 下）；
+     `shared/stack-profile.md` §2 声明过的（实测缺陷：孤儿键 `base_url` / `review` 挂在相邻段下）；
   3. **shared 互引可达**：canonical 里引用的 `shared/<x>.md` 必须存在。
 
 **显式盲区**（已写进 `shared/gates.md`）：**契约正文的语义自洽**机器判不了（例：「第 29 行与第 9 行
-互相否定」需要读懂句意）⇒ 归人（`shared/closeout.md` 步骤 4 的 vault 同步复核 + 独立复核）。
+互相否定」需要读懂句意）⇒ 归人（`shared/closeout.md` 步骤 1 门自检 + 独立复核）。
 
 变异证明：M7 契约里写一个**不带标记**的幽灵环引用 ⇒ 红；M8 模板加一个契约未声明的子键 ⇒ 红；
 M9 契约里引用一个不存在的 shared 文件 ⇒ 红。
@@ -160,8 +159,8 @@ def check_contract_field_refs() -> dict:
                 continue
             if any(mk in line for mk in RETIRE_MARKS):
                 continue
-            for m in re.finditer(r"`(e2e|knowledge|adapters|apps|prototype)\.([a-z_]+)(?:\.[a-z_]+)?`", line):
-                # 排除**文件名**（`shared/knowledge.md` 会被上面的正则读成 段=knowledge / 字段=md）
+            for m in re.finditer(r"`(e2e|adapters|apps|prototype)\.([a-z_]+)(?:\.[a-z_]+)?`", line):
+                # 排除**文件名**（如 `shared/layout.md` 会被上面的正则读成 段=layout / 字段=md）
                 if m.group(2) in ("md", "py", "json", "yaml", "yml", "sh", "ts", "tsx", "js", "txt"):
                     continue
                 refs.setdefault(f"{m.group(1)}.{m.group(2)}", set()).add(
@@ -184,8 +183,13 @@ def check_shared_refs() -> dict:
                 "detail": "shared/ 下无 .md —— 判据失效，fail-closed"}
     refs: dict[str, list[str]] = {}
     for f in canonical_text_files():
-        for m in re.finditer(r"(?:\.atlas/)?shared/([a-z0-9-]+\.md)", f.read_text(encoding="utf-8", errors="replace")):
-            refs.setdefault(m.group(1), []).append(f.relative_to(PKG_ROOT).as_posix())
+        for i, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            # 退役 / 历史语境的引用不算活引用（与本文件 check ① 环引用同一口径）：
+            # 决策记录里 `~~D71~~ 【已退役】…shared/knowledge.md` 是合法的历史留痕。
+            if any(mk in line for mk in RETIRE_MARKS):
+                continue
+            for m in re.finditer(r"(?:\.atlas/)?shared/([a-z0-9-]+\.md)", line):
+                refs.setdefault(m.group(1), []).append(f"{f.relative_to(PKG_ROOT).as_posix()}:{i}")
     bad = [f"{r}（被 {len(w)} 处引用，例：{w[0]}）" for r, w in sorted(refs.items()) if r not in files]
     return {"check": "shared 互引可达", "ok": not bad, "skip": False,
             "detail": ("；".join(bad[:5]) if bad
