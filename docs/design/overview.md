@@ -140,7 +140,7 @@ Trellis 开需求卡（.trellis/tasks/<需求ID>/prd.md；ID = task 目录名，
 
 ## 设计文档导航
 
-- [逆向（结构）环设计](/design/structure-ring)：结构事实、CGC 图谱双通道、用前现刷、Leiden 拓扑聚类
+- [结构（逆向）环设计](/design/structure-ring)：结构事实、CGC 图谱双通道、用前现刷、Leiden 拓扑聚类
 - [产品（PRD）环设计](/design/prd-ring)：应然两级、AC 契约、走查单确认门
 - [E2E 环设计](/design/e2e-ring)：用例分片、总索引、testid 规范与双向校验、状态机与完成门
 - [跨项目分发设计](/design/distribution)：包结构、stack-profile、适配器、平台装配、install

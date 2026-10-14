@@ -83,7 +83,7 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: '全流程设计总览', link: '/design/overview' },
-          { text: '逆向（结构）环设计', link: '/design/structure-ring' },
+          { text: '结构（逆向）环设计', link: '/design/structure-ring' },
           { text: '产品（PRD）环设计', link: '/design/prd-ring' },
           { text: 'E2E 环设计', link: '/design/e2e-ring' },
           { text: '跨项目分发设计', link: '/design/distribution' }
