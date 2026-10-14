@@ -146,6 +146,14 @@ def _path_candidates(text: str):
         yield t
 
 
+def _cat_token(val: str) -> str:
+    s = val.strip()
+    for kw in ("covered", "skipped", "added"):
+        if re.search(r'\b' + kw + r'\b', s):
+            return kw
+    return s.split("：")[0].split(":")[0].strip()
+
+
 def validate(root: Path) -> Result:
     res = Result()
     spec = root / ".trellis" / "spec" / "structure"
@@ -186,9 +194,9 @@ def validate(root: Path) -> Result:
     globals_missing = [n for n in ("directory-map.md", "routes.md")
                        if not (spec / "global" / n).is_file()]
     cat = meta.get("categories") or {}
-    a_ok = isinstance(cat.get("A"), str) and cat["A"].split("：")[0].split(":")[0].strip() in ("covered", "skipped")
+    a_ok = isinstance(cat.get("A"), str) and _cat_token(cat["A"]) in ("covered", "skipped")
     h_ok_vals = ("covered", "added", "skipped") if greenfield else ("covered", "added")
-    h_ok = isinstance(cat.get("H"), str) and cat["H"].split("：")[0].split(":")[0].strip() in h_ok_vals
+    h_ok = isinstance(cat.get("H"), str) and _cat_token(cat["H"]) in h_ok_vals
     role_issues = []
     for role in ("current", "legacy"):
         base = spec / role

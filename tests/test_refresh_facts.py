@@ -84,6 +84,14 @@ def test_semantic_cells_preserved() -> None:
         run(root, "--apply")
         assert "首页入口" in routes_path.read_text(encoding="utf-8")
 
+        # F16 回灌：适配器空产物（items: []）避免意外清空既有手写/已有结构事实 routes.md
+        (root / ".trellis" / "spec" / "structure" / ".adapter-out" / "routes.json").write_text(
+            json.dumps({"category": "routes", "items": []}, ensure_ascii=False), encoding="utf-8")
+        r = run(root, "--apply")
+        assert r.returncode == 0
+        assert "WARN: 适配器产物为空，保留既有手工事实" in r.stdout
+        assert "首页入口" in routes_path.read_text(encoding="utf-8")
+
 
 def test_idempotent() -> None:
     with tempfile.TemporaryDirectory() as td:
@@ -146,7 +154,9 @@ def test_drift_dry_run_prints_without_marker() -> None:
         run(root, "--apply")
         sd = root / ".trellis" / "spec" / "structure"
         (sd / ".adapter-out" / "routes.json").write_text(
-            json.dumps({"category": "routes", "items": []}, ensure_ascii=False), encoding="utf-8")
+            json.dumps({"category": "routes", "items": [
+                {"path": "/home2", "source_file": "app/pages/home.py", "status": "已实现"}
+            ]}, ensure_ascii=False), encoding="utf-8")
         r = run(root)
         assert r.returncode == 0, r.stderr + r.stdout
         assert "结构漂移" in r.stdout, r.stdout

@@ -217,7 +217,7 @@ def seed_models_check(root: Path, blocks: dict[str, dict]) -> tuple[str, str]:
     facts = sorted(spec.rglob("data-models*.md")) if spec.is_dir() else []
     if not facts:
         return "NA", f"无 models 事实（{spec}/**/data-models*.md 不存在）⇒ 跳过对账（不是通过）"
-    models: dict[str, str] = {}
+    models: dict[str, set[str]] = {}
     for f in facts:
         for ln in f.read_text(encoding="utf-8", errors="replace").splitlines():
             if not ln.startswith("|"):
@@ -225,7 +225,11 @@ def seed_models_check(root: Path, blocks: dict[str, dict]) -> tuple[str, str]:
             cells = [c.strip().strip("`") for c in ln.strip().strip("|").split("|")]
             if len(cells) >= 2 and cells[0] and cells[0] != "表/模型" \
                     and not set(cells[0]) <= set("-: "):
-                models.setdefault(cells[0], cells[1])
+                bucket = models.setdefault(cells[0], set())
+                for raw_f in re.split(r'[/,]', cells[1]):
+                    cleaned = raw_f.strip().strip("`")
+                    if cleaned:
+                        bucket.add(cleaned)
     if not models:
         return "NA", f"models 事实里无可用「表/模型」行（{len(facts)} 份文件）⇒ 跳过对账"
     bad: list[str] = []

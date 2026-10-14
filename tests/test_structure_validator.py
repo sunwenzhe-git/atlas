@@ -210,3 +210,29 @@ def test_structure_routes_filled_semantic_columns_no_warn() -> None:
         v = vst.validate(root)
         assert not [w for w in v.warns if w["check"] == "routes 语义列"], v.warns
 
+
+def test_structure_categories_prefix_tolerance() -> None:
+    """F17 回灌：categories A/H 写 'H: skipped'、'H：covered' 等前缀容错提取关键字。"""
+    meta_tolerant = dict(META)
+    meta_tolerant["categories"] = {"A": "A: covered", "H": "H：covered"}
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, meta=meta_tolerant)
+        res = _res(root)
+        assert res["类别覆盖 · categories A/H"]["ok"] is True
+
+    meta_tolerant["categories"] = {"A": "A: covered", "H": "H: added"}
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, meta=meta_tolerant)
+        res = _res(root)
+        assert res["类别覆盖 · categories A/H"]["ok"] is True
+
+    meta_bad = dict(META)
+    meta_bad["categories"] = {"A": "unknown", "H": "covered"}
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, meta=meta_bad)
+        res = _res(root)
+        assert res["类别覆盖 · categories A/H"]["ok"] is False
+

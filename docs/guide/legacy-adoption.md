@@ -7,7 +7,19 @@
 
 ---
 
-## 1. 接入三步
+## 1. 接入步骤与 Checklist
+
+### 接入步骤 Checklist
+
+| 序号 | 步骤 | 命令 / 动作 | 核心交付物 / 目的 |
+|---|---|---|---|
+| 1 | 装配与画像 | `atlas init` + 编辑 `product/stack-profile.yaml` | 确认 `origin: adopt` 与技术栈画像 |
+| 2 | 一次性开户与结构初始化 | `/atlas-apply adopt` | 逆向抽取结构事实（`_meta.json`、`current/`）与 PRD 开户最小集 |
+| 3 | 生成实现期薄桩 | `python3 .atlas/scripts/gen_testid_stub.py --root .` | 产出 `.trellis/spec/conventions/testid.md`，避免首日 `validate_testids.py` 硬 FAIL |
+| 4 | 首日静态体检复核 | `atlas check --fast` | 验证门禁全绿或仅有合法 WARN |
+| 5 | 需求增量流转 | `/atlas-apply <需求ID>` | 日常流转，按域增量生长 |
+
+---
 
 ### 第 1 步：装配与画像（`atlas init` + `stack-profile.yaml`）
 
@@ -25,7 +37,7 @@ atlas init
 
 > 出厂草稿含占位符，未替换前 `atlas check` 必有门禁 `FAIL`——这是 fail-closed 的设计行为，不是安装坏了。
 
-### 第 2 步：一次性开户（`atlas-apply adopt`，只跑这一次）
+### 第 2 步：一次性开户与结构初始化（`atlas-apply adopt`，只跑这一次）
 
 对 Agent 说一句大白话——「帮我把这个项目接入 Atlas 工作流」（或 `/atlas-apply adopt`）。开户只做两件事：
 
@@ -36,7 +48,23 @@ atlas init
 
 **关键承诺：开户不预设 E2E**——不猜老业务的验收用例、不要求补 testid、不产生历史页面的对账债务。老项目的 UI 与流程已经在代码里，从代码反推产品意图再全量重写 PRD 与用例，既不可能也没价值。
 
-### 第 3 步：从第一条需求起，按域增量生长（`atlas-apply <需求ID>`）
+### 第 3 步：生成实现期薄桩（`gen_testid_stub.py`，首日体检前必做）
+
+在结构初始化之后、首日体检之前，显式执行薄桩生成：
+
+```bash
+python3 .atlas/scripts/gen_testid_stub.py --root .
+```
+
+> **为什么必须执行**：`validate_testids.py` 要求必须存在 `.trellis/spec/conventions/testid.md` 薄桩文件（契约 §4.1，否则硬 FAIL）。虽然开户期暂不产生用例分片，但生成器需要扫描既有前端源码建立实然 testid 盘点基线。补齐该薄桩后，存量开户标准方可闭环。
+
+随后即可执行首日体检，确认基础门禁全绿：
+
+```bash
+atlas check --fast     # 秒级静态体检：全部门禁 + 生成物新鲜度
+```
+
+### 第 4 步：从第一条需求起，按域增量生长（`atlas-apply <需求ID>`）
 
 开户后日常完全回到 Trellis 任务卡流转；Atlas 在 workflow Phase 1.6 自动调度 `apply <需求ID>`：
 

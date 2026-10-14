@@ -120,7 +120,10 @@ fi
 
 say "[1/6] 装配 atlas 包到 .atlas/"
 ATLAS_DEST="$TARGET/.atlas"
-run rm -rf "$ATLAS_DEST"
+for pkg_dir in shared rings apply scripts templates adapters validators patches tests _support; do
+  run rm -rf "$ATLAS_DEST/$pkg_dir"
+done
+run rm -f "$ATLAS_DEST/LICENSE"
 run mkdir -p "$ATLAS_DEST"
 for pkg_dir in shared rings apply scripts templates adapters validators patches tests _support; do
   if [ -d "$SCRIPT_DIR/$pkg_dir" ]; then

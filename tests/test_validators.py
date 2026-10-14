@@ -1548,12 +1548,22 @@ MODELS_OK = """# 数据模型
 | voice | name / engine | str | — | — | — |
 """
 
+MODELS_MULTI = """# 数据模型
+
+| 表/模型 | 字段 | 类型 | 约束/默认 | 关系 | 枚举 |
+|---|---|---|---|---|---|
+| todos | id | int | PK | — | — |
+| todos | text | str | — | — | — |
+| todos | done | bool | false | — | — |
+"""
+
 
 def test_e2e_index_seed_models_reconciliation() -> None:
     """契约 §5.7（2026-09-28，`3509 §98 ⑪`）：`seed:` 的实体 × 字段必须存在于 models 事实。
 
     四侧：无 `seed:` ⇒ NA；有 seed 但无 models 事实 ⇒ **NA（不是通过）**；
     有事实 + 实体不在 ⇒ FAIL；实体与字段都对 ⇒ PASS。
+    多字段模型表（F14 回灌）：首行字段（id）与后续多行字段（text/done）均能精确匹配。
     变异 M16：摘掉 `validate()` 里对该判据的调用 ⇒ 本用例红（行消失）。
     """
     seed_ok = CASE_GOOD.replace("testid:\n", "seed:\n  - upsert voice name=旁白\ntestid:\n")
@@ -1563,6 +1573,14 @@ def test_e2e_index_seed_models_reconciliation() -> None:
     assert no_facts["seed × models 对账"] == "NA", no_facts                        # 无事实 ⇒ NA
     assert _seed_levels(seed_ok, MODELS_OK)["seed × models 对账"] == "PASS"
     assert _seed_levels(seed_bad, MODELS_OK)["seed × models 对账"] == "FAIL"
+
+    # F14 多字段多行表用例：首字段与后续字段均可合法 PASS 对账，不存在字段 FAIL
+    seed_multi_first = CASE_GOOD.replace("testid:\n", "seed:\n  - upsert todos id=1\ntestid:\n")
+    seed_multi_subsequent = CASE_GOOD.replace("testid:\n", "seed:\n  - upsert todos text=买牛奶\ntestid:\n")
+    seed_multi_subsequent_bad = CASE_GOOD.replace("testid:\n", "seed:\n  - upsert todos unknown=1\ntestid:\n")
+    assert _seed_levels(seed_multi_first, MODELS_MULTI)["seed × models 对账"] == "PASS"
+    assert _seed_levels(seed_multi_subsequent, MODELS_MULTI)["seed × models 对账"] == "PASS"
+    assert _seed_levels(seed_multi_subsequent_bad, MODELS_MULTI)["seed × models 对账"] == "FAIL"
 
 
 def test_prd_ac_table_columns_enforced() -> None:

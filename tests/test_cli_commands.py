@@ -79,6 +79,22 @@ def test_install_sh_update_fails_on_uninitialized_project():
         assert "目标项目尚未装配 atlas" in res.stdout or "目标项目尚未装配 atlas" in res.stderr
 
 
+def test_install_sh_update_preserves_runs_dir():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmppath = Path(tmpdir)
+        (tmppath / ".atlas").mkdir()
+        (tmppath / ".atlas" / "VERSION").write_text("dummy-digest\n", encoding="utf-8")
+        (tmppath / ".trellis").mkdir()
+        runs_file = tmppath / ".atlas" / "runs" / "backend-ac-alignment.json"
+        runs_file.parent.mkdir(parents=True)
+        runs_file.write_text('{"baseline": 1}\n', encoding="utf-8")
+
+        res = run_cmd(["bash", str(INSTALL_SH), "--update", "--target", tmpdir, "--no-skill", "--no-patch", "--no-wiring"])
+        assert res.returncode == 0
+        assert runs_file.is_file()
+        assert runs_file.read_text(encoding="utf-8") == '{"baseline": 1}\n'
+
+
 def test_cli_update_dry_run_on_initialized_project():
     with tempfile.TemporaryDirectory() as tmpdir:
         tmppath = Path(tmpdir)

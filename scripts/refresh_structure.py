@@ -274,9 +274,15 @@ def render_routes(base: Path, data: dict, apps: list[dict], domains: list[dict],
     enum = {"应用", "页面/路由", "实现状态", "来源文件"}
     existed = path.is_file()
     old = old_rows_by_key(path, ROUTES_HEADER, ["应用", "页面/路由"])
+    items = data.get("items") or []
+    if not items and existed:
+        raw_rows = parse_rows(path.read_text(encoding="utf-8", errors="replace"))
+        if bool(old) or len(raw_rows) >= 2:
+            print("WARN: 适配器产物为空，保留既有手工事实")
+            return
     rows = []
     new_keys: list[tuple] = []
-    for it in data.get("items") or []:
+    for it in items:
         sf = it.get("source_file") or ""
         app = app_of(sf, apps)
         cells = {"应用": (app or {}).get("name") or "—", "页面/路由": it.get("path", ""),
