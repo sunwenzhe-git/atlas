@@ -64,8 +64,8 @@ export default defineConfig({
       { text: '框架横评', link: '/guide/comparison' },
       { text: 'Token 工程', link: '/guide/token-engineering' },
       { text: '核心架构', link: '/concepts/architecture' },
-      { text: '独门重器', link: '/innovations/e2e-console' },
-      { text: '机器门禁', link: '/gates/iron-gates' },
+      { text: '创新设计', link: '/innovations/e2e-console' },
+      { text: '门禁系统', link: '/gates/iron-gates' },
       { text: '技能生态', link: '/ecosystem/skills' },
       { text: '社区交流', link: '/guide/community' },
       { text: '更新日志', link: '/guide/changelog' },
@@ -101,28 +101,28 @@ export default defineConfig({
         ]
       },
       {
-        text: '⚡ 独门重器',
+        text: '⚡ 创新设计',
         collapsed: false,
         items: [
           { text: 'E2E 用例评审控制台', link: '/innovations/e2e-console' },
           { text: '代码图谱 (Code Graph) 逆向', link: '/innovations/code-graph' },
           { text: '变异证明 (Mutation Proving)', link: '/innovations/mutation-proving' },
-          { text: '硬核断言与累加链解耦', link: '/innovations/assertions' },
+          { text: '断言规范与累加链解耦', link: '/innovations/assertions' },
           { text: '流水线自感知上报', link: '/innovations/self-reporting' }
         ]
       },
       {
-        text: '🛡️ 机器门禁',
+        text: '🛡️ 门禁系统',
         collapsed: false,
         items: [
-          { text: '铁血门禁总览 (The Iron Gates)', link: '/gates/iron-gates' }
+          { text: '门禁系统总览 (Gates)', link: '/gates/iron-gates' }
         ]
       },
       {
         text: '🧰 技能与生态',
         collapsed: false,
         items: [
-          { text: '自带技能全家桶', link: '/ecosystem/skills' },
+          { text: '内置技能与 Agents', link: '/ecosystem/skills' },
           { text: 'Pi Agent 扩展实践', link: '/ecosystem/pi-extensions' }
         ]
       },

@@ -16,7 +16,7 @@ hero:
       text: 📊 主流框架横评与选型
       link: /guide/comparison
     - theme: alt
-      text: ⚡ 查看独门重器
+      text: ⚡ 查看创新设计
       link: /innovations/e2e-console
 
 features:
@@ -31,10 +31,10 @@ features:
     details: 基于 FalkorDB / cgc 全仓拓扑，跨文件 callers/callees 深度感知，精准推导需求影响面与架构漂移。
   - icon: 🔨
     title: 变异证明 (Mutation Proving)
-    details: 拒绝形同虚设的假门禁。每条机器规则都配一组注入脏数据的变异钉子（M 系列，编号已到 M49）：正常数据 PASS + 脏数据必红，双向咬合才算入网。
+    details: 拒绝形同虚设的假门禁。每条机器规则都配一组注入脏数据的变异钉子（M 系列，编号已到 M49）：正常数据 PASS + 脏数据必红，双向核对通过才准入网。
   - icon: 🛡️
-    title: 实例 ⑤ 只读防偷工减料审查
-    details: 独立进程 diff 审查，严苛执行“应审 N / 实审 M”对账，彻底遏制大模型跳过文件、少审漏审的暗箱操作。
+    title: 实例 ⑤ 只读独立审查
+    details: 独立进程只读 diff 审查，按“应审 N / 实审 M”对账，防止大模型跳过文件、少审漏审。
   - icon: 🔒
     title: 纯 Git 原生单源
     details: 不绑定任何笔记软件或私有平台。契约、门禁、用例与规则全部活在业务 Git 仓库内，开箱即用。
