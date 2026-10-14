@@ -88,6 +88,8 @@ GPU 显存资源受限，主流厂商的动态 KV Cache 存活时间（TTL）通
 
 针对上述物理特性，我们在 **Pi Agent** 底座与 **Atlas** 工程线束中建立了一套闭环的节流方案。
 
+> 本节涉及的扩展组件（rtk / context-mode / subagents / warm-cache 等）的完整清单，见姊妹篇 [Pi Agent 生产级扩展清单](/ecosystem/pi-extensions)。
+
 ---
 
 ### 第一维：极简 Harness 原语 —— 消除开局的“公摊底噪”

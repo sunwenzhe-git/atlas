@@ -1,4 +1,4 @@
-# 两层正交模型：践行 Project Harness
+# 双线束模型：Agent Harness 与 Project Harness
 
 ## 原创概念：为什么我们需要完整的 Project Harness？
 

@@ -103,7 +103,7 @@ Atlas 的出现并非为了重复造轮子，而是我们在维护长期演进�
 ### 1. 架构定位：依赖并扩展 Trellis，而非替代
 Atlas 直接将成熟的 **Trellis** 作为下层的任务执行依赖。在安装时，Atlas 会作为治理外壳宿主在 Trellis 之上：
 * **单任务流转**：完全由 Trellis 负责（开卡、执行、归档）；
-* **Atlas 的增量职责**：在任务的开始和结束点，套上两层全局护栏：
+* **Atlas 的增量职责**：在任务的开始和结束点，套上两道全局护栏：
   1. **任务启动前**：通过可选的代码调用图谱（基于 CodeGraphContext 集成），分析改动的影响面（`impact_report`）；
   2. **任务收口前**：通过机器门禁（Iron Gates），以退出码 `1` 显式暴露 PRD 验收标准（AC）与真实测试的对齐问题（如无主 AC、无豁免跳过）；workflow 规定门禁未全绿不得归档。
 
@@ -183,5 +183,5 @@ Atlas 绝不是一个银弹，它带来了非常显著的工程代价：
 ## 七、开源地址与相关文档
 
 * 📖 **官方文档与架构指南**：[https://sunwenzhe-git.github.io/atlas/](https://sunwenzhe-git.github.io/atlas/)
-* 🚀 **快速上手**：[30 秒快速上手](/guide/quick-start) ｜ [双层架构解析](/concepts/architecture)
+* 🚀 **快速上手**：[30 秒快速上手](/guide/quick-start) ｜ [双线束模型解析](/concepts/architecture)
 * 💬 **反馈与共建**：欢迎访问 [社区与钉钉交流群](/guide/community) 提出针对门禁机制与生态集成的建设性意见！
