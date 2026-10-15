@@ -721,14 +721,30 @@ def ts_zero_step_baseline(page: str, url: str, cases: list[dict], mock_vacuous: 
             # 整用例跳过零步探针，测试体中仍 100% 严谨执行断言（杜绝机械式补 initial:）。
             mock_exempt_cases.append(c.get("id", "unknown"))
             continue
+        case_testids = set(c.get("testid") or [])
+        step_operated_testids = {parse_line(s)[1] for s in (c.get("step") or [])}
         for e in c.get("expected") or []:
             kind, body = split_prefix(e)
+            anchor, unanchored = split_after(body)
             if kind == "initial":
                 continue  # 显式豁免：不参与零步基线
             if body.split("#", 1)[0].strip().split(" ", 1)[0] == "delta":
                 continue  # 契约 §5.5（P5）：delta 是行动前后差值断言，没有「初始态成立/不成立」语义
+
+            # F24 规则二（守卫型 visible 豁免）：
+            # 仅限 kind == "plain" 且无 anchor，断言动词为 visible，目标在 testid: 块内，
+            # 且该目标未在任何 step 行中被操作（纯在场守卫，已由前置 toHaveCount(1) 覆盖，零步探针无变动语义）。
+            verb, target_id, _val, _note = parse_line(unanchored)
+            if (
+                (kind or "plain") == "plain"
+                and anchor is None
+                and verb == "visible"
+                and target_id in case_testids
+                and target_id not in step_operated_testids
+            ):
+                continue
+
             expr = ts_assert_expr(e)
-            verb = body.split("#", 1)[0].strip().split(" ", 1)[0].strip()
             probes.append({
                 "label": f"{c['id']}: {body.split('#', 1)[0].strip()}",
                 "expr": expr,

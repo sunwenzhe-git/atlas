@@ -1429,10 +1429,12 @@ def test_f24_zero_step_probe_exemptions() -> None:
         # 用例 2：普通用例（普通断言进探针）
         {
             "id": "E2E-HOME-REGULAR",
-            "testid": ["home-cta-btn", "home-title"],
+            "testid": ["home-cta-btn", "home-title", "home-container"],
+            "step": ["click home-cta-btn"],
             "expected": [
-                "visible home-cta-btn # 按钮可见",
-                "text home-title 首页 # 标题断言",
+                "visible home-container # 容器静态在场，未被 step 操作，在 testid 块内 ⇒ 规则二豁免",
+                "visible home-cta-btn # 按钮被 step click 操作了 ⇒ 照入探针，遵守恒真守卫",
+                "text home-title 首页 # 标题状态断言 ⇒ 照入探针",
             ],
         },
     ]
@@ -1453,6 +1455,8 @@ def test_f24_zero_step_probe_exemptions() -> None:
     # 验证豁免：
     # mock 用例断言全都不在 probes
     assert not any("E2E-HOME-MOCK" in l for l in labels), labels
+    # regular 用例中，未被 step 操作的容器 visible 豁免
+    assert not any("visible home-container" in l for l in labels), labels
 
     # 验证普通用例断言照入：
     assert any("visible home-cta-btn" in l for l in labels), labels
