@@ -18,10 +18,12 @@
 互相否定」需要读懂句意）⇒ 归人（`shared/closeout.md` 步骤 1 门自检 + 独立复核）。
 
 变异证明：M7 契约里写一个**不带标记**的幽灵环引用 ⇒ 红；M8 模板加一个契约未声明的子键 ⇒ 红；
-M9 契约里引用一个不存在的 shared 文件 ⇒ 红。
+M9 契约里引用一个不存在的 shared 文件 ⇒ 红；M10 逐文件计数喂「字符串字面量内嵌幽灵 `def test_`」
+的登记数 ⇒ 红（量具按 pytest 实收口径，不数字符串里的假用例）。
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -196,6 +198,23 @@ def check_shared_refs() -> dict:
                        else f"{len(refs)} 个被引用的 shared 文件全部存在（共 {len(files)} 份）")}
 
 
+def _collected_test_count(pf: Path) -> int:
+    """pytest 实收口径的用例数：模块顶层 `test_*` 函数（本套件无 `Test*` 类 / parametrize）。
+
+    不得用 `^def test_` 正则——坏输入 fixture 把被测写法整文件内嵌进三引号字符串
+    （`tests/test_validate_ac_alignment.py` 即如此），正则会数进 7 条永不收集的幽灵用例。
+    """
+    n = 0
+    for node in ast.parse(pf.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            n += sum(1 for m in node.body
+                     if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
+                     and m.name.startswith("test_"))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
+            n += 1
+    return n
+
+
 def check_registry_counts() -> dict:
     """**门总账里的计数必须与实况一致**（`3509 §B105` 的教训：写死计数无对账）。
 
@@ -235,7 +254,7 @@ def check_registry_counts() -> dict:
         for w in ("未落地", "落地未做", "尚无批次号", "已落地"):
             if w in sec13:
                 bad.append(f"DESIGN.md §13 出现推进状态词「{w}」（本节只准放指针，状态归 `3509` 批 6 登记）")
-    # 逐文件「N 条」：`gates.md` 里的 `tests/<file>.py` 后随的「N 条」必须 = 该文件 `def test_` 数
+    # 逐文件「N 条」：`gates.md` 里的 `tests/<file>.py` 后随的「N 条」必须 = 该文件 pytest 实收用例数
     # （2026-09-28 第三轮审计：此处曾写「55 条」而实为 54 —— 白名单只盯固定句式会漏逐文件计数）
     for m in re.finditer(r"`tests/([\w.]+\.py)`[^|]{0,80}?(\d+)\s*条", gates):
         f, n = m.group(1), int(m.group(2))
@@ -243,7 +262,7 @@ def check_registry_counts() -> dict:
         if not pf.is_file():
             bad.append(f"gates.md 引用了不存在的测试文件 tests/{f}")
             continue
-        real = len(re.findall(r"^def test_", pf.read_text(encoding="utf-8"), re.M))
+        real = _collected_test_count(pf)
         if n != real:
             bad.append(f"「tests/{f} {n} 条」≠ 实际 {real}")
     # 同一类：`DESIGN.md` 里若写死「N 个校验器」，必须 = `validators/validate_*.py` 数
@@ -305,6 +324,32 @@ def test_registry_counts_match_reality() -> None:
     """
     res = check_registry_counts()
     assert res["ok"], res["detail"]
+
+
+def test_registry_count_gauge_counts_real_tests_not_literals(tmp_path, monkeypatch) -> None:
+    """M10：逐文件计数的量具必须是 pytest 实收口径（M10 钉子，喂坏输入必红）。
+
+    坏输入形态：坏输入 fixture 把被测写法整文件内嵌进三引号字符串（真实案例
+    `tests/test_validate_ac_alignment.py`，正则量具曾全仓数出 348 而实收 341）——
+    字符串里的顶格 `def test_` 永不收集，登记数若按它写就该红。
+    """
+    import sys
+    (tmp_path / "shared").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "atlas_check.py").write_text(
+        'VALIDATORS = (\n    "validate_x",\n)\n', encoding="utf-8")
+    (tmp_path / "tests" / "test_x.py").write_text(
+        'def test_real():\n    pass\n\n\n_SAMPLE = """\ndef test_phantom():\n    pass\n"""\n',
+        encoding="utf-8")
+    gates = tmp_path / "shared" / "gates.md"
+    monkeypatch.setattr(sys.modules[__name__], "PKG_ROOT", tmp_path)
+    gates.write_text("| 门 | 取证：`tests/test_x.py` **2 条**本轮跑绿 |\n", encoding="utf-8")
+    res = check_registry_counts()
+    assert not res["ok"], f"登记数按幽灵正则口径（2 条）必须红：{res['detail']}"
+    gates.write_text("| 门 | 取证：`tests/test_x.py` **1 条**本轮跑绿 |\n", encoding="utf-8")
+    res = check_registry_counts()
+    assert res["ok"], f"登记数按实收口径（1 条）必须绿：{res['detail']}"
 
 
 
