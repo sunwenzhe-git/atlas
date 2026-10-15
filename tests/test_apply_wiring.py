@@ -4,7 +4,8 @@
 覆盖：
   1. AGENTS.md atlas 指针块写入与幂等更新；
   2. .trellis/config.yaml after_finish hook 登记与幂等；
-  3. Python 工程探测与 pytest.ini 兜底（创建、已有补充 pythonpath、非 Python 工程跳过）。
+  3. Python 工程探测与 pytest 配置兜底（R6.2 对账定稿：pyproject.toml 优先承载、
+     既有 ini 只补 marker、pythonpath 环境补丁随 F23 退役不再注入、非 Python 跳过）。
 """
 from __future__ import annotations
 
@@ -23,24 +24,41 @@ def load_wiring():
     return mod
 
 
-def test_wire_python_scaffold_creates_pytest_ini_when_python_detected() -> None:
+def test_wire_python_scaffold_created_ini_only_carries_markers() -> None:
+    """R6.2：无任何 pytest 配置 ⇒ 新建 pytest.ini 只承载 marker 注册；
+    `pythonpath = .` 环境补丁随 F23 退役（适配器已输出 python3 -m pytest）。"""
     wiring = load_wiring()
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / "requirements.txt").write_text("fastapi\npytest\n", encoding="utf-8")
         res = wiring.wire_python_scaffold(root)
         assert res["status"] == "applied"
-        assert res["file"] == "pytest.ini"
         path, text = res["_write"]
+        assert "markers" in text and "ac" in text
+        assert "pythonpath" not in text, "pythonpath 补丁必须随 F23 退役"
         path.write_text(text, encoding="utf-8")
 
         # 再次运行：幂等跳过
         res2 = wiring.wire_python_scaffold(root)
         assert res2["status"] == "skipped"
-        assert "已包含 pythonpath" in res2["detail"]
+        assert "已包含 marker 注册" in res2["detail"]
 
 
-def test_wire_python_scaffold_injects_pythonpath_into_existing_ini() -> None:
+def test_wire_python_scaffold_pyproject_toml_takes_priority() -> None:
+    """R6.2：pyproject.toml 已有 [tool.pytest...] 段 ⇒ skip，种种不另立/不复活 pytest.ini
+    （防「接线复活被清掉的补丁」病理：legacy 清桩实测）。"""
+    wiring = load_wiring()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "requirements.txt").write_text("pytest\n", encoding="utf-8")
+        (root / "pyproject.toml").write_text(
+            '[tool.pytest.ini_options]\nmarkers = [\n    "ac: x",\n]\n', encoding="utf-8")
+        res = wiring.wire_python_scaffold(root)
+        assert res["status"] == "skipped" and "pyproject.toml" in res["detail"]
+
+
+def test_wire_python_scaffold_existing_ini_gets_marker_only() -> None:
+    """R6.2：既有 pytest.ini 只补缺失的 marker 注册；不注入 pythonpath、不动其他配置。"""
     wiring = load_wiring()
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -49,8 +67,9 @@ def test_wire_python_scaffold_injects_pythonpath_into_existing_ini() -> None:
         res = wiring.wire_python_scaffold(root)
         assert res["status"] == "applied"
         path, text = res["_write"]
-        assert "pythonpath = ." in text
-        assert "addopts = -v" in text
+        assert "markers" in text and "ac" in text
+        assert "pythonpath" not in text, "不得注入 pythonpath（F23 已修根因）"
+        assert "addopts = -v" in text, "既有配置不得破坏"
 
 
 def test_wire_python_scaffold_skips_non_python_projects() -> None:

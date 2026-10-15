@@ -151,7 +151,7 @@ def wire_config(target: Path) -> dict:
     return {"file": CONFIG_REL, "status": "applied", "detail": detail, "_write": (path, new_text)}
 
 
-# ------------------------------------------------------------------- pytest.ini (Python scaffold)
+# ------------------------------------------------------------------- pytest 配置兜底（R6.2 对账定稿，2026-10-15）
 
 def is_python_project(target: Path) -> bool:
     """探测是否为 Python 工程（stack-profile 声明或根目录 Python 特征文件）。"""
@@ -166,8 +166,38 @@ def is_python_project(target: Path) -> bool:
     return False
 
 
+MARKERS_INI = (
+    "[pytest]\n"
+    "markers =\n"
+    "    ac: mark test with AC ID for traceability\n"
+)
+MARKERS_PYPROJECT = (
+    "[tool.pytest.ini_options]\n"
+    "markers = [\n"
+    "    \"ac: mark test with AC ID for traceability\",\n"
+    "]\n"
+)
+
+
+def _has_pytest_section(pyproject: Path) -> bool:
+    try:
+        return "[tool.pytest" in pyproject.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+
+
 def wire_python_scaffold(target: Path) -> dict:
-    """为 Python 存量/新建工程提供无损 pytest.ini 兜底（支持 pythonpath = . 导入）。"""
+    """AC 标记注册兜底——**载体优先级：已有 pytest 配置文件 > 既有 pytest.ini > 新建 pytest.ini**。
+
+    R6.2 对账定稿（2026-10-15）：本兜底只承担 **`ac` marker 注册**这一项正当元数据；
+    `pythonpath = .` 环境补丁已随 F23（适配器输出 `python3 -m pytest`，cwd 自动入
+    `sys.path`）退役——线束不再替业务打环境补丁（假桩③病理）。
+
+    优先级（防「复活被清掉的补丁」）：
+      1. pyproject.toml / setup.cfg 已承载 pytest 配置 ⇒ skip；
+      2. 既有 pytest.ini ⇒ 只补缺失的 marker 注册（pythonpath 不再注入）；
+      3. 什么都没有 ⇒ 新建 pytest.ini（仅 marker 注册）。
+    """
     if not is_python_project(target):
         return {"file": "pytest.ini", "status": "skipped", "detail": "非 Python 工程，跳过"}
 
@@ -175,51 +205,29 @@ def wire_python_scaffold(target: Path) -> dict:
     pyproject = target / "pyproject.toml"
     setup_cfg = target / "setup.cfg"
 
+    # 1. pyproject.toml / setup.cfg 已承载 pytest 配置 ⇒ 尊重，不另立 pytest.ini
+    if pyproject.is_file() and _has_pytest_section(pyproject):
+        return {"file": "pytest.ini", "status": "skipped", "detail": "已由 pyproject.toml 承载 pytest 配置"}
+    if setup_cfg.is_file():
+        text_cfg = setup_cfg.read_text(encoding="utf-8", errors="ignore")
+        if "[tool:pytest]" in text_cfg:
+            return {"file": "pytest.ini", "status": "skipped", "detail": "已由 setup.cfg 承载 pytest 配置"}
+
     if not ini_path.is_file():
-        # 若已有 pyproject.toml 且明确配置了 pytest，不强行覆盖
-        if pyproject.is_file():
-            text_toml = pyproject.read_text(encoding="utf-8", errors="ignore")
-            if "[tool.pytest" in text_toml:
-                return {"file": "pytest.ini", "status": "skipped", "detail": "已由 pyproject.toml 承载 pytest 配置"}
-        if setup_cfg.is_file():
-            text_cfg = setup_cfg.read_text(encoding="utf-8", errors="ignore")
-            if "[tool:pytest]" in text_cfg:
-                return {"file": "pytest.ini", "status": "skipped", "detail": "已由 setup.cfg 承载 pytest 配置"}
-
-        default_ini = (
-            "[pytest]\n"
-            "pythonpath = .\n"
-            "markers =\n"
-            "    ac: mark test with AC ID for traceability\n"
-        )
+        # 3. 全无 ⇒ 新建 pytest.ini（只承载 marker 注册；pythonpath 补丁已随 F23 退役）
         return {"file": "pytest.ini", "status": "applied",
-                "detail": "created default pytest.ini with pythonpath = .",
-                "_write": (ini_path, default_ini)}
+                "detail": "created pytest.ini with ac marker registration (pythonpath retired with F23)",
+                "_write": (ini_path, MARKERS_INI)}
 
-    # 已存在 pytest.ini，检查是否已有 pythonpath
+    # 2. 既有 pytest.ini ⇒ 只补 marker 注册（幂等）
     content = ini_path.read_text(encoding="utf-8")
-    if "pythonpath" in content:
-        return {"file": "pytest.ini", "status": "skipped", "detail": "pytest.ini 已包含 pythonpath"}
+    if "markers" in content:
+        return {"file": "pytest.ini", "status": "skipped", "detail": "pytest.ini 已包含 marker 注册"}
 
-    # 无损注入 pythonpath = .
-    lines = content.splitlines(keepends=True)
-    idx = -1
-    for i, line in enumerate(lines):
-        if line.strip() == "[pytest]":
-            idx = i
-            break
-
-    if idx != -1:
-        lines.insert(idx + 1, "pythonpath = .\n")
-        new_content = "".join(lines)
-        return {"file": "pytest.ini", "status": "applied",
-                "detail": "updated (injected pythonpath = . into [pytest])",
-                "_write": (ini_path, new_content)}
-    else:
-        new_content = content.rstrip("\n") + "\n\n[pytest]\npythonpath = .\n"
-        return {"file": "pytest.ini", "status": "applied",
-                "detail": "updated (appended [pytest] pythonpath = .)",
-                "_write": (ini_path, new_content)}
+    new_content = content.rstrip("\n") + "\nmarkers =\n    ac: mark test with AC ID for traceability\n"
+    return {"file": "pytest.ini", "status": "applied",
+            "detail": "updated (appended ac marker registration)",
+            "_write": (ini_path, new_content)}
 
 
 # ----------------------------------------------------------------------------- main

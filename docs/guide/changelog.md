@@ -11,17 +11,20 @@
 * **【生成器自愈化】审查门免阻断自愈 (`scripts/gen_e2e_scripts.py`, `_support/stack_profile.py`, `validators/validate_stack_profile.py`)**：
   - 彻底终结 `review.json` 缺失直接抛 `exit 2` 阻断写盘、逼迫 AI 人工造假报告桩的历史包袱；
   - 规范化扩充 `e2e.review` 字段白名单与模式枚举：支持 `mode: gate`（严格审查门）、`mode: auto-baseline`（自愈基线模式）与 `mode: off`（免审）；
-  - 当项目处于存量接管形态（`origin: adopt`）或声明了 `review: null` / `auto-baseline` 时，若未发现历史审查报告，在全量校验通过后自动自愈生成最小可证伪基线审查报告（`*-adopt-baseline` 或 `*-auto-baseline`），放行脚本写盘。
+  - 当项目处于存量接管形态（`origin: adopt`）或**显式声明** `mode: auto-baseline` 时，若未发现历史审查报告，在全量校验通过后自动自愈生成最小可证伪基线审查报告（`*-adopt-baseline` 或 `*-auto-baseline`），放行脚本写盘；
+  - **三把钥匙语义（R6 对账定稿）**：`review: null` / 未声明 = 执行器取会话默认（契约原语义）⇒ 走缺省严格门，**不再隐式免审**；`mode: off` = 免审 ⇒ 直接放行且不落基线（不制造「形式审过」假象）。
 * **【提取器增强】JS 动态 testid 提取与文件级 counts 重构 (`validators/validate_testids.py`)**：
   - 全面支持原生 JS 命令式赋值语法：捕获 `el.dataset.testid = "..."`、`el.dataset['testid'] = "..."` 与 `el.setAttribute("data-testid", "...")`（含单/双引号、JSX 花括号与可枚举模板字符串）；
   - 引入源码注释预清洗（`strip_comments`），自动剥离 HTML 注释与 JS/TS 行/块注释，避免废弃 id 产生幻影报错；
-  - 重构 `counts` 全站唯一规则为「声明文件数」，同一文件内的 HTML 与 JS 共存、条件分支或动态列表赋值计数为 1（天然豁免），跨文件冲突严格报警，业务代码无需在 HTML 补 `<template>` 假桩。
-* **【存量脚手架自适应】Python pytest.ini 无损兜底 (`patches/project-wiring/apply-wiring.py`, `adapters/tests.py`)**：
-  - 项目装配接线（`apply-wiring.py`）智能识别 Python 特征，同时 `adapters/tests.py` 输出 `python3 -m pytest` 标准命令；
-  - 根目录无 pytest 配置时自动生成默认 `pytest.ini` 并配置 `pythonpath = .` 与 AC 标记；已有配置无损追加，彻底免除 Python 模块导入找不到路径的环境摩擦。
+  - 重构 `counts` 全站唯一规则为「声明文件数」，同一文件内的 HTML 与 JS 共存、条件分支或动态列表赋值计数为 1（天然豁免），跨文件冲突严格报警，业务代码无需在 HTML 补 `<template>` 假桩；
+  - **同文件重复 WARN 收窄（R6 对账定稿）**：仅对**静态属性同形态重复**报警；「模板壳静态声明 + JS 命令式赋值」混用为 vanilla JS 合法惯用法，豁免不报。
+* **【存量脚手架自适应】Python pytest 配置兜底重构 (`patches/project-wiring/apply-wiring.py`, `adapters/tests.py`)**：
+  - `adapters/tests.py` 输出标准 `python3 -m pytest` 命令形态，cwd 自动入 `sys.path`，从根因上消除模块导入找不到路径的环境摩擦；
+  - **接线兜底退居诚实角色（R6 对账定稿）**：`apply-wiring.py` 不再注入 `pythonpath = .` 环境补丁（随 F23 退役），只承接 `ac` marker 注册；**载体优先级 = 已有 pyproject.toml / setup.cfg > 既有 pytest.ini（只补 marker）> 新建 pytest.ini**，杜绝「接线复活被清掉的补丁」。
 * **【Mock 零步探针容忍】打桩用例自动免除零步恒真探针 (`scripts/gen_e2e_scripts.py`)**：
   - 识别用例分片中的 `mock:` 段，整体免除注入零步基线探针（`probes`），彻底根除外部接口打桩导致的页面初始容器被误判为“恒真（假阳性）”；
-  - 用例本身的 Playwright 测试体 100% 完整保留严格断言，AI 与开发者无需再机械式手写 `initial:` 豁免前缀。
+  - 未被任何 step 操作的容器在场断言（`visible`，声明块成员）由前置 `toHaveCount(1)` 守卫环覆盖而豁免（真跑实证定形）；
+  - 用例本身的 Playwright 测试体 100% 完整保留严格断言与打桩审计，AI 与开发者无需再机械式手写 `initial:` 豁免前缀。
 
 ---
 

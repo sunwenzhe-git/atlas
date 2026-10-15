@@ -289,9 +289,12 @@ def collect_testids_expanded(
         for tid in file_unique:
             counts[tid] = counts.get(tid, 0) + 1
             per_page.setdefault(tid_owner(tid, pages) or "", set()).add(tid)
-        
-        # 检查同文件重复声明（字面量出现次数 > 1）
-        file_counts = Counter(raw_lits)
+
+        # 同文件重复声明（R6.3 收窄）：只对**静态属性同形态重复**报警——
+        # 同名静态 testid 在同文件出现 ≥2 次 = 运行期 strict-mode 歧义真信号；
+        # 「静态属性 + 命令式赋值（dataset/setAttribute）混用」与「多处渲染函数重复赋值」
+        # 是 vanilla JS 的合法惯用法（R6 现网实证：主沙箱三条 WARN 全为此形态），豁免不报。
+        file_counts = Counter(TESTID_ATTR.findall(clean_text))
         dups = [t for t, cnt in file_counts.items() if cnt > 1]
         if dups:
             same_file_dups[rel] = sorted(dups)

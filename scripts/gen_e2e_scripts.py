@@ -908,10 +908,12 @@ def review_gate(root: Path, prof: dict | None = None) -> tuple[bool, list[str], 
     """独立审查门（契约 `rings/e2e/reference.md` §12.6 + `§7.1`；E1：只验本环报告）。
 
     判据 = **报告存在 + 无 Critical**；
-    v0.1.0-beta.14 自愈与免阻断：当审查报告缺失（missing）或损坏（invalid）时，若处于 `origin: adopt`
-    或 `e2e.review.mode` 为 auto-baseline / off / 未声明（review 为空）时，
-    判定为放行并标记 `auto_heal=True`，绝不因报告缺失抛 exit 2 阻断写盘。
-    当处于基线兜底态（level == 'baseline'）时，同样放行但记录 WARN 随行提示。
+    v0.1.0-beta.14 自愈与免阻断：当审查报告缺失（missing）或损坏（invalid）时，若处于
+    `origin: adopt`（存量接管首日无历史报告）或显式声明 `e2e.review.mode: auto-baseline`
+    时，判定为放行并标记 `auto_heal=True`；`mode: off`（免审）直接放行且不落基线。
+    **`review: null` / 未声明 ≠ 免审**（R6.1 对账定稿，2026-10-15）：`null` 的契约语义 =
+    审查执行器取会话默认（shared/stack-profile.md §2）⇒ 走缺省严格门；免阻断须显式
+    `mode: auto-baseline`，免审须显式 `mode: off`——三个语义三把钥匙，不得隐式互化。
     返回 `(gate_ok, reasons, auto_heal)`。
     """
     reasons: list[str] = []
@@ -921,17 +923,20 @@ def review_gate(root: Path, prof: dict | None = None) -> tuple[bool, list[str], 
     rev = e2e.get("review") if isinstance(e2e, dict) else None
     mode = rev.get("mode") if isinstance(rev, dict) else (rev if isinstance(rev, str) else None)
 
-    has_empty_review = ("review" in e2e and rev is None)
-    is_auto_baseline = (mode in ("auto", "auto-baseline", "off"))
+    if mode == "off":
+        # 契约 §2（shared/stack-profile.md）：off = 免审——放行且不落基线（审都没进议程，
+        # 基线报告会制造「形式审过」假象，与 R6 诚实原则相悖）。
+        return True, [], False
 
     if level == "baseline":
         reasons.append(f"WARN: 独立审查未执行（基线报告兜底中：{detail}）—— 跑 python3 .atlas/scripts/gen_e2e_scripts.py --bootstrap-review 拉起独立审查")
         return True, reasons, False
 
     if level in ("missing", "invalid"):
-        # adopt 模式、显式 review: null（review 为空）或配置为 auto-baseline/off 时自愈放行
-        if origin == "adopt" or has_empty_review or is_auto_baseline:
-            reasons.append(f"NOTICE: 审查报告处于 {level} 态，处于 adopt 模式或 review 免阻断通道，已启用自动自愈基线（rings/e2e §12.6）")
+        # adopt 模式（存量接管首日）或显式 auto-baseline 声明 ⇒ 自愈放行；
+        # null / 未声明不在此列（语义 = 缺省严格门，见 docstring）。
+        if origin == "adopt" or mode == "auto-baseline":
+            reasons.append(f"NOTICE: 审查报告处于 {level} 态，处于 adopt 模式或显式 auto-baseline 免阻断通道，已启用自动自愈基线（rings/e2e §12.6）")
             return True, reasons, True
 
     if level != "ok":

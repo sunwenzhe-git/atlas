@@ -980,11 +980,25 @@ def test_review_gate_auto_heals_on_adopt() -> None:
         assert report_data["expected"] >= 1
 
 
-def test_review_gate_auto_heals_on_empty_review() -> None:
-    """v0.1.0-beta.14: 声明 review: null 或 review.mode: auto-baseline 时自动自愈放行。"""
+def test_review_gate_modes_triple_key_semantics() -> None:
+    """R6.1 对账定稿（2026-10-15）：三个语义三把钥匙，不得隐式互化——
+    ① `review: null`（= 执行器取会话默认，契约 shared/stack-profile.md §2）⇒ **缺省严格门**：
+       缺报告 ⇒ --apply 拒写盘 exit 2；
+    ② 显式 `mode: auto-baseline` ⇒ 缺报告自动自愈兜底放行（基线三件套如实 WARN）；
+    ③ 显式 `mode: off`（免审）⇒ 放行且**不落基线**（审未进议程，不制造「形式审过」假象）。"""
+    # ① null = 严格门（回归：此前把 null 当免阻断通道是语义漂移）
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         make(root, profile=PROFILE.replace("runner: node-playwright", "runner: node-playwright\n  review: null"), review=False)
+        r = run(root, "--apply")
+        assert r.returncode == 2 and "审查报告" in r.stderr, r.stderr + r.stdout
+        assert not (root / "product" / "e2e" / "scripts" / "home.spec.ts").exists()
+
+    # ② 显式 auto-baseline ⇒ 自愈兜底
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=PROFILE.replace(
+            "runner: node-playwright", "runner: node-playwright\n  review:\n    mode: auto-baseline"), review=False)
         r = run(root, "--apply")
         assert r.returncode == 0, r.stderr + r.stdout
         assert (root / "product" / "e2e" / "scripts" / "home.spec.ts").exists()
@@ -994,6 +1008,16 @@ def test_review_gate_auto_heals_on_empty_review() -> None:
         assert report_data["ok"] is True
         assert report_data["status"] == "WARN"
         assert report_data["basis"] == "auto-baseline"
+
+    # ③ 显式 off ⇒ 免审放行、不落任何基线
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=PROFILE.replace(
+            "runner: node-playwright", "runner: node-playwright\n  review:\n    mode: off"), review=False)
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stderr + r.stdout
+        assert (root / "product" / "e2e" / "scripts" / "home.spec.ts").exists()
+        assert not list((root / "product" / "e2e" / "reviews").glob("*baseline*")), "off 模式不得落基线报告"
 
 
 def test_mock_case_exempt_from_zero_step_baseline() -> None:

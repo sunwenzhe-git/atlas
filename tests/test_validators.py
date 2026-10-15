@@ -2011,17 +2011,18 @@ def test_goto_path_must_be_in_page_table() -> None:
 
 def test_f22_imperative_testid_extraction_and_counts() -> None:
     """F22（R6「融与化」）：识别 dataset.testid 与 setAttribute 命令式注入，
-    counts 改为按声明文件数计数，跨文件重复 FAIL，同文件多次声明降 WARN。"""
+    counts 改为按声明文件数计数，跨文件重复 FAIL；同文件 WARN 只对**静态属性同形态
+    重复**报警（模板壳 + 命令式赋值混用为合法惯用法，豁免——R6 对账定稿收窄）。"""
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         src = root / "src"
         src.mkdir(parents=True)
-        # 单文件内：静态属性 + dataset 赋值 + setAttribute 注入 + setAttribute 模板
+        # 单文件内：静态属性 + dataset 赋值（混用惯用法 ⇒ 不应报同文件重复）
         (src / "notes.js").write_text(
             """
-            // 静态声明
+            // 静态声明（模板壳）
             const tpl = '<li data-testid="notes-item"></li>';
-            // dataset 注入（同文件重复 notes-item）
+            // dataset 注入（与静态属性混用 = 合法惯用法）
             li.dataset.testid = "notes-item";
             // setAttribute 字面量
             btn.setAttribute("data-testid", "notes-submit");
@@ -2039,24 +2040,37 @@ def test_f22_imperative_testid_extraction_and_counts() -> None:
         # 1. 抽取源覆盖：字面量与注入全部抽取
         assert "notes-item" in counts
         assert "notes-submit" in counts
-        # 2. counts 为声明文件数：同文件出现两次 notes-item，文件数仍为 1
+        # 2. counts 为声明文件数：同文件出现多次 notes-item，文件数仍为 1
         assert counts["notes-item"] == 1
         assert counts["notes-submit"] == 1
         # 3. 模板注入展开：notes-header 进入 expanded
         assert "notes-header" in expanded
-        # 4. 同文件重复检测记录 dups
-        assert "src/notes.js" in dups
-        assert "notes-item" in dups["src/notes.js"]
+        # 4. 同文件混用不报重复（静态属性只有 1 处）
+        assert "src/notes.js" not in dups, dups
 
-        # 5. 跨文件重复注入：新增第二个文件同样注入 notes-submit
+        # 5. 静态属性同形态重复 ⇒ 报警（strict-mode 歧义真信号）
+        (src / "notes.js").write_text(
+            '<i data-testid="notes-a"></i><b data-testid="notes-a"></b>'
+            '<u data-testid="notes-b"></u>'
+            '<script>li.dataset.testid = "notes-b";</script>',
+            encoding="utf-8",
+        )
+        _p3, _c3, _f3, _e3, dups3 = vt.collect_testids_expanded(root, ["src"])
+        assert "notes-a" in dups3.get("src/notes.js", []), dups3
+        assert "notes-b" not in dups3.get("src/notes.js", []), "静态 1 处 + 命令式 1 处混用不得报"
+
+        # 6. 跨文件重复注入：新增第二个文件同样注入 notes-submit
+        (src / "notes.js").write_text(
+            'const tpl = `<li data-testid="notes-item"></li>`;\nli.dataset.testid = "notes-item";'
+        )
         (src / "other.js").write_text(
-            'btn2.dataset.testid = "notes-submit";',
+            'btn2.dataset.testid = "notes-item";',
             encoding="utf-8",
         )
         _per_page2, counts2, _files2, _expanded2, _dups2 = vt.collect_testids_expanded(root, ["src"])
-        assert counts2["notes-submit"] == 2  # 跨两个文件
+        assert counts2["notes-item"] == 2  # 跨两个文件
         cross = {t for t, n in counts2.items() if n > 1}
-        assert "notes-submit" in cross
+        assert "notes-item" in cross
 
 
 
