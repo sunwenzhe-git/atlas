@@ -4,6 +4,22 @@
 
 ---
 
+## [v0.1.0-beta.16] - 2026-10-15
+
+### 🚀 结构环链路闭环与 R8 完结收口 (Structure Ring Chain Close-Out & R8 Closure)
+
+* **【链路闭环与诚实基线】（`scripts/refresh_structure.py`, `validators/validate_structure.py`, `templates/`）**：
+  - 适配器链路全闭环（F25），打通结构环元数据消费与验证；
+  - 诚实基线推进（F26）与单遍渲染优化（F27），规避渲染冗余与基线偏离；
+  - 引入 Tour 消费者挂载（F29）与装配集合指纹比对（F30，`pkg_digest.py`）；
+  - 严格规范 TODO 标记校验（F31）与桩代码自动补齐生成（F32）。
+* **【安装与治理安全加固】（`install.sh`, `scripts/atlas_check.py`, `validators/validate_adr.py`）**：
+  - 安装器工作区脏树拦截守卫（F34），避免污染开发中未提交的工作区；并在纯拷贝态下优雅跳过无 `install.sh` 的自检用例；
+  - 规范级相对引用锚点支持（F34b）与指针形态覆盖豁免机制（F33）；
+  - ADR 循环依赖修复指引与收口记录矩阵（F36），提升架构决策记录的自愈排查效率。
+
+---
+
 ## [v0.1.0-beta.15] - 2026-10-15
 
 ### 🔧 规范与门禁一致性加固 (Canonical Consistency & Reconcile Closure)
