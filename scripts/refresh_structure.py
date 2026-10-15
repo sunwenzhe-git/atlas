@@ -7,9 +7,25 @@
   打印 ⚠ 并落 `.adapter-out/_drift.json`（下一次无漂移的 `--apply` 刷新清除；
   追加 `_drift-history.jsonl` 供收口对账），由 `atlas_check` 的「结构漂移」门读出。
 - 默认 dry-run；`--apply` 写盘。预算按「每域 L1+L2 ≤ max_total_chars」校验。
+- **单遍化（F27，2026-10-15）**：事实区先行渲染落盘，指针层（L2 链接表）后拼装
+  —— 首建一遍 `--apply` 即得完整 L2 链接表（旧口径首遍空表须跑两遍）。
+  已知语义：预算检查后置 ⇒ 预算 die 时事实区已落盘（部分写盘态，测试显式钉住）。
+- **链式收口 `--chain`（F25，隐含 --apply）**：先按 `stack-profile.adapters` 自动执行
+  非空适配器（全局类别 `routes` 跑一次；域级 `api/models/tests` 按 apps 各跑一次，
+  产物落 `.adapter-out/` 既有约定路径），后执行事实/指针刷新。
+  **失败语义（拍板）**：任一适配器非零退出 / 声明了适配器名但按契约解析不到脚本
+  ⇒ 中止链条、不进 refresh、exit 2；中止前已落盘的产物 = 上一轮一致态，无害残留。
+- **基线自进（F26，只跟随 `--chain` 路径）**：`--chain` 完成 refresh 后，四前置
+  全满足才把 `_meta.json` 的 `baseline.commit` 推进到当前 HEAD——
+  ① 推进判定读**本轮刚算出的漂移结果**（drift 标记写盘之后），不读上轮遗留标记；
+  ② 无键级漂移；③ 至少一份适配器产物且事实结果非空（空转态不背书）；
+  ④ 产品侧工作树干净（`.atlas/` `.trellis/` `product/` 之外无脏路径——给未审定
+  代码背书违背诚实 ratchet）。任一不满足 ⇒ SKIP 并说明理由；冻结时可用
+  `--advance-baseline` 显式越过（人工终审后通道；默认显式 `--apply` **永不**推进，
+  零变化承诺保持）。SHA 比较归一化（存量存 7 位短 SHA，前缀匹配即同值）。
 
 用法：
-    python3 refresh_structure.py --root <项目根> [--max-chars N] [--apply]
+    python3 refresh_structure.py --root <项目根> [--max-chars N] [--apply] [--chain] [--advance-baseline]
 """
 from __future__ import annotations
 
@@ -17,6 +33,7 @@ import argparse
 import fnmatch
 import json
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -25,6 +42,10 @@ BEGIN = "<!-- atlas:facts:begin -->"
 END = "<!-- atlas:facts:end -->"
 DEFAULT_MAX_TOTAL = 9500
 DEFAULT_MAX_SPEC = 9400
+# 基线自进的本地写盘豁免前缀（写盘面与装配/元数据自身不算"产品侧脏"）
+CLEAN_EXEMPT_PREFIXES = (".atlas/", ".trellis/", "product/")
+# 适配器四类目（shared/stack-profile.md §3.3）：routes 全局跑一次，域级按 app 各跑一次
+ADAPTER_CATEGORIES = ("routes", "api", "models", "tests")
 
 
 def log(m: str) -> None:
@@ -78,17 +99,35 @@ def merge_preserve(path: Path, fm: str, body: str) -> str:
     return fm + body_block(body) + "\n" + tail.lstrip("\n")
 
 
-def render_tour(meta: dict) -> tuple[str, str]:
+def render_tour(root: Path, meta: dict) -> tuple[str, str]:
     product = meta.get("product") or "项目"
     baseline = (meta.get("baseline") or {}).get("commit") or "N/A"
     apps = meta.get("apps") or []
     domains = meta.get("domains") or []
     fm = "---\npaths:\n  - '**'\n---\n\n"
+    # F29（2026-10-15）：tests 适配器产物的消费落点 = tour.md「项目概况」行
+    # （tour 全量重渲不进漂移机制，"告诉 agent 去哪读"的门面文件即天然读者）。
+    test_cmds: list[str] = []
+    out_dir = root / ".trellis" / "spec" / "structure" / ".adapter-out"
+    for a in apps:
+        name = a.get("name")
+        if not name:
+            continue
+        d = load_adapter(out_dir / "tests" / f"{name}.json")
+        if d is None:
+            continue
+        for it in d.get("items") or []:
+            rc = (it.get("run_command") or "").strip()
+            if rc and rc not in test_cmds:
+                test_cmds.append(rc)
+    test_line = (f"\n- 测试运行方式：{'；'.join(f'`{c}`' for c in test_cmds)}"
+                 f"（来源：结构适配器 tests.json）\n" if test_cmds else "")
     out = [f"# {product} · 代码导航（codebase tour）", "",
            f"> atlas 结构基线蒸馏的**入口索引**——告诉 agent **去哪读**，不复制结构事实正文。基线 `{baseline}`。", "",
            "## 项目概况", "",
            f"- 应用：{'、'.join('`%s`（%s）' % (a.get('name'), a.get('role')) for a in apps) or '—'}",
-           f"- 候选域：{len(domains)}", "",
+           f"- 候选域：{len(domains)}",
+           test_line.rstrip("\n"), "",
            "## 全局事实（跨域）", "",
            "| 事实 | 出处 |", "|---|---|",
            "| 目录与模块地图 | `.trellis/spec/structure/global/directory-map.md` |",
@@ -382,7 +421,242 @@ def render_models(base: Path, items: list[dict], apps: list[dict], domains: list
         record_drift(spath, sold, skeys, "models", results, sexisted)
 
 
+def load_adapters_profile(root: Path) -> dict[str, str | None]:
+    """读 stack-profile 顶层 `adapters:` 段（`key: value|null`；契约 shared/stack-profile.md §3）。
+
+    与 `_lib.load_apps` 同一手写行级解析口径（不引第三方 YAML）；键闭集 = ADAPTER_CATEGORIES。
+    """
+    p = root / "product" / "stack-profile.yaml"
+    out: dict[str, str | None] = {}
+    if not p.is_file():
+        return out
+    in_section = False
+    for raw in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = re.sub(r"\s+#.*$", "", raw.rstrip())
+        s = line.strip()
+        if not s:
+            continue
+        if not line[:1].isspace():
+            in_section = s.rstrip(":") == "adapters" and s.endswith(":") or s == "adapters:"
+            if in_section and not s.endswith(":"):
+                in_section = False  # `adapters: {…}` 行内形态不在本解析范围内
+            continue
+        if not in_section:
+            continue
+        m = re.match(rf"^({'|'.join(ADAPTER_CATEGORIES)})\s*:\s*(.+?)\s*$", s)
+        if m:
+            v = m.group(2).strip().strip("'\"")
+            out[m.group(1)] = None if v in ("null", "~", "") else v
+    return out
+
+
+def run_chain(root: Path, meta: dict) -> int:
+    """F25 链式收口：按 `stack-profile.adapters` 执行非空适配器（routes 全局一次，
+    api/models/tests 按 app 各跑一次；产物路径按 `.adapter-out/` 既有约定）。
+
+    失败语义（拍板，C3）：适配器非零退出 / 声明了适配器名但按契约 §3.3 三级解析失
+    败 ⇒ 中止链条、不进 refresh、exit 2；中止前已落盘产物 = 上一轮一致态，残留无害。
+    """
+    adapters = load_adapters_profile(root)
+    if not any(v is not None for v in adapters.values()):
+        log("  chain: profile 未声明非空 adapters ⇒ 跳过适配器执行（事实区由 agent 维持）")
+        return 0
+    out_dir = root / ".trellis" / "spec" / "structure" / ".adapter-out"
+    apps = [a["name"] for a in (meta.get("apps") or []) if a.get("name")]
+    for cat, name in ((c, adapters.get(c)) for c in ADAPTER_CATEGORIES):
+        if not name:
+            continue
+        # 解析顺序（契约 §3.3）：.atlas/adapters/<名> → .atlas/adapters/<名>.py → 目标项目根同名可执行
+        script = root / ".atlas" / "adapters" / name
+        script_py = Path(f"{script}.py")
+        project_root = root / name
+        if script_py.is_file():
+            cmd = [sys.executable, str(script_py)]
+        elif script.is_file():
+            cmd = [str(script)]
+        elif project_root.is_file():
+            cmd = [str(project_root)]
+        else:
+            print(f"ERROR: chain: 适配器 {cat}={name!r} 解析失败（.atlas/adapters/<名>(.py) 与项目根皆缺）——"
+                  "中止链条不进 refresh（先装配 .atlas/adapters）", file=sys.stderr)
+            return 2
+        if cat == "routes":
+            targets: list[tuple[str | None, Path]] = [(None, out_dir / "routes.json")]
+        elif not apps:
+            log(f"  chain: {cat} 有适配器但 apps 为空 ⇒ 无执行对象，跳过")
+            continue
+        else:
+            targets = [(a, out_dir / cat / f"{a}.json") for a in apps]
+        for app, out_path in targets:
+            full = list(cmd) + ["--root", str(root)]
+            if app is not None:
+                full += ["--app", app]
+            full += ["--out", str(out_path)]
+            r = subprocess.run(full, capture_output=True, text=True)
+            if r.returncode != 0:
+                tail = (r.stderr or r.stdout).strip().splitlines()[-1:] or ["(无输出)"]
+                print(f"ERROR: chain: 适配器 {cat}{'@' + app if app else ''} exit {r.returncode}：{tail[0]}——"
+                      "中止链条不进 refresh", file=sys.stderr)
+                return 2
+            log(f"  chain {cat}{'@' + app if app else ''} → {out_path.relative_to(root)}")
+    return 0
+
+
+def _git(root: Path, *argv: str) -> tuple[bool, str]:
+    try:
+        r = subprocess.run(["git", "-C", str(root), *argv], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return False, ""
+    if r.returncode != 0:
+        return False, ""
+    return True, r.stdout.strip()
+
+
+def maybe_advance_baseline(root: Path, meta: dict, fact_results: list[dict],
+                           drifts: list[dict], override: bool) -> None:
+    """F26 基线自进（只由 --chain / 显式 --advance-baseline 通道调用）。
+
+    四前置（docstring 与方案 §1.2）：本轮 drift 已写盘（调用时序由 main 保证）/ 零漂移
+    （override 显式越过）/ 事实结果非空 / 产品侧干净。SHA 前缀归一比较。
+    """
+    if drifts and not override:
+        log("  baseline: 存在未终审键级漂移 ⇒ 冻结待终审（诚实 ratchet；--advance-baseline 可显式越过）")
+        return
+    if not fact_results:
+        log("  baseline: 无适配器产物参与渲染（空转态）⇒ 不推进（不给半装配态背书）")
+        return
+    ok, cur = _git(root, "rev-parse", "HEAD")
+    if not ok:
+        log("  baseline: git HEAD 不可得 ⇒ SKIP 推进")
+        return
+    ok2, porcelain = _git(root, "status", "--porcelain")
+    if ok2:
+        dirty = []
+        for line in porcelain.splitlines():
+            # v1 格式 `XY path`：_git 的 .strip() 会吃掉首行前导空格 ⇒ 不能盲切 [3:]，
+            # 按状态字符扫描到 path 起点（行首空格跳2位即可见 path）。
+            i = 0
+            while i < len(line) and line[i] == " ":
+                i += 1
+            i += 2  # 跳过两位状态字符
+            while i < len(line) and line[i] == " ":
+                i += 1
+            rest = line[i:]
+            if rest and not rest.startswith(CLEAN_EXEMPT_PREFIXES):
+                dirty.append(rest)
+        if dirty:
+            log(f"  baseline: 产品侧工作树有未提交改动（{dirty[:3]}…）⇒ 不推进（不给未审定代码背书）")
+            return
+    cur = cur.splitlines()[0] if cur else ""
+    old = (meta.get("baseline") or {}).get("commit") or ""
+    if old and (cur == old or cur.startswith(old) or old.startswith(cur)):
+        log(f"  baseline: 已与当前 HEAD 对齐（{old}）⇒ 不重复推进")
+        return
+    branch = (meta.get("baseline") or {}).get("branch") or ""
+    ok3, abbrev = _git(root, "rev-parse", "--abbrev-ref", "HEAD")
+    branch = abbrev or branch
+    meta["baseline"] = {"branch": branch, "commit": cur}
+    meta_path = root / ".trellis" / "spec" / "structure" / "_meta.json"
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    log(f"  advanced baseline → {cur[:12]}（ {_meta_note()}）")
+
+
+def _meta_note() -> str:
+    return "语义：baseline = facts 所描述代码态所在 commit；_meta.json 落其后"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--root", default=".")
+    ap.add_argument("--max-chars", type=int, default=None, help="每域 L1+L2 上限（默认读 config max_total_chars，缺省 9500）")
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--chain", action="store_true",
+                    help="链式收口（F25，隐含 --apply）：先执行非空适配器后刷新；任一失败 ⇒ 中止 exit 2")
+    ap.add_argument("--advance-baseline", action="store_true",
+                    help="显式越过漂移冻结推进 baseline（F26 人工通道；默认仅 --chain 自动推进）")
+    args = ap.parse_args()
+    root = Path(args.root).resolve()
+    meta = load_meta(root)
+    if meta is None:
+        log("SKIP: 缺少 .trellis/spec/structure/_meta.json（结构环尚未首建，跳过结构事实刷新）")
+        return 0
+    max_total = args.max_chars or read_cfg_int(root, "max_total_chars", DEFAULT_MAX_TOTAL)
+    apply = args.apply or args.chain
+
+    # F25 链式先行：适配器产物齐了，本轮事实才拿得到最新代码结构
+    if args.chain:
+        rc = run_chain(root, meta)
+        if rc != 0:
+            return rc
+
+    # F27 单遍化：事实区先渲染落盘（apply 时），指针层（L2 链接表）后拼装
+    # ⇒ 首建一遍即得完整 L2 链接表。已知语义：预算 die 时事实区已落盘（部分写盘态）。
+    fact_results = refresh_facts(root, meta, apply)
+    if fact_results:
+        drifts = [r["drift"] for r in fact_results if r.get("drift")]
+        for r in fact_results:
+            if r.get("drift"):
+                continue
+            log(f"  facts {'~' if r['changed'] else '='} {r['file']}")
+        if drifts:
+            log("  ⚠ 结构漂移（未登记键级变更；变更若已走 apply 登记可忽略，否则先补登记）：")
+            for d in drifts:
+                log(f"    {d['kind']}  +{d['added'][:3]}{'…' if len(d['added']) > 3 else ''}"
+                    f"  -{d['removed'][:3]}{'…' if len(d['removed']) > 3 else ''}  ←（键级变更）")
+        else:
+            log("  facts: 无键级漂移（本轮巧取无漂移态；--chain 会在此后推进 baseline）")
+    else:
+        drifts = []
+        log("  facts: 无 .adapter-out 产物，跳过事实表（由 agent / 适配器维持）")
+
+    outputs: list[tuple[Path, str]] = []
+    tour_dst = root / ".trellis" / "spec" / "structure" / "tour.md"
+    tour_fm, tour_body = render_tour(root, meta)
+    tour = merge_preserve(tour_dst, tour_fm, tour_body)
+    outputs.append((tour_dst, tour))
+
+    over = 0
+    per_spec_over = 0
+    for d in meta["domains"]:
+        dst, fm, body = render_domain(root, d)
+        merged = merge_preserve(dst, fm, body)
+        outputs.append((dst, merged))
+        combined = len(tour) + len(merged)
+        flag = ""
+        if len(merged) > DEFAULT_MAX_SPEC:
+            per_spec_over += 1
+            flag = "  <-- 超单文件上限"
+        if combined > max_total:
+            over += 1
+            flag += "  <-- L1+L2 超 budget"
+        log(f"  {d['id']:<22} L2={len(merged):>5}  L1+L2={combined:>5}{flag}")
+
+    log(f"tour.md L1 = {len(tour)} 字符 ｜ 每域上限 {max_total}")
+    if per_spec_over or over:
+        die(f"{per_spec_over} 个域超单文件 / {over} 个域 L1+L2 超 budget")
+
+    if apply:
+        for path, content in outputs:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        log(f"[written] {len(outputs)} 个指精准文件")
+    else:
+        log("(dry-run；加 --apply 写盘)")
+
+    # F26：基线自进只在 --chain（或显式 --advance-baseline）通道且本轮 apply 时发生；
+    # 显式 `--apply` 默认永不推进（零变化承诺）。dry-run 不推进。
+    if apply and (args.chain or args.advance_baseline):
+        maybe_advance_baseline(root, meta, fact_results, drifts, args.advance_baseline)
+    elif not apply and args.advance_baseline:
+        log("baseline: dry-run 不推进（--apply 后重跑生效）")
+    return 0
+
+
 def refresh_facts(root: Path, meta: dict, apply: bool) -> list[dict]:
+    """事实区自动渲染（适配器产物 → atlas:facts 区；产物路径见 render_* 家族）。
+
+    返回 results；调用方由结果派生 drifts（本轮最新判定，绝不读上轮遗留标记——F26 前置①）。
+    """
     base = root / ".trellis" / "spec" / "structure"
     out_dir = base / ".adapter-out"
     if not out_dir.is_dir():
@@ -428,74 +702,6 @@ def refresh_facts(root: Path, meta: dict, apply: bool) -> list[dict]:
         elif marker.exists():
             marker.unlink()
     return results
-
-
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--root", default=".")
-    ap.add_argument("--max-chars", type=int, default=None, help="每域 L1+L2 上限（默认读 config max_total_chars，缺省 9500）")
-    ap.add_argument("--apply", action="store_true")
-    args = ap.parse_args()
-    root = Path(args.root).resolve()
-    meta = load_meta(root)
-    if meta is None:
-        log("SKIP: 缺少 .trellis/spec/structure/_meta.json（结构环尚未首建，跳过结构事实刷新）")
-        return 0
-    max_total = args.max_chars or read_cfg_int(root, "max_total_chars", DEFAULT_MAX_TOTAL)
-
-    outputs: list[tuple[Path, str]] = []
-    tour_dst = root / ".trellis" / "spec" / "structure" / "tour.md"
-    tour_fm, tour_body = render_tour(meta)
-    tour = merge_preserve(tour_dst, tour_fm, tour_body)
-    outputs.append((tour_dst, tour))
-
-    over = 0
-    per_spec_over = 0
-    for d in meta["domains"]:
-        dst, fm, body = render_domain(root, d)
-        merged = merge_preserve(dst, fm, body)
-        outputs.append((dst, merged))
-        combined = len(tour) + len(merged)
-        flag = ""
-        if len(merged) > DEFAULT_MAX_SPEC:
-            per_spec_over += 1
-            flag = "  <-- 超单文件上限"
-        if combined > max_total:
-            over += 1
-            flag += "  <-- L1+L2 超 budget"
-        log(f"  {d['id']:<22} L2={len(merged):>5}  L1+L2={combined:>5}{flag}")
-
-    log(f"tour.md L1 = {len(tour)} 字符 ｜ 每域上限 {max_total}")
-    if per_spec_over or over:
-        die(f"{per_spec_over} 个域超单文件 / {over} 个域 L1+L2 超 budget")
-
-    # 事实区自动渲染（仅有适配器产物时）
-    fact_results = refresh_facts(root, meta, args.apply)
-    if fact_results:
-        for r in fact_results:
-            if r.get("drift"):
-                continue
-            log(f"  facts {'~' if r['changed'] else '='} {r['file']}")
-        drifts = [r for r in fact_results if r.get("drift")]
-        if drifts:
-            log("  ⚠ 结构漂移（未登记键级变更；变更若已走 apply 登记可忽略，否则先补登记）：")
-            for r in drifts:
-                d = r["drift"]
-                log(f"    {d['kind']}  +{d['added'][:3]}{'…' if len(d['added']) > 3 else ''}"
-                    f"  -{d['removed'][:3]}{'…' if len(d['removed']) > 3 else ''}  ← {r['file']}")
-            if not args.apply:
-                log("  （dry-run 未落漂移标记；--apply 后由 atlas_check「结构漂移」门读出）")
-    else:
-        log("  facts: 无 .adapter-out 产物，跳过事实表（由 agent / 适配器维持）")
-
-    if args.apply:
-        for path, content in outputs:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
-        log(f"[written] {len(outputs)} 个指针文件")
-    else:
-        log("(dry-run；加 --apply 写盘)")
-    return 0
 
 
 if __name__ == "__main__":

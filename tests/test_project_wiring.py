@@ -25,7 +25,7 @@ APPLIER = PKG / "apply-wiring.py"
 SNIPPET = PKG / "agent-pointer.md"
 REAL_CONFIG = REPO / "codebases" / ".trellis" / "config.yaml"
 
-HOOK_CMD = "python3 .atlas/scripts/refresh_structure.py --root . --apply"
+HOOK_CMD = "python3 .atlas/scripts/refresh_structure.py --root . --chain"
 A_START = "<!-- ATLAS:START -->"
 A_END = "<!-- ATLAS:END -->"
 T_END = "<!-- TRELLIS:END -->"

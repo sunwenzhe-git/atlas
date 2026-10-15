@@ -191,6 +191,227 @@ def test_pipe_in_cell_value_round_trips() -> None:
         assert (sd / "current" / "home" / "data-models.md").read_text(encoding="utf-8") == before
 
 
+STUB_ADAPTER = '''#!/usr/bin/env python3
+"""F25 夹具 stub 适配器：契约形（--root/--app/--out），按 app 写入产品 JSON。"""
+import argparse
+import json
+from pathlib import Path
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--root", required=True)
+ap.add_argument("--app", default=None)
+ap.add_argument("--out", required=True)
+a = ap.parse_args()
+
+items_by_cat = {
+    "stub_routes": [{"path": {None: "/stub-route-from-adapter"}.get(a.app, f"/stub-route-{a.app}"),
+                     "source_file": "app/pages/adapter.py", "status": "已实现"}],
+    "stub_models": [{"table": "users", "field": "adapter_field", "type": "int",
+                     "source_file": "app/pages/adapter.py"}],
+}[Path(__file__).stem]
+
+if a.app == "broken":  # demo 失败面由 --app 名触发
+    import sys
+    sys.exit(3)
+
+Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+Path(a.out).write_text(json.dumps({
+    "category": "routes" if "routes" in Path(__file__).stem else "models",
+    "items": items_by_cat,
+}, ensure_ascii=False), encoding="utf-8")
+'''
+
+BROKEN_EXIT_ADAPTER = '''#!/usr/bin/env python3
+import sys
+sys.exit(3)
+'''
+
+ADAPTER_PROFILE = """product: demo
+apps:
+  - name: app
+    path: app
+    kind: frontend
+adapters:
+  routes: stub_routes
+  models: stub_models
+"""
+
+
+def write_profile(root: Path, text: str) -> None:
+    (root / "product").mkdir(parents=True, exist_ok=True)
+    (root / "product" / "stack-profile.yaml").write_text(text, encoding="utf-8")
+
+
+def git_ready(root: Path) -> None:
+    r = lambda *a: __import__("subprocess").run(["git", "-C", str(root), *a],
+                                                capture_output=True, text=True)
+    r("init")
+    r("-c", "user.email=t@t", "-c", "user.name=t", "add", "-A")
+    r("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init")
+
+
+def head_sha(root: Path) -> str:
+    import subprocess
+    return subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                          capture_output=True, text=True).stdout.strip()
+
+
+def write_stub_adapters(root: Path, broken_exit: str | None = None) -> None:
+    ad = root / "product" / "adapters_stub"   # 只写盘不做解析（解析走 .atlas/adapters）
+    ad.mkdir(parents=True, exist_ok=True)
+    at = root / ".atlas" / "adapters"
+    at.mkdir(parents=True, exist_ok=True)
+    (at / "stub_routes.py").write_text(STUB_ADAPTER, encoding="utf-8")
+    (at / "stub_models.py").write_text(STUB_ADAPTER, encoding="utf-8")
+    if broken_exit:
+        (at / "stub_models.py").write_text(BROKEN_EXIT_ADAPTER, encoding="utf-8")
+
+
+def test_chain_runs_adapters_then_refresh_in_one_pass() -> None:
+    """F25+F27：--chain 一遍完成「适配器产物 → 事实区 → L2 指针」——
+    首建单遍即得完整 L2 链接表（旧口径首遍空表须两遍）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build(root)
+        write_profile(root, ADAPTER_PROFILE)
+        write_stub_adapters(root)
+        r = run(root, "--chain")
+        assert r.returncode == 0, r.stderr + r.stdout
+        sd = root / ".trellis" / "spec" / "structure"
+        # 适配器产物更新（routes.json 由 stub 写入新键）
+        assert "stub-route-from-adapter" in (sd / ".adapter-out" / "routes.json").read_text(encoding="utf-8")
+        # 事实区渲染含新键
+        assert "stub-route-from-adapter" in (sd / "global" / "routes.md").read_text(encoding="utf-8")
+        # F27：L2 指针一遍即链接到本轮新落的事实文件
+        dom = (sd / "domains" / "home.md").read_text(encoding="utf-8")
+        assert "current/home/apis.md" in dom, dom
+
+
+def test_chain_failure_aborts_before_refresh() -> None:
+    """F25 失败语义（拍板）：任一适配器非零退出 ⇒ 中止链条不进 refresh，exit 2；
+    中止前已落盘产物 = 上一轮一致态，残留无害。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build(root)
+        write_profile(root, ADAPTER_PROFILE)
+        write_stub_adapters(root, broken_exit="models")
+        r = run(root, "--chain")
+        assert r.returncode == 2, r.stdout
+        sd = root / ".trellis" / "spec" / "structure"
+        # routes 适配器（顺序在前）已落盘
+        assert "stub-route-from-adapter" in (sd / ".adapter-out" / "routes.json").read_text(encoding="utf-8")
+        # refresh 未执行 ⇒ 事实表不存在（首建场景事实表本来未落，links 不更新）
+        out = (sd / "global" / "routes.md")
+        # 这里 build() 的 routes.json 在 stub 前已存在旧内容（build 夹具产物），
+        # refresh 未跑 ⇒ global/routes.md 仍未生成（首建）
+        assert not out.exists(), "中止后不得进刷新"
+
+
+def test_chain_undeclared_adapter_script_aborts() -> None:
+    """F25 fail-loud：声明了适配器名但按契约解析不到脚本 ⇒ exit 2。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build(root)
+        write_profile(root, ADAPTER_PROFILE)  # 声明了 stub_*，但 .atlas/adapters 缺失
+        r = run(root, "--chain")
+        assert r.returncode == 2 and "解析失败" in r.stderr, r.stderr
+
+
+def test_apply_default_never_advances_baseline() -> None:
+    """F26（C2 零变化承诺）：显式 --apply 默认永不推进 baseline——git-ready 夹具 + 事实
+    非空 + 零漂移，仍不推进。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build(root)
+        git_ready(root)
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stderr
+        assert "advanced baseline" not in r.stdout, r.stdout
+        meta_now = json.loads((root / ".trellis" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))
+        assert meta_now["baseline"]["commit"] == "abc"
+
+
+def test_chain_advances_baseline_when_clean() -> None:
+    """F26 四前置全过：--chain 零漂移（首建 existed=False 合法新增）+ 事实非空
+    + 产品侧干净 ⇒ baseline 推进到 HEAD。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build(root)
+        git_ready(root)
+        write_profile(root, ADAPTER_PROFILE)
+        write_stub_adapters(root)
+        r = run(root, "--chain")
+        assert r.returncode == 0, r.stderr
+        assert "advanced baseline" in r.stdout, r.stdout
+        meta_now = json.loads((root / ".trellis" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))
+        assert meta_now["baseline"]["commit"] == head_sha(root)
+
+
+def test_chain_advance_frozen_by_drift_then_override() -> None:
+    """F26 诚实 ratchet：本轮零漂移才推进；有漂移 ⇒ 冻结；--advance-baseline 显式越过。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build(root)
+        git_ready(root)
+        write_profile(root, ADAPTER_PROFILE)
+        write_stub_adapters(root)
+        r1 = run(root, "--chain")   # 首建: baseline=HEAD
+        assert r1.returncode == 0
+        sha1 = head_sha(root)  # _meta.json 此刻未提交，落盘的是 facts 所述代码态 commit（约定口径）
+        # 制造漂移：改 routes 适配器产物键级
+        (root / ".trellis" / "spec" / "structure" / ".adapter-out" / "routes.json").write_text(json.dumps({
+            "category": "routes", "items": [
+                {"path": "/changed", "source_file": "app/pages/home.py", "status": "已实现"}],
+        }, ensure_ascii=False), encoding="utf-8")
+        r = run(root, "--apply")     # 显式 apply 漂移刷新（零推进承诺不受影响）
+        assert "结构漂移" in r.stdout
+        assert json.loads((root / ".trellis" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))["baseline"]["commit"] == sha1
+        # --chain 因冻结跳过推进
+        r2 = run(root, "--chain")
+        assert "冻结" in r2.stdout, r2.stdout
+        assert json.loads((root / ".trellis" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))["baseline"]["commit"] == sha1
+        # 人工终审：提交漂移对应的工作（HEAD 前进）后，--advance-baseline 显式越过仍存的偏移 Freeze
+        subprocess.run(["git", "-C", str(root), "add", "-A"], capture_output=True)
+        subprocess.run(["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t",
+                        "commit", "-m", "drift registered"], capture_output=True)
+        sha2 = head_sha(root)
+        assert sha2 != sha1
+        r3 = run(root, "--chain", "--advance-baseline")
+        assert "advanced baseline" in r3.stdout, r3.stdout
+        assert json.loads((root / ".trellis" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))["baseline"]["commit"] == sha2
+
+
+def test_advance_skips_when_product_dirty() -> None:
+    """F26 第四前置：产品侧工作树脏 ⇒ SKIP（不给未审定代码背书）；.atlas/.trellis 自身写盘豁免。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build(root)
+        git_ready(root)
+        write_profile(root, "product: demo\napps: []\nadapters: {}\n")
+        (root / "svc").mkdir(parents=True, exist_ok=True)
+        (root / "svc" / "pending.py").write_text("# 未提交代码\n", encoding="utf-8")
+        r = run(root, "--chain")
+        assert "产品侧" in r.stdout, r.stdout
+
+
+def test_render_tour_lists_adapter_run_command() -> None:
+    """F29：tour.md「项目概况」行含适配器来源的测试运行命令（消费闭环落在门面文件）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build(root)
+        sd = root / ".trellis" / "spec" / "structure"
+        (sd / ".adapter-out" / "tests").mkdir(parents=True, exist_ok=True)
+        (sd / ".adapter-out" / "tests" / "app.json").write_text(json.dumps({
+            "category": "tests",
+            "items": [{"type": "unit", "location": "app/test_x.py",
+                       "run_command": ".venv/bin/python -m pytest app/tests", "status": None}],
+        }, ensure_ascii=False), encoding="utf-8")
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stderr
+        tour = (sd / "tour.md").read_text(encoding="utf-8")
+        assert "- 测试运行方式：`.venv/bin/python -m pytest app/tests`（来源：结构适配器 tests.json）" in tour, tour
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

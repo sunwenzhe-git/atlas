@@ -105,6 +105,32 @@ if [ "$DRY_RUN" -eq 0 ] && [ -d "$TARGET/.atlas" ] && [ "${ATLAS_ALLOW_OVERWRITE
   exit 1
 fi
 
+# ── 触点脏树守卫（F34，2026-10-15）：--update 整包覆盖前的装配触点检查 ──
+# R6 现场教训：并行终端与沙箱会话共写仓库时，update 的 rm -rf 会把副本侧未提交的
+# 线束改动一并卷走（提交归属被污染）。守卫必须位于整包拷贝（rm -rf）**之前**。
+if [ "$IS_UPDATE" -eq 1 ] && [ "$DRY_RUN" -eq 0 ] && command -v git >/dev/null 2>&1; then
+  if git -C "$TARGET" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    DIRTY_TOUCH=""
+    while IFS= read -r raw; do
+      [ -z "$raw" ] && continue
+      case "$raw" in
+        .atlas/*|.atlas|.trellis/workflow.md|.trellis/config.yaml|AGENTS.md) DIRTY_TOUCH="$DIRTY_TOUCH $raw" ;;
+      esac
+    done < <(git -C "$TARGET" status --porcelain 2>/dev/null | cut -c4-)
+    if [ -n "$DIRTY_TOUCH" ]; then
+      if [ "$FORCE" -eq 1 ]; then
+        say "（--force：感知到装配触点未提交改动：${DIRTY_TOUCH} —— 整包覆盖自负）"
+      else
+        say "错误：装配触点存在未提交改动（${DIRTY_TOUCH}）；--update 的整包覆盖会冲掉"
+        say "      副本侧未回灌的线束改动（含 .atlas/ 与指针文件）。"
+        say "      - 先提交或 stash 后重跑"
+        say "      - 明知覆盖、仍要继续：加 --force"
+        exit 1
+      fi
+    fi
+  fi
+fi
+
 # 探测目标项目实际使用的平台目录
 PLATFORM_DIRS=()
 if [ -d "$TARGET/.agents/skills" ]; then PLATFORM_DIRS+=(".agents/skills"); fi

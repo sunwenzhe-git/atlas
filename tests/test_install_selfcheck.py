@@ -274,6 +274,49 @@ def test_ring_and_skill_are_symmetric() -> None:
     assert res["ok"], res["detail"]
 
 
+def test_update_guard_refuses_dirty_touchpoints_and_force_overrides() -> None:
+    """F34（R7，2026-10-15）：--update 的触点脏树守卫必须位于整包拷贝（rm -rf）**之前**
+    —— 位置回归钉：改 .atlas/VERSION 后跑 update ⇒ exit 1 且未提交的 VERSION **未被
+    rm -rf 卷走**；--force ⇒ 放行整包覆盖（守卫通知可见）。R6 现场教训（并行终端共写仓库
+    致提交归属污染）的产品化。"""
+    import subprocess
+    import tempfile
+
+    def sh(*a: str):
+        r = subprocess.run(a, capture_output=True, env={"PATH": "/usr/bin:/bin:/opt/homebrew/bin",
+                                                        "LANG": "C.UTF-8"})
+        return r.returncode, r.stdout.decode("utf-8", errors="replace") + r.stderr.decode("utf-8", errors="replace")
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "proj"
+        (root / ".atlas" / "scripts").mkdir(parents=True)
+        (root / ".atlas" / "VERSION").write_text("stamped-by-fixture\n", encoding="utf-8")
+        (root / ".trellis").mkdir()
+        (root / ".trellis" / "workflow.md").write_text("# w\n", encoding="utf-8")
+        (root / "AGENTS.md").write_text("# agents\n", encoding="utf-8")
+        sh("git", "-C", str(root), "init", "-q")
+        sh("git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t", "add", "-A")
+        sh("git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t",
+           "commit", "-qm", "init")
+        # 制造脏触点（.atlas 内未提交改动）
+        (root / ".atlas" / "VERSION").write_text("dirty local edit\n", encoding="utf-8")
+        r = sh("bash", str(PKG_ROOT / "install.sh"),
+               "--update", "--target", str(root),
+               "--no-skill", "--no-patch", "--no-wiring")
+        assert r[0] == 1, r[1]
+        assert "装配触点存在未提交改动" in r[1], r[1]
+        # 位置钉：守卫在整包拷贝之前 ⇒ 未提交的 VERSION 未被 rm -rf 卷走
+        assert (root / ".atlas" / "VERSION").read_text(encoding="utf-8") == "dirty local edit\n"
+        # --force 放行：整包覆盖（源包拷入），守卫通知可见
+        r2 = sh("bash", str(PKG_ROOT / "install.sh"),
+                "--update", "--target", str(root),
+                "--no-skill", "--no-patch", "--no-wiring", "--force")
+        assert r2[0] == 0, r2[1]
+        assert "感知到装配触点未提交改动" in r2[1], r2[1]
+        stamped = (root / ".atlas" / "VERSION").read_text(encoding="utf-8")
+        assert stamped != "dirty local edit\n" and stamped.count("\n") == 3, stamped
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--json", action="store_true")

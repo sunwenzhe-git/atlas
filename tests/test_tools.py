@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -188,6 +189,53 @@ def test_f23_tests_adapter_python3_m_pytest() -> None:
         assert data["adapter_version"] == "0.1.1"
         assert len(data["items"]) == 1
         assert data["items"][0]["run_command"] == "python3 -m pytest"
+
+
+def test_f30_assembly_cover_in_sync_with_install_sh() -> None:
+    """F30（R7，2026-10-15）：pkg_digest 装配集白名单 ⇔ install.sh 拷贝列表**双向同步钉**
+    （防将来新增拷贝目录自成摘要盲区；含 docs-only 改动不再激发装配版本回环）。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("pkg_digest", PKG_ROOT / "scripts" / "pkg_digest.py")
+    pd = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pd)
+
+    install_txt = (PKG_ROOT / "install.sh").read_text(encoding="utf-8")
+    m = re.search(r"for pkg_dir in ([a-z /_]+);", install_txt)
+    assert m, install_txt
+    pkg_dirs = {d for d in m.group(1).strip().split()}
+    cover = pdo_cover = set(pd.ASSEMBLY_COVER_DIRS)
+
+    # ① install.sh pkg_dir 循环里的每一笔必须都在摘要白名单
+    missing = pkg_dirs - cover - {"LICENSE"}
+    assert not missing, f"install.sh 拷贝了 {missing}，pkg_digest 未覆盖（摘要盲区）"
+    # ② skills/* 是 [2/6] 拷贝集（不在 pkg_dir 循环）⇒ 必须也在白名单
+    assert "skills/" in install_txt and "skills" in cover
+    # ③ 非装配文件不进摘要：临时 math clone 中仅 docs 改动 ⇒ digest 不变
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        for d in ("scripts", "docsx".replace("docsx", "docs")):
+            (root / d).mkdir(parents=True, exist_ok=True)
+        (root / "scripts" / "x.py").write_text("# keep\n", encoding="utf-8")
+        (root / "docs" / "readme.md").write_text("docs v1\n", encoding="utf-8")
+        (root / "CHANGELOG.md").write_text("v1\n", encoding="utf-8")
+        d1 = pd.digest(root)
+        (root / "docs" / "readme.md").write_text("docs v2\n", encoding="utf-8")
+        (root / "CHANGELOG.md").write_text("v2\n", encoding="utf-8")
+        (root / "scripts" / "x.py").write_text("# changed\n", encoding="utf-8")
+        d2 = pd.digest(root)
+        assert d1 != d2, "装配集内文件变化必须摘摆动"
+        # docs 文件变动带同 change 一样受 scripts 驱动，拆分到纯净场景：
+        with tempfile.TemporaryDirectory() as t2:
+            root2 = Path(t2)
+            (root2 / "scripts").mkdir(parents=True)
+            (root2 / "scripts" / "x.py").write_text("# keep\n", encoding="utf-8")
+            (root2 / "docs").mkdir(parents=True)
+            (root2 / "docs" / "readme.md").write_text("v1\n", encoding="utf-8")
+            d3 = pd.digest(root2)
+            (root2 / "docs" / "readme.md").write_text("v2\n", encoding="utf-8")
+            assert pd.digest(root2) == d3, "非装配集文件变动不得摆动摘要（F8 关门）"
 
 
 

@@ -79,3 +79,44 @@ def test_wire_python_scaffold_skips_non_python_projects() -> None:
         res = wiring.wire_python_scaffold(root)
         assert res["status"] == "skipped"
         assert "非 Python 工程" in res["detail"]
+
+
+def test_wire_config_upgrades_legacy_apply_hook_in_place() -> None:
+    """C1（R7）：存量 `--apply` hook ⇒ 原位升级为 `--chain`；**不得**插入第二行
+    （否则旧+新双 hook 常驻，每次 finish refresh 跑两遍——R6 现场教训变体）。"""
+    wiring = load_wiring()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        cfg = root / ".trellis" / "config.yaml"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            "hooks:\n"
+            "  after_finish:\n"
+            '    - "python3 .atlas/scripts/refresh_structure.py --root . --apply"\n',
+            encoding="utf-8")
+        res = wiring.wire_config(root)
+        assert res["status"] == "applied" and "in-place" in res["detail"], res
+        new_text = res["_write"][1]
+        res["_write"][0].write_text(new_text, encoding="utf-8")  # 应用写盘，再验幂等
+        assert new_text.count("refresh_structure.py") == 1, new_text
+        assert "--chain" in new_text and "--apply" not in new_text
+
+        # 幂等：已是 --chain ⇒ skipped
+        res2 = wiring.wire_config(root)
+        assert res2["status"] == "skipped", res2
+
+
+def test_wire_config_preserves_custom_hook_without_second_line() -> None:
+    """C1：前缀命令尾是自定义形态（非 --apply/--chain）⇒ 尊重自定 hook，不再插入。"""
+    wiring = load_wiring()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        cfg = root / ".trellis" / "config.yaml"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            "hooks:\n"
+            "  after_finish:\n"
+            '    - "python3 .atlas/scripts/refresh_structure.py --root . --custom-flag"\n',
+            encoding="utf-8")
+        res = wiring.wire_config(root)
+        assert res["status"] == "skipped" and "自定义" in res["detail"], res

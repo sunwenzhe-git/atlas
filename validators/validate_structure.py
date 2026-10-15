@@ -283,12 +283,21 @@ def validate(root: Path) -> Result:
             inj.append(f"{p.name}: {why}")
     res.add("注入结构 paths 块列表", not inj, "；".join(inj))
 
-    # 占位符
+    # 占位符（F31，2026-10-15：token 级判据只作用于 `TODO`）
+    # 病根：`FORBIDDEN` 含大写 `TODO`，域码恰为 todo 的项目在结构文档里引用
+    # 用例 ID（`E2E-TODO-004`）时被逐行子串误杀。修法：**裸 token** 判——
+    # `TODO` 前后邻字符非 `[\w-]` 才算命中；`E2E-TODO-004` 内的 `-TODO-` 两端
+    # 都是 `-` ⇒ 不命中。裸 `TODO`/`TODO:` 照报（冒号不在豁免字符内）。
+    # 其余 FORBIDDEN 词保持原逐行子串语义（CJK 复合词宏观边界非本次目标）。
+    todo_bare_re = re.compile(r"(?<![\w-])TODO(?![\w-])")
     place = []
     for p in sorted(spec.rglob("*.md")):
         for n, ln in enumerate(read(p).splitlines(), 1):
             for word in FORBIDDEN:
-                if word in ln:
+                if word == "TODO":
+                    if todo_bare_re.search(ln):
+                        place.append(f"{p.relative_to(spec)}:{n} 含「TODO」")
+                elif word in ln:
                     place.append(f"{p.relative_to(spec)}:{n} 含「{word}」")
     res.add("占位符", not place, "；".join(place))
 

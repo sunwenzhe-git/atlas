@@ -38,7 +38,10 @@ ATLAS_END = "<!-- ATLAS:END -->"
 TRELLIS_END = "<!-- TRELLIS:END -->"
 AGENTS_REL = "AGENTS.md"
 
-HOOK_CMD = "python3 .atlas/scripts/refresh_structure.py --root . --apply"
+HOOK_CMD = "python3 .atlas/scripts/refresh_structure.py --root . --chain"
+# C1（R7，2026-10-15）：存量钩子的**前缀**（幂等判据必须冗余于一字符）——
+# 子串等于旧命令会漏识别 `--apply` 旧形态 ⇒ 双 hook 常驻、refresh 跑两遍。
+HOOK_PREFIX = "python3 .atlas/scripts/refresh_structure.py --root ."
 CONFIG_REL = ".trellis/config.yaml"
 
 RE_HOOKS = re.compile(r"^hooks:\s*(#.*)?$")
@@ -107,6 +110,23 @@ def wire_config(target: Path) -> dict:
     text = path.read_text(encoding="utf-8")
     if HOOK_CMD in text:
         return {"file": CONFIG_REL, "status": "skipped", "detail": "after_finish hook 已登记"}
+
+    # C1 迁移分支（R7）：识别旧形态 `HOOK_PREFIX … --apply`（引号/裸命令皆），**原位替换**
+    # 为 --chain，而不是插入新行——否则旧+新双 hook 常驻，每次 finish 刷新跑两遍。
+    if HOOK_PREFIX in text and HOOK_CMD not in text:
+        tails = [m.group(1) for m in re.finditer(re.escape(HOOK_PREFIX) + r"([^\n\"\']*)", text)]
+        if any(t.strip() == "--apply" for t in tails):
+            new_text = re.sub(re.escape(HOOK_PREFIX) + r"\s+--apply", HOOK_CMD, text)
+            # 护栏：替换后同一文件内仍有 `HOOK_PREFIX --apply`（多 hook 场景不期）则拒绝
+            if "--apply" in new_text and HOOK_PREFIX in new_text:
+                return {"file": CONFIG_REL, "status": "error",
+                        "detail": "迁移护栏：替换后仍存在旧形态 --apply hook，不修改"}
+            return {"file": CONFIG_REL, "status": "applied",
+                    "detail": "hook upgraded in-place (--apply → --chain)", "_write": (path, new_text)}
+        if all(t.strip() not in ("--apply", "--chain") for t in tails):
+            # 前缀在但命令尾是自定义形态 ⇒ 尊重用户自定 hook，不插第二行（防双 hook 常驻）
+            return {"file": CONFIG_REL, "status": "skipped",
+                    "detail": "存在自定义 refresh hook（yellow 尾非 --apply/--chain），未改"}
 
     lines = text.splitlines(keepends=True)
 

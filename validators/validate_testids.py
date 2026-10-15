@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 import sys
@@ -39,6 +40,18 @@ def _format_list(items: list[str] | set[str], max_show: int = 20) -> str:
     if len(lst) <= max_show:
         return f"{lst}"
     return f"{lst[:max_show]} (共 {len(lst)} 项，截断前 {max_show} 项)"
+
+
+def _load_stub_generator():
+    """F32：定位随包的 `gen_testid_stub`（副本态 = `.atlas` 同级装配；包态 = 源包同级）。"""
+    here = Path(__file__).resolve()
+    for cand in (here.parents[1] / "scripts" / "gen_testid_stub.py",):
+        if cand.is_file():
+            spec = importlib.util.spec_from_file_location("atlas_gen_testid_stub", cand)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+    return None
 
 TESTID_ATTR = re.compile(r"""data-testid\s*=\s*(?:\{\s*)?["']([a-zA-Z0-9_\-]+)["'](?:\s*\})?""")
 # 模板字面量 testid（2026-10-04）：`data-testid={`…${ident}…`}`——共享外壳按页派生前缀的
@@ -401,15 +414,30 @@ def validate(root: Path) -> Result:
                 f"抽取源={has_src} 用例目录={cases.is_dir()}")
         return res
 
-    # 实现期薄桩（契约 §4.1）：契约要求它由生成器产出 ⇒ 不存在即 FAIL，不静默（`3509 §B73`）
+    # 实现期薄桩（契约 §4.1）：缺失 ⇒ **机器兜底生成**（F32，2026-10-15；与 R6 基线
+    # 报告同哲学——缺失的派生工件由就近工具自动补齐），FAIL 只留给"生成不了"的真错。
     stub = root / ".trellis" / "spec" / "conventions" / "testid.md"
     if stub.is_file():
         res.add("实现期薄桩存在", "PASS", "")
     else:
-        res.add("实现期薄桩存在", "FAIL",
-                "缺 .trellis/spec/conventions/testid.md —— 跑 "
-                "`python3 .atlas/scripts/gen_testid_stub.py --root .` 生成"
-                "（rings/e2e/reference.md §4.1）")
+        gen = _load_stub_generator()
+        if gen is not None:
+            try:
+                text, _n = gen.render(root, globs)
+                stub.parent.mkdir(parents=True, exist_ok=True)
+                stub.write_text(text, encoding="utf-8")
+                res.add("实现期薄桩存在", "PASS",
+                        "缺失已由本器自动生成（F32 机器兜底；规范正文见 "
+                        "rings/e2e/reference.md §4.1）")
+            except Exception as exc:  # noqa: BLE001 — 生成失败才给红
+                res.add("实现期薄桩存在", "FAIL",
+                        f"薄桩缺失且自动生成失败：{exc}（可手动跑 "
+                        "`python3 .atlas/scripts/gen_testid_stub.py --root .`）")
+        else:
+            res.add("实现期薄桩存在", "FAIL",
+                    "缺 .trellis/spec/conventions/testid.md 且无法定位生成器 —— 跑 "
+                    "`python3 .atlas/scripts/gen_testid_stub.py --root .` 生成"
+                    "（rings/e2e/reference.md §4.1）")
 
     src_ids, counts, sources, expanded, same_file_dups = collect_testids_expanded(root, globs)
     states = index_page_states(root)

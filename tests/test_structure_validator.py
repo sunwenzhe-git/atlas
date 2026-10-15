@@ -236,3 +236,35 @@ def test_structure_categories_prefix_tolerance() -> None:
         res = _res(root)
         assert res["类别覆盖 · categories A/H"]["ok"] is False
 
+
+
+def test_f31_case_id_reference_not_flagged_as_todo_placeholder() -> None:
+    """F31（R7）：结构文档自然语言引用用例 ID（`E2E-TODO-004`，`-TODO-` 非独立 token）
+    **不再**被占位符黑名单误杀；裸 `TODO`/`TODO:` 仍逐一拦截（fail-closed 不松）。"""
+    with _tmp() as td:
+        root = Path(td)
+        mk(root)
+        doc = root / ".trellis" / "spec" / "structure" / "domains" / "demo.md"
+        doc.write_text(
+            "# demo 域结构\n\n"
+            "- 本域改动对照用例 `E2E-TODO-001` 至 `E2E-TODO-004`（自然语言引用）。\n",
+            encoding="utf-8")
+        res = _res(root)
+        assert res["占位符"]["ok"] is True, res["占位符"]
+
+    with _tmp() as td:
+        root = Path(td)
+        mk(root)
+        doc = root / ".trellis" / "spec" / "structure" / "domains" / "demo.md"
+        doc.write_text("# demo 域结构\n\n- 事项：TODO 待补充。\n", encoding="utf-8")
+        res = _res(root)
+        assert res["占位符"]["ok"] is False, "裸 TODO 必须命中（不放宽）"
+        assert "TODO" in res["占位符"]["detail"], res["占位符"]
+
+    with _tmp() as td:
+        root = Path(td)
+        mk(root)
+        doc = root / ".trellis" / "spec" / "structure" / "domains" / "demo.md"
+        doc.write_text("# demo 域结构\n\n- 事项：TODO: 后续补充判定。\n", encoding="utf-8")
+        res = _res(root)
+        assert res["占位符"]["ok"] is False, "TODO: 冒号形态必须命中"
