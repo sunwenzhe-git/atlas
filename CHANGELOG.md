@@ -4,7 +4,8 @@
 
 ---
 
-## [Unreleased]
+## [v0.1.0-beta.17] - 2026-10-15
+
 
 ### 🧹 门册五件遗留态收口 (Leftover-State Batch: D79)
 
@@ -14,7 +15,7 @@
 * **【AC 反向覆盖：升 FAIL 规则落档 + 死指针修正】（`validators/validate_e2e_index.py`, `shared/gates.md` 2.1/§3；D79 ②）**：
   - 触发 = 零挂靠清零 + 清零态实测全绿一次 ⇒ WARN 分支改 FAIL（不设 profile 开关——灰度即「看起来在跑」面）；升档日 source/copy 分叉按回灌批收口。校验器 WARN detail 里指向外仓 `product/issues.md` P9 的死指针改为 gates 行锚（台账不在本仓）。
 * **【D77 否决面词汇钉（canonical 判据⑦，治标）+ closeout 宣称 sweep】（`tests/test_canonical_consistency.py`, `shared/gates.md` 2.6, `shared/closeout.md`, `docs/design/overview.md`, `docs/design/prd-ring.md`；D79 ③）**：
-  - 黑名单词（`Leiden/拓扑聚类/自动归域/端点到模型/阻断全仓`）出现在 git 跟踪源 md 的活语境 ⇒ 红；豁免锚 = 行内 `D77/D78`（局部自持，**不得**并入 `RETIRE_MARKS`——共享会把豁免串门到 ①③⑤）；扫面收窄到 `docs/**.md`（除 `.vitepress`）+ `shared/**.md` + 顶层 `README.md`（rglob 不认 .gitignore，dist 编译产物会漂判据）；`rings`、`apply`、`patches` 三目录不扫 = 显式盲区。
+  - 黑名单词（判据⑦词表，五个；词表本体见 `tests/test_canonical_consistency.py` 的 `VETO_WORDS`）出现在 git 跟踪源 md 的活语境 ⇒ 红；豁免锚 = 行内 `D77/D78`（局部自持，**不得**并入 `RETIRE_MARKS`——共享会把豁免串门到 ①③⑤）；扫面收窄到 `docs/**.md`（除 `.vitepress`）+ `shared/**.md` + 顶层 `README.md`（rglob 不认 .gitignore，dist 编译产物会漂判据）；`rings`、`apply`、`patches` 三目录不扫 = 显式盲区。
   - **判据落地首跑即咬 4 处漏网活体**（`overview.md:20/:57/:143`、`prd-ring.md:124` 的 Leiden/拓扑聚类宣称——D78 ④ 收窄批的漏网，教训 = sweep 按词 grep、不按已知清单改文件），同批全部收窄为多信号投票 + D77 锚。
   - closeout 新触发行：改 §12 被否裁决 ⇒ 全仓 grep 否决词 + 同批登记进黑名单（钉=治标本面，语义自洽终归人）。变异 M67：摘掉黑名单一个词 ⇒ 喂坏输入用例红（还原逐字节一致）。
 * **【impact 对账观察窗（不加代码）】（`shared/gates.md` 2.1, `scripts/impact_reconcile.py` docstring；D79 ④）**：
@@ -81,7 +82,7 @@
   - **修复**：`api` 的「有机器可读描述」分支此前**不可达**——描述文件搭源码后缀遍历永远找不到 `.json` ⇒ 自带 `openapi.json` 的项目会得到空事实表；改为按文件名单独探测（整项目范围）。
   - 测试：新增 `tests/test_adapter_api.py`，扩写 `tests/test_adapter_routes.py` / `tests/test_adapter_models.py`，登记变异证明 **M52 / M53 / M54**。
 * **【图谱消费面如实化】（`README.md`, `docs/innovations/code-graph.md`, `shared/stack-profile.md`）**：
-  - 原文称图谱供给结构抽取「跨文件端点到模型映射 / 级联依赖自动归域」，与实装不符——`_graph.py` 的消费面只有 `routes` 的**文件枚举通道**与 `apply` 的**影响面基准**两处，域聚类与解析层都不走图谱。图示与正文按实情改写，并写明「它不做什么」。
+  - 原文称图谱供给结构抽取「跨文件端点到模型映射 / 级联依赖自动归域」（如实化判据：`DESIGN.md` D77），与实装不符——`_graph.py` 的消费面只有 `routes` 的**文件枚举通道**与 `apply` 的**影响面基准**两处，域聚类与解析层都不走图谱。图示与正文按实情改写，并写明「它不做什么」。
   - **画像确认门内新增探测与提议**：`graph` 段在模板里是注释态，不提议就永不生效（实测用户装好后端而全程无人提过）；同时要求提议口径如实，别把能力说大。
 * **【结构环：域清单确认门】（`rings/structure/reference.md`, `skills/atlas-structure/SKILL.md`）**：
   - 在「提议候选域」与「铺域级文件」之间加一道用户过目门；未经确认就产出的，报告里必须点名「未确认」。域 id 是全链路键，PRD 定稿合并/拆分会让在未确认粒度上先铺的产出整批重排。

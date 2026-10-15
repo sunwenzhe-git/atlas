@@ -457,6 +457,14 @@ def test_gate_registry_gates_are_scheduled_by_atlas_check() -> None:
     assert res["ok"], res["detail"]
 
 
+def test_veto_word_pins_clean_over_real_canonical() -> None:
+    """判据⑦ **真实扫面**载体（2026-10-15 补）：canonical 全绿必须在 pytest 里可判——
+    本测曾缺口，导致 pytest 全绿而脚本报红（docs/guide/changelog.md 转述词表行）
+    无人咬。黑名单词表更新语句必须带 D77/D78 锚（或改写避词），否则本测红。"""
+    res = check_veto_word_pins()
+    assert res["ok"], res["detail"]
+
+
 def test_veto_word_pins_bad_input_reds_and_anchor_exempts(tmp_path, monkeypatch) -> None:
     """判据⑦（D79 ③）：喂坏输入必红（活语境黑名单词 ⇒ 红），回锚豁免不误伤
     （收窄后的行引 D77/D78 锚合法放行）。缺文件扫面 fail-closed 的正例由 scan() 全绿
