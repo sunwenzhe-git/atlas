@@ -15,7 +15,7 @@ Atlas 随包完整分发了一套高度自洽的高阶开发、审查与压力�
 
 ## 2. 三环资产技能 — `atlas-structure` / `atlas-prd` / `atlas-e2e`
 
-* **`atlas-structure`（结构基线 · 实然）**：读代码逆向产出目录与模块地图、路由与页面清单、接口清单、数据模型清单、设计 token，落 `.trellis/spec/structure/`（Trellis 路径注入层），并从代码提议候选域；
+* **`atlas-structure`（结构基线 · 实然）**：读代码逆向产出目录与模块地图、路由与页面清单、接口清单、数据模型清单，落 `.trellis/spec/structure/`（Trellis 路径注入层），并从代码提议候选域（域清单先请用户过目再铺域级文件）；
 * **`atlas-prd`（业务应然单源）**：产出全局 `prd.md` + 每个产品功能域一份域级 PRD，含功能架构、范围与处置、Rule Set 与可追溯 AC；
 * **`atlas-e2e`（验收应然）**：产出「页面分片 + 总索引」用例资产；`data-testid` 应然（分片）⇔ 实然（前端源码）按页双向集合校验；再从分片生成脚本、在真实应用单段执行；
 * 三环如何环环相扣，见[三环资产体系](/concepts/rings)。

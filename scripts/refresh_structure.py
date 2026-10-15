@@ -43,9 +43,27 @@ END = "<!-- atlas:facts:end -->"
 DEFAULT_MAX_TOTAL = 9500
 DEFAULT_MAX_SPEC = 9400
 # 基线自进的本地写盘豁免前缀（写盘面与装配/元数据自身不算"产品侧脏"）
-CLEAN_EXEMPT_PREFIXES = (".atlas/", ".trellis/", "product/")
+# 「产品侧干净」判据的豁免前缀（F26 基线自进前置④）：这些是 atlas 自己的产物 / 中间产物，
+# 不算「未审定的产品侧改动」。
+# `.adapter-out/` 必须在内（2026-10-15，issue #8 移动落点后暴露）：它此前位于 `.trellis/`
+# 之下、被 `.trellis/` 顺带豁免；移到项目根后若仍不豁免，atlas 自己写的中间目录就会被读成
+# 「产品侧有未提交改动」⇒ **基线自进永久冻结**（比原缺陷更难察觉：门不报错，只是再也不前进）。
+CLEAN_EXEMPT_PREFIXES = (".atlas/", ".trellis/", "product/", ".adapter-out/")
 # 适配器四类目（shared/stack-profile.md §3.3）：routes 全局跑一次，域级按 app 各跑一次
 ADAPTER_CATEGORIES = ("routes", "api", "models", "tests")
+# `.adapter-out/` 的**单一位点 = 项目根**（2026-10-15 统一，issue #8）。
+# 适配器产物 / 漂移标记 / 图谱新鲜度标记同址——设计档案 `docs/design/structure-ring.md`
+# 的目录树从一开始写的就是项目根，实现却漂到了 `.trellis/spec/structure/` 下 ⇒ 同名两处，
+# 而图谱层（`adapters/_graph.py`）写在项目根：现场于是出现「`git status` 里有
+# `.adapter-out/`，漂移门却说『无 .adapter-out 产物目录』」的自相矛盾（排查者会先怀疑门坏）。
+# 统一后该矛盾**构造性消失**；`atlas_check`（漂移门）与 `_graph.py`（标记）都读这一处。
+# 三消费者同址由 `tests/test_refresh_facts.py::test_f41_adapter_out_single_location` 钉住。
+ADAPTER_OUT_DIRNAME = ".adapter-out"
+
+
+def adapter_out_dir(root: Path) -> Path:
+    """适配器产物 / 漂移标记 / 图谱标记的**共同**落点（项目根，非 spec 目录）。"""
+    return root / ADAPTER_OUT_DIRNAME
 
 
 def log(m: str) -> None:
@@ -108,7 +126,7 @@ def render_tour(root: Path, meta: dict) -> tuple[str, str]:
     # F29（2026-10-15）：tests 适配器产物的消费落点 = tour.md「项目概况」行
     # （tour 全量重渲不进漂移机制，"告诉 agent 去哪读"的门面文件即天然读者）。
     test_cmds: list[str] = []
-    out_dir = root / ".trellis" / "spec" / "structure" / ".adapter-out"
+    out_dir = adapter_out_dir(root)
     for a in apps:
         name = a.get("name")
         if not name:
@@ -308,6 +326,29 @@ def record_drift(path: Path, old: dict, new_keys: list[tuple], kind: str,
         results.append({"file": str(path), "changed": True, "drift": {"kind": kind, **d}})
 
 
+def dedup_by_row_key(cell_rows: list[dict], key_cols: list[str]) -> tuple[list[dict], list[tuple]]:
+    """**按渲染行键折叠重复行**（2026-10-15 补；D69 的行键级合并以「行键唯一」为前提）。
+
+    为何在渲染层而不是适配器里（同日复核改判，有实测依据）：适配器 `items` 的粒度 =
+    **代码里的事实**——同一端点被两个域各调一次是**两条合法事实**，渲染期按 `source_file`
+    分域后各自进自己的 `apis.md`（真项目实测：25 个重复（方法,路径）键**全部跨域**，
+    零个落进同一张表）。在适配器里按行键全局去重，会把另一个域**唯一**的那条抹掉。
+    同一个目标文件内才会出现同键（同域两个模块调同一端点；两个文件声明了同名同字段的
+    模型），那里才是折叠点。保留**首个**出现（输入序 = 适配器的确定性排序）。
+    """
+    out: list[dict] = []
+    keys: list[tuple] = []
+    seen: set[tuple] = set()
+    for cells in cell_rows:
+        k = tuple(_norm(cells.get(n, "")) for n in key_cols)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(cells)
+        keys.append(k)
+    return out, keys
+
+
 def render_routes(base: Path, data: dict, apps: list[dict], domains: list[dict], apply: bool, results: list[dict]) -> None:
     path = base / "global" / "routes.md"
     enum = {"应用", "页面/路由", "实现状态", "来源文件"}
@@ -319,16 +360,15 @@ def render_routes(base: Path, data: dict, apps: list[dict], domains: list[dict],
         if bool(old) or len(raw_rows) >= 2:
             print("WARN: 适配器产物为空，保留既有手工事实")
             return
-    rows = []
-    new_keys: list[tuple] = []
+    cell_rows: list[dict] = []
     for it in items:
         sf = it.get("source_file") or ""
         app = app_of(sf, apps)
-        cells = {"应用": (app or {}).get("name") or "—", "页面/路由": it.get("path", ""),
-                 "域": domain_of(sf, domains) or "—", "用途": "", "关键交互": "",
-                 "实现状态": it.get("status") or "—", "来源文件": sf}
-        rows.append(merge_cells(old, ROUTES_HEADER, ["应用", "页面/路由"], enum, cells))
-        new_keys.append(tuple(_norm(cells.get(n, "")) for n in ("应用", "页面/路由")))
+        cell_rows.append({"应用": (app or {}).get("name") or "—", "页面/路由": it.get("path", ""),
+                          "域": domain_of(sf, domains) or "—", "用途": "", "关键交互": "",
+                          "实现状态": it.get("status") or "—", "来源文件": sf})
+    cds, new_keys = dedup_by_row_key(cell_rows, ["应用", "页面/路由"])
+    rows = [merge_cells(old, ROUTES_HEADER, ["应用", "页面/路由"], enum, c) for c in cds]
     write_facts(path, ["# 全站路由总表", "",
                        "> 事实区由 `refresh_structure.py` 从适配器产物刷新；语义列（域/用途/关键交互）保留既有。",
                        "> `实现状态` 仅 landing（`current/`）需要，legacy 用「—」。", ""]
@@ -368,23 +408,21 @@ def render_apis(base: Path, items: list[dict], pointers: list[dict], apps: list[
         path = base / role / dom / "apis.md"
         existed = path.is_file()
         old = old_rows_by_key(path, API_HEADER, ["方法", "路径"])
-        new_keys = [tuple(_norm(cells(it).get(n, "")) for n in ("方法", "路径")) for it in its]
-        rows = [merge_cells(old, API_HEADER, ["方法", "路径"], enum, cells(it)) for it in its]
+        cds, new_keys = dedup_by_row_key([cells(it) for it in its], ["方法", "路径"])
+        rows = [merge_cells(old, API_HEADER, ["方法", "路径"], enum, c) for c in cds]
         write_facts(path, [f"# {dom} · 接口清单（{role}）", "",
                            "> 事实区自动渲染；语义列（用途/请求要点/响应要点）保留既有。", ""]
                     + render_table(API_HEADER, rows), apply, results)
         record_drift(path, old, new_keys, "apis", results, existed)
-    srows = [merge_cells({}, API_HEADER, ["方法", "路径"], enum,
-                         {"方法": "—", "路径": p.get("spec_entry", ""), "来源模块": p.get("app", ""),
-                          "用途": "真相源入口", "请求要点": "", "响应要点": ""}) for p in pointers]
-    srows += [merge_cells({}, API_HEADER, ["方法", "路径"], enum, cells(it)) for it in shared]
+    scell_rows = [{"方法": "—", "路径": p.get("spec_entry", ""), "来源模块": p.get("app", ""),
+                   "用途": "真相源入口", "请求要点": "", "响应要点": ""} for p in pointers]
+    scell_rows += [cells(it) for it in shared]
+    scds, skeys = dedup_by_row_key(scell_rows, ["方法", "路径"])
+    srows = [merge_cells({}, API_HEADER, ["方法", "路径"], enum, c) for c in scds]
     if srows:
         spath = base / "global" / "apis-shared.md"
-        skey_cols = ("方法", "路径")
         sexisted = spath.is_file()
-        sold = old_rows_by_key(spath, API_HEADER, list(skey_cols))
-        skeys = ([tuple(_norm(x) for x in ("—", p.get("spec_entry", ""))) for p in pointers]
-                 + [tuple(_norm(cells(it).get(n, "")) for n in skey_cols) for it in shared])
+        sold = old_rows_by_key(spath, API_HEADER, ["方法", "路径"])
         record_drift(spath, sold, skeys, "apis", results, sexisted)
         write_facts(spath, ["# 跨域共享接口 / 真相源入口", "",
                             "> 无 domain globs 命中、或 api 为「机器可读描述」指针形态时落此；请在域内引用或补 globs。", ""]
@@ -404,8 +442,8 @@ def render_models(base: Path, items: list[dict], apps: list[dict], domains: list
         path = base / role / dom / "data-models.md"
         existed = path.is_file()
         old = old_rows_by_key(path, MODEL_HEADER, ["表/模型", "字段"])
-        new_keys = [tuple(_norm(cells(it).get(n, "")) for n in ("表/模型", "字段")) for it in its]
-        rows = [merge_cells(old, MODEL_HEADER, ["表/模型", "字段"], enum, cells(it)) for it in its]
+        cds, new_keys = dedup_by_row_key([cells(it) for it in its], ["表/模型", "字段"])
+        rows = [merge_cells(old, MODEL_HEADER, ["表/模型", "字段"], enum, c) for c in cds]
         write_facts(path, [f"# {dom} · 数据模型（{role}）", "", "> 事实区自动渲染。", ""]
                     + render_table(MODEL_HEADER, rows), apply, results)
         record_drift(path, old, new_keys, "models", results, existed)
@@ -413,8 +451,8 @@ def render_models(base: Path, items: list[dict], apps: list[dict], domains: list
         spath = base / "global" / "data-models-shared.md"
         sexisted = spath.is_file()
         sold = old_rows_by_key(spath, MODEL_HEADER, ["表/模型", "字段"])
-        skeys = [tuple(_norm(cells(it).get(n, "")) for n in ("表/模型", "字段")) for it in shared]
-        rows = [merge_cells({}, MODEL_HEADER, ["表/模型", "字段"], enum, cells(it)) for it in shared]
+        scds, skeys = dedup_by_row_key([cells(it) for it in shared], ["表/模型", "字段"])
+        rows = [merge_cells({}, MODEL_HEADER, ["表/模型", "字段"], enum, c) for c in scds]
         write_facts(spath, ["# 跨域共享数据模型（无域归属）", "",
                             "> 无 domain globs 命中时落此；请在域内引用或补 globs。", ""]
                     + render_table(MODEL_HEADER, rows), apply, results)
@@ -461,7 +499,7 @@ def run_chain(root: Path, meta: dict) -> int:
     if not any(v is not None for v in adapters.values()):
         log("  chain: profile 未声明非空 adapters ⇒ 跳过适配器执行（事实区由 agent 维持）")
         return 0
-    out_dir = root / ".trellis" / "spec" / "structure" / ".adapter-out"
+    out_dir = adapter_out_dir(root)
     apps = [a["name"] for a in (meta.get("apps") or []) if a.get("name")]
     for cat, name in ((c, adapters.get(c)) for c in ADAPTER_CATEGORIES):
         if not name:
@@ -658,7 +696,7 @@ def refresh_facts(root: Path, meta: dict, apply: bool) -> list[dict]:
     返回 results；调用方由结果派生 drifts（本轮最新判定，绝不读上轮遗留标记——F26 前置①）。
     """
     base = root / ".trellis" / "spec" / "structure"
-    out_dir = base / ".adapter-out"
+    out_dir = adapter_out_dir(root)
     if not out_dir.is_dir():
         return []
     apps = meta.get("apps") or []

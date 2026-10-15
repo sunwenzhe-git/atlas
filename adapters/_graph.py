@@ -12,6 +12,17 @@
   不直连图数据库内部 schema。
 * **确定性**：本层产出的所有查询都带 `ORDER BY`，同代码态重跑结果一致——这是
   上层可 diff、可对账的前提。
+* **落点：项目根 `.adapter-out/`**（2026-10-15 统一，issue #8）。该目录是 **atlas 全部中间
+  产物的单一位点**——适配器产物（`routes.json` / `api/*.json` / …）、漂移标记（`_drift.json`）、
+  本层的新鲜度标记（`_graph_index.json`）**同址**（设计档案 `docs/design/structure-ring.md`
+  的目录树原本就这么写）。此处一度把本层标记与结构环产物**分开**（本层在项目根、结构环在
+  `.trellis/spec/structure/` 下），结果是同名两处：现场出现「`git status` 里有 `.adapter-out/`，
+  而漂移门说『无 .adapter-out 产物目录』」的自相矛盾，排查者会先怀疑门坏 ⇒ 已统一。
+  代价 = 项目根多一个未跟踪目录 ⇒ **项目应在 `.gitignore` 加一行 `.adapter-out/`**（契约 §3.6）。
+* **后端自己的索引库不得落进项目工作树**：存储位置是后端的事，一旦它把库文件写在 cwd，
+  新鲜度键就会把「写索引 ⇒ 键变化 ⇒ 再索引」自激成永不稳定的全量重建。
+* **单进程假设**：`ensure_index` 不带并发互锁——两个消费者并行跑会各做一次全量重建
+  （后写者胜，无正确性损失，只白烧时间）。
 
 后端 = cgc（CodeGraphContext，MIT；PyPI 包 `codegraphcontext`，可执行名 `cgc`）。
 未安装 / 不可达时 `detect()` 返回 None，由调用方决定响亮降级（适配器显式 WARN +
@@ -47,6 +58,9 @@ VERSION_TIMEOUT = 15
 QUERY_TIMEOUT = 120
 INDEX_TIMEOUT = 900
 
+# 新鲜度标记落 `.adapter-out/`——与适配器产物、漂移标记**同址**（项目根，见文件头「落点」）。
+# 三处消费者（本层 / `refresh_structure` / `atlas_check` 的漂移门）同址由
+# `tests/test_refresh_facts.py::test_f41_adapter_out_single_location` 钉住。
 INDEX_MARKER = ".adapter-out/_graph_index.json"
 
 
@@ -158,13 +172,31 @@ def _git(root: Path, *args: str, timeout: int = 30) -> str:
     return p.stdout
 
 
+def _is_git_worktree(root: Path) -> bool:
+    p = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=str(root),
+                       capture_output=True, text=True)
+    return p.returncode == 0 and p.stdout.strip() == "true"
+
+
 def freshness_key(root: Path) -> str:
     """代码态指纹 = sha1(HEAD + 脏文件集)。脏工作区的未提交改动一并计入——
     索引反映的是磁盘工作树，不是 HEAD 提交。
 
     `.adapter-out/` 行排除：它是运行时产物目录（stack-profile.md §3.1 定性——
-    中间产物、非真相源），且本层自己的新鲜度标记也写在里面；不排除的话
-    「写标记 ⇒ 键变化 ⇒ 再索引」自激振荡，新鲜度机制自毁（2026-10-05 实测）。"""
+    中间产物、非真相源），本层自己的新鲜度标记也写在里面；不排除的话
+    「写标记 ⇒ 键变化 ⇒ 再索引」自激振荡，新鲜度机制自毁（2026-10-05 实测）。
+    git 对未跟踪目录报**最深的那一层**（现在是 `?? .adapter-out/`——2026-10-15 起该目录
+    统一在项目根；此前在 `.trellis/spec/structure/` 下时报的是嵌套那一层），故这条子串
+    判据对两种形态都命中。
+
+    **非 git 工作树 ⇒ 返回空键 + 显式 WARN**（不再硬崩）：指纹算不出来，就等于
+    「新鲜度不可保证」⇒ 调用方每次全量重建（`ensure_index` 只认非空键），绝不拿
+    无法验证新鲜度的索引装新鲜。图谱本来是给 git 仓库用的，长期这样说明该去掉
+    `graph` 段——WARN 就是这句话。"""
+    if not _is_git_worktree(root):
+        warn("非 git 工作树：无法计算代码态指纹 ⇒ 每次消费都全量重建索引"
+             "（图谱段不是给非 git 项目用的，建议移除 graph 段）")
+        return ""
     head = _git(root, "rev-parse", "HEAD").strip() if _has_commits(root) else ""
     dirty = "\n".join(ln for ln in _git(root, "status", "--porcelain").splitlines()
                       if ".adapter-out" not in ln)
@@ -215,7 +247,8 @@ def ensure_index(root: Path, cfg: dict | None = None, version: str | None = None
         version = det["version"]
     key = freshness_key(root)
     marker = _read_marker(root)
-    if marker and marker.get("key") == key and marker.get("backend_version") == version:
+    # 空键 = 指纹不可算（非 git 工作树）⇒ 永不认新鲜，见 `freshness_key`。
+    if key and marker and marker.get("key") == key and marker.get("backend_version") == version:
         return {"status": "fresh", "version": version, "key": key}
     p = subprocess.run(["cgc", "index", str(root), "--force", "--no-progress"],
                        capture_output=True, text=True, timeout=INDEX_TIMEOUT,

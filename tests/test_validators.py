@@ -2242,6 +2242,117 @@ def test_prd_depends_on_solid_cycle_fails() -> None:
         assert "实线成环" in row["detail"], row
 
 
+# ---- F39：域间依赖门的解析口径（2026-10-15，issue #7）----
+# 该门有四条判据只写在实现里、契约里没有；①②④ 组合下「带连字符 slug + 含空格中文名」
+# **无任何合法写法**（现场只能改产品命名去迁就解析器）。以下逐条钉住。
+
+def _mk_dep_multi(root: Path, domains: list[tuple[str, str, str]], edges: str) -> None:
+    """通用夹具：`domains = [(slug, domain_name, depends_on_csv), …]`。"""
+    d = root / "product" / "prd"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "prd.md").write_text(
+        FM_GLOBAL + "# 全局 PRD\n\n## 五、功能架构\n\n```mermaid\nflowchart LR\n"
+        + edges + "\n```\n", encoding="utf-8")
+    for slug, name, dep in domains:
+        (d / f"{slug}-prd.md").write_text(
+            f"---\ndoc: prd-domain\ndomain: {slug}\ndomain_name: {name}\n"
+            f"domain_code: {slug.upper()}\nversion: 1.0\ndate: 2026-10-04\nstatus: final\n"
+            f"depends_on: [{dep}]\n---\n\n# {name}\n", encoding="utf-8")
+
+
+def test_f39_bare_slug_nodes_resolve() -> None:
+    """F39 ①：节点写成**裸 slug**（无 `[中文名]`）也必须可用——域 slug 本身就是推导键。
+
+    旧实现只认 `id[标签]`，裸 slug 退化成 `?slug` ⇒ 边集比对**永远失败**（契约却只说
+    「实线入判据」，没规定节点写法）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_dep_multi(root, [("platform", "平台", ""), ("ops", "运维台", "platform")],
+                      "  platform --> ops")
+        row = _dep_check(root)
+        assert row["status"] == "PASS", row
+
+
+def test_f39_hyphenated_slug_nodes_resolve() -> None:
+    """F39 ③：带连字符的域 slug（`ops-console`）作节点 id 必须可用。
+
+    旧节点 id 正则 `\\w+` 不含连字符 ⇒ `ops-console` 被切在连字符处，切出的残片再也
+    解析不回来，带连字符的域 slug 因此**不可用作节点 id**。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_dep_multi(root,
+                      [("platform", "平台", ""), ("ops-console", "运维台", "platform")],
+                      "  pf[平台] --> oc[运维台]")
+        row = _dep_check(root)
+        assert row["status"] == "PASS", row
+
+
+def test_f39_spaced_chinese_domain_name_resolves() -> None:
+    """F39 ④：`domain_name` 含空格（`网关 管理`）必须**整行**读出。
+
+    旧写法 `^domain_name:\\s*(\\S+)` 只取到首个空白前（`网关`）⇒ 标签写全名匹配不上、
+    写短名又读不出来，形成**不可满足**。模板值带引号，故一并剥引号。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_dep_multi(root, [("platform", "平台", ""), ("gateway", "网关 管理", "platform")],
+                      "  pf[平台] --> gw[网关 管理]")
+        row = _dep_check(root)
+        assert row["status"] == "PASS", row
+
+
+def test_f39_quoted_frontmatter_values_still_resolve() -> None:
+    """F39 附：frontmatter 值带引号（模板形态）不得把引号吃进推导键/依赖集。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_dep_multi(root, [("platform", "平台", ""), ("ops", "运维台", 'platform')],
+                      "  platform --> ops")
+        d = root / "product" / "prd"
+        (d / "ops-prd.md").write_text(
+            '---\ndoc: prd-domain\ndomain: "ops"\ndomain_name: "运维台"\n'
+            'version: 1.0\ndate: 2026-10-04\nstatus: final\ndepends_on: ["platform"]\n---\n\n# 运维台\n',
+            encoding="utf-8")
+        row = _dep_check(root)
+        assert row["status"] == "PASS", row
+
+
+def test_f39_chained_edges_are_not_silently_dropped() -> None:
+    """F39：一行的**链式** `a --> b --> c` 必须出**两条**边。
+
+    旧实现整段 `findall` ⇒ 上一段的靶节点被消耗掉，第二条边静默丢失（`c` 的 depends_on
+    会凭空多出一条不一致）。静默丢边 = 把缺口伪装成绿灯（同 `§B92` 族）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_dep_multi(root, [("a", "甲", ""), ("b", "乙", "a"), ("c", "丙", "b")],
+                      "  a --> b --> c")
+        row = _dep_check(root)
+        assert row["status"] == "PASS", row
+
+
+def test_f39_labelled_edges_are_not_silently_dropped() -> None:
+    """F39：带**边标签**的实线 `a -->|前置| b` 不得整条丢掉。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_dep_multi(root, [("a", "甲", ""), ("b", "乙", "a")], "  a -->|前置| b")
+        row = _dep_check(root)
+        assert row["status"] == "PASS", row
+
+
+def test_f39_unresolved_label_gets_its_own_root_cause() -> None:
+    """F39 报告可读性：标签对不上任何 `domain_name` 时，文案须先点名「标签未解析」，
+    而不是只丢 `?<名>` 的对比——读者会以为依赖写错了，实际只是域名对不上。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_dep_multi(root, [("demo", "演示域", "")], "  aliased[另一个名字] --> demo[演示域]")
+        row = _dep_check(root)
+        assert row["status"] == "FAIL", row
+        assert "标签未解析" in row["detail"], row
+        assert "另一个名字" in row["detail"], row
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

@@ -16,6 +16,15 @@ import re
 import sys
 from pathlib import Path
 
+# profile 单源解析（2026-10-12 单源批口径，与 `validate_stack_profile` 同一条加载路径；
+# 判定面白名单不在内核、各消费者自持——本处只取 `adapters` 的**声明值**，形态/合法性
+# 校验仍归 `validate_stack_profile`）。
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.siblings import load_module  # noqa: E402
+
+_sp_profile = load_module("stack_profile")
+
 DEFAULT_MAX_TOTAL = 9500
 DOMAIN_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -146,12 +155,103 @@ def _path_candidates(text: str):
         yield t
 
 
-def _cat_token(val: str) -> str:
-    s = val.strip()
-    for kw in ("covered", "skipped", "added"):
-        if re.search(r'\b' + kw + r'\b', s):
+# categories.A/H 的合法处置 token（**枚举判定**，契约 `rings/structure/reference.md` §7）
+_CAT_TOKENS = ("covered", "skipped", "added")
+# token 之后必须是**显式分隔符**或串尾：散文（取证文本）只准接在分隔符之后
+_CAT_EVIDENCE_SEP = "：:（(，,。；;、）)"
+# 可选标签前缀（F17 容错：`A: covered` / `H：covered`）。字符集排除分隔符与换行，
+# 长度封顶 6——防「一整段散文 + 冒号 + token」绕行（如 `本轮不做，因为：added`）。
+_CAT_LABEL_RE = re.compile(r"^[^：:（(，,。；;、）)\n]{1,6}[：:]")
+
+
+def _as_cat_token(s: str) -> str:
+    """`s` 若以合法 token **声明**开头（token 后接显式分隔符或串尾）⇒ 返回该 token。"""
+    s = s.strip()
+    for kw in _CAT_TOKENS:
+        if s == kw or (s.startswith(kw) and s[len(kw)] in _CAT_EVIDENCE_SEP):
             return kw
-    return s.split("：")[0].split(":")[0].strip()
+    return ""
+
+
+def _cat_token(val: str) -> str:
+    """从 `categories.A/H` 取值里取出**声明位置**上的处置 token；不识别 ⇒ `""`。
+
+    为何不能全文找关键词（2026-10-15 修，issue #6 现场实证）：契约对这两个字段的语义是
+    **枚举判定**（A: `covered|skipped`；H: `covered|added`，adopt 下不得 `skipped`），
+    而旧实现是「文本里出现过该词即算」⇒ 把**描述未完成**的措辞判成**已完成**：
+
+        '待核准：…核准后补写为 added'   → 'added'    # 说的正是尚未补写
+        'covered 与否未定，也不含其他词' → 'covered'
+        '这个类别 stayed skipped 因为没人管' → 'skipped'
+        '本轮不做'                      → '本轮不做'  # 唯一正确报红的形态
+
+    新判据锚定**声明位置**：允许一个可选 `<标签>:` 前缀（保住 F17 的 `A: covered` /
+    `H：covered`），随后必须是枚举 token，且 token 之后跟显式分隔符或串尾。
+    token 后直接接非分隔符内容（`covered 与否未定`）⇒ 不识别 ⇒ `""` ⇒ 必然 FAIL。
+    """
+    s = val.strip()
+    t = _as_cat_token(s)
+    if t:
+        return t
+    m = _CAT_LABEL_RE.match(s)
+    return _as_cat_token(s[m.end():]) if m else ""
+
+
+# D 类形态 token（2026-10-15：跨产物声明一致判据用）。template 的 `categories.D` 三态 =
+# 清单（用户确认无描述）| 指针（有机器可读描述：<地址，可在仓外>）| 未取证：<取证>。
+# 锚定判据与 `_cat_token` 同款（F38 一族）：token 必须在声明位（首位或可选 `<标签>:`
+# 前缀之后）、后接显式分隔符或串尾——散文里「提到指针」≠ 声明为指针。
+_D_FORM_TOKENS = ("清单", "指针", "未取证")
+# 接线不相容形态（`shared/stack-profile.md` §3.5）：指针 / 未取证形态下该类别**不得接**
+# 源码枚举适配器（adapters.api 应置 null）。
+_D_WIRE_INCOMPATIBLE = ("指针", "未取证")
+
+
+def _d_form_token(val: str) -> str:
+    """`categories.D` 取值里**声明位置**上的形态 token；不识别 ⇒ `""`（未声明）。
+
+    顺序与 `_cat_token` 同款（2026-10-15 实测咬合：标签前缀正则会把「未取证」本身
+    当 `<标签>:` 前缀吃掉）——先试声明位直取，标签前缀匹配只是兜底。"""
+    def _direct(s: str) -> str:
+        for kw in _D_FORM_TOKENS:
+            if s == kw or (s.startswith(kw) and s[len(kw)] in _CAT_EVIDENCE_SEP):
+                return kw
+        return ""
+
+    s = val.strip()
+    t = _direct(s)
+    if t:
+        return t
+    m = _CAT_LABEL_RE.match(s)
+    return _direct(s[m.end():]) if m else ""
+
+
+def _pointer_declared(t: str) -> bool:
+    """`apis.md` 是否**声明**了指针形态（2026-10-15 F44 重写，F38 同族锚定）。
+
+    旧判据 = 无锚定子串 `"真相源" in t` —— 全文**提到**「真相源」即算指针 ⇒ 清单型
+    `apis.md` 的语义段只要写一句「本域接口真相源由网关维护」，整表就被误判
+    「清单与指针混写」FAIL（issue #6 同族疾病在兄弟判据上的残留）。
+
+    新判据锚定**声明位置**（与 `_cat_token` / `_d_form_token` 同款）：某个
+    **行首**（或表格**单元格**首）出现 token，其后接显式分隔符或就此结束才算
+    ——契约 §4 D「有 → 记真相源入口 + 访问方式」的落笔形态就是行首 `真相源：…`。
+    散文里的「…真相源由网关维护…」提及一律不算；真按指针落笔时豁免照常成立。"""
+    for ln in t.splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        if s.startswith("|"):
+            cells = [c.strip() for c in s.strip("|").split("|")]
+            for c in cells:
+                if c.startswith("真相源") and (c == "真相源"
+                                               or c[len("真相源")] in _CAT_EVIDENCE_SEP):
+                    return True
+            continue
+        if s.startswith("真相源") and (len(s) == len("真相源")
+                                        or s[len("真相源")] in _CAT_EVIDENCE_SEP):
+            return True
+    return False
 
 
 def validate(root: Path) -> Result:
@@ -241,7 +341,56 @@ def validate(root: Path) -> Result:
     res.add("类别覆盖 · global/", (not globals_missing) or greenfield,
             f"greenfield={greenfield} 缺 {globals_missing}")
     res.add("类别覆盖 · 域级 apis/data-models", not role_issues, "；".join(role_issues))
-    res.add("类别覆盖 · categories A/H", a_ok and h_ok, f"A={cat.get('A')!r} H={cat.get('H')!r}")
+    res.add("类别覆盖 · categories A/H", a_ok and h_ok,
+            f"A={cat.get('A')!r} H={cat.get('H')!r}"
+            f"（处置须**声明在字段首位**：A ∈ covered|skipped；"
+            f"H ∈ {'covered|added|skipped（greenfield）' if greenfield else 'covered|added'}；"
+            f"散文/取证只准接在 `：` 或 `（` 之后）")
+
+    # 适配器缺口登记（F42，2026-10-15，issue #3 ④）
+    # 接线前置未满足时（适配器 0 命中 / 产出不自洽），契约要求「不接线 + 把缺口登记下来」。
+    # 不登记的话两种处境在产物里**同形**（都是 `maintained_by: agent`）：
+    #   (a) 设计结论「源即真相，不接」——缺口是设计结论；
+    #   (b) **工具覆盖不足**（逐件判定表判「接」，但本栈 0 命中）——缺口是工具的问题。
+    # 采用者会把 (b) 读成 (a)，而该类别的 `structure ↔ 代码` 对账平面**永久缺口**、且没人
+    # 知道它不是预期的（`§B118` 的反面：把工具覆盖不足伪装成审慎的设计结论，同样是伪装）。
+    gaps = meta.get("adapter_gaps")
+    if gaps:
+        if not isinstance(gaps, dict):
+            res.add("适配器缺口 · 形态", False,
+                    f"adapter_gaps 应为对象（类别 → 取证），实得 {type(gaps).__name__}")
+        else:
+            res.add_warn("适配器缺口",
+                         "；".join(f"{k}: {v}" for k, v in sorted(gaps.items()))
+                         + "（接线前置未满足 ⇒ 该类别的对账平面缺口；确认是设计结论还是工具覆盖不足）")
+
+    # D 类接线态 ⇔ 形态声明 ⇔ 缺口登记（2026-10-15）：接线态跨两个产物
+    # （`product/stack-profile.yaml` 的 adapters.api ⇔ 本产物的 `categories.D` / `adapter_gaps`）。
+    # 契约 `shared/stack-profile.md` §3.5：D 类为**指针 / 未取证**形态时不得接源码枚举
+    # 适配器（adapters.api 应置 null）——此前无任何机器判据，接线态与形态声明混写没门咬。
+    # 三态纪律：profile 不存在 / adapters.api 未声明 ⇒ 不产行（profile 缺失由
+    # `validate_stack_profile` 独立响亮 FAIL，本器不重复告警）。
+    api_decl: object = None
+    prof_path = root / "product" / "stack-profile.yaml"
+    if prof_path.is_file():
+        _prof = _sp_profile.parse_profile(prof_path.read_text(encoding="utf-8"))
+        adapters_decl = _prof.get("adapters")
+        api_decl = adapters_decl.get("api") if isinstance(adapters_decl, dict) else None
+    if api_decl:
+        d_val = cat.get("D") if isinstance(cat.get("D"), str) else ""
+        d_form = _d_form_token(d_val)
+        gaps_obj = meta.get("adapter_gaps")
+        g_api = (gaps_obj or {}).get("api") if isinstance(gaps_obj, dict) else None
+        why = []
+        if d_form in _D_WIRE_INCOMPATIBLE:
+            why.append(f"categories.D 声明为「{d_form}」形态（{d_val}）")
+        if g_api:
+            why.append(f"adapter_gaps 登记 api：{g_api}")
+        if why:
+            res.add_warn("D 类接线态与形态声明混写",
+                         f"adapters.api = {api_decl!r} 已接线，但 {'；'.join(why)}"
+                         "——§3.5 该形态不得接源码枚举适配器：把 adapters.api 退回 null，"
+                         "或把 categories.D 改为「清单（用户确认无描述）」并给取证")
 
     # 元数据一致 · apps / product
     res.add("元数据 · product/apps", bool(meta.get("product")) and isinstance(meta.get("apps"), list) and meta.get("apps"),
@@ -274,13 +423,14 @@ def validate(root: Path) -> Result:
         if gaps:
             res.add_warn("routes 语义列", "；".join(gaps))
 
-    # D 形态
+    # D 形态（F44：指针形态判据改**锚定声明**——全文子串 `"真相源" in t` 会把清单型
+    # 文件语义段里的提及误判成指针 ⇒ 「清单与指针混写」假 FAIL；F38 同族 diseases）
     d_issues = []
     for p in sorted(spec.glob("*/*/apis.md")):
         t = read(p)
         head = first_table(t)
         is_list = head == TABLE_APIS
-        is_pointer = "真相源" in t
+        is_pointer = _pointer_declared(t)
         rel = p.relative_to(spec).as_posix()
         if is_list and is_pointer:
             d_issues.append(f"{rel} 清单与指针混写")
@@ -344,7 +494,7 @@ def validate(root: Path) -> Result:
             col_issues.append(f"{p.relative_to(spec)} 列头不符")
     for p in sorted(spec.glob("*/*/apis.md")):
         head = first_table(read(p))
-        if head is not None and head != TABLE_APIS and "真相源" not in read(p):
+        if head is not None and head != TABLE_APIS and not _pointer_declared(read(p)):
             col_issues.append(f"{p.relative_to(spec)} 列头={head}")
     res.add("表格列", not col_issues, "；".join(col_issues))
 

@@ -93,7 +93,7 @@ DATA_MODELS = """# demo 数据模型
 
 def mk(root: Path, *, meta: dict | None = None, tour: str = TOUR,
        apis: str | None = APIS_POINTER, directory_map: str = DIRECTORY_MAP,
-       routes: str = ROUTES) -> None:
+       routes: str = ROUTES, profile: str | None = None) -> None:
     spec = root / ".trellis" / "spec" / "structure"
     (spec / "domains").mkdir(parents=True, exist_ok=True)
     (spec / "global").mkdir(parents=True, exist_ok=True)
@@ -107,6 +107,27 @@ def mk(root: Path, *, meta: dict | None = None, tour: str = TOUR,
     if apis is not None:
         (spec / "current" / "demo" / "apis.md").write_text(apis, encoding="utf-8")
     (spec / "current" / "demo" / "data-models.md").write_text(DATA_MODELS, encoding="utf-8")
+    if profile is not None:
+        product = root / "product"
+        product.mkdir(exist_ok=True)
+        (product / "stack-profile.yaml").write_text(profile, encoding="utf-8")
+
+
+PROFILE_WIRED_API = (
+    "product: 夹具产品\n"
+    "origin: adopt\n"
+    "apps:\n"
+    "  - name: web\n"
+    "    path: web\n"
+    "    kind: fullstack\n"
+    "    role: landing\n"
+    "    stack: react+fastapi\n"
+    "adapters:\n"
+    "  routes: routes_adapter\n"
+    "  api: api_adapter\n"
+    "  models: null\n"
+    "  tests: null\n"
+)
 
 
 def _res(root: Path):
@@ -237,6 +258,102 @@ def test_structure_categories_prefix_tolerance() -> None:
         assert res["类别覆盖 · categories A/H"]["ok"] is False
 
 
+def test_f38_categories_prose_mention_is_not_a_declaration() -> None:
+    """F38（2026-10-15，issue #6）：A/H 是**枚举声明**，判据读状态不读措辞。
+
+    旧 `_cat_token` 是全文子串匹配（`re.search(r'\\bkw\\b', s)`）⇒ **只要字段里提到过**
+    关键词就算通过。后果：描述「尚未完成」的措辞被判成「已完成」——H 类恰好是 `adopt`
+    下**唯一不允许 `skipped`** 的类别（既有项目必须把「怎么跑」记下来），是收口时最需要
+    它咬住的一格。
+
+    四侧坏输入逐条对齐 issue 现场实证：前三条旧实现在**假绿**，第四条是旧实现唯一能
+    正确报红的形态。
+    """
+    cases = {
+        "待核准：…核准后补写为 added": "描述『尚未补写』却含 added",
+        "covered 与否未定，也不含其他词": "明文说不确定",
+        "这个类别 stayed skipped 因为没人管": "散文里提到 skipped",
+        "本轮不做": "干脆没提关键词",
+        "本轮不做，因为：added": "散文 + 冒号后带 token（防标签前缀被滥用成绕行道）",
+    }
+    for val, why in cases.items():
+        for key in ("A", "H"):
+            meta = dict(META)
+            meta["categories"] = {**META["categories"], key: val}
+            with _tmp() as td:
+                root = Path(td)
+                mk(root, meta=meta)
+                row = _res(root)["类别覆盖 · categories A/H"]
+                assert row["ok"] is False, f"{key}={val!r} 必须 FAIL（{why}）"
+
+
+def test_f38_categories_declaration_with_evidence_passes() -> None:
+    """F38 正控：token 声明在首位、取证文本接在 `：` / `（` 之后 ⇒ 通过。
+
+    保住契约本来就允许的写法（token 之后放散文取证），确保新判据不是「一律从严」。
+    """
+    for val, key in (("covered：根 README「技术栈」「快速开始」两节齐备", "A"),
+                     ("added：根 README 补了测试/运行说明", "H"),
+                     ("covered（既有测试说明齐备）", "H"),
+                     ("A: covered", "A"),
+                     ("H：added", "H")):
+        meta = dict(META)
+        meta["categories"] = {**META["categories"], key: val}
+        with _tmp() as td:
+            root = Path(td)
+            mk(root, meta=meta)
+            row = _res(root)["类别覆盖 · categories A/H"]
+            assert row["ok"] is True, f"{key}={val!r} 应通过，实得 {row['detail']}"
+
+
+
+def test_f42_adapter_gaps_are_warned_not_failed() -> None:
+    """F42（2026-10-15，issue #3 ④）：`_meta.json.adapter_gaps` 非空 ⇒ `WARN` 逐条指名。
+
+    「未接」本身不是缺陷（契约：未接 ≠ 缺陷，而是「源即真相」的判定结果），所以不置红；
+    但**必须可见**——不登记的话两种性质完全不同的处境在产物里同形（都是
+    `maintained_by: agent`）：(a) 设计结论「源即真相，不接」；(b) **工具覆盖不足**
+    （逐件判定表判「接」但本栈 0 命中）。采用者会把 (b) 读成 (a)，而该类别的
+    `structure ↔ 代码` 对账平面永久缺口且无人知道它不是预期的。
+
+    变异证明：摘掉 `add_warn` 分支 ⇒ 本用例红（缺口重新变成不可见）。
+    """
+    meta = dict(META)
+    meta["adapter_gaps"] = {"routes": "0 命中（文件式路由 + .tsx）"}
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, meta=meta)
+        res = vst.validate(root)
+        assert res.ok, "缺口是 WARN，不得置红"          # 未接 ≠ 缺陷
+        got = [w for w in res.warns if w["check"] == "适配器缺口"]
+        assert got, res.warns                            # 但必须可见
+        assert "routes" in got[0]["detail"] and "0 命中" in got[0]["detail"], got[0]
+
+
+def test_f42_absent_or_empty_gaps_produce_no_noise() -> None:
+    """F42：`adapter_gaps` 缺失或空对象 ⇒ **不产行、不产 WARN**（否则每个项目都多一条噪声）。"""
+    for gaps in (None, {}):
+        meta = dict(META)
+        if gaps is not None:
+            meta["adapter_gaps"] = gaps
+        with _tmp() as td:
+            root = Path(td)
+            mk(root, meta=meta)
+            res = vst.validate(root)
+            assert not [w for w in res.warns if w["check"] == "适配器缺口"], res.warns
+            assert all(c["ok"] is not False for c in res.rows if "适配器缺口" in c["check"]), res.rows
+
+
+def test_f42_malformed_gaps_field_fails() -> None:
+    """F42：形态非法（非对象）⇒ FAIL——契约把它定为「类别 → 取证」的对象。"""
+    meta = dict(META)
+    meta["adapter_gaps"] = ["routes"]
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, meta=meta)
+        res = _res(root)
+        assert res["适配器缺口 · 形态"]["ok"] is False, res.get("适配器缺口 · 形态")
+
 
 def test_f31_case_id_reference_not_flagged_as_todo_placeholder() -> None:
     """F31（R7）：结构文档自然语言引用用例 ID（`E2E-TODO-004`，`-TODO-` 非独立 token）
@@ -334,3 +451,140 @@ def test_f34b_spec_relative_sibling_reference_resolves() -> None:
         res = _res(root)
         assert res["来源可定位"]["ok"] is False, "幻影引用必须仍命中（不放宽）"
         assert "no-such-file" in res["来源可定位"]["detail"]
+
+
+# ---------------------------------------------------- D 类接线态 ⇔ 形态声明（2026-10-15）
+
+def _wire_warns(v):
+    return [w for w in v.warns if w["check"] == "D 类接线态与形态声明混写"]
+
+
+def test_f43_wired_api_with_pointer_d_warns() -> None:
+    """接线态跨产物混写：`adapters.api` 已接线而 `categories.D` 锚定声明为**指针**形态 ⇒
+    WARN 指名（`shared/stack-profile.md` §3.5：指针 / 未取证形态不得接源码枚举适配器）。
+
+    变异证明（M64）：摘掉判定分支 ⇒ 本用例红（混写重新变得不可见）。
+    另覆盖同族「未取证」形态。"""
+    for d_val, why in (("指针（有机器可读描述：网关 /openapi.json，可在仓外）", "指针"),
+                       ("未取证：用户尚未答复有无机器可读描述", "未取证")):
+        meta = dict(META)
+        meta["categories"] = {"A": "skipped", "H": "covered", "D": d_val}
+        with _tmp() as td:
+            root = Path(td)
+            mk(root, meta=meta, profile=PROFILE_WIRED_API)
+            v = vst.validate(root)
+            assert v.ok, "接线态混写是 WARN，不得置红"
+            got = _wire_warns(v)
+            assert got, (d_val, [w["check"] for w in v.warns])
+            assert "api_adapter" in got[0]["detail"], got[0]
+            assert why in got[0]["detail"] and "§3.5" in got[0]["detail"], got[0]
+
+
+def test_f43_wired_api_with_list_form_stays_silent() -> None:
+    """正控：`adapters.api` 接线 + `categories.D` 锚定声明为**清单**形态（用户确认无
+    描述）⇒ 合法一致态，不产行不产 WARN（新判据不得一律从严）。"""
+    meta = dict(META)
+    meta["categories"] = {"A": "skipped", "H": "covered",
+                          "D": "清单（用户确认无机器可读描述）"}
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, meta=meta, profile=PROFILE_WIRED_API)
+        v = vst.validate(root)
+        assert not _wire_warns(v), v.warns
+
+
+def test_f43_wired_api_with_gaps_registration_warns() -> None:
+    """`adapter_gaps` 登记了 `api`（接线前置未满足）而 profile 仍接线 ⇒ 同为混写，WARN。
+    与 F42 的缺口可见性并存：两条 WARN 触发面不同（登记可见 / 接线态矛盾），不互相掩盖。"""
+    meta = dict(META)
+    meta["adapter_gaps"] = {"api": "0 items（桩检查未识别 .tsx 调用点）"}
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, meta=meta, profile=PROFILE_WIRED_API)
+        v = vst.validate(root)
+        got = _wire_warns(v)
+        assert got and "adapter_gaps" in got[0]["detail"], v.warns
+        assert [w for w in v.warns if w["check"] == "适配器缺口"], "F42 的缺口 WARN 必须仍在"
+        assert v.ok, "WARN 不置红"
+
+
+def test_f43_prose_mention_undeclared_and_missing_profile_stay_silent() -> None:
+    """F38 同族三侧静默：① 散文提及「指针」不算声明（锚定判据）；② `adapters.api`
+    未声明（null）时指针形态是合法降级；③ profile 缺失⇒不产行（profile 合法性
+    归 validate_stack_profile，本器不重复告警、不假红）。"""
+    meta_prose = dict(META)
+    meta_prose["categories"] = {"A": "skipped", "H": "covered",
+                                "D": "指针与否未定：用户没来得及答"}
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, meta=meta_prose, profile=PROFILE_WIRED_API)
+        assert not _wire_warns(vst.validate(root)), "散文提及 ≠ 声明（F38 口径）"
+
+    meta_pointer = dict(META)
+    meta_pointer["categories"] = {"A": "skipped", "H": "covered",
+                                  "D": "指针（网关文档站）"}
+    meta_pointer["adapter_gaps"] = {}
+    profile_null_api = PROFILE_WIRED_API.replace("  api: api_adapter\n", "  api: null\n")
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, meta=meta_pointer, profile=profile_null_api)
+        assert not _wire_warns(vst.validate(root)), "api=null + 指针形态 ⇒ 合法降级"
+
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, meta=meta_pointer)   # 无 profile
+        assert not _wire_warns(vst.validate(root)), "profile 缺失 ⇒ 不产行"
+
+
+# ---------------------------------------------------- F44：D 形态指针判据锚定化
+
+LIST_APIS_WITH_PROSE = """# demo 接口
+
+| 方法 | 路径 | 用途 | 请求要点 | 响应要点 | 来源模块 |
+|---|---|---|---|---|---|
+| POST | /echo | 夹具端点 | — | — | backend |
+
+## 语义说明
+
+本域接口的真相源由网关维护，本表只收客户端调用点；网关文档不在仓内。
+"""
+
+
+def test_f44_list_form_prose_mention_of_zhenxiangyuan_not_flagged() -> None:
+    """F44（2026-10-15）：清单型 `apis.md` 的语义段**提到**「真相源」⇒ 不得判「清单与
+    指针混写」FAIL。旧判据是无锚定全文子串（issue #6 同族疾病在 D 形态残留）。
+    变异证明（M66）：`is_pointer` 退回全文子串 ⇒ 本用例红（假 FAIL 复活）。"""
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, apis=LIST_APIS_WITH_PROSE)
+        res = _res(root)
+        assert res["D 形态"]["ok"] is True, res["D 形态"]
+
+
+def test_f44_anchored_pointer_still_detected_both_sides() -> None:
+    """锚定判据两侧都不松：①行首 `真相源：` 仍是指针形态（夹具基线即此形态）；②
+    清单表 + 声明位指针条目（表格单元格首 `真相源：`）仍判**混写 FAIL**（fail-closed
+    不放宽——真混写必须咬）；③无表且无锚定声明 ⇒ 「既非清单也非指针」照 FAIL。"""
+    # ① 基线指针文件（APIS_POINTER = `真相源：…` 行首声明）通过既有基线用例覆盖。
+    with _tmp() as td:
+        root = Path(td)
+        mk(root)  # baseline: pointer form passes
+        assert _res(root)["D 形态"]["ok"] is True
+
+    # ② 清单表 + 声明位指针 = 真混写 ⇒ FAIL
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, apis=LIST_APIS_WITH_PROSE.replace(
+            "本域接口的真相源由网关维护，本表只收客户端调用点；网关文档不在仓内。",
+            "| — | OpenAPI: 网关描述 | 真相源：网关文档站 |  |  | web |"))
+        res = _res(root)
+        assert res["D 形态"]["ok"] is False, "真混写必须仍咬（fail-closed 不放宽）"
+        assert "混写" in res["D 形态"]["detail"], res["D 形态"]
+
+    # ③ 无表、无锚定声明（提及也不在声明位）⇒ 既非清单也非指针
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, apis="# demo 接口\n\n有人提到接口的真相源在别处，但本文件什么形态都不是。\n")
+        res = _res(root)
+        assert res["D 形态"]["ok"] is False
+        assert "既非清单也非指针" in res["D 形态"]["detail"], res["D 形态"]

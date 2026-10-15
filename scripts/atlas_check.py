@@ -75,6 +75,11 @@ _GATE_PRECONDITIONS = {
 
 GEN_NOT_READY = 3
 
+# 空装配摘要（= sha256('')[:16]）。旧安装器在 npm 全局安装路径下每个文件都被过滤掉，
+# 落的就是这个值；两侧同错 ⇒ 本门曾恒等恒 ok。识别它是为了给**根因级**指引（重装），
+# 而不是混进「源包已前进/落后」那条对账文案（F37，2026-10-15）。
+EMPTY_DIGEST = "e3b0c44298fc1c14"
+
 # E2E 生成物运行器所需的解释器级依赖：候选解释器必须能**导入**它们才算可用。
 # 判据是「可导入性」而非「路径存在」——框架名只在这里作为探测目标出现。
 
@@ -264,11 +269,22 @@ def check_drift(root: Path, rows: Row) -> None:
     """「结构漂移」门（gates.md §2.2，2026-10-04 登记）：只读 refresh_structure 落的
     漂移标记，**不做二次判定**。标记 = 最近一次 --apply 刷新发现的事实表键级增删
     （源码结构变更未经 apply 登记的信号）；登记语义归收口对账人终审 ⇒ WARN 不置红。
+
+    基准 = **项目根** `.adapter-out/`（2026-10-15 统一，issue #8）。此前本门读
+    `.trellis/spec/structure/.adapter-out/`，而图谱层写项目根 ⇒ 同名两处，现场出现
+    「`git status` 里有 `.adapter-out/`，本门却说『无 .adapter-out 产物目录』」的矛盾
+    （排查者会先怀疑门坏）。统一后 SKIP 文案**带上实际路径**，这类「SKIP 与现场不一致」
+    一眼能看出问的是哪条路径。
     """
-    out_dir = root / ".trellis" / "spec" / "structure" / ".adapter-out"
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from refresh_structure import adapter_out_dir  # noqa: E402  单源：落点只此一处
+    except ImportError:
+        adapter_out_dir = lambda r: r / ".adapter-out"  # noqa: E731  旧装配缺该模块时的退路
+    out_dir = adapter_out_dir(root)
     marker = out_dir / "_drift.json"
     if not out_dir.is_dir():
-        rows.add("结构漂移", "SKIP", "结构环未跑（无 .adapter-out 产物目录）")
+        rows.add("结构漂移", "SKIP", f"结构环未跑（未找到 {out_dir}）")
         return
     if not marker.is_file():
         rows.add("结构漂移", "ok", "最近一次事实刷新无键级增删")
@@ -297,6 +313,13 @@ def check_version(root: Path, rows: Row) -> None:
     源包内容摘要，与当前源包重算摘要比对——不一致 ⇒ WARN（源包已前进/落后于装配态，
     重跑 install.sh 前先回灌对账）。漂移是常态信号非门禁失败 ⇒ WARN 不置红
     （check_drift 同款语义）。算法单点 = scripts/pkg_digest.py（两侧同文件，防双端漂移）。
+
+    F37（2026-10-15）：历史坏戳 `e3b0c44298fc1c14`（= `sha256('')[:16]`）单列一条
+    **根因级** WARN，不走「源包已前进/落后」——那条会把人引向对账，而真正该做的是
+    重装。坏戳由旧安装器产出：旧 `digest()` 拿**绝对** parts 判 `SKIP_DIRS`，npm 全局
+    安装的源包位于 `<prefix>/lib/node_modules/<pkg>` ⇒ 每个文件都被滤掉 ⇒ 空摘要落戳，
+    而副本侧同错重算 ⇒ 两侧恒等 ⇒ 本门恒 ok。修后 `digest()` 对空装配直接抛
+    `EmptyAssembly`，故该哨兵只可能对应「修复前落的戳」。
     """
     version_file = root / ".atlas" / "VERSION"
     if not version_file.is_file():
@@ -307,18 +330,29 @@ def check_version(root: Path, rows: Row) -> None:
         rows.add("装配版本", "WARN", ".atlas/VERSION 形态非法（应为 摘要/时间/源包路径 三行）")
         return
     stamped, _when, source = lines[0], lines[1], lines[2]
+    if stamped == EMPTY_DIGEST:
+        rows.add("装配版本", "WARN",
+                 "历史坏戳（旧安装器把空装配当成合法摘要：摘要 == sha256('')[:16]）"
+                 "——重跑 install.sh 重新落戳；此戳不承载任何内容信息，本门此前恒 ok")
+        return
     source_dir = Path(source)
     if not source_dir.is_dir():
         rows.add("装配版本", "SKIP", f"源包路径不可达（{source}）——搬家后未更新 VERSION")
         return
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from pkg_digest import digest  # noqa: E402  延迟导入：旧装配无此文件时走 SKIP
+        from pkg_digest import EmptyAssembly, digest  # noqa: E402  延迟导入：旧装配无此文件时走 SKIP
     except ImportError:
-        rows.add("装配版本", "SKIP", "无 scripts/pkg_digest.py（旧装配）——重跑 install.sh 补齐")
+        rows.add("装配版本", "SKIP",
+                 "无 scripts/pkg_digest.py 或版本过旧（无 EmptyAssembly）——重跑 install.sh 补齐")
         return
     try:
         current = digest(source_dir)
+    except EmptyAssembly as e:
+        # 独立子句且**排在 (OSError, ValueError) 之前**：EmptyAssembly 是 ValueError 子类，
+        # 并进同一个 tuple 会被当成 SKIP，而「装配集为空」绝不是合法降级。
+        rows.add("装配版本", "WARN", f"装配集为空，摘要不可信（{e}）——源包疑似不完整，重跑 install.sh")
+        return
     except (OSError, ValueError) as e:
         rows.add("装配版本", "SKIP", f"源包摘要计算失败（{e}）")
         return
@@ -326,7 +360,10 @@ def check_version(root: Path, rows: Row) -> None:
         rows.add("装配版本", "ok", f"源包与装配态一致（{stamped}）")
         return
     rows.add("装配版本", "WARN",
-             f"源包已前进/落后于装配态（装配 {stamped} → 当前 {current}）——重跑 install.sh 前先回灌对账（ATLAS-UPSTREAM）")
+             f"源包已前进/落后于装配态（装配 {stamped} → 当前 {current}）——"
+             "生效：npm 全局源包态 `atlas upgrade` 后在项目里跑 `atlas update`；"
+             "本地源仓态重跑 `install.sh`；差异明细跑 `backflow.py` 三态对账"
+             "（SOURCE_ONLY 拒绝护栏；D79 ⑤）")
 
 
 def _is_node_playwright(p: Path | str) -> bool:

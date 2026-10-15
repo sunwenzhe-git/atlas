@@ -5,12 +5,15 @@
 （同一派生逻辑、同一排序）——两通道漂移 = 事实源分叉，同族 `3509 §B92`（索引静默脱节）。
 降级必须显式（stderr WARN + `backend_fallback` 字段），静默改道 = 门失效。
 
-五侧（1–4 经 fake `cgc`；5 需真后端，`ATLAS_REAL_GRAPH=1` 门控）：
+六侧（1–5 经 fake `cgc`；6 需真后端，`ATLAS_REAL_GRAPH=1` 门控）：
   1. 两通道 items 全等；
   2. auto 解析：profile 声明 graph ⇒ graph；
   3. 声明了 graph 但 cgc 缺失 ⇒ 响亮降级（exit 0 + WARN + backend_fallback）；
   4. 显式 --backend graph 而 cgc 缺失 ⇒ 硬错 exit 1（显式要求不得被静默改道）；
-  5. 真后端：cgc index 夹具后 graph 通道与 regex 通道全等 + 双跑字节一致。
+  5. **枚举范围等价**：后端 File 节点里含依赖 / 构建目录 ⇒ 必须剪掉（否则假路由）；
+  6. 真后端：cgc index 夹具后 graph 通道与 regex 通道全等 + 双跑字节一致。
+
+变异 M55：摘掉 `_prune` 调用（枚举范围退回「后端给什么用什么」）⇒ 第 5 侧红。
 """
 from __future__ import annotations
 
@@ -116,6 +119,37 @@ def test_graph_channel_matches_regex_channel(tmp_path) -> None:
             "两通道 items 漂移（事实源分叉）:\n"
             f"graph={json.dumps(graph_out['items'], ensure_ascii=False)}\n"
             f"regex={json.dumps(regex_out['items'], ensure_ascii=False)}")
+
+
+def test_graph_channel_prunes_dependency_dirs(tmp_path) -> None:
+    """枚举范围等价：后端 File 节点里含依赖 / 构建目录 ⇒ 必须剪掉，不得产出假路由。
+
+    为何要它（2026-10-15 补）：regex 通道走 `iter_files` ⇒ 天然剪 `IGNORE_DIRS`；
+    graph 通道拿的是后端 File 节点，而 `cgc index` 不带任何 exclude 旗标——后端若
+    不理 gitignore，`node_modules` / `dist` 里的 `.tsx` 会整批进枚举池。
+    """
+    bin_dir = fake_cgc_into(tmp_path)
+    polluted = {
+        "frontend/node_modules/pkg/routes/index.tsx": "// 依赖里的假路由\n",
+        "frontend/dist/routes/index.tsx": "// 构建产物\n",
+    }
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root)
+        for rel, body in polluted.items():
+            p = root / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(body, encoding="utf-8")
+        env = dict(os.environ, PATH=bin_dir + os.pathsep + os.environ.get("PATH", ""),
+                   FAKE_CGC_FILES=json.dumps(sorted({**FILES, **polluted})))
+        graph_out, p2 = run(root, "--backend", "graph", env=env)
+        regex_out, p1 = run(root, "--backend", "regex", env=env)
+        assert p1.returncode == 0 and p2.returncode == 0, (p1.stderr, p2.stderr)
+        assert graph_out["items"] == regex_out["items"], (
+            "图谱通道枚举范围未剪（依赖目录进了枚举池）:\n"
+            f"graph={sorted(f for f in graph_out['source_files'])}")
+        assert not any("node_modules" in f or "/dist/" in f
+                       for f in graph_out["source_files"]), graph_out["source_files"]
 
 
 def test_auto_resolves_graph_when_declared(tmp_path) -> None:

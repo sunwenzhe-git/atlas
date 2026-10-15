@@ -4,6 +4,123 @@
 
 ---
 
+## [Unreleased]
+
+### 🧹 门册五件遗留态收口 (Leftover-State Batch: D79)
+
+* **【真跑记录裁决与升档规则落档】（`shared/gates.md` 上限声明/2.2/2.4, `DESIGN.md` §13 项, `rings/e2e/reference.md` §16, `shared/single-source.md` §3；D79 ①）**：
+  - 以 gates 2.2 行的仓内记录（逐页真跑 + 咬出真红，`3508 §166`/`§187`/`§190`）为事实，纠正三处 2026-09-28 批的「真栈未跑/未发生」残留措辞（完成门 = 域收口事件、与真跑门独立）；「暂不真跑」裁定标注为已被执行反推，双台账会话号（`3509 §111`/`3508 §111`）并列引用。
+  - 取证上限改**逐格**：`真跑级` 只给字面咬过的行、须附咬合证据；未覆盖行保持出厂级、不预填；**首跑协议 = 1 app × 1 页最小切片**，留档 `product/e2e/reviews/<日期>/`；完成门与真跑门是独立升档通道；E0 产物残留重生成绑真跑准备日。
+* **【AC 反向覆盖：升 FAIL 规则落档 + 死指针修正】（`validators/validate_e2e_index.py`, `shared/gates.md` 2.1/§3；D79 ②）**：
+  - 触发 = 零挂靠清零 + 清零态实测全绿一次 ⇒ WARN 分支改 FAIL（不设 profile 开关——灰度即「看起来在跑」面）；升档日 source/copy 分叉按回灌批收口。校验器 WARN detail 里指向外仓 `product/issues.md` P9 的死指针改为 gates 行锚（台账不在本仓）。
+* **【D77 否决面词汇钉（canonical 判据⑦，治标）+ closeout 宣称 sweep】（`tests/test_canonical_consistency.py`, `shared/gates.md` 2.6, `shared/closeout.md`, `docs/design/overview.md`, `docs/design/prd-ring.md`；D79 ③）**：
+  - 黑名单词（`Leiden/拓扑聚类/自动归域/端点到模型/阻断全仓`）出现在 git 跟踪源 md 的活语境 ⇒ 红；豁免锚 = 行内 `D77/D78`（局部自持，**不得**并入 `RETIRE_MARKS`——共享会把豁免串门到 ①③⑤）；扫面收窄到 `docs/**.md`（除 `.vitepress`）+ `shared/**.md` + 顶层 `README.md`（rglob 不认 .gitignore，dist 编译产物会漂判据）；`rings`、`apply`、`patches` 三目录不扫 = 显式盲区。
+  - **判据落地首跑即咬 4 处漏网活体**（`overview.md:20/:57/:143`、`prd-ring.md:124` 的 Leiden/拓扑聚类宣称——D78 ④ 收窄批的漏网，教训 = sweep 按词 grep、不按已知清单改文件），同批全部收窄为多信号投票 + D77 锚。
+  - closeout 新触发行：改 §12 被否裁决 ⇒ 全仓 grep 否决词 + 同批登记进黑名单（钉=治标本面，语义自洽终归人）。变异 M67：摘掉黑名单一个词 ⇒ 喂坏输入用例红（还原逐字节一致）。
+* **【impact 对账观察窗（不加代码）】（`shared/gates.md` 2.1, `scripts/impact_reconcile.py` docstring；D79 ④）**：
+  - 台账 = `impact_reconcile` **已无条件落盘**的 `impact-reconcile.json`（每单一份）；升 FAIL 触发 = 裁决日起**连续 3 单**漏报（miss）为 0 且无**同文件**重复漏报（对账本来就只判文件级）；升档后分档 = **miss ⇒ FAIL、over 保持 WARN**（多报是预测偏宽的良性量，收口不得被它钉死）；判据值全落 gates 行、不赖仓外 `3509 §B191-1` 台账数字。
+* **【装配版本门 WARN 文案升级】（`scripts/atlas_check.py`, `scripts/pkg_digest.py`, `shared/gates.md` 2.2, `tests/test_atlas_check.py`；D79 ⑤）**：
+  - WARN detail 给齐**两支路生效路径**（npm 全局源包态 `atlas upgrade` → `atlas update`；本地源仓态重跑 `install.sh`）+ `backflow.py` 三态明细通道（版本门不做第二套文件级 diff——防腐）；同批回写三处旧文案字样 + 测试断言钉（**M68**：从 detail 摘掉动作词 ⇒ 红，还原逐字节一致）。
+
+### 📐 图谱收益实测收窄与接线/gitignore 自动化 (Graph Value Recalibration & Wiring)
+
+* **【图谱「提议」按栈门控 + 收益宣称按实测收窄】（`shared/stack-profile.md` §2/§3.6, `rings/structure/reference.md` §6/§7, `templates/stack-profile.yaml`, `scripts/impact_report.py`, `DESIGN.md` D78, `docs/innovations/code-graph.md`, `docs/design/structure-ring.md`, `docs/concepts/rings.md`, `docs/guide/token-engineering.md`, `README.md`；issue #2 复审）**：
+  - cgc 0.6.13 实测（前端形态夹具独立复测）：**JSX 组件引用不产生任何调用边**（`CALLS` 与启发式调用边均不覆盖 `element: <Comp />` 形态），且 atlas 消费层只认 `CALLS` 边（`_graph.callers` 写死边型）⇒ 图谱对纯 UI 栈两条消费面近乎零收益——`routes` 图谱枚举通道与 regex **产出恒等**，`impact` 对组件叶面系统性失真；逻辑调用链照常有效。
+  - **提议按栈门控**：仅当 `apps[]` 存在 `kind ∈ {backend, fullstack}` 的 app 时才探测并提议声明 `graph` 段；纯 `frontend` / `mobile` 不提议（不探测、不提、不推销）。撤回排定的「体检报告图谱探测提醒」——对目标栈无收益的能力不需要发现通道。
+  - 收益口径分两层写死：**消费层**（atlas 只读 `CALLS` 边）是不随 cgc 版本漂移的不变式；**后端层**（0.6.13 边型普查）随版本可能变化，由 `pinned` 探测 WARN 感知。
+  - 文档同步收窄：`docs/design/structure-ring.md` 的「调用拓扑候选域聚类 / Leiden」宣称（与 D77 ① 直接冲突，03 收窄漏网）、`docs/concepts/rings.md`、`docs/guide/token-engineering.md`（advisory ≠ 阻断）、`docs/innovations/code-graph.md` 与 `README.md` 的开场措辞；`impact_report` 常驻「无调用方命中」提示句补 JSX 渲染引用。
+* **【接线第 5 触点：`.gitignore` 自动追加 `.adapter-out/`】（`patches/project-wiring/apply-wiring.py`, `shared/stack-profile.md` §3.1/§3.6, `shared/gates.md` 2.3；issue #8 的后续）**：
+  - issue #8 把 atlas 全部中间产物统一到项目根 `.adapter-out/` 之后，**所有**接线项目的 `git status` 都会出现未跟踪噪声（不只图谱用户）。接线在目标项目**已有** `.gitignore` 时幂等追加一行；`.adapter-out` 子串已存在 ⇒ 跳过；`!.adapter-out` 负模式 ⇒ 跳过不与用户规则打架；**无 `.gitignore` ⇒ 不首创**（报告给一行建议）。**本触点无退役对称**：单向追加、永不回收——`.gitignore` 不是 wiring 建的文件（与 `pytest.ini`「逐字节相等才清」不同，明写承认）。门面 2.3 行四触点 → 五触点，计数随 `tests/test_apply_wiring.py`（20 条）/ `tests/test_project_wiring.py`（12 条）刷新。
+* **【跨产物声明一致门：D 类接线态 ⇔ 形态 / 缺口登记】（`validators/validate_structure.py`, `rings/structure/reference.md` §7，`shared/gates.md` 2.1）**：
+  - 契约 §3.5 把「D 类有机器可读描述 ⇒ 指针形态 ⇒ `adapters.api` 置 null」写死，但接线态与形态声明**分属两个产物**（profile ⇔ `_meta.json`），此前无任何机器判据——混写（如 profile 还声明着 `api` 而 `_meta.categories.D` 记的是指针）没有门咬。现 `validate_structure` 判：`adapters.api` 已接线但 `categories.D` **锚定声明**为指针 / 未取证形态、或 `adapter_gaps` 登记 `api` ⇒ `WARN` 指名（锚定声明口径 = F38 同族：
+    token 首位 + 显式分隔符，散文提及不算声明）；profile 缺失 / `adapters.api` 未声明 ⇒ 不产行。同日实测咬合：标签前缀正则会把「未取证」本身当 `<标签>:` 前缀吃掉 ⇒ 判据顺序定为「声明位直取优先、标签兜底」（更新至 `_d_form_token` 注释与 F43 钉子）。变异证明：M64，`tests/test_structure_validator.py`（24 条）。
+* **【`apis.md` 指针形态判据锚定化（F44，issue #6 同族兄弟残留）】（`validators/validate_structure.py`）**：
+  - 旧判据是无锚定全文子串 `"真相源" in t`：清单型 `apis.md` 的语义段只要写一句「本域接口真相源由网关维护」，整表就被误判「清单与指针混写」FAIL——与 issue #6 的 `categories.A/H` 措辞判形态同一族疾病，落在兄弟判据上。现改**锚定声明**：行首（或表格单元格首）出现 `真相源` token、其后接显式分隔符或就此结束才算指针形态；散文提及一律不算，真按指针落笔时豁免照常成立。`表格列` 门里对指针文件的豁免同步换用同一判据。变异证明：M66，判据退回全文子串 ⇒ `test_f44_list_form_prose_mention_of_zhenxiangyuan_not_flagged` 红（还原逐字节一致）。
+
+
+
+* **【`.adapter-out/` 单一位点 = 项目根】（`scripts/refresh_structure.py`, `scripts/atlas_check.py`, `adapters/_graph.py`, `shared/stack-profile.md` §3.1/§3.6, `DESIGN.md` D41/D77, `rings/structure/reference.md` §6.1；issue #8）**：
+  - 设计档案 `docs/design/structure-ring.md` 的目录树**从一开始**就把 `.adapter-out/` 画在**项目根**（「适配器提取中间件、图谱新鲜度标记」同处），而实现漂成了两处：图谱层在项目根、结构环产物在 `.trellis/spec/structure/` 下 ⇒ 同名两处。现场因此出现「`git status` 里有 `.adapter-out/`，而「结构漂移」门说『无 .adapter-out 产物目录』」的自相矛盾——排查者会先怀疑门坏，而不是去比对基准。
+  - 三消费者（`refresh_structure` 写入 / 漂移门读取 / `_graph` 标记）统一到项目根；漂移门的 SKIP 文案**带上实际路径**，同类「SKIP 与现场不一致」一眼能看出问的是哪条路径。新增 `test_f41_adapter_out_single_location` 把三者钉在一起（此前是两处硬编码字面量，无任何测试关联）。
+  - **顺带修掉一个移动暴露的真缺陷**：`CLEAN_EXEMPT_PREFIXES`（F26 基线自进前置④「产品侧干净」）此前靠 `.trellis/` **顺带**豁免 `.adapter-out/`；移到项目根后若不显式豁免，atlas 自己写的中间目录会被读成「产品侧有未提交改动」⇒ **基线自进永久冻结**（比原缺陷更难察觉：门不报错，只是再也不前进）。已把 `.adapter-out/` 加入豁免前缀。
+  - 代价：项目应在 `.gitignore` 加一行 `.adapter-out/`（对所有项目都成立，不再只是图谱用户）。
+* **【接线缺口可见化：`_meta.json.adapter_gaps`】（`validators/validate_structure.py`, `rings/structure/reference.md` §6.1/§7/§9, `templates/structure/_meta.json`；issue #3 ④）**：
+  - 接线前置未满足时（适配器 0 命中 / 产出不自洽），契约要求「不接线 + 登记缺口」。不登记的话两种性质完全不同的处境在产物里**同形**（都是 `maintained_by: agent`）：(a) 设计结论「源即真相，不接」；(b) **工具覆盖不足**（逐件判定表判「接」，但本栈 0 命中）。采用者会把 (b) 读成 (a)，而该类别的 `structure ↔ 代码` 对账平面**永久缺口、且无人知道它不是预期的**——`§B118` 论证了「把缺口伪装成配门比诚实缺口更糟」，本条补其反面：**把工具覆盖不足伪装成审慎的设计结论，同样是伪装**。
+  - 此前契约把落点写成「写进台账（`§B118`）」，而 `3509` 台账**不在本仓** ⇒ 缺口被记录在采用者读不到的地方。现改为落 `_meta.json.adapter_gaps`（类别 → 为什么没接）：`validate_structure` 对非空值出 `WARN` 逐条指名（**不置红**——未接本身不是缺陷，但必须可见），形态非法 ⇒ `FAIL`；`atlas_check` 体检报告直接可见。
+
+### 🐛 自感知上报四项缺陷清偿 (Self-Reported Defects: Four Fixes)
+
+* **【装配版本门：摘要恒空致门恒 ok】（`scripts/pkg_digest.py`, `scripts/atlas_check.py`, `install.sh`；F37，issue #1）**：
+  - 过滤口径由**绝对** parts 改**根相对** parts：npm 全局安装的源包位于 `<prefix>/lib/node_modules/<pkg>`，绝对 parts 必然命中 `SKIP_DIRS` 里的 `node_modules` ⇒ 每个文件都被滤掉 ⇒ `files == []` ⇒ 摘要恒为 `sha256('')[:16]`；而落戳与重算**两侧同错** ⇒ 恒等 ⇒ 「装配版本」门在任何内容漂移下都不报红（实测 `digest(绝对全局路径) == e3b0c44298fc1c14`）。
+  - 「装配集为空」由静默空摘要改为**响亮报错**（`EmptyAssembly`）：`atlas_check` 侧 WARN（不得滑成 SKIP——本仓 SKIP 语义是「合法降级」），`install.sh` 侧落戳失败改**硬错**（「装配 0 文件」不得被记成一次合法装配）并附一行手工诊断命令。
+  - 历史坏戳 `e3b0c44298fc1c14` 单列一条**根因级** WARN（重跑 install.sh），不混进「源包已前进/落后」那条对账文案。
+* **【tests 适配器：对 `.test.ts` 给出 Python 运行命令】（`adapters/tests.py`, `shared/stack-profile.md` §3.2；F40，issue #4）**：
+  - 运行命令改由测试文件**后缀族**推定（`.py` ⇒ Python 族；`.ts/.js/.tsx/.jsx` ⇒ Node 族，playwright > vitest > jest > `npm test`），配置只在同族内细化命令——不再「项目根有 pytest 配置 ⇒ 全仓测试都按 pytest 跑」。
+  - 后缀族与配置族**冲突**时不产矛盾条目：item 仍出、`run_command` 置空（**无主张**）+ stderr WARN，**退出码恒 0**（非零会被 `refresh_structure --chain` 当成适配器失败而中止整条链）。
+  - **配置探测扫整项目**，不随 `--app` 收窄——配置是项目级的、落在项目根；旧实现逐 app 调用时拿不到根级配置，命令被静默降级成空。
+  - 接线前置由「产出非空」扩为「产出非空**且逐条自洽**」：`§B118` 只覆盖了「产出为空」那一类假绿灯，没覆盖「产出非空但内容错」。
+* **【structure 类别覆盖：散文可满足 A/H 枚举判据】（`validators/validate_structure.py`, `templates/structure/_meta.json`, `rings/structure/reference.md` §7；F38，issue #6）**：
+  - `_cat_token` 由关键词**全文子串匹配**改**锚定声明位置**：可选 `<标签>:` 前缀（保住 F17 的 `A: covered` 容错），token 之后须接显式分隔符或串尾，取证文本接在其后。旧实现把**描述未完成**的措辞判成**已完成**（`待核准：…核准后补写为 added` 通过），而 H 恰是 `adopt` 下唯一不得 `skipped` 的类别。
+  - 同步 `templates/structure/_meta.json` 的占位写法（原 `[covered|skipped：<取证>]` 会教出非法形态）与 §7 的写法规定。
+* **【prd 域间依赖门：判据存在却无对应规格】（`validators/validate_prd.py`, `rings/prd/reference.md` §4/§7；F39，issue #7）**：
+  - 节点 id 正则 `\w+` → 含连字符（带连字符的域 slug 此前**不可用作节点 id**）；`domain_name` 由 `\S+` 改**整行**读取并剥引号（含空格的中文名此前**读不出来** ⇒ 与「标签须与 `domain_name` 逐字相同」组合成**无合法写法**）；裸 slug 节点也认。
+  - 边抽取不再整段 `findall`：支持**链式** `a --> b --> c` 与**边标签** `a -->|前置| b`（旧实现**静默丢边**），`%%` 注释剥除，`-.->` 仍不入边集。
+  - FAIL 文案分两类根因：「标签未解析」与「边集真不一致」。
+  - 契约补齐「§五 mermaid 写法约定」（节点 / 标签 / 箭头 / 方向 / 粒度 / 注释 + 可照抄示例）——判据的写法要求不再只活在源码里。
+
+*(以下为上一轮未发布内容)*
+
+### 🔌 前端栈适配器覆盖与图谱消费面如实化 (Frontend Adapter Coverage & Honest Graph Surface)
+
+* **【适配器认主流前端栈】（`adapters/routes.py`, `adapters/api.py`, `adapters/models.py`, `adapters/_lib.py`）**：
+  - 真实存量项目实测：**routes / api / models 三类产出全为 0** ⇒ 按 §6.2 只能退回「agent 手写」（慢，且带解析瑕疵）。本轮把三类的 TS 形态补齐：
+    - `routes`：收**声明式路由表**（含 `rout` 的数组绑定，如 `routesList` / `otherRouters`），不再要求父目录叫 `router`、不再只认 `.ts`；反引号路径与 `element: <X />` 一并收；注释行（`//`、`/* */`）不再被当成活路由。
+    - `models`：收**契约层声明文件**（`types/` `api/` `dto/` …）里 `export` 的 `interface` / `type … = {`；`?` ⇒ 可空、`readonly` ⇒ 只读、字面量联合 ⇒ 枚举、`extends` ⇒ 父字段并入；非 `export` 局部类型、无字段体的类型别名、组件 Props（UI 管道）与 `*.d.ts` 一律不收。
+    - `api`：收 **TS 的 RPC / action 调用**（首参为点分方法名的 `request(…)` / `*Fetch<…>(…)`），`path` 记方法名本身、不合成 URL。
+  - 新增共用工具 `_lib.strip_js_comments`（引号感知：`'https://x'` 里的 `//` 不是注释）。
+  - **修复**：`api` 的「有机器可读描述」分支此前**不可达**——描述文件搭源码后缀遍历永远找不到 `.json` ⇒ 自带 `openapi.json` 的项目会得到空事实表；改为按文件名单独探测（整项目范围）。
+  - 测试：新增 `tests/test_adapter_api.py`，扩写 `tests/test_adapter_routes.py` / `tests/test_adapter_models.py`，登记变异证明 **M52 / M53 / M54**。
+* **【图谱消费面如实化】（`README.md`, `docs/innovations/code-graph.md`, `shared/stack-profile.md`）**：
+  - 原文称图谱供给结构抽取「跨文件端点到模型映射 / 级联依赖自动归域」，与实装不符——`_graph.py` 的消费面只有 `routes` 的**文件枚举通道**与 `apply` 的**影响面基准**两处，域聚类与解析层都不走图谱。图示与正文按实情改写，并写明「它不做什么」。
+  - **画像确认门内新增探测与提议**：`graph` 段在模板里是注释态，不提议就永不生效（实测用户装好后端而全程无人提过）；同时要求提议口径如实，别把能力说大。
+* **【结构环：域清单确认门】（`rings/structure/reference.md`, `skills/atlas-structure/SKILL.md`）**：
+  - 在「提议候选域」与「铺域级文件」之间加一道用户过目门；未经确认就产出的，报告里必须点名「未确认」。域 id 是全链路键，PRD 定稿合并/拆分会让在未确认粒度上先铺的产出整批重排。
+* **【F 类退役残留清除】（`DESIGN.md`, `skills/atlas-structure/SKILL.md`, `docs/ecosystem/skills.md`）**：
+  - 设计 token（F 类）2026-09-30 已整体退役，但设计档案与 skill 瘦桩仍把它列为现行产出 ⇒ 按「退役即删」清掉残留陈述。
+* **【装配集同步】（`scripts/pkg_digest.py`, `shared/gates.md`）**：`extensions/` 已纳入装配拷贝集而摘要白名单未覆盖（F30 门红）⇒ 补齐；门总账计数按实况更新。
+
+### 🧭 图谱与抽取口径收口（设计评审驱动，2026-10-15 第二轮）
+
+* **【图谱落点与工作树纪律】（`adapters/_graph.py`, `shared/stack-profile.md` §3.6, `DESIGN.md` D77）**：
+  - **标记落点定形 = 项目根 `.adapter-out/`（本层自己的运行时目录）**：本轮一度把它挪进结构环的 `--out` 产物目录，**已回退**——§3.1 那条路径是给适配器产物定的，而本层不是适配器、消费者还跨 structure/apply 两个环，挂进单环目录会让只跑 apply 的项目凭空长出 `spec/structure/`。真正缺的是**约定本身没写下来** ⇒ 现在写进 §3.6，并明确「启用图谱的项目应 gitignore `.adapter-out/`」；
+  - 新增两条**硬约束**：**后端自己的索引库不得落进项目工作树**（否则新鲜度键自激成永不稳定的全量重建）；**图谱通道的文件清单必须过与 regex 通道同一份 `IGNORE_DIRS` 剪枝**（`cgc index` 无 exclude 旗标，依赖目录进池即产假事实，`routes._prune`）；
+  - 非 git 工作树 ⇒ 显式 WARN + 每次全量重建（此前直接硬崩，违背「声明了而环境不满足 ⇒ 响亮降级」）；`ensure_index` 记明**单进程假设**；
+  - 图谱能力在设计档案里**此前零记录**（同期实现层增强 D70/D73/D76 都有 D 号）⇒ 补 **D77**，把消费面、落点、枚举纪律、启用方式一次定形。
+* **【api 口径：RPC 形态与 D42 窄化】（`adapters/api.py`, `shared/stack-profile.md` §3.2/§3.5, `DESIGN.md` D42）**：
+  - RPC / action 形态的 `method` 由 `POST` 改记 **`RPC`**——调用点看不出传输动词，写 `POST` 是不可取证的猜测（`path` 仍记方法名本身，不合成 URL）；
+  - **D42 窄化声明**：其「不收前端 client 调用」以「存在后端 / 描述侧真相源」为前提；纯前端无描述态下前端调用点即 D 类唯一机械可抽源（此前本轮实现整体踩在这条未退役的反向决策上）；
+  - 转指针形态（探测到机器可读描述 ⇒ 丢弃源码抽到的端点）**必须出声**：stderr 报出丢弃条数，不再静默清空。
+* **【行键粒度：适配器不去重，渲染期折叠】（`scripts/refresh_structure.py`, `shared/stack-profile.md` §3.2, `DESIGN.md` D69）**：
+  - 新增 `dedup_by_row_key`：同一事实文件内的重复行键折叠为首行（行键级合并以「行键唯一」为前提）；
+  - 适配器**保持不去重**——实测真项目 25 个重复（方法,路径）键**全部跨域**，是「同一端点被两个域各调一次」的合法事实，全局去重会抹掉另一个域唯一的那条。
+* **【models 枚举补面与措辞更正】（`adapters/models.py`）**：
+  - 新增**同文件「别名 / 枚举名 → 取值」旁表**：`export type S = 'a' | 'b'` 与 `export enum S {…}` 自身不成行（`table · field` 是行键，接不住独立枚举），但引用它们的字段现在能拿回取值（真项目实测补回 45 处、枚举 67 → 112）；
+  - 更正失实措辞：跨文件类型引用是**直接丢弃**（渲染期只做 `source_file` → 行的域归属、不解析类型引用，且 `关系` 是适配器列），不是「留给渲染期」；
+  - 「先量」统计：stderr 报出顶层枚举/别名声明数与补回处数（`global-rules.md` §12）。
+* **【静默跳过一律出声】（`adapters/routes.py`, `shared/closeout.md`）**：
+  - routes 的**常量路径**条目（`path: SOME_CONST` 静态不可求值）跳过时 stderr 报数——静默会让 §9 报告的「取证范围」少报；契约同步写明 `auth` 只记可静态取证的**认证**门、且渲染表当前无该列；
+  - `closeout.md` 触发表新增一行：结构环产出/刷新域级文件时须对账**域清单确认门**（未过目的候选域要么过目、要么登记待确认）。
+  - 新增/更新判据：M55（图谱枚举剪枝）/ M56（渲染期行键折叠）/ M57（RPC 方法值）/ M58（非 git 降级）。
+
+### 🔎 D 类形态改判：先问人，再问代码（2026-10-15 第三轮）
+
+* **【判定主体纠正】（`shared/stack-profile.md` §3.5, `rings/structure/reference.md` §4 D / §6 步 1 / §9, `templates/structure/_meta.json`）**：
+  - 原口径「项目**是否自带**机器可读接口描述**由适配器探测**」把「仓内探测不到」等同于「无描述」——而描述**常常不在本仓库**（网关 / 独立文档站 / 运行时端点）。实测有接入项目的 `categories.D` 记着「后端经网关暴露 RPC action；网关文档地址不随仓库分发」：仓内探测不到，但描述确实存在；照旧口径会被误判为「无」⇒ 去枚举调用点，产出一张本不该存在的清单。
+  - 改判：D 类形态**先问用户**（与 A 类「先问是否纳入」、图谱「探测后提议」同一批确认门问题）；答「有」（地址可在仓外）⇒ **指针形态** + `adapters.api` 置 `null`（**不接源码枚举适配器**，否则清单与指针混写）；答「无」⇒ 才落源码枚举；**未答 ⇒ 不得当「无」**，记 `categories.D` 并在 §9 点名「未取证」。
+  - 顺带更正：§3.5 原文举例「用一个读取该描述的适配器（**如 `openapi`**）」，而包内并无出厂 `openapi` 适配器（`adapters/` 只有 routes / api / models / tests）⇒ 如实写明「包内暂无出厂实现；仓内文件形态项目可自带，**仓外地址形态无需适配器**、指针由 agent 记」。
+
+---
+
 ## [v0.1.0-beta.16] - 2026-10-15
 
 ### 🚀 结构环链路闭环与 R8 完结收口 (Structure Ring Chain Close-Out & R8 Closure)

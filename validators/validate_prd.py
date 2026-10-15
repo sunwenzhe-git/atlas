@@ -32,6 +32,56 @@ NEXT_H2 = re.compile(r"^##\s", re.M)
 FN_RE = re.compile(r"FN-[A-Z0-9]+-\d+")
 R_RE = re.compile(r"\b[A-Z][A-Z0-9]+-R-\d+")
 AC_RE = re.compile(r"AC-[A-Z0-9]+-\d+")
+
+# ---- 域间依赖门（参数 4 ⑧）的解析口径（F39，2026-10-15；issue #7 现场实证）----
+# 节点 id = 词字符与连字符，**末位必须是词字符**（否则 `---` 这种纯横线会被当成节点）。
+# 契约示例是 `id[中文名]`；裸 slug、含连字符的 slug（`ops-console`）都必须可用。
+_NODE_ID = r"[\w-]*\w"
+# 边：只认实线 `-->`。`-.->` 也要**识别出来**（它是虚线 = 增强链路 / 数据回流，不入边集）——
+# 不识别的话就会像旧实现那样在别的箭头形态上静默丢边。其余箭头（`==>` 等）不认。
+_SOLID_ARROW = "-->"
+_DASHED_ARROW = "-.->"
+_EDGE_RE = re.compile(
+    rf"({_NODE_ID})(?:\[[^\]]*\])?\s*(?P<arr>{_SOLID_ARROW}|{re.escape(_DASHED_ARROW)})"
+    rf"(?:\s*\|[^|]*\|)?\s*({_NODE_ID})")
+_LABEL_RE = re.compile(rf"({_NODE_ID})\[([^\]]+)\]")
+
+
+def _fm_scalar(dt: str, key: str) -> str | None:
+    """取 frontmatter 标量**整行**值（`^key: <值>$`）并剥外层引号。
+
+    为何不是 `\\S+`（F39）：那只取到**首个空白前**的一段——含空格的中文名（`网关 管理`）
+    被读成 `网关`，于是 mermaid 标签写全名匹配不上、写短名又读不出来，形成**不可满足**。
+    模板值本身带引号（`domain_name: "[必填：中文名]"`），故一并剥引号。
+    """
+    m = re.search(rf"^{re.escape(key)}:\s*(.+)$", dt, re.M)
+    if not m:
+        return None
+    return m.group(1).strip().strip("\"'“”‘’") or None
+
+
+def _solid_edges(body: str) -> list[tuple[str, str]]:
+    """mermaid 流程图里的**实线**边集 `(源节点 id, 靶节点 id)`。
+
+    支持一行的**链式**（`a --> b --> c` 出两条边）与**边标签**（`a -->|前置| b`）；
+    `%%` 注释行剥除；`-.->` 不算边。
+
+    旧实现只对整段 `findall(r"(\\w+)(?:\\[[^\\]]*\\])?\\s*-->\\s*(\\w+)")` ⇒ 链式只出第一条
+    边、**带边标签的边整条静默丢失**（F39 实测）。静默丢边同样是「把缺口伪装成绿灯」。
+    """
+    edges: list[tuple[str, str]] = []
+    for raw in body.splitlines():
+        line = raw.split("%%")[0]
+        pos = 0
+        while True:
+            m = _EDGE_RE.search(line, pos)
+            if m is None:
+                break
+            pos = m.start(3)                 # 链式：下一段从靶节点起续扫（严格递增 ⇒ 必终止）
+            if m.group("arr") == _SOLID_ARROW:
+                edges.append((m.group(1), m.group(3)))
+    return edges
+
 # 契约 §4「五、验收标准」（2026-09-25 补）：域级 PRD 末附**结构类 AC 清单**（只能初始态观测的 AC）。
 STRUCT_LIST_HEAD = "#### 结构类 AC 清单"
 STRUCT_AC_RE = re.compile(r"AC-[A-Z0-9]+-\d{3}")
@@ -526,16 +576,19 @@ def validate(root: Path) -> Result:
     dep: dict[str, set[str]] = {}
     for p in domains:
         dt = p.read_text(encoding="utf-8")
-        ms = re.search(r"^domain:\s*(\S+)", dt, re.M)
-        if not ms:
+        slug = _fm_scalar(dt, "domain")
+        if not slug:
             continue
-        slug = ms.group(1)
         d_slug[p] = slug
-        mn = re.search(r"^domain_name:\s*(\S+)", dt, re.M)
-        if mn:
-            name2slug[mn.group(1)] = slug
+        nm = _fm_scalar(dt, "domain_name")
+        if nm:
+            name2slug[nm] = slug
+        # 裸 slug 节点（`ops-console --> platform`，无 `id[中文名]`）也认：域 slug 本身就是
+        # 推导键。旧实现只认 `id[标签]` ⇒ 裸 slug 退化成 `?slug` ⇒ 边集比对永远失败。
+        name2slug.setdefault(slug, slug)
         md = re.search(r"^depends_on:\s*\[([^\]]*)\]", dt, re.M)
-        dep[slug] = {x.strip() for x in (md.group(1).split(",") if md else []) if x.strip()}
+        dep[slug] = {x.strip().strip("\"'“”") for x in (md.group(1).split(",") if md else [])
+                     if x.strip()}
     gfile = root / "product" / "prd" / "prd.md"
     gtext = gfile.read_text(encoding="utf-8") if gfile.is_file() else ""
     gsec = re.search(r"^##\s*五、功能架构\s*$(.*?)(?=^##\s|\Z)", gtext, re.S | re.M)
@@ -545,14 +598,18 @@ def validate(root: Path) -> Result:
                 "无域级 `depends_on` 声明，或全局 §五 无 mermaid 域间关系图")
     else:
         body = gmer.group(1)
-        labels = dict(re.findall(r"(\w+)\[([^\]]+)\]", body))
+        labels = dict(_LABEL_RE.findall(body))
+        unresolved: set[str] = set()
 
         def _slug(node: str) -> str:
             nm = labels.get(node, node)
-            return name2slug.get(nm, "?" + nm)
+            s = name2slug.get(nm)
+            if s is None:
+                unresolved.add(nm)
+                return "?" + nm
+            return s
 
-        solid = {(_slug(a), _slug(b))
-                 for a, b in re.findall(r"(\w+)(?:\[[^\]]*\])?\s*-->\s*(\w+)", body)}
+        solid = {(_slug(a), _slug(b)) for a, b in _solid_edges(body)}
         issues: list[str] = []
         dangling = sorted({(d, x) for d, s in dep.items() for x in s if x not in dep})
         if dangling:
@@ -583,9 +640,29 @@ def validate(root: Path) -> Result:
         mism = [d for d in sorted(set(dep) | set(mer_dep))
                 if dep.get(d, set()) != mer_dep.get(d, set())]
         if mism:
-            issues.append("与实线边集不一致=" + "; ".join(
-                f"{d}(frontmatter={sorted(dep.get(d, set()))} ≠ 实线={sorted(mer_dep.get(d, set()))})"
-                for d in mism[:4]))
+            # F39：两类根因分开报——「标签未解析」是写法/取名问题（改 mermaid 标签或
+            # `domain_name` 即可），「边集不一致」是真·依赖声明与图不符。混在一起报会让人
+            # 以为依赖写错了，而实际只是域名对不上（旧文案只给 `?中文名` 对比，读者无从判断）。
+            if unresolved:
+                issues.append(
+                    "标签未解析=" + ",".join(sorted(unresolved)[:6])
+                    + "（mermaid 节点标签与任何域级 `domain_name` 都不逐字相同——"
+                      "要么该域级 PRD 缺失，要么标签写的是简称/别名）")
+
+            def _resolved_clean(d: str) -> bool:
+                """该域两侧有没有「标签未解析」的痕迹（`?` 前缀是内部标记）。
+
+                `?` 本身也是键——不能把 `?<名>` 这条算成「真·边集不一致」，那正是旧文案
+                让读者困惑的形态（两个都不存在的域名的对比）。
+                """
+                return (not d.startswith("?")
+                        and not any(x.startswith("?") for x in mer_dep.get(d, set())))
+
+            real = [d for d in mism if _resolved_clean(d)]
+            if real or not unresolved:
+                issues.append("与实线边集不一致=" + "; ".join(
+                    f"{d}(frontmatter={sorted(dep.get(d, set()))} ≠ 实线={sorted(mer_dep.get(d, set()))})"
+                    for d in (real or mism)[:4]))
         res.add("参数4 域间依赖", "PASS" if not issues else "FAIL", "；".join(issues))
 
     # ---- AC 号唯一（域级 PRD 内 AC 号跨文件 / 同文件不得重复；2026-10-14 归位自 validate_ledger）

@@ -11,6 +11,16 @@
   2. **空产出**：目录里只有 layout/生成物 ⇒ `items` 为空（接线前置判据的负例）；
   3. **去重**：同一 `path` + 同一源文件只留一份。
 
+**声明式路由表**（2026-10-15 补，M52）：真实接入项目的路由表是 `src/entry/main/routes.tsx`
+里的 `routesList` / `otherRouters` / `adminSubRoutes`——父目录不叫 `router`、后缀 `.tsx`、
+绑定名不叫 `routes`。旧判据三闸叠加 ⇒ **0 条**（实测），故第 4/5 侧钉住新判据与两条误报防线：
+
+  4. **声明式路由表**：非 `router/` 目录的 `.tsx` 里多张含 `rout` 的数组绑定（含反引号路径、
+     `element: <X />`、无字面量 path 的常量条目跳过）；
+  5. **注释行不是路由**：被 `//` 注掉的条目不得进 `items`（同理 `'https://x'` 里的 `//`
+     不是注释，不得把数组砍断）。
+
+变异 M52：把 `collect_js_routes` 的候选闸退回「父目录须为 `router`」⇒ 第 4 侧红。
 变异 M18：摘掉 `collect_file_based_routes` 的调用 ⇒ 第 1 侧红。
 """
 from __future__ import annotations
@@ -93,3 +103,68 @@ def test_duplicate_path_and_source_collapsed() -> None:
         items = run(root)["items"]
         keys = [(i["path"], i["source_file"]) for i in items]
         assert len(keys) == len(set(keys)), keys
+
+
+ROUTER_TSX = """\
+import { lazy } from 'react'
+const Market = lazy(() => import('@/modules/market'))
+const App = lazy(() => import('@/modules/app'))
+
+interface RouteConfig {
+  path: string
+  element: unknown
+}
+
+export const routesList: RouteConfig[] = [
+  { path: `/market`, titleKey: 'main.routes.appMarket', element: <Market /> },
+  { path: '/app', titleKey: 'main.routes.app', element: <App /> },
+]
+
+export const otherRouters: RouteConfig[] = [
+  { path: '/login', element: <Login /> },
+  { path: IFRAME_ACCESS_DENIED_PATH, element: <Unauthorized /> },
+]
+
+// 管理模块的子菜单路由
+export const adminSubRoutes: RouteConfig[] = [
+  // { path: '/role-management', element: <RoleManagement /> },
+  { path: '/api-key', titleKey: 'main.routes.apiKey', element: <ApiKey /> },
+]
+"""
+
+
+def test_declarative_route_table_in_tsx() -> None:
+    """声明式路由表：非 `router/` 目录、`.tsx` 后缀、多张含 `rout` 的数组绑定都要收。
+
+    反引号路径要收；`path: SOME_CONST` 静态不可求值 ⇒ 跳过（宁缺，不产假路径）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, {"frontend/src/entry/main/routes.tsx": ROUTER_TSX})
+        items = run(root)["items"]
+        assert sorted(i["path"] for i in items) == ["/api-key", "/app", "/login", "/market"], items
+        market = next(i for i in items if i["path"] == "/market")
+        assert market["component"] == "Market", market
+        assert market["name"] == "main.routes.appMarket", market
+        assert market["source_file"] == "frontend/src/entry/main/routes.tsx:11", market
+        # 常量 path 的条目静默跳过（保留其邻居，不是整表丢弃）
+        assert not any("IFRAME" in str(i) for i in items), items
+
+
+def test_commented_out_route_is_not_a_route() -> None:
+    """被注掉的条目不得进 `items`；`'https://x'` 里的 `//` 不得把数组砍断。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, {"frontend/src/router/index.ts": """\
+const routes: RouteConfig[] = [
+  { path: 'https://docs.example.com/help', element: Docs },
+  // { path: '/role-management', element: <RoleManagement /> },
+  /* { path: '/upload-demo', element: <UploadDemo /> }, */
+  { path: '/alive', element: <Alive /> },
+]
+"""})
+        items = run(root)["items"]
+        assert sorted(i["path"] for i in items) == [
+            "/alive", "https://docs.example.com/help"], items
+        assert not any("role-management" in i["path"] or "upload-demo" in i["path"] for i in items)
+

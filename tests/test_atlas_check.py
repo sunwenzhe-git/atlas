@@ -392,7 +392,7 @@ def test_drift_gate_reads_marker() -> None:
         rows = mod.Row()
         mod.check_drift(root, rows)
         assert rows.rows[0]["status"] == "SKIP", rows.rows          # 无 .adapter-out ⇒ 结构环未跑
-        od = root / ".trellis" / "spec" / "structure" / ".adapter-out"
+        od = root / ".adapter-out"
         od.mkdir(parents=True)
         rows2 = mod.Row()
         mod.check_drift(root, rows2)
@@ -494,7 +494,12 @@ def test_check_version_warns_when_source_advanced() -> None:
         (src / "scripts" / "tool.py").write_text("print('v2 — source advanced')\n", encoding="utf-8")
         row = _version_rows(root)["装配版本"]
         assert row["status"] == "WARN", row          # 漂移是信号不是门禁失败
-        assert "回灌对账" in row["detail"]
+        # M68 钉（2026-10-15，D79 ⑤）：WARN detail 必须带**可执行动作词齐组**——
+        # `atlas upgrade` / `install.sh`（两种源态并列）/ `backflow`（明细通道）；缺一
+        # 即文案漂回没有动作的无用警告 ⇒ 本断言红。变异证明：从源 detail 摘掉一个词 ⇒ 红。
+        assert "atlas upgrade" in row["detail"], row
+        assert "install.sh" in row["detail"], row
+        assert "backflow" in row["detail"], row
 
 
 def test_check_version_skips_legacy_or_lost_source() -> None:
@@ -502,14 +507,55 @@ def test_check_version_skips_legacy_or_lost_source() -> None:
         root = Path(td) / "proj"
         root.mkdir()
         assert _version_rows(root)["装配版本"]["status"] == "SKIP"  # 无 VERSION = 旧装配
+        import shutil
         src, root2 = Path(td) / "atlas2", Path(td) / "proj2"
-        (src / "s").mkdir(parents=True)
-        (src / "s" / "a.py").write_text("x\n", encoding="utf-8")
+        # 源包盒必须落在**装配集**内（`scripts/`），否则 F37 后 `digest()` 抛 EmptyAssembly
+        # ——本夹具此前用装配集外的 `s/`，靠旧口径「空装配返回空摘要」才立得住。
+        (src / "scripts").mkdir(parents=True)
+        (src / "scripts" / "a.py").write_text("x\n", encoding="utf-8")
         root2.mkdir()
         _stamp(src, root2)
-        import shutil
         shutil.rmtree(src)                            # 源包搬家/不可达 ⇒ SKIP 不误报
         assert _version_rows(root2)["装配版本"]["status"] == "SKIP"
+
+
+def test_f37_bad_empty_stamp_gets_root_cause_warn() -> None:
+    """F37（2026-10-15）：历史坏戳（= `sha256('')[:16]`）必须给**根因级**指引（重装），
+    不得混进「源包已前进/落后」那条对账文案——后者把人引向对账，而这个戳不承载任何
+    内容信息，对账对着的是空气。
+
+    判别性：源包此处**存在且非空**，若没有哨兵，走的正是「源包已前进/落后」分支。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        src, root = Path(td) / "atlas", Path(td) / "proj"
+        (src / "scripts").mkdir(parents=True)
+        (src / "scripts" / "tool.py").write_text("print('v1')\n", encoding="utf-8")
+        (root / ".atlas").mkdir(parents=True)
+        (root / ".atlas" / "VERSION").write_text(
+            "e3b0c44298fc1c14\n2026-10-15T14:03:14+08:00\n" + str(src) + "\n", encoding="utf-8")
+        row = _version_rows(root)["装配版本"]
+        assert row["status"] == "WARN", row
+        assert "历史坏戳" in row["detail"], row
+        assert "回灌对账" not in row["detail"], row     # 根因是坏戳，不是漂移
+
+
+def test_f37_empty_assembly_is_warn_not_skip() -> None:
+    """F37：装配集为空 ⇒ WARN（摘要不可信），**不得**降级为 SKIP。
+
+    本仓 SKIP 语义 = 合法降级（「源即真相」类）；「装了 0 个文件」是装配出错，不是降级。
+    同时钉住 `except EmptyAssembly` 必须排在 `except (OSError, ValueError)` **之前**——
+    `EmptyAssembly` 是 `ValueError` 子类，并进同一个 tuple 会滑成 SKIP。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        src, root = Path(td) / "atlas", Path(td) / "proj"
+        (src / "docs").mkdir(parents=True)            # 装配集外目录 ⇒ 摘要覆盖不到
+        (src / "docs" / "readme.md").write_text("x\n", encoding="utf-8")
+        (root / ".atlas").mkdir(parents=True)
+        (root / ".atlas" / "VERSION").write_text(
+            "deadbeefdeadbeef\n2026-10-15T14:03:14+08:00\n" + str(src) + "\n", encoding="utf-8")
+        row = _version_rows(root)["装配版本"]
+        assert row["status"] == "WARN", row
+        assert "装配集为空" in row["detail"], row
 
 
 def test_atlas_check_failure_log_written_on_fail_and_cleaned_on_pass() -> None:

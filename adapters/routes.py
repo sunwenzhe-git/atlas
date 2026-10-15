@@ -4,8 +4,12 @@
 契约见 `.atlas/shared/stack-profile.md` §3（调用方式 / 输出 JSON / items 字段）。
 本文件是**框架知识的合法落点**：适配器内部可识别具体栈；atlas 核心不认任何框架。
 
-做法：扫描代码根内已识别的**路由源签名**（文件即路由的页面目录 / **文件式路由 `routes/`** / 前端 router 定义文件），
-机械产出 `items[]`；用途 / 交互等语义列由 structure 环的 agent 补。
+做法：扫描代码根内已识别的**路由源签名**（文件即路由的页面目录 / **文件式路由 `routes/`** /
+前端 router 定义文件），机械产出 `items[]`；用途 / 交互等语义列由 structure 环的 agent 补。
+
+前端 router 定义文件 = **声明式路由表**：含 `rout` 的数组绑定（`routes` / `routesList` /
+`otherRouters` / `adminSubRoutes` …），值是 `{ path: …, element/component: … }` 对象数组；
+一个文件可有多张表，`element: <X />` 与 `titleKey` 一并收（2026-10-15 补，见下）。
 
 文件枚举二通道（2026-10-05 图谱批 1）：
 
@@ -29,13 +33,14 @@ import sys
 from pathlib import Path
 
 ADAPTER = "routes"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 # 文件枚举的全量后缀池（三识别方式各自再过滤）；graph 通道一次枚举共用。
 _ENUM_SUFFIXES = (".pyxl", ".tsx", ".ts", ".jsx", ".js")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _graph  # noqa: E402  # 同包隔离层（唯一后端接触面）
+from _lib import strip_js_comments  # noqa: E402  # 同包共用工具（引号感知的注释剥离）
 
 IGNORE_DIRS = {
     ".git", "node_modules", "__pycache__", "site-packages", "dist", "build",
@@ -213,45 +218,80 @@ def _top_level_objects(text: str) -> list[tuple[int, str]]:
     return out
 
 
-def parse_js_router(text: str, rel: str) -> list[dict]:
-    m = re.search(r"routes\s*[:=]\s*\[", text)
-    if not m:
-        return []
-    arr_start = m.end() - 1
-    arr_end = _balanced(text, arr_start, "[", "]")
-    if arr_end < 0:
-        return []
-    body = text[arr_start:arr_end + 1]
+# 路由数组的绑定名判据（**廉价信号**）：绑定名含 `rout`（大小写不敏感）且值是对象数组。
+# 不加名字闸就会把配置里任意 `{ path: … }` 数组误收成路由——那比漏收更糟（把缺口伪装成配门）。
+_ROUT_NAME_RE = re.compile(r"rout", re.I)
+# 对象里**有 `path` 键**（值不是字面量 ⇒ 常量路径，静态不可求值）
+_PATH_KEY_RE = re.compile(r"(?<![\w$])path\s*:")
+# 声明式：`const routesList: RouteConfig[] = [` / `export const routes = [`（类型标注可省）
+_DECL_ARRAY_RE = re.compile(
+    r"(?m)^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*"
+    r"(?::[^=\n]{0,120}?)?=\s*\["
+)
+# 对象字面量式：`createRouter({ routes: [...] })` / 裸 `routes = [`
+_OBJ_ARRAY_RE = re.compile(r"(?<![\w$.])(rout[\w$]*)\s*[:=]\s*\[", re.I)
+
+
+def _route_array_starts(text: str) -> list[int]:
+    """文件里所有「路由数组」字面量的 `[` 偏移，去重升序（一个文件可有多张表）。"""
+    starts: set[int] = set()
+    for m in _DECL_ARRAY_RE.finditer(text):
+        if _ROUT_NAME_RE.search(m.group(1)):
+            starts.add(m.end() - 1)
+    for m in _OBJ_ARRAY_RE.finditer(text):
+        starts.add(m.end() - 1)
+    return sorted(starts)
+
+
+def parse_js_router(text: str, rel: str) -> tuple[list[dict], int]:
+    """声明式路由表 → (items[], 常量路径条目数)。
+
+    `name?` 收 `name` 与 `titleKey` 两键（后者是主流前端同族的展示标题键，语义列由 agent 定）；
+    `component?` 依次看 `import(…)` → `element: <X …>` → `component: X`。
+    `path` **只认字符串字面量**（单引号 / 双引号 / 反引号）：`path: SOME_CONST` 无法静态求值
+    ⇒ 跳过（宁缺，不产假路径），但**计数出声**（2026-10-15 补）：静默跳过会让 §9 报告的
+    「取证范围」少报——若整个文件都是常量路径，它连 `source_files` 都进不去。
+    """
+    src = strip_js_comments(text)
     items: list[dict] = []
-    for off, obj in _top_level_objects(body):
-        pm = re.search(r"path\s*:\s*['\"]([^'\"]+)['\"]", obj)
-        if not pm:
+    n_const = 0
+    for arr_start in _route_array_starts(src):
+        arr_end = _balanced(src, arr_start, "[", "]")
+        if arr_end < 0:
             continue
-        path = pm.group(1)
-        nm = re.search(r"name\s*:\s*['\"]([^'\"]+)['\"]", obj)
-        comp = None
-        im = re.search(r"import\(\s*['\"]([^'\"]+)['\"]\s*\)", obj)
-        if im:
-            imp = im.group(1)
-            if imp.startswith("."):
-                comp = posixpath.normpath(posixpath.join(posixpath.dirname(rel), imp))
+        body = src[arr_start:arr_end + 1]
+        for off, obj in _top_level_objects(body):
+            pm = re.search(r"""path\s*:\s*['"`]([^'"`]+)['"`]""", obj)
+            if not pm:
+                if _PATH_KEY_RE.search(obj):     # 有 path 键、值不是字面量 ⇒ 常量路径
+                    n_const += 1
+                continue
+            path = pm.group(1)
+            nm = re.search(r"""(?:name|titleKey)\s*:\s*['"`]([^'"`]+)['"`]""", obj)
+            comp = None
+            im = re.search(r"""import\(\s*['"`]([^'"`]+)['"`]\s*\)""", obj)
+            if im:
+                imp = im.group(1)
+                if imp.startswith("."):
+                    comp = posixpath.normpath(posixpath.join(posixpath.dirname(rel), imp))
+                else:
+                    comp = imp
             else:
-                comp = imp
-        else:
-            cm = re.search(r"component\s*:\s*([A-Za-z_$][\w$]*)", obj)
-            if cm:
-                comp = cm.group(1)
-        line = text.count("\n", 0, arr_start + off) + 1
-        items.append({
-            "path": path,
-            "name": nm.group(1) if nm else None,
-            "component": comp,
-            "auth": None,
-            "params": re.findall(r":([A-Za-z_]\w*)", path) or None,
-            "source_file": f"{rel}:{line}",
-            "status": None,
-        })
-    return items
+                cm = (re.search(r"component\s*:\s*([A-Za-z_$][\w$.]*)", obj)
+                      or re.search(r"element\s*:\s*<\s*([A-Za-z_$][\w$.]*)", obj))
+                if cm:
+                    comp = cm.group(1)
+            line = src.count("\n", 0, arr_start + off) + 1
+            items.append({
+                "path": path,
+                "name": nm.group(1) if nm else None,
+                "component": comp,
+                "auth": None,
+                "params": re.findall(r":([A-Za-z_]\w*)", path) or None,
+                "source_file": f"{rel}:{line}",
+                "status": None,
+            })
+    return items, n_const
 
 
 def collect_file_based_routes(root: Path, apps: list[dict], app_path: str | None,
@@ -302,20 +342,33 @@ def collect_file_based_routes(root: Path, apps: list[dict], app_path: str | None
 
 def collect_js_routes(root: Path, apps: list[dict], app_path: str | None,
                       relpaths: list[str] | None = None) -> list[dict]:
+    """**声明式路由表**识别（React Router / Vue Router 同族约定）。
+
+    为何去掉「父目录必须叫 `router`」与「只认 `.js`/`.ts`」（2026-10-15 实测）：
+    真实接入项目把路由表放在 `src/entry/main/routes.tsx`——父目录 `main`、后缀 `.tsx`、
+    绑定名 `routesList`（另有 `otherRouters` / `adminSubRoutes`）。三道闸叠加 ⇒ **0 条**，
+    而该栈正是 adopt 的主力形态（`3509 §B118` 同族：适配器认不认本栈必须先有判据）。
+
+    改判据：候选文件 = **文件名含 `rout`** 或落在 `router/` 目录里（廉价闸，避免全量读
+    `.ts`/`.tsx`）；命中与否交给 `parse_js_router` 的数组判据，不再要求固定目录名。
+    """
     items: list[dict] = []
-    files = ([root / r for r in relpaths if r.endswith((".js", ".ts"))]
-             if relpaths is not None else iter_files(root, (".js", ".ts"), app_path))
+    suffixes = (".tsx", ".ts", ".jsx", ".js")
+    files = ([root / r for r in relpaths if r.endswith(suffixes)]
+             if relpaths is not None else iter_files(root, suffixes, app_path))
     for f in files:
-        if f.parent.name != "router":
+        if "rout" not in f.name.lower() and f.parent.name != "router":
             continue
         try:
             text = f.read_text(encoding="utf-8")
         except OSError:
             continue
-        if "createRouter" not in text and "routes" not in text:
-            continue
         rel = f.relative_to(root).as_posix()
-        for it in parse_js_router(text, rel):
+        parsed, n_const = parse_js_router(text, rel)
+        if n_const:
+            print(f"[{ADAPTER}] WARN: {rel} 有 {n_const} 条常量路径（path 非字面量，"
+                  f"静态不可求值）已跳过——取证范围少报这些条目", file=sys.stderr)
+        for it in parsed:
             it["status"] = "已实现" if landing(rel, apps) else None
             items.append(it)
     return items
@@ -341,9 +394,28 @@ def resolve_relpaths(root: Path, app_path: str | None, backend: str, cfg: dict |
                     f"（安装 cgc 或移除 profile 的 graph 段后恢复 graph 通道）")
         return _walk_relpaths(root, app_path), "regex", "cgc 不可用（未安装或探测失败）"
     _graph.ensure_index(root, cfg, version=det["version"])
-    relpaths = _graph.file_paths(root, prefix=app_path, cfg=cfg)
-    relpaths = [r for r in relpaths if r.endswith(_ENUM_SUFFIXES)]
-    return sorted(relpaths), "graph", None
+    return _prune(_graph.file_paths(root, prefix=app_path, cfg=cfg)), "graph", None
+
+
+def _prune(relpaths: list[str]) -> list[str]:
+    """把图谱枚举结果剪成与 regex 通道**同一范围**（确定性排序）。
+
+    为何必须剪（2026-10-15 复核补，`3509 §B92` 同族）：regex 通道走 `iter_files`，
+    天然剪掉 `IGNORE_DIRS`（`node_modules` / `dist` / `build` …）与 `.venv*`；graph
+    通道拿的是后端 File 节点，而 `cgc index` **不带任何 exclude 旗标**——后端若不理
+    gitignore，依赖与构建目录里的 `.tsx`/`.ts` 会整批进枚举池并产出**假路由**。
+    枚举范围不等价 ⇒ 两条通道的结果不可对等，而「两通道全等」正是
+    `tests/test_routes_graph_backend.py` 的立身之本。
+    """
+    out: list[str] = []
+    for rel in relpaths:
+        if not rel.endswith(_ENUM_SUFFIXES):
+            continue
+        if any(p in IGNORE_DIRS or p.startswith(".venv") or p.endswith(".venv")
+               for p in rel.split("/")[:-1]):
+            continue
+        out.append(rel)
+    return sorted(out)
 
 
 def _walk_relpaths(root: Path, app_path: str | None) -> list[str]:

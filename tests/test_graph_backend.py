@@ -11,6 +11,11 @@
   4. profile 声明：graph 段解析 / `graph: null` / 非法 backend 必红。
 
 变异：摘掉 query 的 error 对象检查 ⇒ 第 3 侧红；摘掉 ensure_index 的键比对 ⇒ 第 2 侧红。
+
+另两处 2026-10-15 收口：**标记落点**（项目根 `.adapter-out/` = 本层自己的运行时目录，
+**不跟**结构环的产物目录同址——见模块 docstring 的层间理由）与**非 git 工作树降级**
+（指纹不可算 ⇒ WARN + 每次全量重建，不硬崩）。
+变异 M59：把非 git 的降级改回「不判工作树直接调 git」⇒ 非 git 侧红。
 """
 from __future__ import annotations
 
@@ -72,7 +77,7 @@ def git_repo(tmp_path: Path):
     subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t"], check=True)
     subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
     # fakebin/ state/ 是本测试夹具的运行时目录；.adapter-out/ 是图谱层运行时目录——
-    # 与真实项目一致：运行时目录 gitignore，不进代码态指纹。
+    # 与真实项目一致：运行时目录 gitignore，不进代码态指纹（无前导斜杠 ⇒ 任意深度命中）。
     (tmp_path / ".gitignore").write_text("fakebin/\nstate/\n.adapter-out/\n", encoding="utf-8")
     (tmp_path / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
@@ -103,8 +108,12 @@ def test_ensure_index_fresh_then_reindex_on_change(fake_cgc, git_repo) -> None:
     cfg = {"backend": "cgc"}
     r1 = _graph.ensure_index(git_repo, cfg, version="0.9.9")
     assert r1["status"] == "indexed"
+    # 标记落点 = 本层自己的运行时目录（项目根）。**不跟**结构环的产物目录同址：
+    # 那条路径是给适配器 `--out` 产物定的，而本层不是适配器、消费者跨两个环。
     marker = json.loads((git_repo / ".adapter-out" / "_graph_index.json").read_text(encoding="utf-8"))
     assert marker["backend"] == "cgc" and marker["backend_version"] == "0.9.9"
+    assert not (git_repo / ".trellis" / "spec" / "structure" / ".adapter-out").exists(), \
+        "不得把本层运行时状态挂进结构环的产物目录"
 
     r2 = _graph.ensure_index(git_repo, cfg, version="0.9.9")
     assert r2["status"] == "fresh"
@@ -125,6 +134,20 @@ def test_ensure_index_backend_failure_is_loud(fake_cgc, git_repo, monkeypatch, c
         _graph.ensure_index(git_repo, {"backend": "cgc"}, version="0.9.9")
     assert "cgc index 失败" in capsys.readouterr().err
     assert not (git_repo / ".adapter-out" / "_graph_index.json").exists()
+
+
+def test_non_git_worktree_warns_and_never_claims_fresh(fake_cgc, tmp_path, monkeypatch, capsys) -> None:
+    """非 git 工作树：指纹算不出来 ⇒ 显式 WARN + 每次全量重建，**不得硬崩**
+    （「声明了而环境不满足 ⇒ 响亮降级」是契约语义，不是 exception）。"""
+    monkeypatch.delenv("GIT_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert _graph.freshness_key(tmp_path) == ""
+    assert "非 git 工作树" in capsys.readouterr().err
+
+    cfg = {"backend": "cgc"}
+    assert _graph.ensure_index(tmp_path, cfg, version="0.9.9")["status"] == "indexed"
+    # 空键永不认新鲜：即便标记已写、版本一致，仍必须重建
+    assert _graph.ensure_index(tmp_path, cfg, version="0.9.9")["status"] == "indexed"
 
 
 # ---------------------------------------------------------------- 3. 查询解析

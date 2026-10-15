@@ -31,8 +31,8 @@
 - [三、快速开始（Quick Start）](#三快速开始quick-start)
   - [1. 依赖准备](#1-依赖准备)
   - [2. 全局安装 CLI 与项目初始化](#2-全局安装-cli-与项目初始化)
-  - [3. 配置技术栈画像 (`product/stack-profile.yaml`)](#3-配置技术栈画像-productstack-profileyaml)
-  - [4. 怎么快速使用？（纯自然语言驱动）](#4-怎么快速使用纯自然语言驱动)
+  - [3. 核对技术栈画像 (`product/stack-profile.yaml`)](#3-核对技术栈画像-productstack-profileyaml)
+  - [4. 怎么快速使用？（大白话为主，确定性入口兜底）](#4-怎么快速使用大白话为主确定性入口兜底)
 - [四、创新设计：E2E 用例评审控制台（人机协同终验）](#四创新设计e2e-用例评审控制台人机协同终验)
 - [五、技术纵深：代码图谱（Code Graph）优化逆向抽取](#五技术纵深代码图谱code-graph优化逆向抽取)
 - [六、变异证明（Mutation Proving）](#六变异证明mutation-proving)
@@ -69,7 +69,7 @@ NBER（美国国家经济研究局）2026 年工作论文 35275 追踪了超过 
 | :--- | :--- | :--- | :--- |
 | **CPU / 算力核心** | **LLM（大语言模型）** | Claude 3.7 / GPT-5 / GLM-5 | 负责纯粹的逻辑推理与自回归计算（纯算力输入与输出） |
 | **操作系统 / Runtime (OS)** | **Agent Harness** | Claude Code / Cursor / Pi Agent / OpenCode | **提供系统调用（Syscall）与运行环境**<br>• 文件读写、Bash 执行（工具调用）<br>• 内存与缓存管理（KV Cache 保温、上下文窗口截断）<br>• 多进程调度（Subagent 派生） |
-| **工程框架 / 工业级脚手架** | **Project Harness** | **Atlas** / Trellis / OpenSpec | **定义项目物理秩序与全生命周期防线**<br>• 规范与应然资产基线（PRD / AC 账本）<br>• 依赖图谱与架构防线（Code Graph 影响分析）<br>• 机器物理阻断门禁（防止 AI 敷衍实现与伪造测试） |
+| **工程框架 / 工业级脚手架** | **Project Harness** | **Atlas** / Trellis / OpenSpec | **定义项目物理秩序与全生命周期防线**<br>• 规范与应然资产基线（PRD / AC 账本）<br>• 依赖图谱影响面基准（可选增强，advisory）<br>• 机器物理阻断门禁（防止 AI 敷衍实现与伪造测试） |
 
 ### 3. 为什么说 Project Harness 是 AI 时代的 Spring Boot？
 
@@ -87,7 +87,7 @@ NBER（美国国家经济研究局）2026 年工作论文 35275 追踪了超过 
 * **Agent Harness 的记忆是“工人的经验手记（模糊且概率性）”**：  
   现代 Coding Agent 确实拥有记忆机制（如 auto-memory、向量检索或会话手记）。但这种记忆本质上是**自然语言的经验总结与概率召回** —— 它无法提供机器确定性。面对大型系统，模型依旧会遗忘边界、漏掉关联依赖、甚至产生假完成幻觉；
 * **Project Harness 维护的是“工程蓝图与机器门禁（确定且可证伪）”**：  
-  Atlas 原创提出的 Project Harness 不依赖模型的“记忆自觉”，而是将应然资产（PRD 验收准则、代码图谱事实、E2E 验收用例）直接固化在代码仓库内，并用双向集合对账门给出硬性的 0/1 判定。**工人的个人手记再丰富，也绝不能替代工地的建筑蓝图与机器监理！**
+  Atlas 原创提出的 Project Harness 不依赖模型的“记忆自觉”，而是将应然资产（PRD 验收准则、结构事实、E2E 验收用例）直接固化在代码仓库内，并用双向集合对账门给出硬性的 0/1 判定。**工人的个人手记再丰富，也绝不能替代工地的建筑蓝图与机器监理！**
 
 ---
 
@@ -119,7 +119,7 @@ NBER（美国国家经济研究局）2026 年工作论文 35275 追踪了超过 
 ```
 
 ### 1. 两层正交模型（项目级平面 🆚 需求级平面）
-1. **项目级（应然资产层）**：定义“这个系统是什么、长什么样、怎么算做对”。包含**结构事实**（图谱与 AST 逆向抽取）、**项目级 PRD**（业务规则单源）、**E2E 验收用例**（真实靶场可证伪用例），以及跨需求生效的**架构决策记录**（`product/adr/NNNN-<slug>.md`）。
+1. **项目级（应然资产层）**：定义“这个系统是什么、长什么样、怎么算做对”。包含**结构事实**（适配器 AST / 正则逆向抽取；图谱为可选文件枚举增强）、**项目级 PRD**（业务规则单源）、**E2E 验收用例**（真实靶场可证伪用例），以及跨需求生效的**架构决策记录**（`product/adr/NNNN-<slug>.md`）。
 2. **需求级（小需求执行层）**：定义“这次改动改什么、怎么写代码”。由内置的 **Trellis** 任务系统承担，Atlas 本身**不侵入业务代码实现**。
 3. **`apply` 单向衔接**：需求在进入实现前，先由 Agent 唤起 `atlas-apply <需求ID>` 技能将需求增量合并入项目级应然资产，坚决杜绝“先写代码、事后补文档”的失控循环。
 
@@ -129,7 +129,7 @@ Atlas 的核心由 **三环（Rings）** 构筑成不可逾越的应然防线：
 
 | 构件 | 角色 | 产物位置 | 核心机制 |
 |---|---|---|---|
-| **Ring 1: 结构基线** (`atlas-structure`) | **实然事实** | `.trellis/spec/structure/` | 代码图谱 + AST 逆向提取代码事实（路由、数据模型、API、测试现状）。事实区由机器刷新，语义区由规范治理，双份维护（`current` / `legacy`）。 |
+| **Ring 1: 结构基线** (`atlas-structure`) | **实然事实** | `.trellis/spec/structure/` | 适配器（AST / 正则）逆向提取代码事实（路由、数据模型、API、测试现状）。事实区由机器刷新，语义区由规范治理，双份维护（`current` / `legacy`）。 |
 | **Ring 2: 项目级 PRD** (`atlas-prd`) | **业务应然** | `product/prd/` | 业务叙事单一真相源（SSOT）。双向强制追踪链：`功能 ──► 业务规则 ──► 验收准则(AC) ──► E2E 用例`。不挂实现状态，保持应然纯粹性。 |
 | **Ring 3: 验收用例** (`atlas-e2e`) | **验证应然** | `product/e2e/` | 真实应用单段执行（Playwright）。总索引唯一入口，一例一片（页面分片），以 `data-testid` 为唯一硬锚，严禁将瞬时反馈（Toast）当终态。 |
 
@@ -150,7 +150,7 @@ Atlas 的核心由 **三环（Rings）** 构筑成不可逾越的应然防线：
 * **Python 3.10+**（核心校验器与生成引擎）
 * **Playwright**（E2E 测试运行器：Node 版，由项目 node_modules 提供）
 * **[Trellis](https://github.com/mindfold-ai/trellis)**（必需宿主执行器，负责需求级任务调度；安装：`npm install -g @mindfoldhq/trellis`）
-* *(可选)* **CodeGraphContext (cgc)**：若需开启图谱级跨文件逆向分析，安装 `uv tool install codegraphcontext`（或 `pip install codegraphcontext`）
+* *(可选)* **CodeGraphContext (cgc)**：**仅后端 / 全栈项目建议安装**（纯前端栈实测近乎零收益，atlas 在确认画像时按栈门控提议、不会向纯前端项目推销）——安装：`uv tool install codegraphcontext`（或 `pip install codegraphcontext`）
 
 ### 2. 全局安装 CLI 与项目初始化
 
@@ -165,20 +165,19 @@ cd your-project
 atlas init
 ```
 
-> 💡 **提示**：也可以直接从 GitHub 仓库一键安装：`npm install -g sunwenzhe-git/atlas`。Atlas 采用纯项目级设计（与 Trellis 理念一致），无全局 Agent 扩展污染。运行 `atlas init` 时会将专属 skills 按需装配至当前项目本地目录。
-
 装配命令将自动完成：
 1. 将核心契约、校验器、模板整包镜像至目标项目 `.atlas/`；
 2. 为你的 Agent 平台生成专用 Skills 瘦桩（`atlas-structure`, `atlas-prd`, `atlas-e2e`, `atlas-apply`, `atlas-grill`, `atlas-design-review`, `frontend-design` 等）；
-3. 向 `.trellis/` 注入工作流补丁组（Plan 1.6 应然资产挂载、各阶段技能路由、根因分析优先红用例）与项目接线；
+3. 向 `.trellis/` 注入工作流补丁组（Plan 1.6 应然资产挂载、各阶段技能路由、根因分析优先红用例）与项目接线（`AGENTS.md` 指针、`.trellis/config.yaml` 的 `after_finish` hook，pi 宿主另登记 `.pi/` 下的 `/atlas` 控制台扩展）；
 4. 部署只读审查专用 Agent：`atlas-reviewer`。
+5. *（pi 宿主专有）* 落地 `/atlas` 控制台扩展——`/atlas status` 会报**开户态**（「装配 ≠ 开户」），未开户时直接告诉你去跑 `adopt`。非 pi 项目不创建 `.pi/`。
 
 > 🔄 **升级与更新**：
 > - **全局 CLI 自身升级**：运行 `atlas upgrade`（自动通过 npm 拉取最新全局包，支持 `--tag beta` 或 `--dry-run`）。
 > - **项目内工程线束刷新**：在项目目录下运行 `atlas update`（安全刷新 `.atlas/` 资产与平台 Skills 瘦桩，版本戳对账更新，业务配置严格保护不覆盖）。
 
-### 3. 配置技术栈画像 (`product/stack-profile.yaml`)
-检查并填写生成的画像草稿（出厂草稿含占位符，未替换真实字段前 `atlas check` 必有门禁 FAIL；首跑开户前 Agent 会先与你核对画像）：
+### 3. 核对技术栈画像 (`product/stack-profile.yaml`)
+这份草稿**不用你手改**：首跑开户时 Agent 会带着你逐项核对（`origin` / `apps` / `role` / `adapters`）后落盘。出厂草稿含占位符，未替换真实字段前 `atlas check` 必有门禁 FAIL —— 这是 fail-closed 的预期行为，不是装坏了：
 ```yaml
 product: MyAwesomeApp
 origin: greenfield          # greenfield: 全新项目 | adopt: 存量老项目接入
@@ -213,25 +212,35 @@ graph:                      # 可选：声明后 routes 走图谱枚举、apply 
 
 > `apps[]` 的 `name` / `path` / `kind` / `role` 四项为**必填**（缺一即被 `validate_stack_profile` 判 FAIL），`origin` 只有 `greenfield` / `adopt` 两个取值。
 
-### 4. 怎么快速使用？（纯自然语言驱动）
+### 4. 怎么快速使用？（大白话为主，确定性入口兜底）
 
 Atlas 完全做到了**“日常全自动，低频全靠大白话”**：
 
 #### 场景 A：存量老项目首次接入（最常用）
-在 Agent 对话中输入一句大白话：
+唤起技能（确定性入口）：
+```text
+/atlas-apply adopt
+```
+也可以只说一句大白话，让 Agent 自己选模式：
 ```text
 “帮我把这个项目接入 Atlas 工作流”
 ```
-Agent 将自动唤起技能 `atlas-apply adopt`（或 `/atlas-apply adopt`），逆向扫描现有代码拓扑，建立应然资产起点（不瞎猜老业务用例，只登记基线）。首跑开户前 Agent 会与你核对画像草稿，将占位符替换为真实路径。
+无论哪种入口，Agent 都会逆向扫描现有代码拓扑，建立应然资产起点（不瞎猜老业务用例，只登记基线），并在开户前与你核对画像草稿、把占位符换成真实路径。
+
+> ⚠️ **装配 ≠ 开户**：`atlas init` 只装配线束（`.atlas/`、`product/` 骨架、AGENTS.md 指针）。**开户产物是 `product/prd/` 与 `.trellis/spec/structure/` 的内容**——两者为空就是尚未开户。所以「已经装过 atlas」不代表已接入：此时若 Agent 回你「已接入」或反问你「是不是接过了」，直接敲 `/atlas-apply adopt` 即可（开户按产物存在与否断点续跑）。
 
 > 完整流程、为什么存量页面不会把门禁刷红、后端项目的补充配置，见 [存量项目接入指南 (adopt)](https://sunwenzhe-git.github.io/atlas/guide/legacy-adoption)。
 
 #### 场景 B：全新空白项目立项
-对 Agent 说：
+唤起技能：
+```text
+/atlas-apply all
+```
+或对 Agent 说：
 ```text
 “跑一下三环全量构建，建立应然基线”
 ```
-Agent 自动唤起技能 `atlas-apply all`，全量串行初始化 `structure → prd → e2e`。
+Agent 全量串行初始化 `structure → prd → e2e`。
 
 #### 场景 C：日常迭代提需求（100% 自动无感）
 你**无需敲任何 Atlas 命令**，像往常一样在 Trellis 中创建任务（如 `/trellis:start 优化配音列表`）：
@@ -302,14 +311,14 @@ Atlas 随包自带了一个**纯 Python 标准库编写的本地轻量级可视�
 
 ## 五、技术纵深：代码图谱（Code Graph）优化逆向抽取
 
-传统基于纯 AST 或静态正则的代码分析，存在致命局限：**只能看见单文件内的语法树，看不懂跨文件的调用拓扑与隐式依赖**。在复杂工程中，重构一个底层数据模型，传统的 linter 根本无法推断上游究竟有多少路由受损。
+传统基于纯 AST 或静态正则的代码分析看得见单文件语法树，跨文件的函数调用关系却要靠人肉逐文件倒查。图谱把「改一个函数，哪些函数调它」变成可查询的一跳——**能力边界同样先讲清楚**：ORM / 属性访问、反射与框架入口、**以及 JSX 组件的渲染引用**都不在静态调用图内（实测 cgc 0.6.13：`<Comp />` 形态不产生任何调用边 ⇒ 纯前端栈上图谱近乎买不到东西，atlas 按栈门控、纯前端项目不提议启用）。
 
-Atlas 引入了**图谱后端隔离层（`adapters/_graph.py`）**，接入基于 **CodeGraphContext (cgc / FalkorDB 知识图谱后端)** 的图分析能力：
+Atlas 引入了**图谱后端隔离层（`adapters/_graph.py`）**，接入基于 **CodeGraphContext (cgc / FalkorDB 知识图谱后端)** 的图查询能力。**当前消费面只有两处**——先把边界说清楚，免得你为一个用不上的能力装依赖：
 
 ```
   Git 仓库代码 (FastAPI/React/...)
                │
-               ▼  cgc 逆向索引 (FalkorDB)
+               ▼  cgc 建索引（用前现刷，见下）
   ┌──────────────────────────────────────────────┐
   │         全仓代码知识图谱 (Code Graph)          │
   │  File ──► Class ──► Function ──► Caller/Callee │
@@ -317,14 +326,16 @@ Atlas 引入了**图谱后端隔离层（`adapters/_graph.py`）**，接入基�
                          │
         ┌────────────────┴────────────────┐
         ▼                                 ▼
- 结构事实抽取器 (adapters)          精准影响面推导器 (impact_report)
- • 跨文件端点到模型映射             • 需求前置推导影响域
- • 级联依赖自动归域                 • 结合 git diff 深度校验
+  routes 适配器的**文件枚举通道**       影响面基准 (impact_report)
+  • 只换「哪些文件参与识别」            • 需求前置推导受影响符号与调用方
+  • 解析逻辑与正则通道**同一份**        • 与 git diff 对账（advisory 基准）
 ```
+
+> **它不做什么**（同样重要）：图谱**不**做业务域聚类——域由 structure 环按路由簇 / 目录簇 / 模型命名簇 / 接口前缀簇多信号投票得出（`rings/structure/reference.md` §2.1）；图谱也**不**替代任何一个适配器的解析层，枚举出来的文件照样要过同一套解析逻辑。段未声明或后端未安装 ⇒ 全部显式降级（适配器 `WARN` + 回退正则、报告器 `not_ready`），不影响其余流程。
 
 ### 图优化的 4 大工程设计：
 1. **薄后端、厚自有**：
-   * 图谱引擎只当“哑索引与高速查询接口”；所有智能影响面分层、业务域聚类等算法全部由 Atlas 自有 Python 脚本实现。后端无论换成 FalkorDB、Neo4j 还是内存图，核心业务逻辑稳如泰山。
+   * 图谱引擎只当“哑索引与高速查询接口”；所有智能影响面分层等算法全部由 Atlas 自有 Python 脚本实现，域归类走多信号投票（不发图谱，见上「它不做什么」）。后端无论换成 FalkorDB、Neo4j 还是内存图，核心业务逻辑稳如泰山。
 2. **用前现刷，拒绝陈旧（Freshness Guarantee）**：
    * 图谱没有后台常驻的定时任务。每个脚本在查询图谱前自动调用 `ensure_index()`，比对当前 `git HEAD + 脏文件集` 的哈希摘要；哈希不一致则秒级重构索引，**过期状态在消费时构造性不存在**。
 3. **确定性查询（Deterministic Ordering）**：

@@ -13,9 +13,9 @@
 
 | 序号 | 步骤 | 命令 / 动作 | 核心交付物 / 目的 |
 |---|---|---|---|
-| 1 | 装配与画像 | `atlas init` + 编辑 `product/stack-profile.yaml` | 确认 `origin: adopt` 与技术栈画像 |
+| 1 | 装配与画像 | `atlas init` + 与 Agent 核对 `product/stack-profile.yaml`（草稿不用手改） | 确认 `origin: adopt` 与技术栈画像 |
 | 2 | 一次性开户与结构初始化 | `/atlas-apply adopt` | 逆向抽取结构事实（`_meta.json`、`current/`）与 PRD 开户最小集 |
-| 3 | 生成实现期薄桩 | `python3 .atlas/scripts/gen_testid_stub.py --root .` | 产出 `.trellis/spec/conventions/testid.md`，避免首日 `validate_testids.py` 硬 FAIL |
+| 3 | 生成实现期薄桩 | `python3 .atlas/scripts/gen_testid_stub.py --root .` | 产出 `.trellis/spec/conventions/testid.md` = 老页面 testid 实然盘点（非硬门前置：缺失会被 `validate_testids` 自动补齐） |
 | 4 | 首日静态体检复核 | `atlas check --fast` | 验证门禁全绿或仅有合法 WARN |
 | 5 | 需求增量流转 | `/atlas-apply <需求ID>` | 日常流转，按域增量生长 |
 
@@ -29,7 +29,9 @@ cd your-project
 atlas init
 ```
 
-确认 `product/stack-profile.yaml` 里三处关键声明：
+> ⚠️ **这一步只完成「装配」，不等于已接入**。`atlas init` 落下的是线束与骨架：`.atlas/`、`product/`（含画像草稿与空的 `e2e/cases/`）、AGENTS.md 指针、Trellis 接线。**开户是第 2 步**——开户产物是 `product/prd/` 与 `.trellis/spec/structure/` 的**内容**（现在都还是空的）。把这两个目录当成「开户进度条」：为空 ⇒ 还没开户，说「接入」时 Agent 应当直接进 `atlas-apply adopt`，**而不是**因为 `.atlas/` 已存在就判「已接入」。
+
+画像草稿不用你手改 —— 第 2 步开户时 Agent 会带着你逐项核对下面三处关键声明（也可以自己先看草稿）：
 
 * **`origin: adopt`** —— 声明存量形态：PRD 走「增量起步」，开户只开最小集；
 * **`apps[]`** —— 真正落地的实现标 `role: landing`；被重构替换中的旧代码（作为事实来源）标 `role: legacy`；
@@ -48,15 +50,16 @@ atlas init
 
 **关键承诺：开户不预设 E2E**——不猜老业务的验收用例、不要求补 testid、不产生历史页面的对账债务。老项目的 UI 与流程已经在代码里，从代码反推产品意图再全量重写 PRD 与用例，既不可能也没价值。
 
-### 第 3 步：生成实现期薄桩（`gen_testid_stub.py`，首日体检前必做）
+### 第 3 步：生成实现期薄桩（`gen_testid_stub.py`，开户交尾）
 
-在结构初始化之后、首日体检之前，显式执行薄桩生成：
+在结构初始化之后、首日体检之前，显式执行一次薄桩生成：
 
 ```bash
 python3 .atlas/scripts/gen_testid_stub.py --root .
 ```
 
-> **为什么必须执行**：`validate_testids.py` 要求必须存在 `.trellis/spec/conventions/testid.md` 薄桩文件（契约 §4.1，否则硬 FAIL）。虽然开户期暂不产生用例分片，但生成器需要扫描既有前端源码建立实然 testid 盘点基线。补齐该薄桩后，存量开户标准方可闭环。
+> **为什么建议显式跑一次**：薄桩是**开户交割物之一** —— 生成器扫描既有前端源码，产出**老页面 testid 的实然盘点表**（契约 §4.1）。
+> **注意它不是首日的硬门前置**：薄桩缺失时 `validate_testids.py` 会**就地自动补齐并记 `PASS`**（F32 机器兜底，2026-10-15 起；`FAIL` 只留给生成失败的真错）。所以显式跑一次是为了让这份交割物**当场可见、可核对**，而不是躲在某道门的副作用里。
 
 随后即可执行首日体检，确认基础门禁全绿：
 

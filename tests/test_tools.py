@@ -186,7 +186,7 @@ def test_f23_tests_adapter_python3_m_pytest() -> None:
         res = subprocess.run(cmd, capture_output=True, text=True)
         assert res.returncode == 0, res.stderr
         data = json.loads(out_json.read_text(encoding="utf-8"))
-        assert data["adapter_version"] == "0.1.1"
+        assert data["adapter_version"] == "0.2.0"
         assert len(data["items"]) == 1
         assert data["items"][0]["run_command"] == "python3 -m pytest"
 
@@ -242,6 +242,127 @@ def test_f30_assembly_cover_in_sync_with_install_sh() -> None:
             (root2 / "docs" / "readme.md").write_text("v2\n", encoding="utf-8")
             assert pd.digest(root2) == d3, "非装配集文件变动不得摆动摘要（F8 关门）"
 
+
+def _load_pkg_digest():
+    return load("pkg_digest", "scripts/pkg_digest.py")
+
+
+def test_f37_digest_covers_files_under_node_modules_prefix() -> None:
+    """F37（2026-10-15）：源包位于 npm 全局安装路径 `<prefix>/lib/node_modules/<pkg>` 时，
+    摘要必须**非空且随内容变**。
+
+    旧口径拿**绝对** parts 判 `SKIP_DIRS` ⇒ 每个文件都命中 `node_modules` 被滤掉 ⇒
+    摘要恒为 `sha256('')[:16]`，而 install.sh 落戳与 atlas_check 重算两侧同错 ⇒ 恒等 ⇒
+    「装配版本」门在任何内容漂移下都不报红（issue #1 现场实证）。本钉把「装配版本」门
+    从「只会通过的门」拽回可证伪。
+    """
+    import hashlib
+
+    pd = _load_pkg_digest()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "lib" / "node_modules" / "atlas-project-harness"
+        (root / "shared").mkdir(parents=True)
+        (root / "shared" / "closeout.md").write_text("v1\n", encoding="utf-8")
+        d1 = pd.digest(root)
+        assert d1 != hashlib.sha256(b"").hexdigest()[:16], "空摘要 ⇒ 门恒等恒 ok（F37 病根）"
+        (root / "shared" / "closeout.md").write_text("v2\n", encoding="utf-8")
+        assert pd.digest(root) != d1, "改装配集内文件必须摆动摘要"
+
+
+def test_f37_empty_assembly_raises_instead_of_empty_digest() -> None:
+    """F37：装配集为空（一个可摘要文件都没有）⇒ 响亮报错，不得静默返回空摘要。
+
+    「装配 0 文件」不是一次合法装配；空摘要流过落戳就等于把门设成恒等。
+    """
+    pd = _load_pkg_digest()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "docs").mkdir(parents=True)          # 非装配集目录 ⇒ 摘要覆盖不到
+        (root / "docs" / "readme.md").write_text("x\n", encoding="utf-8")
+        try:
+            pd.digest(root)
+        except pd.EmptyAssembly:
+            pass
+        else:
+            raise AssertionError("空装配必须抛 EmptyAssembly，而不是返回空摘要")
+
+
+def _run_tests_adapter(root: Path, *extra: str):
+    out_json = root / "tests.json"
+    cmd = [sys.executable, str(PKG_ROOT / "adapters" / "tests.py"),
+           "--root", str(root), "--out", str(out_json), *extra]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    return res, (json.loads(out_json.read_text(encoding="utf-8")) if out_json.is_file() else None)
+
+
+def _mk_profile(root: Path, apps: str = "  - name: svc\n    path: svc\n    kind: backend\n") -> None:
+    (root / "product").mkdir(parents=True, exist_ok=True)
+    (root / "product" / "stack-profile.yaml").write_text(
+        f"product: legacy-test\norigin: adopt\napps:\n{apps}", encoding="utf-8")
+
+
+def test_f40_ts_test_with_only_pytest_config_gets_no_command() -> None:
+    """F40（2026-10-15，issue #4 现场）：根有 `pytest.ini`、全仓唯一测试文件是 `.test.ts`
+    ⇒ `run_command` 必须**留空**并出声，绝不产「`.test.ts` + `python3 -m pytest`」这种
+    自相矛盾条目。
+
+    为何要紧：该产出「非空且形态合法」⇒ 骗过 §6.2 的接线前置（`§B118` 只识别「产出为空」），
+    把错误事实喂进事实区，且它会随 `refresh_structure --chain` 反复回来。
+
+    变异证明：把 runner 退回「只看配置存在性」⇒ `run_command == RUN_PYTEST`，本用例红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_profile(root)
+        (root / "pytest.ini").write_text("[pytest]\nmarkers =\n    ac: x\n", encoding="utf-8")
+        (root / "svc").mkdir()
+        (root / "svc" / "util.test.ts").write_text("// t\n", encoding="utf-8")
+        res, data = _run_tests_adapter(root)
+        assert res.returncode == 0, res.stderr                  # WARN 不得置非零（否则砍链）
+        assert len(data["items"]) == 1
+        assert data["items"][0]["location"].endswith("util.test.ts")
+        assert data["items"][0]["run_command"] is None, data["items"][0]
+        assert "WARN" in res.stderr and "util.test.ts" in res.stderr, res.stderr
+
+
+def test_f40_node_family_runner_comes_from_node_config() -> None:
+    """F40 正控：JS/TS 测试按**同族配置**取命令（playwright > vitest > jest > npm test）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_profile(root)
+        (root / "vitest.config.ts").write_text("export default {}\n", encoding="utf-8")
+        (root / "svc").mkdir()
+        (root / "svc" / "a.test.ts").write_text("t\n", encoding="utf-8")
+        _, data = _run_tests_adapter(root)
+        assert data["items"][0]["run_command"] == "npx vitest run", data["items"][0]
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_profile(root)
+        (root / "playwright.config.ts").write_text("export default {}\n", encoding="utf-8")
+        (root / "svc").mkdir()
+        (root / "svc" / "b.spec.ts").write_text("t\n", encoding="utf-8")
+        _, data = _run_tests_adapter(root)
+        assert data["items"][0]["run_command"] == "npx playwright test", data["items"][0]
+        assert data["items"][0]["type"] == "e2e", data["items"][0]
+
+
+def test_f40_root_config_found_under_app_scope() -> None:
+    """F40：`--app` 调用（域级类别的主路径）**不得漏掉项目根的配置**。
+
+    旧实现用同一遍遍历取配置与测试文件，而 `iter_files(base=app_path)` 只走 app 目录 ⇒
+    落在项目根的 `pytest.ini` 拿不到，命令被静默降级成 null。配置是**项目级**的，探测必须
+    扫整项目；测试文件盘点才按 app 收窄。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_profile(root)
+        (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+        (root / "svc").mkdir()
+        (root / "svc" / "test_notes.py").write_text("def test_x(): pass\n", encoding="utf-8")
+        _, data = _run_tests_adapter(root, "--app", "svc")
+        assert [i["location"] for i in data["items"]] == ["svc/test_notes.py"], data["items"]
+        assert data["items"][0]["run_command"] == "python3 -m pytest", data["items"][0]
 
 
 def main() -> int:

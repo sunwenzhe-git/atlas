@@ -121,6 +121,6 @@ product/prd/
 
 | 环 | 接口 |
 |---|---|
-| `atlas structure`（上游，解耦） | 以 `.trellis/spec/structure/`（含 `_meta.json.domains` 候选域）为输入；候选域由 structure 环基于 CGC 调用图 + Leiden 拓扑聚类机器计算。**不由 structure 自动触发**，本环独立运行、按需读。本环诊断阶段读候选域并**定稿域**边界，回写 `_meta.json`。 |
+| `atlas structure`（上游，解耦） | 以 `.trellis/spec/structure/`（含 `_meta.json.domains` 候选域）为输入；候选域由 structure 环按**多信号投票**提议（`rings/structure/reference.md` §2.1；不走 CGC 调用图——`DESIGN.md` D77/D78）。**不由 structure 自动触发**，本环独立运行、按需读。本环诊断阶段读候选域并**定稿域**边界，回写 `_meta.json`。 |
 | `atlas e2e` | **页面 → 分片键**；**AC → 用例上游**（用例 `prd_ref` 回指 AC ID）。 |
 | `atlas apply` | 需求增量时只改受影响的域章节 + 追溯总表 + 全局范围节。 |

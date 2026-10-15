@@ -4,7 +4,7 @@
 **事故**：批 1 删掉原型环 5 件包内件，但 `install.sh` 的自检仍 `check` 其中 4 件
 ⇒ 新项目开户直接以「装配失败」退出（exit 1），且骨架仍创建已退役的 `product/prototype/`。
 人眼复核连过两轮（`3508 §101`、`§104`）都没命中 —— 因为它不在 vault↔canonical 的
-对账面上。故把三条判据钉成机器门：
+对账面上。故把下面几条判据钉成机器门：
 
   1. **自检引用必须存在**：`install.sh` 每条 `check "<名>" "<路径>"`，凡指向包内
      （`$ATLAS_DEST/...`、`$PATCH_DIR/...`、`$WIRING_DIR/...`）的文件必须在包内存在；
@@ -16,9 +16,14 @@
   3. **skill 瘦桩引用的契约必须存在**（副本态也能跑）：`skills/*/SKILL.md` 里出现的
      `.atlas/<...>` 路径逐个校验；`{a,b,c}` 花括号展开。事故同族：E1 后瘦桩仍指
      `rings/{prd,prototype,e2e,structure}`。
+  4. **`$var` 紧邻非 ASCII 必须写 `${var}`**（`set -u` 下会被吞进变量名 ⇒ 半途退出）。
+  5. **环退役对称**（`rings/<r>/reference.md` ⇔ `skills/atlas-<r>/`）。
+  6. **首建提示的两条硬约束**（2026-10-15 加）：`say` 行不得残留已退役环名（首建者是纯
+     噪声，与判据 1 同族），且存量（`atlas-apply adopt`）与全新（`atlas-apply all`）两条
+     开户入口都要在 —— 只给全新那条，存量项目开户即无从下手。
 
 - 框架无关；纯标准库。判定：全部通过 → 0；任一违规 → 1。
-- 副本态（`.atlas/`）没有 `install.sh` ⇒ 判据 1/2 **显式 skip**（`-rs` 可见），不静默通过。
+- 副本态（`.atlas/`）没有 `install.sh` ⇒ 判据 1/2/4/6 **显式 skip**（`-rs` 可见），不静默通过。
 
 用法：
     python3 test_install_selfcheck.py [--json]
@@ -51,6 +56,12 @@ QUOTED_RE = re.compile(r'"([^"]+)"')
 # 否则 `{prd,prototype,e2e,structure}` 整条引用匹配不上，静默不检查。
 # 实测：漏 `,` 时变异 M3（把已删环塞回花括号）不咬，门成摆设）
 ATLAS_REF_RE = re.compile(r"\.atlas/([A-Za-z0-9_./{},]+\.(?:md|py))")
+# `say "..."` 整行（用户可见输出；判据 6 用）
+SAY_RE = re.compile(r'\bsay\s+"(.*)"\s*$')
+# 已退役环在提示里的残留词（判据 6 ①）：`rings/prototype/` 已删，中英文两种写法都不该露脸
+RETIRED_RING_WORDS = ("原型", "prototype")
+# 开户两条入口（判据 6 ②）：存量 adopt / 全新 all。只给一条 ⇒ 另一种形态的项目开户即无从下手
+HINT_ENTRIES = ("atlas-apply adopt", "atlas-apply all")
 
 # 包内变量前缀 → 包内相对目录（$ATLAS_DEST = <目标>/.atlas/，逐字镜像包内布局）
 # 非环 skill 白名单（`3509 §95`）：它们不是「环」，不参与环退役对称判据。
@@ -244,9 +255,52 @@ def check_var_before_nonascii() -> dict:
                        else "install.sh 内无 `$var` 紧邻非 ASCII 的写法")}
 
 
+def install_say_lines(text: str) -> list[str]:
+    """install.sh **打到用户眼前**的行（`say "..."`；注释与普通语句不算）。
+
+    只看注释不算数：判据要守的是首建者读到的那几行。
+    """
+    out: list[str] = []
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        m = SAY_RE.search(line)
+        if m:
+            out.append(m.group(1))
+    return out
+
+
+def check_first_run_hint() -> dict:
+    """首建提示（`say` 行）的两条硬约束（2026-10-15 重写后加，M50）。
+
+    **缺陷本体**：首建尾巴原本挂着「（E1：原型环已移除）」—— 对刚装完的人是纯噪声，
+    且与 ① 同族（源包已删环、提示还提它）；同时只给全新项目的全量环入口
+    （`atlas-apply all`），**存量项目照着做是错的形态**（存量该走 `atlas-apply adopt`：
+    只登记基线，不逆向考古）——开户时无从下手。两条都判：
+      ① **无退役环残留**：`say` 行不得出现已退役环名（`原型` / `prototype`）；
+      ② **双入口齐备**：存量（`atlas-apply adopt`）与全新（`atlas-apply all`）都要出现。
+    """
+    text = _read(INSTALL)
+    if not text:
+        return {"check": "首建提示（退役环残留 / 双入口）", "ok": True, "skip": True,
+                "detail": "包内无 install.sh（副本态：装配面自检只在源包跑）"}
+    lines = install_say_lines(text)
+    if not lines:
+        return {"check": "首建提示（退役环残留 / 双入口）", "ok": False, "skip": False,
+                "detail": "未能从 install.sh 解析出任何 `say` 行（判据失效，fail-closed）"}
+    bad = [f"提示残留退役环名「{w}」：{ln.strip()}"
+           for ln in lines for w in RETIRED_RING_WORDS if w in ln]
+    joined = "\n".join(lines)
+    bad += [f"提示缺开户入口「{e}」" for e in HINT_ENTRIES if e not in joined]
+    return {"check": "首建提示（退役环残留 / 双入口）", "ok": not bad, "skip": False,
+            "detail": ("；".join(bad) + "（退役即删，提示里不留历史括注；两条入口见 `apply/reference.md` §1）"
+                       if bad else
+                       f"{len(lines)} 条用户可见 `say` 行：无退役环残留，双开户入口齐备")}
+
+
 def scan() -> list[dict]:
     return [check_install_paths(), check_install_skeleton(), check_skill_refs(),
-            check_var_before_nonascii(), check_ring_skill_symmetry()]
+            check_var_before_nonascii(), check_ring_skill_symmetry(), check_first_run_hint()]
 
 
 def test_install_selfcheck_paths_exist() -> None:
@@ -271,6 +325,11 @@ def test_install_has_no_var_touching_nonascii() -> None:
 
 def test_ring_and_skill_are_symmetric() -> None:
     res = check_ring_skill_symmetry()
+    assert res["ok"], res["detail"]
+
+
+def test_first_run_hint_has_no_retired_ring_and_both_entries() -> None:
+    res = check_first_run_hint()
     assert res["ok"], res["detail"]
 
 

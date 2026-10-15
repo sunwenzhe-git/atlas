@@ -298,8 +298,10 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
 
 使用方式:
   1. 在 Agent 会话中直接输入大白话，例如:
-     - "帮我把这个项目接入 Atlas 工作流" (对应 adopt 存量开户)
-     - "跑一下三环全量构建，建立应然基线" (对应 all 全量构建)
+     - "帮我把这个项目接入 Atlas 工作流" (意图 = adopt 存量开户)
+     - "跑一下三环全量构建，建立应然基线" (意图 = all 全量构建)
+     注意「装配 ≠ 开户」：开户产物是 product/prd/ 与 .trellis/spec/structure/ 的内容。
+     若 Agent 因 .atlas/ 已存在而回你「已接入」，改用下面第 2 种（确定性入口）。
   2. 或在支持 Slash Command 的平台中唤起技能:
      /atlas-apply ${sub}
 `);

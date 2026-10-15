@@ -24,21 +24,60 @@ META = {
 }
 
 
+def test_f41_adapter_out_single_location() -> None:
+    """F41（2026-10-15，issue #8）：`.adapter-out/` 是**单一位点 = 项目根**。
+
+    三消费者必须同址：适配器产物（`refresh_structure`）、漂移门（`atlas_check`）、图谱
+    新鲜度标记（`adapters/_graph`）。此前图谱层在项目根、结构环产物在
+    `.trellis/spec/structure/` 下 ⇒ 同名两处。现场因此出现「`git status` 里有
+    `.adapter-out/`，而漂移门说『无 .adapter-out 产物目录』」的自相矛盾——排查者会先怀疑
+    门坏，而不是去比对基准。本钉即 issue #8 ④ 要求的「把两处硬编码字面量钉在一起」：
+    任一消费者改回 spec 目录即红。
+    """
+    import importlib.util
+
+    def load(name: str, rel: str):
+        spec = importlib.util.spec_from_file_location(name, PKG_ROOT / rel)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    rs = load("rs_single_loc", "scripts/refresh_structure.py")
+    ac = load("ac_single_loc", "scripts/atlas_check.py")
+    gr = load("gr_single_loc", "adapters/_graph.py")
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        # ① 写入侧（适配器产物 + 漂移标记）
+        assert rs.adapter_out_dir(root) == root / ".adapter-out"
+        # ② 读取侧（漂移门）：SKIP 文案必须**带上实际路径**，否则「SKIP 与现场不一致」时
+        #    读者看不出问的是哪条路径（issue #8 ③）
+        rows = ac.Row()
+        ac.check_drift(root, rows)
+        skip = [r for r in rows.rows if r["name"] == "结构漂移"][0]
+        assert skip["status"] == "SKIP", skip
+        assert str(root / ".adapter-out") in skip["detail"], skip
+        # ③ 图谱层标记与上面**同址**
+        assert Path(gr.INDEX_MARKER).parent == Path(rs.ADAPTER_OUT_DIRNAME), gr.INDEX_MARKER
+
+
 def build(root: Path) -> None:
     sd = root / ".trellis" / "spec" / "structure"
-    (sd / ".adapter-out" / "api").mkdir(parents=True, exist_ok=True)
-    (sd / ".adapter-out" / "models").mkdir(parents=True, exist_ok=True)
+    sd.mkdir(parents=True, exist_ok=True)   # .adapter-out 已移到项目根 ⇒ 不再顺带建 sd
+
+    (root / ".adapter-out" / "api").mkdir(parents=True, exist_ok=True)
+    (root / ".adapter-out" / "models").mkdir(parents=True, exist_ok=True)
     (sd / "_meta.json").write_text(json.dumps(META, ensure_ascii=False), encoding="utf-8")
-    (sd / ".adapter-out" / "routes.json").write_text(json.dumps({
+    (root / ".adapter-out" / "routes.json").write_text(json.dumps({
         "category": "routes",
         "items": [{"path": "/home", "source_file": "app/pages/home.py", "status": "已实现"}],
     }, ensure_ascii=False), encoding="utf-8")
-    (sd / ".adapter-out" / "api" / "app.json").write_text(json.dumps({
+    (root / ".adapter-out" / "api" / "app.json").write_text(json.dumps({
         "category": "api",
         "items": [{"method": "GET", "path": "/home", "summary": "首页", "source_module": "home",
                    "source_file": "app/pages/home.py"}],
     }, ensure_ascii=False), encoding="utf-8")
-    (sd / ".adapter-out" / "models" / "app.json").write_text(json.dumps({
+    (root / ".adapter-out" / "models" / "app.json").write_text(json.dumps({
         "category": "models",
         "items": [
             {"table": "users", "field": "id", "type": "int", "source_file": "app/pages/home.py"},
@@ -60,6 +99,8 @@ def test_facts_rendered_and_mapped() -> None:
         r = run(root, "--apply")
         assert r.returncode == 0, r.stderr + r.stdout
         sd = root / ".trellis" / "spec" / "structure"
+        sd.mkdir(parents=True, exist_ok=True)   # .adapter-out 已移到项目根 ⇒ 不再顺带建 sd
+
         routes = (sd / "global" / "routes.md").read_text(encoding="utf-8")
         assert "| app | /home | home |" in routes, routes
         apis = (sd / "current" / "home" / "apis.md").read_text(encoding="utf-8")
@@ -85,12 +126,41 @@ def test_semantic_cells_preserved() -> None:
         assert "首页入口" in routes_path.read_text(encoding="utf-8")
 
         # F16 回灌：适配器空产物（items: []）避免意外清空既有手写/已有结构事实 routes.md
-        (root / ".trellis" / "spec" / "structure" / ".adapter-out" / "routes.json").write_text(
+        (root / ".adapter-out" / "routes.json").write_text(
             json.dumps({"category": "routes", "items": []}, ensure_ascii=False), encoding="utf-8")
         r = run(root, "--apply")
         assert r.returncode == 0
         assert "WARN: 适配器产物为空，保留既有手工事实" in r.stdout
         assert "首页入口" in routes_path.read_text(encoding="utf-8")
+
+
+def test_duplicate_row_keys_collapse_within_one_facts_file() -> None:
+    """同一事实文件内**重复行键折叠为一行**（D69 的行键级合并以「行键唯一」为前提）。
+
+    2026-10-15 补：RPC 端点常从同域多个模块被调、同名同字段模型常在两个文件各声明一次。
+    适配器**不去重**（items 粒度 = 代码里的事实；跨域重复是合法事实，各进各的域文件），
+    折叠点在这里 —— 不折叠则表里出现同键同内容的重复行，而 `merge_cells` 的语义列
+    在重复键上也没有归属可言。变异 M58：摘掉 `dedup_by_row_key` ⇒ 本侧红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build(root)
+        (root / ".adapter-out" / "api" / "app.json").write_text(
+            json.dumps({
+                "category": "api",
+                "items": [
+                    {"method": "RPC", "path": "zeldaEasy.x.doIt", "summary": None,
+                     "source_module": "app/pages/home.py", "source_file": "app/pages/home.py"},
+                    {"method": "RPC", "path": "zeldaEasy.x.doIt", "summary": None,
+                     "source_module": "app/pages/home_detail.py",
+                     "source_file": "app/pages/home_detail.py"},
+                ],
+            }, ensure_ascii=False), encoding="utf-8")
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stderr + r.stdout
+        apis = (root / ".trellis" / "spec" / "structure" / "current" / "home"
+                / "apis.md").read_text(encoding="utf-8")
+        assert apis.count("zeldaEasy.x.doIt") == 1, apis
 
 
 def test_idempotent() -> None:
@@ -122,15 +192,17 @@ def test_drift_detected_then_cleared() -> None:
         build(root)
         run(root, "--apply")
         sd = root / ".trellis" / "spec" / "structure"
+        sd.mkdir(parents=True, exist_ok=True)   # .adapter-out 已移到项目根 ⇒ 不再顺带建 sd
+
         # 模拟改名：改写适配器产物（路由 /home → /home2，未走 apply 登记）
-        (sd / ".adapter-out" / "routes.json").write_text(json.dumps({
+        (root / ".adapter-out" / "routes.json").write_text(json.dumps({
             "category": "routes",
             "items": [{"path": "/home2", "source_file": "app/pages/home.py", "status": "已实现"}],
         }, ensure_ascii=False), encoding="utf-8")
         r = run(root, "--apply")
         assert r.returncode == 0, r.stderr + r.stdout
         assert "结构漂移" in r.stdout, r.stdout
-        marker = sd / ".adapter-out" / "_drift.json"
+        marker = root / ".adapter-out" / "_drift.json"
         assert marker.is_file(), r.stdout
         d = json.loads(marker.read_text(encoding="utf-8"))
         dr = d["drifts"][0]
@@ -142,7 +214,7 @@ def test_drift_detected_then_cleared() -> None:
         assert r2.returncode == 0
         assert "结构漂移" not in r2.stdout, r2.stdout
         assert not marker.exists()
-        hist = sd / ".adapter-out" / "_drift-history.jsonl"
+        hist = root / ".adapter-out" / "_drift-history.jsonl"
         assert hist.is_file() and "/home2" in hist.read_text(encoding="utf-8")
 
 
@@ -153,14 +225,16 @@ def test_drift_dry_run_prints_without_marker() -> None:
         build(root)
         run(root, "--apply")
         sd = root / ".trellis" / "spec" / "structure"
-        (sd / ".adapter-out" / "routes.json").write_text(
+        sd.mkdir(parents=True, exist_ok=True)   # .adapter-out 已移到项目根 ⇒ 不再顺带建 sd
+
+        (root / ".adapter-out" / "routes.json").write_text(
             json.dumps({"category": "routes", "items": [
                 {"path": "/home2", "source_file": "app/pages/home.py", "status": "已实现"}
             ]}, ensure_ascii=False), encoding="utf-8")
         r = run(root)
         assert r.returncode == 0, r.stderr + r.stdout
         assert "结构漂移" in r.stdout, r.stdout
-        assert not (sd / ".adapter-out" / "_drift.json").exists()
+        assert not (root / ".adapter-out" / "_drift.json").exists()
 
 
 def test_pipe_in_cell_value_round_trips() -> None:
@@ -172,7 +246,9 @@ def test_pipe_in_cell_value_round_trips() -> None:
         root = Path(td)
         build(root)
         sd = root / ".trellis" / "spec" / "structure"
-        (sd / ".adapter-out" / "models" / "app.json").write_text(json.dumps({
+        sd.mkdir(parents=True, exist_ok=True)   # .adapter-out 已移到项目根 ⇒ 不再顺带建 sd
+
+        (root / ".adapter-out" / "models" / "app.json").write_text(json.dumps({
             "category": "models",
             "items": [
                 {"table": "users", "field": "id", "type": "datetime | None",
@@ -278,8 +354,10 @@ def test_chain_runs_adapters_then_refresh_in_one_pass() -> None:
         r = run(root, "--chain")
         assert r.returncode == 0, r.stderr + r.stdout
         sd = root / ".trellis" / "spec" / "structure"
+        sd.mkdir(parents=True, exist_ok=True)   # .adapter-out 已移到项目根 ⇒ 不再顺带建 sd
+
         # 适配器产物更新（routes.json 由 stub 写入新键）
-        assert "stub-route-from-adapter" in (sd / ".adapter-out" / "routes.json").read_text(encoding="utf-8")
+        assert "stub-route-from-adapter" in (root / ".adapter-out" / "routes.json").read_text(encoding="utf-8")
         # 事实区渲染含新键
         assert "stub-route-from-adapter" in (sd / "global" / "routes.md").read_text(encoding="utf-8")
         # F27：L2 指针一遍即链接到本轮新落的事实文件
@@ -298,8 +376,10 @@ def test_chain_failure_aborts_before_refresh() -> None:
         r = run(root, "--chain")
         assert r.returncode == 2, r.stdout
         sd = root / ".trellis" / "spec" / "structure"
+        sd.mkdir(parents=True, exist_ok=True)   # .adapter-out 已移到项目根 ⇒ 不再顺带建 sd
+
         # routes 适配器（顺序在前）已落盘
-        assert "stub-route-from-adapter" in (sd / ".adapter-out" / "routes.json").read_text(encoding="utf-8")
+        assert "stub-route-from-adapter" in (root / ".adapter-out" / "routes.json").read_text(encoding="utf-8")
         # refresh 未执行 ⇒ 事实表不存在（首建场景事实表本来未落，links 不更新）
         out = (sd / "global" / "routes.md")
         # 这里 build() 的 routes.json 在 stub 前已存在旧内容（build 夹具产物），
@@ -359,7 +439,7 @@ def test_chain_advance_frozen_by_drift_then_override() -> None:
         assert r1.returncode == 0
         sha1 = head_sha(root)  # _meta.json 此刻未提交，落盘的是 facts 所述代码态 commit（约定口径）
         # 制造漂移：改 routes 适配器产物键级
-        (root / ".trellis" / "spec" / "structure" / ".adapter-out" / "routes.json").write_text(json.dumps({
+        (root / ".adapter-out" / "routes.json").write_text(json.dumps({
             "category": "routes", "items": [
                 {"path": "/changed", "source_file": "app/pages/home.py", "status": "已实现"}],
         }, ensure_ascii=False), encoding="utf-8")
@@ -400,8 +480,10 @@ def test_render_tour_lists_adapter_run_command() -> None:
         root = Path(td)
         build(root)
         sd = root / ".trellis" / "spec" / "structure"
-        (sd / ".adapter-out" / "tests").mkdir(parents=True, exist_ok=True)
-        (sd / ".adapter-out" / "tests" / "app.json").write_text(json.dumps({
+        sd.mkdir(parents=True, exist_ok=True)   # .adapter-out 已移到项目根 ⇒ 不再顺带建 sd
+
+        (root / ".adapter-out" / "tests").mkdir(parents=True, exist_ok=True)
+        (root / ".adapter-out" / "tests" / "app.json").write_text(json.dumps({
             "category": "tests",
             "items": [{"type": "unit", "location": "app/test_x.py",
                        "run_command": ".venv/bin/python -m pytest app/tests", "status": None}],

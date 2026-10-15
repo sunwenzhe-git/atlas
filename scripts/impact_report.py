@@ -165,7 +165,8 @@ def render(out_dir: Path, payload: dict) -> None:
                 lines.append(f"  - {f}")
         lines.append("")
     if not payload["layers"]:
-        lines.append("（无调用方命中——注意：无边 ≠ 无人用；框架入口 / 反射 / 跨语言引用"
+        lines.append("（无调用方命中——注意：无边 ≠ 无人用；框架入口 / 反射 / 跨语言引用，"
+                     "以及 JSX 组件的渲染引用（组件被使用不产生调用边，2026-10-15 实测）"
                      "不在静态调用图内，语义侧仍须人工确认。）")
     (out_dir / "impact.md").write_text("\n".join(lines), encoding="utf-8")
 

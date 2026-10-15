@@ -36,7 +36,7 @@ from pathlib import Path
 
 # 与 install.sh 第 1 步的 `for pkg_dir in …` 逐项一致（出厂测试守恒；新增包面目录两处同改）。
 BACKFLOW_DIRS = ("shared", "rings", "apply", "scripts", "templates",
-                 "adapters", "validators", "patches", "tests", "_support")
+                 "adapters", "validators", "patches", "tests", "_support", "extensions")
 SKIP_NAMES = {"__pycache__", ".pytest_cache", ".DS_Store"}
 SKIP_SUFFIXES = (".pyc",)
 

@@ -2,17 +2,20 @@
 """atlas 流水线缺陷与设计冲突自感知上报工具。
 
 由 Agent 在会话中遇到 Atlas 流水线结构性冲突、体验卡点或规则盲区时自动调用，
-将结构化现场直推云端中心池（GitHub Issues），以便架构师集中排期、定案并升级。
+将结构化的**设计问题**直推云端中心池（GitHub Issues），以便架构师集中排期、定案并升级。
 纯标准库，零外部依赖。
+
+**零业务上下文**（`global-rules.md` §15）：本工具上报的是**规则缺陷**，不是某个产品的现场 ——
+不上传产品名、业务名词、真实数据或业务代码。业务背景只在会话内用于定位，落盘前一律抽象化。
 
 用法：
     python3 atlas_report.py \
         --title "标题" \
         --kind design-conflict \
-        --conflict "冲突本体说明" \
-        --context "业务背景" \
-        --proposal "建议方案" \
-        --evidence "日志或代码"
+        --conflict "设计缺陷本体（哪条规则 / 哪个提取器 / 哪一步流程，在什么条件下冲突）" \
+        --shape "触发形态（抽象：什么形状的用法撞上它）" \
+        --proposal "建议解耦方向与权衡" \
+        --evidence "atlas 侧客观输出：报错 / 规则 ID / 文件行"
 """
 from __future__ import annotations
 
@@ -58,28 +61,34 @@ def get_token() -> str | None:
     return None
 
 
-def format_markdown(title: str, kind: str, conflict: str, context: str, proposal: str, evidence: str) -> str:
+def format_markdown(title: str, kind: str, conflict: str, shape: str, proposal: str, evidence: str,
+                    trigger: str = "auto") -> str:
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # 来源必须如实：用户要求上报 ≠ 模型自己认出来（`global-rules.md` §15 类别 4 是**漏认**的
+    # 信号）。池子里的来源分布就是这条契约的体检表 —— 全 user 说明自动路径没在工作。
+    source = ("Agent 自动感知归因（§15 类别 1–3）" if trigger == "auto"
+              else "用户显式要求上报（§15 类别 4 —— 本轮模型漏认）")
     return f"""### 📌 流水线自感知上报 (Pipeline RFC)
 
 > **上报时间**：{now}  
 > **问题类别**：`{kind}`  
-> **上报来源**：Agent 自动感知归因
+> **上报来源**：{source}  
+> **范围**：只报**设计问题**；不含产品名 / 业务名词 / 真实数据（§15 零业务上下文）
 
 ---
 
-#### 1. 业务背景与触发时机 (Context)
-{context or "未提供具体业务背景"}
-
-#### 2. 冲突本体与设计不合理处 (Conflict & Design Flaw)
+#### 1. 设计缺陷本体 (Design Flaw)
 {conflict or "未详细展开冲突本体"}
+
+#### 2. 触发形态（抽象）(Repro Shape)
+{shape or "未提供（抽象描述：什么形状的用法撞上它，而非哪个产品）"}
 
 #### 3. Agent 建议解法与权衡 (Proposal & Trade-offs)
 {proposal or "未提供建议方案"}
 
-#### 4. 现场客观证据 (Evidence)
+#### 4. 现场客观证据（atlas 侧输出）(Evidence)
 ```text
-{evidence or "无附带代码片段或日志"}
+{evidence or "无附带报错或规则 ID"}
 ```
 """
 
@@ -120,14 +129,18 @@ def main() -> int:
     parser.add_argument("--title", required=True, help="问题简述标题")
     parser.add_argument("--kind", choices=KINDS, default="design-conflict", help="问题类型")
     parser.add_argument("--conflict", required=True, help="冲突本体或设计缺陷详细描述")
-    parser.add_argument("--context", default="", help="业务背景与触发时机")
+    parser.add_argument("--shape", default="",
+                        help="触发形态（抽象：什么形状的用法撞上它；不含产品名 / 业务名词 / 真实数据）")
     parser.add_argument("--proposal", default="", help="建议方案与权衡")
-    parser.add_argument("--evidence", default="", help="客观报错输出或代码片段")
+    parser.add_argument("--evidence", default="", help="atlas 侧客观输出：报错 / 规则 ID / 文件行")
+    parser.add_argument("--trigger", choices=("auto", "user"), default="auto",
+                        help="谁先发现的：auto = 模型自己认出来；user = 用户要求上报（§15 类别 4）")
     parser.add_argument("--repo", default=DEFAULT_REPO, help="GitHub 目标仓库 (默认: sunwenzhe-git/atlas)")
     parser.add_argument("--root", default=".", help="项目根目录")
 
     args = parser.parse_args()
-    body = format_markdown(args.title, args.kind, args.conflict, args.context, args.proposal, args.evidence)
+    body = format_markdown(args.title, args.kind, args.conflict, args.shape, args.proposal, args.evidence,
+                           args.trigger)
     token = get_token()
 
     if token:

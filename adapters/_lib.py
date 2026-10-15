@@ -87,3 +87,46 @@ def write_json(adapter: str, out: str, payload: dict) -> None:
     dst.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     n = len(payload.get("items", []))
     print(f"[{adapter}] {n} 项 / {len(payload.get('source_files', []))} 个源文件 -> {dst}")
+
+
+def strip_js_comments(text: str) -> str:
+    """去掉 JS/TS 的 `//` 与 `/* */` 注释，**保留换行**（行号据此稳定）。
+
+    必须懂引号：`'https://x'` 里的 `//` 不是注释——朴素 `split("//")` 会把 URL 砍断。
+    注释同样是**源码事实的敌人**：被注掉的条目/字段若仍被当活事实收走，产出的就是假事实
+    （2026-10-15 实测：被 `//` 注掉的路由条目仍被收进清单）。
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    quote = ""
+    while i < n:
+        ch = text[i]
+        if quote:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+            i += 1
+            continue
+        if ch in "'\"`":
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "/":
+            i = text.find("\n", i)
+            if i < 0:
+                break
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "*":
+            end = text.find("*/", i + 2)
+            end = n if end < 0 else end + 2
+            out.extend(c for c in text[i:end] if c == "\n")
+            i = end
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)

@@ -17,7 +17,7 @@ Atlas 不重造执行与测试引擎，而是站在三件成熟基础设施之�
 
 1. **Trellis（执行基础设施）**：承担需求级任务生命周期——分阶段 Plan / Execute、Spec 路径原生注入与上下文管理。Atlas 严格遵守 Trellis 的约束（不新增状态、不改 hook 解析逻辑），只通过**锚点补丁**在 Plan 阶段插入一步。
 2. **Playwright（验收基础设施）**：承担真实靶场的交互验证与端到端回归。现已**单轨定型为 Node-Playwright**（`@playwright/test`），python-playwright 整体退役。
-3. **CGC（CodeGraphContext，MIT）代码拓扑基础设施**：承担全仓 AST 代码知识图谱构建、事实双通道抽取、Leiden 候选域拓扑聚类、用前现刷新鲜度防线与 impact 影响面对账。
+3. **CGC（CodeGraphContext，MIT）代码拓扑基础设施**：承担全仓 AST 代码知识图谱构建与**有限的双消费面**（routes 文件枚举通道 + advisory 影响面基准）；事实抽取与域聚类**均不走图谱**（域 = 多信号投票，`rings/structure/reference.md` §2.1）——边界定形见 `DESIGN.md` D77/D78；用前现刷新鲜度防线与 impact 影响面对账照常承担。
 
 > 三者在仓库里的落点：执行契约 `.trellis/`、验收产物 `product/e2e/`、图谱隔离层 `.atlas/adapters/_graph.py`。
 
@@ -54,7 +54,7 @@ Atlas 的核心结构是**两层正交**（也常被称作**双线束模型**：
 | 项目形态 | 起点 | 启动顺序 |
 |---|---|---|
 | **全新（绿地）** | `apply all`（幂等、断点续跑） | stack-profile + 约定类结构 → PRD 骨架 → 空索引 + 页面表 → 开始接需求（事实类随代码由适配器补齐） |
-| **重构 / 存量** | `apply adopt` 开户 | legacy 结构事实（适配器 + CGC 逆向抽取 + Leiden 候选域）→ PRD 开到「开户最小集」→ **不预设 E2E**，由后续需求按三问门长出 → 开始接需求 |
+| **重构 / 存量** | `apply adopt` 开户 | legacy 结构事实（适配器 AST/正则逆向抽取 + 多信号投票候选域；图谱为可选文件枚举增强，`DESIGN.md` D77）→ PRD 开到「开户最小集」→ **不预设 E2E**，由后续需求按三问门长出 → 开始接需求 |
 | **纯存量自描述** | `apply adopt` 开户 | 结构事实 + PRD（当前功能条目，开户最小集）→ 同样不预设 E2E → 开始接需求 |
 | **已接入项目的日常** | 无独立入口 | 就是下面这条稳态循环 |
 
@@ -140,7 +140,7 @@ Trellis 开需求卡（.trellis/tasks/<需求ID>/prd.md；ID = task 目录名，
 
 ## 设计文档导航
 
-- [结构（逆向）环设计](/design/structure-ring)：结构事实、CGC 图谱双通道、用前现刷、Leiden 拓扑聚类
+- [结构（逆向）环设计](/design/structure-ring)：结构事实、适配器抽取、可选图谱文件枚举与影响面基准（`DESIGN.md` D77）、用前现刷、多信号投票候选域
 - [产品（PRD）环设计](/design/prd-ring)：应然两级、AC 契约、走查单确认门
 - [E2E 环设计](/design/e2e-ring)：用例分片、总索引、testid 规范与双向校验、状态机与完成门
 - [跨项目分发设计](/design/distribution)：包结构、stack-profile、适配器、平台装配、install

@@ -8,7 +8,8 @@
   - **漏报（miss）** = 实际 diff 有、预测集没有 —— 改动落在了影响面基准之外（最危险：
     要么影响面预测漏了真波及，要么改了申报范围外的文件）；
   - **多报（over）** = 预测集有、实际 diff 没有 —— 预测偏宽（name 级静态面的已知属性，
-    量化「命中率」的分母；WARN 攒 2–3 单真实需求数据后按命中率决定是否收紧/升 FAIL）。
+    量化「命中率」的分母；观察窗与升档分档判据见 `shared/gates.md` 2.1 本门行，2026-10-15
+    登记档——台账 = 本器已无条件落盘的 `impact-reconcile.json`）。
 
 判据（全部可机器判）：
 
@@ -17,8 +18,9 @@
      差集解释权归人，不得静默对账）；`--diff-base` ≠ `inputs.diff_base` ⇒ WARN 指名；
   3. predicted 集 = `touched_files` ∪ `inputs.paths` ∪ ⋃`layers[].files`；actual = 
      `git diff --name-only <diff-base>`（与 impact_report 的 `--diff-base` 同语义）；
-  4. 双向差集非空 ⇒ **WARN** + 双侧逐文件指名（WARN 不置红——先攒命中率数据，升 FAIL
-     的触发物见 `3509 §B191-1`）。
+  4. 双向差集非空 ⇒ **WARN** + 双侧逐文件指名（WARN 不置红——升 FAIL 的观察窗规则见
+     `shared/gates.md` 2.1 本门行，2026-10-15 登记档：连续 3 单漏报 0 且无同文件重复漏报；
+     升档后 miss ⇒ FAIL、over ⇒ WARN）。
 
 用法：
 

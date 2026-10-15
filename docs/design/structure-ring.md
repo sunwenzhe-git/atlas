@@ -1,6 +1,6 @@
 ---
 title: 结构（逆向）环设计
-description: 第一环：读代码产出实然结构事实，落 .trellis/spec/structure/，既是项目级事实又能被 Trellis 原生注入；CGC 代码图谱深度赋能——AST 双通道抽取、调用拓扑候选域聚类、用前现刷、影响面对账。
+description: 第一环：读代码产出实然结构事实，落 .trellis/spec/structure/，既是项目级事实又能被 Trellis 原生注入；适配器 AST/正则抽取 + 多信号投票候选域；CGC 图谱为可选增强，仅两条有限消费面（routes 文件枚举 + advisory 影响面基准，DESIGN.md D77）、用前现刷。
 ---
 
 # 结构（逆向）环设计
@@ -40,7 +40,7 @@ description: 第一环：读代码产出实然结构事实，落 .trellis/spec/s
 
 ## 三、代码图谱（CGC）对逆向环的深度优化
 
-Atlas 把 **CGC（CodeGraphContext，MIT）** 集成为与 Trellis、Playwright 并列的**第三基础设施**，用来攻克「纯正则抽取的盲区」与「静态逆向事实易漂移」两个顽疾。
+Atlas 把 **CGC（CodeGraphContext，MIT）** 作为**可选增强**集成（消费面只有两条：`routes` 的文件枚举通道与 advisory 影响面基准，边界由 `DESIGN.md` D77 定形）：补「文件枚举范围一致」与「影响面有可对账基准」两个具体场景。**事实抽取与候选域聚类不走图谱**——抽取的解析逻辑两端同份；域归类拨归 `rings/structure/reference.md` §2.1 的多信号投票。
 
 ### 3.1 事实抽取：从正则盲盒 → AST 图谱双通道
 
@@ -50,10 +50,10 @@ Atlas 把 **CGC（CodeGraphContext，MIT）** 集成为与 Trellis、Playwright 
 - **确定性铁律**：Cypher 查询在代码侧兜底 `ORDER BY` 排序；子进程注入 `COLUMNS=20000`，规避终端默认列宽把 JSON 长文本硬折断的问题；保证同一代码态重跑输出**字节级一致**。
 - **响亮降级**：探测不到后端时显式降级为 regex（stderr WARN + JSON 落 `backend_fallback` 字段）；显式 `--backend graph` 而不可用则**硬报错**，绝不静默装绿。
 
-### 3.2 候选域提议：从人工猜测 → 调用拓扑聚类
+### 3.2 候选域提议：从人工猜测 → 多信号投票聚类
 
-- **痛点**：逆向第一步要从散乱代码里「提议候选域」供 PRD 定稿。旧版靠目录名启发式猜测，面对扁平目录或跨目录调用时主观且易误判。
-- **拓扑聚类**：基于 CGC 导出的调用关系拓扑（`call_edges` / `callers` / `callees`），运行 Leiden 社区检测（固定随机种子 `seed=42` 保障确定性），从真实调用拓扑的高内聚簇自动识别功能模块——**机器计算内聚边界，Agent 裁定领域语义与命名**。
+- **痛点**：逆向第一步要从散乱代码里「提议候选域」供 PRD 定稿。靠目录名启发式人工猜测，面对扁平目录或跨目录调用时主观且易误判。
+- **多信号投票**（实现口径，`rings/structure/reference.md` §2.1）：信号 = 路由 / 页面目录簇 · 模块 / 目录簇 · 数据表 / 模型命名簇 · 接口路径前缀簇；跨域或信号冲突的域标「信号冲突」，由 PRD 定稿。**不走调用拓扑聚类**——`DESIGN.md` D77 ① 明文否掉；cgc 0.6.13 实测 JSX 渲染引用不产生调用边，调用拓扑对组件世界也不成图。
 
 ### 3.3 事实新鲜度：用前现刷（Zero-Daemon）
 

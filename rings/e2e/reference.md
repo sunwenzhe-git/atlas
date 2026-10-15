@@ -124,7 +124,7 @@ product/e2e/
 ### 4.1 实现期薄桩（Trellis 注入）
 
 - 落点：`<项目根>/.trellis/spec/conventions/testid.md`，带**块列表** `paths:`（= 该产品 `kind: frontend|fullstack` 的 app 路径 globs），供 Trellis 原生注入到实现任务。
-- **生产者（2026-09-26 补，`3509 §B73`）**：`scripts/gen_testid_stub.py --root <项目根>`。它是**确定性派生**：源 = 与 `validate_testids` 同一个**抽取源**（§4），输出稳定，可重复重生成。**它不存在 ⇒ `validate_testids` FAIL**（否则它就是一条「契约要求、无人产出」的空头登记）。
+- **生产者（2026-09-26 补，`3509 §B73`）**：`scripts/gen_testid_stub.py --root <项目根>`。它是**确定性派生**：源 = 与 `validate_testids` 同一个**抽取源**（§4），输出稳定，可重复重生成。**它不存在 ⇒ `validate_testids` 就地自动补齐并记 `PASS`**（F32 机器兜底，2026-10-15：缺失的派生工件由就近工具补齐，同 R6 基线报告哲学；否则它就是一条「契约要求、无人产出」的空头登记）；`FAIL` 只留给**生成不了**的真错（生成器定位不到 / render 抛错）。
 - 内容（**派生视图，非正文**）：
   1. 一条祈使句（E1 统一）：**实现按分片应然清单命名 `data-testid`，不得自造；既有实现保持现有 `data-testid`**。
   2. 指向正文的指针：`.atlas/rings/e2e/reference.md` §4；
@@ -441,7 +441,7 @@ testid:
 | 用例引用抽取 | 扫描 `product/e2e/cases/*.md` 的 `atlas-case` 块（`testid:` 声明 ∪ `step`/`expected` 派生），按 testid **归属页**归集 |
 | 分页等价 | 有分片的页：两集合必须相等，多/少即 FAIL |
 | 未建分片页 | 抽取源里存在该页但无分片 → WARN |
-| **实现期薄桩存在** | `.trellis/spec/conventions/testid.md` 不存在 ⇒ **FAIL**（跑 `python3 .atlas/scripts/gen_testid_stub.py --root .` 生成；§4.1） |
+| **实现期薄桩存在** | `.trellis/spec/conventions/testid.md` 不存在 ⇒ 本器**就地自动补齐 + `PASS`**（F32 兜底，2026-10-15；detail 披露兜底语义）。**FAIL** 只在生成失败时（生成器定位不到 / render 抛错——手跑 `python3 .atlas/scripts/gen_testid_stub.py --root .` 兜底；§4.1） |
 | 命名规范 | 分片新声明须 `^[a-z0-9]+(-[a-z0-9]+)+$` 且首段 == 该页 slug（否则 FAIL）；存量实然命名降 WARN（§4 保持现状承诺） |
 | 全站唯一 | 同名 testid 出现于多页 / 多元素 → FAIL |
 | 门控态 | 无页面表或无用例目录 → N/A |
@@ -539,7 +539,7 @@ testid:
 
 **已落地（2026-09-20，D67/D68）**：`validators/validate_testids.py`、`validators/validate_e2e_index.py`（§8 清单的代码）、`scripts/gen_e2e_scripts.py`（从分片生成运行器脚本，§7）、`install.sh` 装配自检。
 
-**仍延后（待真跑时落地）**：**首次真栈执行**——E1 单段唯一地址 `e2e.app_base_url` 由业务侧就绪后声明；在它为空期间，`product/e2e/scripts/` 里的派生件保持 E0 形态（`atlas_check` 记 `SKIP`），重生成随真跑准备日一次完成。
+**仍延后（待真跑时落地）**：**协议定形首跑**——E2E 真跑门已于 2026-10-04 逐页真跑并咬出真红（`3508 §166`/`§187`/`§190`；**真跑级自此逐格解锁**，升档规则见 `shared/gates.md` 上限声明与 `DESIGN.md` D79）；仍开的是 `e2e.app_base_url` 声明后的 **1 app × 1 页最小切片**首跑（升档只及字面咬过的行；完成门与真跑门是独立通道，各自升档），留档落 `product/e2e/reviews/<日期>/`。在地址为空期间，`product/e2e/scripts/` 里的派生件保持 E0 形态（`atlas_check` 记 `SKIP`），重生成随真跑准备日一次完成。
 
 **执行纪律（agent，非校验器）——本节各项自 2026-09-26 起有载体**：第 2 条（反偏见）与第 3 条（去重 3-Gate）由 **§12 独立审查** 承担（D1–D10 + 全局审查者），第 4 条（完成门）由 E2E 状态机与收口门承担；本节保留为纪律正文。
 

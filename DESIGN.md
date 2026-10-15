@@ -112,7 +112,7 @@ atlas **只收口约束层**——项目级应然资产、唯一事实源、三�
 │   │   ├── _meta.json               #   机器：product/baseline/apps[]/domains[]/categories
 │   │   ├── tour.md                  #   L1：paths ['**']
 │   │   ├── domains/<domain>.md      #   L2：paths = 域 globs
-│   │   ├── global/                  #   directory-map / routes / design-tokens
+│   │   ├── global/                  #   directory-map / routes
 │   │   └── {current,legacy}/<domain>/{apis,data-models}.md
 │   └── tasks/<NN-slug>/             # 需求级：prd.md = 需求卡；task id = 需求 ID
 ├── .atlas/                          # atlas 包（install.sh 装配；包产物）
@@ -146,7 +146,7 @@ atlas **只收口约束层**——项目级应然资产、唯一事实源、三�
 
 ### 5.1 structure（结构基线）
 
-**7 类内容（5 入 `.trellis/spec/structure/`：B–F，D 条件；A / H 落项目根 `README.md`）**：
+**6 类内容（4 入 `.trellis/spec/structure/`：B–E，D 条件；A / H 落项目根 `README.md`）**：
 
 | # | 类别 | 性质 |
 |---|---|---|
@@ -155,14 +155,14 @@ atlas **只收口约束层**——项目级应然资产、唯一事实源、三�
 | C | 路由与页面清单（路径、用途、关键交互、实现状态） | 事实 |
 | D（条件） | 接口清单（方法、路径、请求/响应要点、来源模块）；有机器可读描述时只记真相源入口 | 事实 |
 | E | 数据模型清单（表/字段/关系/枚举） | 事实 |
-| F | 设计 token 清单 | 事实 + 语义 |
 | H（条件） | 测试现状与运行方式；落点 = **项目根 `README.md`**（README 已有则不动） | 事实 |
 
 > G（testid / selector 约定）归 **E2E 环**；I（编码规范）不由 atlas 收口——两者均移出 structure（决策 D35）。
+> F（设计 token）**已退役删除**（2026-09-30 用户拍板「直接删」，`3508 §156`）：类别清单 / 模板 / 校验器判据 / 适配器键与产物文件全删；实现期视觉参考 = 前端样式表本身（`rings/structure/reference.md` §6.2）。
 
 **域模型（本环负责提议）**：本环按路由/页面簇、模块簇、表/模型命名簇、接口路径前缀**聚类出候选域**，写入 `.trellis/spec/structure/_meta.json.domains`（含域 → globs；人读视图在 `tour.md` 域速查表）；PRD 诊断阶段读它并**定稿回写**。**域 id 是全链路键**（PRD / E2E / 注入 spec）。
 
-**两层结构**：全局层 `global/`（`directory-map` / `routes` / `design-tokens`）+ 域级层 `{current,legacy}/<domain>/`（`apis` / `data-models`）。仅 `tour.md`（L1，`paths ['**']`）与 `domains/<d>.md`（L2，域 globs）带 `paths:` 被注入；其余事实文档无 `paths`、按需 Read。A（技术栈）与 H（测试）落项目根 `README.md`。
+**两层结构**：全局层 `global/`（`directory-map` / `routes`）+ 域级层 `{current,legacy}/<domain>/`（`apis` / `data-models`）。仅 `tour.md`（L1，`paths ['**']`）与 `domains/<d>.md`（L2，域 globs）带 `paths:` 被注入；其余事实文档无 `paths`、按需 Read。A（技术栈）与 H（测试）落项目根 `README.md`。
 
 **二分法（跨项目关键）**：
 
@@ -356,7 +356,8 @@ atlas/
 │   ├── spec.json                    #   补丁载荷
 │   ├── apply-patches.py             #   锚点式幂等应用器（复用现有模式）
 │   └── *.insert.md                  #   插入片段
-├── patches/project-wiring/          # AGENTS.md 指针段 + after_finish hook（幂等）
+├── patches/project-wiring/          # 四触点接线（幂等）：AGENTS.md 指针段 + after_finish hook + pytest marker 兜底 + pi 宿主扩展
+├── extensions/                      # 宿主扩展（2026-10-15 纳入装配）：pi.ts（`/atlas` 控制台 + 开户态判定 + 提示注入）
 ├── templates/                       # stack-profile / prd / 结构 / e2e 用例 / 评审控制台模板
 ├── adapters/                        # 各栈事实抽取器（见 §9.3）
 ├── validators/                      # 机器校验脚本（见 §10）
@@ -378,7 +379,6 @@ adapters:
   routes: <adapter 名 | null>
   api: <adapter 名 | null>
   models: <adapter 名 | null>
-  tokens: <adapter 名 | null>
   tests: <adapter 名 | null>
 ```
 
@@ -398,7 +398,7 @@ adapters:
 2. 每个 `skills/atlas-*/` → 各平台 skill 目录（瘦桩 `SKILL.md`，指回 `.atlas/`）；并清理历史单入口 `atlas` skill。
 3. `.trellis/workflow.md` 的 Plan 步骤补丁（锚点幂等；`--no-patch` 可跳过）。
 4. `product/` 目录骨架 + `stack-profile.yaml` 模板（既有内容永不覆盖）。
-5. **项目接线**（`patches/project-wiring/`，幂等；`--no-wiring` 可跳过）：`<目标>/AGENTS.md` 的 `<!-- ATLAS:START/END -->` 指针段（置于 Trellis 区块**外**，不被 `trellis update` 覆盖）+ `.trellis/config.yaml` 的 `after_finish` hook（`refresh_structure.py`）。补的是「新项目 agent 一开会话就知道本项目用 atlas、契约在哪、需求级怎么走」的入口（D73）。
+5. **项目接线**（`patches/project-wiring/`，幂等；`--no-wiring` 可跳过）：`<目标>/AGENTS.md` 的 `<!-- ATLAS:START/END -->` 指针段（置于 Trellis 区块**外**，不被 `trellis update` 覆盖）+ `.trellis/config.yaml` 的 `after_finish` hook（`refresh_structure.py`）。补的是「新项目 agent 一开会话就知道本项目用 atlas、契约在哪、需求级怎么走、撞到规则不合业务往哪上报（§15）」的入口（D73）。
 6. 回归自检（含 Plan 补丁、AGENTS.md 指针段、`after_finish` hook 三项生效检查）。
 
 ### 9.5 平台适配
@@ -446,10 +446,10 @@ adapters:
 | 项目形态 | 顺序 |
 |---|---|
 | 绿地（`origin: greenfield`，等价入口 `apply all`） | stack-profile + 约定 → PRD 骨架 → 空索引 + 页面表 → 开始接需求（事实类随代码由适配器补齐） |
-| 重构 / 存量（`origin: adopt`，`apply adopt` 开户） | legacy structure 事实（适配器抽取）→ PRD 开到「开户最小集」（只登记基线，不全量重述）→ 不预设 E2E（由后续需求按三问门长出）→ 开始接需求 |
-| 纯存量自描述（`origin: adopt`） | structure 事实 + PRD（当前功能条目，开户最小集）→ 不预设 E2E → 开始接需求 |
+| 重构 / 存量（`origin: adopt`，`apply adopt` 开户） | legacy structure 事实（适配器抽取）→ PRD 开到「开户最小集」（只登记基线，不全量重述）→ 不预设 E2E（由后续需求按三问门长出）→ 开户交尾出实现期薄桩（老页面 testid 实然盘点，`apply/reference.md` §1）→ 开始接需求 |
+| 纯存量自描述（`origin: adopt`） | structure 事实 + PRD（当前功能条目，开户最小集）→ 不预设 E2E → 开户交尾出实现期薄桩（老页面 testid 实然盘点）→ 开始接需求 |
 
-存量两行的 E2E 口径 = `apply/reference.md` §1 adopt 教义（开户不预设 E2E；E1 原型环已移除），2026-09-29 对齐（`B146-1`）。
+存量两行的 E2E 口径 = `apply/reference.md` §1 adopt 教义（开户不预设 E2E；E1 原型环已移除），2026-09-29 对齐（`B146-1`）；交尾薄桩为**交割物显式化**（缺失由 `validate_testids` 自动补齐，非门禁前置），2026-10-15 补。
 
 **绿地为什么是友好的**：事实类内容由适配器从代码生成，**没代码就没有事实**，不是"没建完"；而 E2E 先行在绿地上价值更大——用例本身就是规格。
 
@@ -501,8 +501,8 @@ adapters:
 | D38 | 事实刷新机制 | **事实区**由 `refresh_structure.py` 确定性刷新，登记为 `.trellis/config.yaml` 的 **`after_finish` hook**（单行扩展点，升级冲突最小；hook 只跑 shell 正好）；**语义区**由 AI / `trellis-update-spec` 维护 |
 | D39 | 适配器粒度与调用约定 | 一类脚本一个**通用名**（`routes` / `models`，非 `vue-router` / `sqlalchemy` 多名）；框架识别收在适配器内部。`--root` 传**项目根**（`source_file` 用项目根相对路径），`--app` 传 `apps[].name` 过滤；**域级类别按 app 各调一次**再合并（items 无 app 列），**全局类别整项目一次** |
 | D40 | 结构环契约修正（随 D39 落地） | ① C 表多 app 前置 `应用` 列（单 app 可省）；② `_meta.json.categories.A` 值域改 `covered\|skipped`；③「每域 2 份」限定在**存在的 role 目录**内；④「来源可定位」允许按所属 app 根回退解析；⑤ `adapters` 去掉 `components` 键（落地 `shared/stack-profile.md` 早已去掉） |
-| D41 | 适配器消费规程与产物落点 | 适配器**不自动改写文档**：由 structure 环 agent 按 **global 类别整项目一次 / 域级类别按 app 各一次** 调用，JSON 落 `<项目根>/.trellis/spec/structure/.adapter-out/<category>[/<app>].json`（中间产物、非真相源），再读 JSON 渲染事实表 + 补语义列。「事实区自动渲染 + 表→域映射」为后续独立项 |
-| D42 | 适配器口径补齐（第二批） | ① `api`：Swagger 描述（落盘或运行时 `spec_entry`）→ 指针，无描述才源码抽 `@action`/装饰器清单；**不收**出站调用与前端 client 调用；② `tokens`：只抽样式表自定义属性，`kind` 加第 6 值 `other`；③ `tests`：`type` 定 `unit\|integration\|e2e\|other`，`status` 留空由 agent 补 |
+| D41 | 适配器消费规程与产物落点 | 适配器**不自动改写文档**：由 structure 环 agent 按 **global 类别整项目一次 / 域级类别按 app 各一次** 调用，JSON 落 `<项目根>/.adapter-out/<category>[/<app>].json`（中间产物、非真相源；该目录是 atlas 全部中间产物的**单一位点**——适配器产物 / 漂移标记 / 图谱新鲜度标记同址，2026-10-15 统一，issue #8），再读 JSON 渲染事实表 + 补语义列。「事实区自动渲染 + 表→域映射」为后续独立项 |
+| D42 | 适配器口径补齐（第二批） | ① `api`：Swagger 描述（落盘或运行时 `spec_entry`）→ 指针，无描述才源码抽 `@action`/装饰器清单；**不收**出站调用与前端 client 调用——**窄化声明（2026-10-15）**：该禁令以「存在后端 / 描述侧真相源」为前提；**纯前端无描述态下，前端调用点即 D 类唯一机械可抽源**（点分方法名 RPC 调用，`shared/stack-profile.md` §3.5），此时收它是补缺口而非违反本决策；② 【已退役 2026-09-30，F 类整体删除】`tokens`：只抽样式表自定义属性，`kind` 加第 6 值 `other`；③ `tests`：`type` 定 `unit\|integration\|e2e\|other`，`status` 留空由 agent 补 |
 | D43 | 校验器面（本批） | 新增 `validate_stack_profile.py`（`null`=OK / 非 null 解析不到=FAIL / `app.path` 缺失=WARN）与 `validate_prd.py`（门控态追溯项 N/A 不 FAIL；链接**双基准**解析；机器检不了的子项降 WARN）；CLI 统一 `--root [--json]`、`{ok,status,checks[]}`、PASS/WARN→exit 0、FAIL→exit 1。`validate_testids.py` / `validate_e2e_index.py` 待 prototype/E2E 环契约 |
 | D44 | 陈旧结构产物清理 + PRD 引用语义重映射 | 删除 `product/structure/`（D37 后遗留）；canonical 模板旧路径改 `.trellis/spec/structure/`；PRD 引用按新布局**逐条语义重映射**（routes/directory-map→`global/`，tech-stack/tests→根 `README.md`，apis/data-models→`<role>/<domain>/`），工作区路径改指项目内 `.atlas/` |
 | D45 | E2E 依据来源（硬优先级） | ①业务预期唯一来自**域级 PRD 的 AC**；②交互与 `data-testid` 来自**原型**；③`.trellis/spec/structure/` 只作**参考基线**。三禁令：禁止用真实实现/旧实现行为反推预期；禁止用原型行为当业务规则；禁止无 AC 来源的用例（`prd_ref` 必填） |
@@ -529,7 +529,7 @@ adapters:
 | D66 | patches 实现 | `patches/workflow-plan-apply/`（`spec.json` + 锚点幂等 `apply-patches.py` + 片段）；只做外科式插入、以 `<!-- atlas:apply:<id> -->` 判幂等、可重放；`install.sh` 装配（`--no-patch` 可跳过）；**前置 B2**（`trellis` CLI 升到项目 `.trellis/.version`）；回归测试 `tests/test_apply_patches.py` |
 | D67 | 校验器与原型服务器落地（2026-09-20） | 实现 `validators/validate_prototype.py`、`validate_testids.py`、`validate_e2e_index.py`（纯 stdlib、无框架名、门控态 `N/A`、CLI `--root [--json]`、PASS/WARN→0 FAIL→1）与 `scripts/serve_prototype.py`（无扩展名解析静态服务器，默认 `127.0.0.1:4173`）；`install.sh` 自检覆盖两者；回归测试 `tests/test_validators.py`。**关闭 C5 的三项校验器**，并解除原型/E2E 环的「代码延后（D52/D59）」；`stack-profile` 两字段写回仍属原型 skill 的确认门动作 |
 | D68 | E2E 脚本生成器 | `scripts/gen_e2e_scripts.py`：产**可运行的 testid 冒烟骨架**（`goto(<页面 URL>)` + 分片 `testid` 存在性断言；中文 `step`/`expected` 作注释）；**深断言放 `_support/`**（不覆盖，`hooks.deep_assert`）；地址**不硬编码**、由运行器原生配置承载（`--target` 选 `prototype.base_url` / `e2e.app_base_url`）；一页一脚本、派生可重生成、dry-run 缺省 |
-| D69 | 事实区自动渲染（C7） | `refresh_structure.py --apply` 读 `.adapter-out/*.json` 自动重写事实区表：**行键级单元格合并**（适配器填可枚举列、既有行**语义列保留**、新增行语义列留空→校验器 WARN、消失行移除）；归属 = 条目 `source_file` → app（最长 path 前缀）→ role（`landing`→`current/`）→ 域 globs（最长命中），**无命中落 `global/{apis,data-models}-shared.md`**；无 `.adapter-out/` 时跳过（agent 维持） |
+| D69 | 事实区自动渲染（C7） | `refresh_structure.py --apply` 读 `.adapter-out/*.json` 自动重写事实区表：**行键级单元格合并**（适配器填可枚举列、既有行**语义列保留**、新增行语义列留空→校验器 WARN、消失行移除）；归属 = 条目 `source_file` → app（最长 path 前缀）→ role（`landing`→`current/`）→ 域 globs（最长命中），**无命中落 `global/{apis,data-models}-shared.md`**；无 `.adapter-out/` 时跳过（agent 维持）。**items 粒度 = 渲染行键**（2026-10-15 补）：适配器**不去重**（items 是代码里的事实，同一端点被两个域各调一次是两条合法事实，各进各的域文件），同一目标文件内的**重复行键**在渲染期折叠为首行（`dedup_by_row_key`）——否则表里出现同键重复行，而语义列在重复键上没有归属可言 |
 | D70 | 适配器脚手架与指南 | 新增 `adapters/_scaffold.py`（可复制填空的适配器模板，强制 `source_file`）+ `adapters/README.md`（契约 §3 落成步骤）；把「无适配器 → `null` → agent 撰写」作为**一等降级**；`models` 条目补 `source_file`（支撑 D69 域归属）。**框架知识只允许出现在适配器内** |
 | ~~D71~~ | **【已退役 2026-10-14】** 知识库（Obsidian）维护契约（2026-09-20） | 新增 `shared/knowledge.md`：知识库保存**设计依据与讨论**（「为什么这么定」），与产物分层、不复制正文。**可选增强**——`stack-profile.knowledge.vault` 为 `null`/缺省 ⇒ 整体跳过、不阻断任何环。写入/检索**经 open-zk-kb MCP**（不手写 vault 文件）；vault 内**唯一 atlas 设计目录**（跨项目共用，不按项目分目录）。四环与 `apply` **收口必做**（`global-rules.md` §9）；只写持久设计与依据（决策/讨论/被否/纠正/未决），不写进度与产物正文；契约变更**仓库 canonical 与知识库两处同改**。`stack-profile` 增 `knowledge` 段（`tool/vault/dir/project`）；`install.sh` **不写用户 vault**（只落 profile 草稿 + 自检契约存在） |
 | D76 | 设计档案契约登记 + 豁免机器对账门（2026-10-08，`3508 §200` / `ATLAS-UPSTREAM #182`） | `product/design.md`（视觉设计档案）登记为项目级应然文件：**写者 = frontend-design skill**（atlas 包外；atlas 不生产、不覆盖、只读两个触点）——① 走查单确认门前对照视觉方向一致性（`rings/prd/reference.md` §4·八）；② 档案「已有豁免」的 `detect:<rule-id>` 必须与 `.impeccable/config.json` 的 `detector.ignoreRules` **双向集合相等**，新校验器 `validate_design_exemptions.py`（无档案 ⇒ SKIP 三态；变异 M43）。缘起：档案生于 frontend-design skill 吸收 impeccable 精华（`3508 §199`），项目根落点撞 atlas 产物归属与 `DESIGN.md` 契约名 ⇒ 用户拍板固定落 `product/`。被否：按 `.atlas/` 存在与否嗅探两种落点（双落点 = 漂移面）；校验器内嵌 impeccable 规则表（第三方升级会误伤） |
@@ -539,6 +539,12 @@ adapters:
 | D74 | 定位表述定稿：身份 ≠ 实现分工（2026-09-29，`3508 §129` 设计树 A–F） | **身份** = atlas 是覆盖「立项 → 需求 → 应然资产 → 实现 → 验收 → 收口」的**全流程 vibecoding 工作流**，项目级应然资产跨项目分发、机器可校验；**实现分工** = 「需求级执行」由执行器承担（**当前 = Trellis**，依附其官方可改面，不改状态机与 hook 解析），执行器可替换是未来可能而非现行契约。改面：`README.md` 开场 + §定位（删「分层正交」作身份表述——它降为产物分层的实施细节，归 `DESIGN.md` §3/§8）；`patches/project-wiring/agent-pointer.md` 标题与首行同步（重装配后注入各业务仓库 AGENTS.md）。被否：把「atlas = 项目级资产层」当身份（一次分工决策 D72 静默改写身份，实证 `3508 §129`）；「执行器 adapter」先行（无实跑取证） |
 | ~~D75~~ | **【已退役 2026-10-14】** 知识库双通道 + KB 投影对账门（2026-09-29，`3509 §B116`/`§B121` 拍板「按推荐走」） | **双通道**：短 note 经 MCP（store/get），**长 note 定点/批量修订直接编辑文件** + 收口跑 `kb_index_refresh.mjs` + `kb_projection_check.mjs` 对账（`shared/knowledge.md` §3 重写；原「不手写 vault 文件」与历轮实践矛盾，且 open-zk-kb 无文件监听 ⇒ 手改不重索引会静默漂）。**对账门**：`atlas/scripts/kb_projection_check.mjs` 用包内解析器逐篇逐字段比对投影（`.index/knowledge.db`）⇔ vault 本体，四类漂移指名，入 `gates.md` 2.1（测试 + 三类变异咬合）；`atlas_check` 对校验器 WARN 行从静默当 ok 改为显式 `WARN` 行。配套：`embeddings:{enabled:false}` 落 `~/.config/open-zk-kb/config.yaml`（本机不可达 HF CDN，local 兜底使 rebuild/embed 每次白试下载 = MCP 超时根因）。被否：坚持 MCP 单一通道（唯一可行通道就是直接编辑，实证 `§B116` 硬证据）；拆短 note 方案（丢历史、覆盖风险） |
 
+| D77 | 图谱后端隔离层的边界与落点（2026-10-15 收口，用户实测回报驱动） | ① **消费面就两处**：`routes` 的文件枚举通道（派生逻辑与 regex 同一份）与 `apply` 影响面基准（`impact_report.py`）——**不做**域聚类（域归 `rings/structure/reference.md` §2.1 多信号投票）、**不替**任何适配器的解析层；② **落点 = 项目根 `.adapter-out/`**——**与适配器产物、漂移标记同址**（2026-10-15 统一，issue #8：该目录是 atlas 全部中间产物的单一位点，设计档案目录树原本即如此；此前实现漂成同名两处 ⇒ 现场「`git status` 有 `.adapter-out/` 而漂移门说『无产物目录』」）；**后端自己的索引库不得落进项目工作树**（否则新鲜度键自激成永不稳定的全量重建）；启用图谱的项目应 gitignore 该目录；③ **枚举范围纪律**：图谱通道的文件清单必须过与 regex 同一份 `IGNORE_DIRS` 剪枝（`cgc index` 无 exclude 旗标，否则依赖目录进池产假事实）；④ **启用方式**：出厂注释态 + 确认画像时探测并**提议**（不自动声明——画像不该替用户承诺环境依赖能力，且图谱有持续成本）；⑤ 非 git 工作树 ⇒ WARN + 每次全量重建（不硬崩）；`ensure_index` **单进程假设**。缘起：README 原称图谱供给结构抽取「跨文件端点到模型映射 / 级联依赖自动归域」，实装无此事 ⇒ 文档按实情收窄，同时把上面五条纪律定形。被否：把图谱能力做上去（当前 name 级调用图抓不到 ORM / 属性访问边，做跨文件映射会往 canonical 事实表灌批量假事实）；自动声明（持续成本 + 承诺环境依赖）。详见 `docs/innovations/code-graph.md` |
+
+| D79 | 门册五件遗留态收口——真跑裁决记录归一 / AC 升档规则落档 / D77 否决面词汇钉 / impact 观察窗 / 装配生效面文案（2026-10-15，评审修后采纳） | ① **真跑记录裁决**：以 gates 2.2「E2E 真跑」行的仓内记录（**逐页真跑 + 咬出真红，`3508 §166`/`§187`/`§190`**）为事实，纠正三处 2026-09-28 批残留的「真栈未跑/首次真栈执行未发生」措辞（gates 2.4 完成门 = 域收口事件、与真跑门独立；`DESIGN.md` §13 项、`rings/e2e` §16、上限声明）；「暂不真跑」裁决（2026-09-28）标注为已被执行反推，双台账会话号（`3509 §111`/`3508 §111`）并列引用；取证上限改**逐格**：真跑级只给字面咬过的行、须附咬合证据，未覆盖行保持出厂级、不预填；首跑协议 = 1 app × 1 页最小切片，留档 `product/e2e/reviews/<日期>/`；E0 产物残留重生成绑真跑准备日。② **AC 反向覆盖升 FAIL 规则落档**：触发 = 零挂靠清零 + 清零态实测全绿一次 ⇔ WARN 分支改 FAIL（不设 profile 开关——灰度即「看起来在跑」面）；升档日 source/copy 分叉按回灌批收口；校验器 WARN detail 的外仓 P9 死指针改为 gates 行锚。③ **D77 否决面词汇钉（canonical 判据⑦，治标）**：黑名单（`Leiden/拓扑聚类/自动归域/端点到模型/阻断全仓`）出现在活语境 ⇒ 红，豁免锚 = 行内 D77/D78（**局部自持，不得并入 `RETIRE_MARKS`**——共享会串门到 ①③⑤）；扫面收窄到 git 跟踪源 md（`rglob` 不认 .gitignore，`.vitepress/dist` 编译产物会漂判据）；**首跑咬合 4 处**（`docs/design/overview.md` 三处 + `prd-ring.md:124`——D78 ④ 收窄漏网，sweep 应按词 grep 不按清单改文件）；`rings`、`apply`、`patches` 三目录不扫 = 显式盲区；closeout 新增宣称 sweep 触发行（改被否裁决 ⇒ 全仓 grep + 词表同批登记）。④ **impact 观察窗**：不加代码——台账 = `impact_reconcile` 已无条件落盘的 `impact-reconcile.json`；升 FAIL 触发 = 裁决日起**连续 3 单**漏报 0 且无**同文件**重复漏报；升档后 miss ⇒ FAIL、over 保持 WARN（分档防良性偏宽钉死收口）；判据值全落 gates 行、不赖仓外 `3509 §B191-1` 数字。⑤ **装配版本门文案升级**：WARN detail 给齐两支路生效路径（npm 全局态 `atlas upgrade`+`atlas update` / 本地源仓 `install.sh`）+ `backflow.py` 三态明细通道；不做第二套文件级 diff（防腐）；同批三处回写（`test_atlas_check` 断言钉 M68 / gates 2.2 行 / `pkg_digest.py` docstring）。被否：--record 追加台账（盘上已有按单产物，双视图=两处正文）；版本门内重算 diff；AC 升档加灰度开关；判据⑦并入 `RETIRE_MARKS`；以「待复核」复述未真跑行。变异：M67（摘 `VETO_WORDS` 一个词 ⇒ 判据⑦喂坏输入用例红）/ M68（摘 WARN 文案动作词 ⇒ `test_atlas_check` 文案钉红）；两枚还原逐字节一致。设计评审：tech-proposal-reviewer 子代理，五件全「修后采纳」，本行按其修正点落地 |
+
+| D78 | 图谱收益实测改判 + 接线第 5 触点 + 跨产物声明一致门（2026-10-15，issue #2 复审驱动） | ① **前端栈实测改判**：cgc 0.6.13 前端形态夹具实测——JSX 组件引用不产生任何调用边（`CALLS` 与启发式调用边均不覆盖 `element: <Comp />`），且 atlas 消费层只认 `CALLS` 边（`_graph.callers` 写死边型，后端加渲染边也读不到）⇒ 图谱对纯 UI 栈的两条消费面近乎零收益（routes 通道与 regex **恒等**；impact 对组件叶面系统性失真），逻辑调用链不受影响 ⇒ **提议按栈门控**（`apps[]` 存在 `kind ∈ {backend, fullstack}` 才探测并提议；字面枚举，不复用 `FRONTEND_KINDS`——该词表把 fullstack 归前端面，语义相反），撤回一轮排定的「atlas_check 图谱探测提醒」（对目标栈无收益的能力不需要发现通道）；② **接线第 5 触点**：`apply-wiring.py` 在目标项目**已有** `.gitignore` 时幂等追加一行 `.adapter-out/`（子串幂等、`!.adapter-out` 负模式不打架、无文件不首创；**无退役对称**——单向追加不改名撤回，gates 2.3 登记）；③ **跨产物声明一致门**：`validate_structure` 判接线态 ⇔ 形态 / 缺口登记（`adapters.api` 已接线但 `categories.D` 锚定声明为指针 / 未取证、或 `adapter_gaps.api` ⇒ WARN；F38 锚定声明同族；落 validate_structure 而非 stack_profile 的理由 = 三态前置复用，结构环未跑 ⇒ 整器 SKIP）；④ **文档收窄补漏**：03 收窄漏掉 `docs/design/structure-ring.md` 的「调用拓扑候选域聚类 / Leiden」宣称（与 D77 ① 直接冲突）及 `README` / `docs/concepts/rings.md` / `token-engineering` / `innovations` 开场的溢出措辞；`impact_report` 常驻「无调用方」提示句补 JSX 渲染引用。被否：为前端把渲染边能力在 atlas 侧补齐（D77 已否一次）；用指令通道解决 `.gitignore`（issue #2 姊妹缺陷实证「口头提议」会漂——`rings/structure` §6 步 1 的提议条款在实际接入里从未生效过）；判据落 validate_stack_profile（其前置只判 profile 存在，三态要自造，且跨产物读取归结构环平面对齐）。实测依据存档：cgc 0.6.13 /tmp 夹具复测数据见当时评审记录（callers 空集 + 边型普查 CALLS/CONTAINS/HEURISTIC_CALLS/IMPORTS/INHERITS）。
+
 ---
 
 ## 13. 待实现事项
@@ -547,7 +553,7 @@ adapters:
 > **进度与下一步**随每轮实际产出就近登记；门的取证等级 = `shared/gates.md`。
 > 本节只留**确知仍开、且不属批 6** 的项（机器判据：本节不得出现落地状态词，见 `tests/test_canonical_consistency.py` 判据 ④）。
 
-1. **首次真栈执行**（E1 单段）：`e2e.app_base_url` 就绪后重生成 `product/e2e/scripts/` 并跑全量用例（首跑分类协议见 `rings/e2e/reference.md` §5.4）。当前**未发生**（用户 2026-09-28 裁定暂不真跑，`3508 §111`）。
+1. **真栈收口**（E1 单段）：E2E 真跑门**已于 2026-10-04 逐页真跑并咬出真红**（`shared/gates.md` 2.2「E2E 真跑」行，`3508 §166`/`§187`/`§190`——2026-09-28「暂不真跑」裁定（`3508 §111`）已被执行反推）；确知仍开 = ① **协议定形首跑**（1 app × 1 页最小切片，升档规则见 gates 上限声明——逐格 + 咬合记录，首次真实**域收口**与 `E2E 真跑` 行的两个独立通道各自升档）；② **E0 产物残留重生成**（绑真跑准备日一次清，`shared/single-source.md` §3）。
 
 ---
 

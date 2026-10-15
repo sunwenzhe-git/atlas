@@ -546,11 +546,14 @@ def validate(root: Path) -> Result:
         if exempted:
             detail += ("；" if detail else "") + f"不可验豁免={exempted}"
         # 门级（2026-10-12，`3509 §B201-3`）：豁免落点已定形（PRD 侧「不可验 AC 清单」机器读取，
-        # 上方减法）⇒ **升 FAIL 通道就绪**；当前仍 WARN：三域残留的逐条裁决（补用例 / 登记不可验）
-        # 归 P9（随各域 B124 走查批），裁决清零即把本行级别改 FAIL（契约 §8.2 已同步改口；
-        # 过早 FAIL 被量推翻的先例见 `3509 §B36`——先让数据能过，再上严判）。
+        # 上方减法）⇒ 升 FAIL 通道就绪；当前仍 WARN——**残留清欠在内容侧**（补 `关联AC` 或
+        # 登记「不可验 AC 清单」），升档规则（零挂靠清零 + 清零态实测全绿一次 ⇒ WARN 分支改
+        # FAIL，不设 profile 开关）登记在 `shared/gates.md` §3 的 AC⇔用例行，本文件的引用以它为锚
+        # （2026-10-15 死指针修正，D79 ②：旧文案指向外仓 `product/issues.md` P9——台账不在本仓，
+        # 外仓读者读不到。过早 FAIL 被量推翻的先例见 `3509 §B36`）。
         res.add("AC 反向覆盖", "PASS" if not gaps else "WARN",
-                (detail + "；残留待裁决（P9，清零后升 FAIL）") if gaps else detail)
+                (detail + "；残留待裁决（清零后升 FAIL，规则在 shared/gates.md §3 AC⇔用例行）")
+                if gaps else detail)
 
     # 零证据用例须挂结构类 AC（契约 §8.2；2026-09-25 补，`3509 §B36` + `§B50`）：
     # `expected` **全部**带 `initial:` 的用例 = 零证据用例（它自己声明「不构成验证」）——

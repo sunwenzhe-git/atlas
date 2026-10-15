@@ -6,7 +6,7 @@
 第 29 行说「可临时启用原型环」而第 9 行说「环已移除」、模板的 `prototype:` 段头被删而两个子键
 变成孤儿挂在相邻段下。三类都属「文本之间互相否定」，而 canonical 装配面这条对账面照不到它们。
 
-三条判据（全部可机器判）：
+判据（全部可机器判；`scan()` 现含 ①–⑤ 与 ⑦）——编号 ⑥ 已给「调度门」单独登记（`check_gates_gates_are_scheduled`，gates.md 2.2 引用为「判据⑥」）：
 
   1. **环引用自明**：文本里的 `rings/<x>/`，若 `<x>` 不是现存环 ⇒ **该行必须带退役/历史标记**
      （否则就是「活口径引用已删环」——批次 1/5 缺陷的本体）；
@@ -291,9 +291,67 @@ def check_registry_counts() -> dict:
                        else f"计数与状态与实际一致（测试文件 {n_tests}；自检 {n_checks} 条；校验器 {n_validators}；§13 无状态词）{skipped}")}
 
 
+# ------------------------------------------------------------------ 判据 ⑦（D79 ③）
+
+# **D77 否决面词汇钉 —— 治标面**（2026-10-15）。语义自洽机器判不了（gates 2.6 同行的
+# 显式盲区），但「已发生的宣称腐面」可以钉死复现：被否/被收窄的能力词（黑名单）再出现在
+# 活语境里即红，倒逼宣称 sweep。**白名单局限**与 `check_registry_counts` 相同
+# （本文件 docstring）：换写法就漂 ⇒ sweep 是双闸——新被否裁决必须同批把否决词登记进来。
+VETO_WORDS = ("Leiden", "拓扑聚类", "自动归域", "端点到模型", "阻断全仓")
+# 豁免锚**局部自持**：只认否决判据编号（D77/D78——收窄/否决后的行必须回锚它们）。
+# **不得并入 `RETIRE_MARKS`**：那个元组被判据 ①/③/⑤ 共享，把「已收窄」一类词塞进去
+# 会让活语境行顺带豁免幽灵环引用 / 幽灵 shared 引用（同元组串门）。
+VETO_EXEMPT_ANCHORS = ("D77", "D78")
+
+
+def _veto_scan_files() -> list[Path]:
+    """判据⑦ 扫面 = git 跟踪的**源 md**：`docs/**.md`（排除 `.vitepress` 构建产物）、
+    `shared/**.md`、顶层 `README.md`。
+
+    收窄到这里有两个理由：① 本文件的 `rglob` **不认 .gitignore**（SKIP_DIRS 只有
+    `__pycache__/.git/.pytest_cache`），`docs/.vitepress/dist/` 编译产物含全部正文
+    文案 ⇒ 全仓扫会让判据随有无 dist 漂移（不可复现）；② `rings`、`apply`、`patches`
+    三个目录不扫 = **显式盲区**（它们是消费契约正文的地方，由 closeout 宣称 sweep
+    承担）。"""
+    out: list[Path] = []
+    docs = PKG_ROOT / "docs"
+    if docs.is_dir():
+        out += [p for p in docs.rglob("*.md") if ".vitepress" not in p.parts]
+    out += sorted((PKG_ROOT / "shared").glob("*.md"))
+    readme = PKG_ROOT / "README.md"
+    if readme.is_file():
+        out.append(readme)
+    return sorted(out)
+
+
+def check_veto_word_pins() -> dict:
+    files = _veto_scan_files()
+    if not files:
+        return {"check": "D77 否决面词汇钉（治标）", "ok": False, "skip": False,
+                "detail": "未扫到任何源 md —— 判据失效，fail-closed"}
+    bad: list[str] = []
+    for f in files:
+        try:
+            rel = f.relative_to(PKG_ROOT).as_posix()
+        except ValueError:  # 包根外路径（喂坏输入测试注入 tmp 文件）⇒ 用全路径报
+            rel = str(f)
+        for i, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            if any(a in line for a in VETO_EXEMPT_ANCHORS):
+                continue
+            hit = [w for w in VETO_WORDS if w in line]
+            if hit:
+                bad.append(f"{rel}:{i} 含 {'/'.join(hit)}"
+                           "（被否/收窄能力词出现在活语境；收窄须回锚 D77/D78 或改写）")
+    return {"check": "D77 否决面词汇钉（治标）", "ok": not bad, "skip": False,
+            "detail": ("；".join(bad[:6]) + "（被否能力词不得在活语境宣称；换写法会漂，"
+                       "钉 = 治标面，语义自洽归人）" if bad
+                       else f"D77 否决面词汇钉干净（扫 {len(files)} 个源 md；"
+                            "rings、apply、patches 三目录不扫 = 显式盲区，归 closeout sweep）")}
+
+
 def scan() -> list[dict]:
     return [check_ring_refs_self_marking(), check_template_keys(), check_shared_refs(),
-            check_registry_counts(), check_contract_field_refs()]
+            check_registry_counts(), check_contract_field_refs(), check_veto_word_pins()]
 
 
 def test_contract_field_references_are_declared() -> None:
@@ -397,6 +455,30 @@ def test_gate_registry_gates_are_scheduled_by_atlas_check() -> None:
     """判据⑥（`§B120`）：在册的每道机器门必须有调度者。"""
     res = check_gates_gates_are_scheduled()
     assert res["ok"], res["detail"]
+
+
+def test_veto_word_pins_bad_input_reds_and_anchor_exempts(tmp_path, monkeypatch) -> None:
+    """判据⑦（D79 ③）：喂坏输入必红（活语境黑名单词 ⇒ 红），回锚豁免不误伤
+    （收窄后的行引 D77/D78 锚合法放行）。缺文件扫面 fail-closed 的正例由 scan() 全绿
+    兜住（四判据走同一 fail-closed 口径）。
+
+    变异证明 M67：从 `VETO_WORDS` 摘掉一个词 ⇒ 本用例红（腐面重新不可见）。"""
+    import sys
+    bad = tmp_path / "bad.md"
+    bad.write_text("回到 Leiden 深度赋能候选域时代\n", encoding="utf-8")
+    anchored = tmp_path / "ok.md"
+    anchored.write_text(
+        "域聚类不走图谱（多信号投票，DESIGN.md D77；曾宣称 Leiden 候选域拓扑聚类）\n",
+        encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "_veto_scan_files", lambda: [bad, anchored])
+    res = check_veto_word_pins()
+    assert not res["ok"] and "Leiden" in res["detail"], res["detail"]
+    monkeypatch.setattr(sys.modules[__name__], "_veto_scan_files", lambda: [anchored])
+    res2 = check_veto_word_pins()
+    assert res2["ok"], res2["detail"]
+    monkeypatch.setattr(sys.modules[__name__], "_veto_scan_files", lambda: [])
+    res3 = check_veto_word_pins()
+    assert not res3["ok"], "空扫面必须 fail-closed"
 
 
 def main() -> int:

@@ -146,12 +146,12 @@ fi
 
 say "[1/6] 装配 atlas 包到 .atlas/"
 ATLAS_DEST="$TARGET/.atlas"
-for pkg_dir in shared rings apply scripts templates adapters validators patches tests _support; do
+for pkg_dir in shared rings apply scripts templates adapters validators patches tests _support extensions; do
   run rm -rf "$ATLAS_DEST/$pkg_dir"
 done
 run rm -f "$ATLAS_DEST/LICENSE"
 run mkdir -p "$ATLAS_DEST"
-for pkg_dir in shared rings apply scripts templates adapters validators patches tests _support; do
+for pkg_dir in shared rings apply scripts templates adapters validators patches tests _support extensions; do
   if [ -d "$SCRIPT_DIR/$pkg_dir" ]; then
     run cp -R "$SCRIPT_DIR/$pkg_dir" "$ATLAS_DEST/$pkg_dir"
     say "      -> .atlas/$pkg_dir"
@@ -393,6 +393,7 @@ check "回灌助手" "$ATLAS_DEST/scripts/backflow.py"
 check "共享内核（模块加载器）" "$ATLAS_DEST/_support/siblings.py"
 check "共享内核（profile 解析）" "$ATLAS_DEST/_support/stack_profile.py"
 check "共享内核（用例块解析）" "$ATLAS_DEST/_support/case_block.py"
+check "pi 宿主扩展" "$ATLAS_DEST/extensions/pi.ts"
 check "结构模板" "$ATLAS_DEST/templates/structure/_meta.json"
 check "PRD 模板" "$ATLAS_DEST/templates/prd/domain.md"
 check "E2E 模板" "$ATLAS_DEST/templates/e2e/e2e-index.md"
@@ -453,18 +454,47 @@ PY
 )"; then
   say "  [ok] .atlas/VERSION 装配版本戳（${OUT}）"
 else
-  say "  [WARN] 版本戳落盘失败（.atlas/VERSION 未写，atlas_check 将 SKIP）"
+  # 硬错而非 WARN（F37，2026-10-15）：落戳失败 = 装配集为空（摘要算不出来）或脚本缺失。
+  # 「装配 0 文件」不得被记成一次合法装配，且 WARN 会让后续步骤照常往下走。
+  say "  [FAIL] 版本戳落盘失败：装配集为空或 pkg_digest 不可用 ⇒ 装配态无法对账。"
+  say "         诊断：python3 \"$SCRIPT_DIR/scripts/pkg_digest.py\" \"$SCRIPT_DIR\""
+  exit 1
 fi
 
+# 首建提示（2026-10-15 三易其稿，保留最终口径与理由）：
+#   一稿问题：①「确认 product/stack-profile.yaml」读起来像要人肉改 YAML，而画像的确认门是
+#     Agent 带用户逐项过（global-rules §7）；② 只给全新项目的全量环入口，存量项目开户时
+#     无从下手；③ 挂着已退役环的历史括注（对首次安装者纯噪声）。
+#   二稿问题：写了「大白话（= atlas-apply adopt）」这种**等号承诺** —— 那句话只是**意图**，
+#     模式由 Agent 选；装配过的仓库里它还容易被判成「已接入」而根本不开户 ⇒ 确定性入口
+#     （`/atlas-apply <模式>`）上主句，大白话降为可选说法。
+#   **终稿（用户定稿）**：只留「首次开户（二选一）」这一段 —— 编号、"下一步"导语、
+#     「装配 ≠ 开户」状态注、以及「接需求走 Trellis Plan」那条，全部砍掉。
+#     状态注没丢，只是**换了归属**：它的读者是 Agent 与人（读文档时），不是刚装完盯着终端的人 ——
+#     现由 AGENTS.md 指针段 / `/atlas status` / README / 存量接入指南 / `atlas apply` 帮助承载。
+#   两条入口都列，并按目标是否已有源码痕迹把更可能的那条排在前面（只是提示，真形态由
+#   Agent 与用户核对的 origin 落定）。
 if [ "$IS_UPDATE" -eq 1 ]; then
   say "刷新完成。"
   say ""
   say "项目工程线束与各平台 Skills 瘦桩已对账刷新为最新版本。"
 else
+  FIRST_RUN_MARK=""
+  for marker in package.json requirements.txt pyproject.toml go.mod Cargo.toml pom.xml build.gradle composer.json Gemfile src app pages frontend backend web mobile; do
+    if [ -e "$TARGET/$marker" ]; then FIRST_RUN_MARK="$marker"; break; fi
+  done
+
   say "装配完成。"
   say ""
-  say "下一步："
-  say "  1. 确认 product/stack-profile.yaml（apps / role / adapters）。"
-  say "  2. 首建项目级资产：触发 atlas-structure / atlas-prd / atlas-e2e，或用 atlas-apply 的 all 模式按序跑三环（E1：原型环已移除）。"
-  say "  3. 接需求：走 Trellis Plan，其 1.6 步会调 atlas-apply 做需求式增量。"
+  say "首次开户（二选一）："
+  say "存量项目 → /atlas-apply adopt —— 只登记既有结构基线 + 开户最小集："
+  say "           不重写老 PRD、不为老页面补历史用例。"
+  say "全新项目 → /atlas-apply all —— structure → prd → e2e 逐环全量。"
+  if [ -n "$FIRST_RUN_MARK" ]; then
+    say "（检测到 ${FIRST_RUN_MARK}：看起来是前者；也可以只说「帮我把这个项目接入 Atlas 工作流」）"
+  else
+    say "（未检测到既有源码：看起来是后者；也可以只说「跑一下三环全量构建，建立应然基线」）"
+  fi
+  say "Agent 会先带你核对 product/stack-profile.yaml（origin / apps / role / adapters）"
+  say "再落盘；占位符替换前 atlas check 判 FAIL 属预期，不是装坏了。"
 fi

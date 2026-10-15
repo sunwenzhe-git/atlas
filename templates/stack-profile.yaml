@@ -36,6 +36,9 @@ adapters:
 # 代码图谱后端（可选增强，2026-10-05 图谱批 1）。段缺失 / graph: null = 不用图谱（合法降级）。
 # 声明后：routes 适配器走图谱文件枚举（用前现刷）、apply 影响面推导先跑 impact_report。
 # 后端未安装 ⇒ 消费者显式 not_ready / 降级（绝不静默）。契约见 shared/stack-profile.md §2/§3.6。
+# 本段是**注释态**，不提议就永不生效：确认画像那一次 Agent 按栈门控探测——项目里存在
+# backend / fullstack 形态的应用才向你提议启用；纯前端栈不提议（实测：JSX 组件引用不进
+# 调用边，两条消费面对纯 UI 栈近乎零收益，见 shared/stack-profile.md §2）。
 # graph:
 #   backend: cgc            # 枚举：cgc（CodeGraphContext，MIT；uv tool install codegraphcontext）
 #   pinned: "0.6.13"        # 可选；与实装失配 ⇒ 显式 WARN

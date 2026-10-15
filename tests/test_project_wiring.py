@@ -79,6 +79,9 @@ def test_snippet_exists() -> None:
     body = SNIPPET.read_text(encoding="utf-8")
     assert "#### 1.6 项目级资产更新" in body
     assert "stack-profile.yaml" in body
+    # §15 自感知上报的出口必须在指针段里 —— 它是该契约在真实项目里**唯一的常在交付面**
+    # （只写在 `.atlas/shared/global-rules.md` 里时，流程中段等不到提醒）。
+    assert "atlas report" in body and "§15" in body, "指针段缺 §15 上报出口"
 
 
 def test_agents_insert_after_trellis_and_idempotent() -> None:
@@ -201,6 +204,20 @@ def test_dry_run_does_not_write() -> None:
         assert c.read_text(encoding="utf-8") == c_before
 
 
+def test_gitignore_fifth_touchpoint_appends_idempotently() -> None:
+    """第 5 触点（2026-10-15，issue #8）：已有 `.gitignore` ⇒ 追加一行 `.adapter-out/`，
+    重跑幂等字节不变；端到端（真跑 `--apply`）防函数级测试漏掉接线排序/汇总回归。"""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        gi = write(tmp, ".gitignore", "node_modules/\n")
+        r1 = run(tmp, "--apply")
+        assert r1.returncode == 0, r1.stdout + r1.stderr
+        assert gi.read_text(encoding="utf-8") == "node_modules/\n.adapter-out/\n"
+        r2 = run(tmp, "--apply")
+        assert r2.returncode == 0, r2.stdout
+        assert gi.read_text(encoding="utf-8") == "node_modules/\n.adapter-out/\n"
+
+
 def test_real_config_already_wired() -> None:
     """真实 codebases 配置已含 hook → 应 skipped（守护重复登记）。"""
     if not REAL_CONFIG.is_file():
@@ -228,6 +245,7 @@ def main() -> int:
         test_config_insert_after_existing_after_finish,
         test_config_idempotent,
         test_dry_run_does_not_write,
+        test_gitignore_fifth_touchpoint_appends_idempotently,
         test_real_config_already_wired,
     ]
     failed = 0
