@@ -282,6 +282,10 @@ def test_update_guard_refuses_dirty_touchpoints_and_force_overrides() -> None:
     import subprocess
     import tempfile
 
+    if not INSTALL.is_file():
+        import pytest
+        pytest.skip("包内无 install.sh（副本态）—— F34 集成用例要求源包态执行", allow_module_level=False)
+
     def sh(*a: str):
         r = subprocess.run(a, capture_output=True, env={"PATH": "/usr/bin:/bin:/opt/homebrew/bin",
                                                         "LANG": "C.UTF-8"})
