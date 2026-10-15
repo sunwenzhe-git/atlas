@@ -4,6 +4,21 @@
 
 ---
 
+## [v0.1.0-beta.15] - 2026-10-15
+
+### 🔧 规范与门禁一致性加固 (Canonical Consistency & Reconcile Closure)
+
+* **【门禁用例实收口径对齐】（`shared/gates.md`, `tests/test_canonical_consistency.py`, `README.md`）**：
+  - `gates.md` 逐文件用例计数登记改按 pytest 实收口径（AST 顶层 `test_*`），消除因字符串字面量 fixture 内嵌被测写法导致的幽灵计数偏差（全仓真实用例数对齐 AST 实收口径）；
+  - 新增 M10 钉子门禁，确保登记口径真实可证伪；
+  - README tests 徽章去写死数字，从根因上杜绝版本发布时的徽章数值漂移。
+* **【R6 闭环一致性实施】（`scripts/gen_e2e_scripts.py`, `validators/validate_testids.py`, `patches/project-wiring/apply-wiring.py`）**：
+  - 严格执行三把钥匙契约（`review: null` / 未声明走缺省严格门）；
+  - `validate_testids.py` 收窄同文件重复告警，仅针对静态属性同形态重复报警，豁免模板壳静态与 JS 命令式赋值混用；
+  - `apply-wiring.py` 接线载体优先级遵循 `pyproject.toml` > `setup.cfg` > `pytest.ini`，不再注入已退役的 `pythonpath` 补丁。
+
+---
+
 ## [v0.1.0-beta.14] - 2026-10-15
 
 ### 🚀 AI 原生自愈与免阻断架构升级 (AI-Native Resilience & Zero Friction)
