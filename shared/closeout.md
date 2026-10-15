@@ -15,6 +15,8 @@
 | 独立审查报告落盘（①②④⑤ 任一实例） | 1（含 `validate_review_report --dir <报告目录>`，2026-10-06 起） |
 | 影响面报告已产出（`.trellis/tasks/<ID>/impact.json` 存在）的收口 | 1（含 `impact_reconcile --task <ID> --diff-base <ref>` 对账门：predicted vs 实际 diff 双向差集 ⇒ WARN，B191-1，2026-10-07 起） |
 | 域 / 里程碑收口且出现 ≥2 次同类纠偏（或用户点名复盘） | **11**（harness 复盘，按需） |
+| ADR 演进链出现 `adr_cycle_detected` WARN（validate_adr stdout 自带 F36 修复指令） | 1（含 ADR 终审：`superseded_by` 指向**移出环外**的有效编号或撤销现行非终态取代行；validate_adr 复跑复绿——WARN 是终审信号不是失败，`shared/gates.md` §2.1） |
+
 | 任一工作单元收尾 | 1（至少） |
 
 ## 2. 步骤

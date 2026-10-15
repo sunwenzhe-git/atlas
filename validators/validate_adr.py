@@ -197,7 +197,10 @@ def validate_adr(root: Path) -> Result:
     for c in cycles:
         if c not in seen_cycles:
             seen_cycles.add(c)
-            res.add("adr_cycle_detected", "WARN", f"演进链存在循环引用环路: {c}")
+            res.add("adr_cycle_detected", "WARN",
+                    f"演进链存在循环引用环路: {c}"
+                    "（F36 修复指令：把最新一代的 `superseded_by` 指向**移出环外**的有效编号，"
+                    "或撤销现行非终态取代行并登记变更；改后复跑本器复绿，收口清单有对应行）")
 
     return res
 

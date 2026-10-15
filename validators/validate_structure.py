@@ -198,17 +198,46 @@ def validate(root: Path) -> Result:
     h_ok_vals = ("covered", "added", "skipped") if greenfield else ("covered", "added")
     h_ok = isinstance(cat.get("H"), str) and _cat_token(cat["H"]) in h_ok_vals
     role_issues = []
+    # F33（R8 收束，2026-10-15）：D 类**指针形态豁免**——AP 已经有机器可读描述
+    # （OpenAPI/Swagger/graphql 等）时，领域适配器会存入 `global/apis-shared.md` 指针行
+    # （`真相源` 与 `spec_entry`），而非领域级的 `apis.md` 清单。覆盖判据读它：
+    # 如果指针行指向的领域 (apps[] 包含子名称) 匹配，则该领域的 `apis.md` 缺失合规，且
+    # 不再被迫手写域级指针文件（F1 病根）。
+    shared_apis_md = spec / "global" / "apis-shared.md"
+
+    def _pointer_covers(app_names: list) -> bool:
+        """F33 判据：`global/apis-shared.md` 存在且至少一行指针同时满足：
+        ① 表内含 `真相源`（refresh_structure 的指针行渲染特征）；② `来源模块` 列
+        命中该域任一 app 名（domains[].apps 与表行交集）。"""
+        if not app_names or not shared_apis_md.is_file():
+            return False
+        t = read(shared_apis_md)
+        for line in t.splitlines():
+            if line.strip().startswith("| —") and "真相源" in line:
+                # 指针行：`| — | <spec_entry> | … | <来源模块(app 名)> | …`
+                cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                # 真相源入口行形态：`| — | <spec_entry> | … | <app 名> |`（六列表头，
+                # 来源模块列 = cells[5]）。**精确等于**——非智能子串匹配（在 `other-app` 中
+                # 误匹配 `app` 会导致假豁免：变更本应将 FAIL 变为 PASS）。
+                if any(app == cells[5] for app in app_names if len(cells) >= 6):
+                    return True
+        return False
     for role in ("current", "legacy"):
         base = spec / role
         if not base.is_dir():
             continue
+        domains_by_id = {d.get("id"): d for d in (meta.get("domains") or []) if isinstance(d, dict)}
         for sub in sorted(p for p in base.iterdir() if p.is_dir()):
             if sub.name not in ids:
                 role_issues.append(f"{role}/{sub.name} 不在 domains[]")
                 continue
             for req in ("apis.md", "data-models.md"):
-                if not (sub / req).is_file():
-                    role_issues.append(f"{role}/{sub.name} 缺 {req}")
+                if (sub / req).is_file():
+                    continue
+                if req == "apis.md" and _pointer_covers(
+                        (domains_by_id.get(sub.name, {}).get("apps") or [])):
+                    continue  # F33 指针形态合规
+                role_issues.append(f"{role}/{sub.name} 缺 {req}")
     res.add("类别覆盖 · global/", (not globals_missing) or greenfield,
             f"greenfield={greenfield} 缺 {globals_missing}")
     res.add("类别覆盖 · 域级 apis/data-models", not role_issues, "；".join(role_issues))
@@ -323,7 +352,10 @@ def validate(root: Path) -> Result:
     app_paths = [a.get("path") for a in (meta.get("apps") or []) if isinstance(a, dict) and a.get("path")]
 
     def resolves(target: str) -> bool:
-        bases = [root] + [root / ap for ap in app_paths]
+        # F34b（R8 收束，2026-10-15）：兄弟 spec 相对引用合法——结构文档里的
+        # `global/routes.md`、`domains/demo.md` 等 <spec> 内相对路径，解析锚 =
+        # **结构 spec 根**（`.trellis/spec/structure/`）；项目根与 app 根锚保留在前优先。
+        bases = [root] + [root / ap for ap in app_paths] + [spec]
         if "*" in target:
             return any(any(b.glob(target)) for b in bases)
         return any((b / target).exists() for b in bases)

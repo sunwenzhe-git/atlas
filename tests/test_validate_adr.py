@@ -151,3 +151,5 @@ def test_validate_adr_warn_cycle_detected(tmp_path: Path):
     cycle_checks = [c for c in res.checks if c["check"] == "adr_cycle_detected"]
     assert cycle_checks, res.checks
     assert "演进链存在循环引用环路: 0001->0002->0003->0001" in cycle_checks[0]["detail"], cycle_checks
+    # F36（R8 收束）：WARN 必须随身携带**机器可读修复指令**（superseded_by 移出环外）。
+    assert "superseded_by" in cycle_checks[0]["detail"] and "移出环外" in cycle_checks[0]["detail"], cycle_checks
