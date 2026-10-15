@@ -217,8 +217,47 @@ def check_generated(root: Path, rows: Row, py: str) -> None:
     if stale:
         rows.add("生成物最新", "WARN", "%d 个产物待重跑 gen_e2e_scripts.py --apply（例：%s）"
                  % (len(stale), Path(stale[0]).name))
+    elif "基线报告兜底中" in out:
+        rows.add("生成物最新", "WARN", "独立审查未执行（基线报告兜底中；跑 gen_e2e_scripts.py --bootstrap-review）")
     else:
         rows.add("生成物最新", "ok", "%d 个页面脚本与索引反向视图均已最新" % info.get("generated", 0))
+
+
+def check_review_report(root: Path, rows: Row) -> None:
+    """「审查报告形态」常驻巡检门（gates.md §2.2；F21，2026-10-15）。
+    调 `validate_review_report.validate_report()` 对最新 E2E 审查报告进行形态与状态复算：
+    - 缺报告 / 未开户：SKIP
+    - 基线兜底报告（N/0）：WARN 随行披露（诚实降级，揭发未审状态）
+    - 形态门通过：ok
+    - 形态门失败（如手写假桩缺字段、映射自相矛盾）：FAIL 揭发伪造证据
+    """
+    reviews_dir = root / "product" / "e2e" / "reviews"
+    if not reviews_dir.is_dir():
+        rows.add("审查报告形态", "SKIP", "无 product/e2e/reviews 目录")
+        return
+    review_re = re.compile(r"^(\d{4}-\d{2}-\d{2})-(.+)$")
+    candidates = [p for p in reviews_dir.iterdir() if p.is_dir() and review_re.match(p.name)]
+    if not candidates:
+        rows.add("审查报告形态", "SKIP", "无符合命名规范的审查报告目录")
+        return
+    candidates.sort(key=lambda p: p.name)
+    latest = candidates[-1]
+
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from validate_review_report import validate_report  # noqa: E402
+    except ImportError:
+        rows.add("审查报告形态", "SKIP", "无 scripts/validate_review_report.py")
+        return
+
+    res = validate_report(latest)
+    if res.status == "FAIL":
+        fails = [c["check"] for c in res.checks if c.get("level") == "FAIL"]
+        rows.add("审查报告形态", "FAIL", f"{latest.name} 形态不合规（例：{fails[:2]}）")
+    elif res.status == "WARN":
+        rows.add("审查报告形态", "WARN", f"{latest.name} 处于未审基线或含警告（状态={res.status}）")
+    else:
+        rows.add("审查报告形态", "ok", f"{latest.name} 形态合规且状态一致")
 
 
 def check_drift(root: Path, rows: Row) -> None:
@@ -502,6 +541,7 @@ def main() -> int:
     if not args.fast:
         check_factory(root, rows, sys.executable)
     check_generated(root, rows, sys.executable)
+    check_review_report(root, rows)
     check_drift(root, rows)
     check_version(root, rows)
     if not args.fast:

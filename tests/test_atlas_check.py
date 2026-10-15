@@ -15,6 +15,7 @@ import json
 import os
 import subprocess
 import sys
+import shutil
 import tempfile
 import threading
 from pathlib import Path
@@ -546,4 +547,59 @@ def test_atlas_check_failure_log_written_on_fail_and_cleaned_on_pass() -> None:
         code_clean, out_clean = run(["--root", ".", "--fast"], root_clean)
         assert code_clean == 0, out_clean
         assert not fake_log.is_file(), "全绿时必须自动清理旧的 last-check-error.log"
+
+
+def test_check_review_report_exposes_fake_stub_and_warns_baseline() -> None:
+    """F21（R6「融与化」）：atlas_check 常驻巡检行对假桩报 FAIL，对基线兜底报 WARN。"""
+    spec = importlib.util.spec_from_file_location("atlas_check", CK)
+    ac = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ac)
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        rdir = root / "product" / "e2e" / "reviews"
+        rdir.mkdir(parents=True)
+
+        # 1. 手写假桩：只有 status: PASS，缺 expected/reviewed，缺 README.md
+        fake_dir = rdir / "2026-10-15-fake-review"
+        fake_dir.mkdir()
+        (fake_dir / "review.json").write_text(
+            json.dumps({"ok": True, "status": "PASS", "scope": "fake", "unit": "cases", "checks": []}),
+            encoding="utf-8",
+        )
+        rows = ac.Row()
+        ac.check_review_report(root, rows)
+        row = next(r for r in rows.rows if r["name"] == "审查报告形态")
+        assert row["status"] == "FAIL", row
+
+        # 2. 合规基线兜底报告：如实 expected=1 / reviewed=0，复算一致 WARN
+        shutil.rmtree(fake_dir)
+        base_dir = rdir / "2026-10-15-adopt-baseline"
+        base_dir.mkdir()
+        (base_dir / "review.json").write_text(
+            json.dumps({
+                "ok": True,
+                "status": "WARN",
+                "basis": "auto-baseline",
+                "root": str(root),
+                "scope": "adopt-baseline",
+                "unit": "e2e",
+                "round": 1,
+                "expected": 1,
+                "reviewed": 0,
+                "budget_exceeded": False,
+                "checks": [],
+                "other": ["基线兜底"],
+            }),
+            encoding="utf-8",
+        )
+        (base_dir / "README.md").write_text("# 审查总结\n- 状态：WARN\n", encoding="utf-8")
+        (base_dir / "inputs").mkdir()
+        (base_dir / "inputs" / "MANIFEST.json").write_text("{}", encoding="utf-8")
+
+        rows2 = ac.Row()
+        ac.check_review_report(root, rows2)
+        row2 = next(r for r in rows2.rows if r["name"] == "审查报告形态")
+        assert row2["status"] == "WARN", row2
+
 

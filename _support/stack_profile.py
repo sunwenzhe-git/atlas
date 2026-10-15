@@ -23,8 +23,8 @@ _DEFAULTS: dict = {
 }
 # 值 = 空映射的顶层段（解析时直接初始化 dict，供后续缩进行填充）
 _DICT_SECTIONS = ("graph", "backend_test")
-# `e2e` 下「缩进 2 且值为空」开子块的键（§2 e2e 表；`app_login` / `seed` / `mock`）
-_E2E_SUBBLOCK_KEYS = ("app_login", "seed", "mock")
+# `e2e` 下「缩进 2 且值为空」开子块的键（§2 e2e 表；`app_login` / `seed` / `mock` / `review`）
+_E2E_SUBBLOCK_KEYS = ("app_login", "seed", "mock", "review")
 
 
 def strip_inline_comment(line: str) -> str:
@@ -106,7 +106,8 @@ def parse_profile(text: str) -> dict:
                 key, v = m.group(1), yaml_scalar(m.group(2))
                 # e2e 子段（§B101 / B197-1 / §5.8）：「缩进 2 且值为空」开子块，
                 # 更深缩进键归子 dict（旧实现全扁平化 ⇒ `seed.mode` 被误读成 e2e 顶层键）。
-                if section == "e2e" and key in _E2E_SUBBLOCK_KEYS and indent == 2 and v is None:
+                is_empty_val = (m.group(2).strip() == "")
+                if section == "e2e" and key in _E2E_SUBBLOCK_KEYS and indent == 2 and is_empty_val:
                     data[section].setdefault(key, {})
                     cur = key
                     continue

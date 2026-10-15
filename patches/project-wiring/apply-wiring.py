@@ -151,6 +151,77 @@ def wire_config(target: Path) -> dict:
     return {"file": CONFIG_REL, "status": "applied", "detail": detail, "_write": (path, new_text)}
 
 
+# ------------------------------------------------------------------- pytest.ini (Python scaffold)
+
+def is_python_project(target: Path) -> bool:
+    """探测是否为 Python 工程（stack-profile 声明或根目录 Python 特征文件）。"""
+    prof_path = target / "product" / "stack-profile.yaml"
+    if prof_path.is_file():
+        text = prof_path.read_text(encoding="utf-8", errors="ignore").lower()
+        if "python" in text or "framework: pytest" in text:
+            return True
+    for marker in ("requirements.txt", "pyproject.toml", "setup.py", "Pipfile", ".venv"):
+        if (target / marker).exists():
+            return True
+    return False
+
+
+def wire_python_scaffold(target: Path) -> dict:
+    """为 Python 存量/新建工程提供无损 pytest.ini 兜底（支持 pythonpath = . 导入）。"""
+    if not is_python_project(target):
+        return {"file": "pytest.ini", "status": "skipped", "detail": "非 Python 工程，跳过"}
+
+    ini_path = target / "pytest.ini"
+    pyproject = target / "pyproject.toml"
+    setup_cfg = target / "setup.cfg"
+
+    if not ini_path.is_file():
+        # 若已有 pyproject.toml 且明确配置了 pytest，不强行覆盖
+        if pyproject.is_file():
+            text_toml = pyproject.read_text(encoding="utf-8", errors="ignore")
+            if "[tool.pytest" in text_toml:
+                return {"file": "pytest.ini", "status": "skipped", "detail": "已由 pyproject.toml 承载 pytest 配置"}
+        if setup_cfg.is_file():
+            text_cfg = setup_cfg.read_text(encoding="utf-8", errors="ignore")
+            if "[tool:pytest]" in text_cfg:
+                return {"file": "pytest.ini", "status": "skipped", "detail": "已由 setup.cfg 承载 pytest 配置"}
+
+        default_ini = (
+            "[pytest]\n"
+            "pythonpath = .\n"
+            "markers =\n"
+            "    ac: mark test with AC ID for traceability\n"
+        )
+        return {"file": "pytest.ini", "status": "applied",
+                "detail": "created default pytest.ini with pythonpath = .",
+                "_write": (ini_path, default_ini)}
+
+    # 已存在 pytest.ini，检查是否已有 pythonpath
+    content = ini_path.read_text(encoding="utf-8")
+    if "pythonpath" in content:
+        return {"file": "pytest.ini", "status": "skipped", "detail": "pytest.ini 已包含 pythonpath"}
+
+    # 无损注入 pythonpath = .
+    lines = content.splitlines(keepends=True)
+    idx = -1
+    for i, line in enumerate(lines):
+        if line.strip() == "[pytest]":
+            idx = i
+            break
+
+    if idx != -1:
+        lines.insert(idx + 1, "pythonpath = .\n")
+        new_content = "".join(lines)
+        return {"file": "pytest.ini", "status": "applied",
+                "detail": "updated (injected pythonpath = . into [pytest])",
+                "_write": (ini_path, new_content)}
+    else:
+        new_content = content.rstrip("\n") + "\n\n[pytest]\npythonpath = .\n"
+        return {"file": "pytest.ini", "status": "applied",
+                "detail": "updated (appended [pytest] pythonpath = .)",
+                "_write": (ini_path, new_content)}
+
+
 # ----------------------------------------------------------------------------- main
 
 def main() -> int:
@@ -164,7 +235,7 @@ def main() -> int:
     write = bool(args.apply) and not bool(args.dry_run)
     target = Path(args.target).resolve()
 
-    results = [wire_agents(target), wire_config(target)]
+    results = [wire_agents(target), wire_config(target), wire_python_scaffold(target)]
     errors = sum(1 for r in results if r["status"] == "error")
 
     if write:

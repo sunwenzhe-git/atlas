@@ -24,7 +24,7 @@ from _lib import (  # noqa: E402
 )
 
 ADAPTER = "tests"
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 PY_TEST_RE = re.compile(r"^test_.+\.py$|^.+_test\.py$")
 JS_TEST_RE = re.compile(r"\.(spec|test)\.(js|jsx|ts|tsx)$")
@@ -93,7 +93,7 @@ def main() -> int:
     if playwright_cfg:
         run_command = "npx playwright test"
     elif pytest_cfg:
-        run_command = "pytest"
+        run_command = "python3 -m pytest"
     elif npm_cfg:
         run_command = "npm test"
     else:

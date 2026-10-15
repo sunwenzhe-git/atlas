@@ -28,6 +28,7 @@ import argparse
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 
@@ -39,11 +40,28 @@ def _format_list(items: list[str] | set[str], max_show: int = 20) -> str:
         return f"{lst}"
     return f"{lst[:max_show]} (共 {len(lst)} 项，截断前 {max_show} 项)"
 
-TESTID_ATTR = re.compile(r"""data-testid\s*=\s*["']([^"']+)["']""")
+TESTID_ATTR = re.compile(r"""data-testid\s*=\s*(?:\{\s*)?["']([a-zA-Z0-9_\-]+)["'](?:\s*\})?""")
 # 模板字面量 testid（2026-10-04）：`data-testid={`…${ident}…`}`——共享外壳按页派生前缀的
 # 合法形态（页 slug 与索引页面表逐字一致，可静态枚举），此前被字面量正则漏扫 ⇒
 # 「页面表状态如实升『已实现』必然 FAIL」与「状态停在旧值 ⇒ 最严门自动降 WARN」互锁。
 TEMPLATE_TESTID_ATTR = re.compile(r"""data-testid\s*=\s*\{\s*`([^`]+)`\s*\}""")
+# 命令式注入 testid（F22，2026-10-15；v0.1.0-beta.14）：原生 JS / Web Components 常见注入形态
+# 识别 `el.dataset.testid = "..."`、`el.dataset['testid'] = "..."` 与 `el.setAttribute("data-testid", "...")`，消除假桩诱因
+DATASET_TESTID = re.compile(r"""(?:\.dataset\.testid|\.dataset\[["']testid["']\])\s*=\s*["']([a-zA-Z0-9_\-]+)["']""")
+SETATTR_TESTID = re.compile(r"""\.setAttribute\(\s*["']data-testid["']\s*,\s*["']([a-zA-Z0-9_\-]+)["']\s*\)""")
+DATASET_TESTID_TPL = re.compile(r"""(?:\.dataset\.testid|\.dataset\[["']testid["']\])\s*=\s*`([^`]+)`""")
+SETATTR_TESTID_TPL = re.compile(r"""\.setAttribute\(\s*["']data-testid["']\s*,\s*`([^`]+)`\s*\)""")
+
+
+def strip_comments(text: str) -> str:
+    """剥离 HTML 注释与 JS/TS 块注释/行注释，防止注释中的陈旧 testid 产生幻影报错。"""
+    # 剥离 HTML 注释
+    text = re.sub(r"<!--[\s\S]*?-->", "", text)
+    # 剥离 JS/TS 块注释
+    text = re.sub(r"/\*[\s\S]*?\*/", "", text)
+    # 剥离 JS/TS 行注释（排除协议头 http:// 或 https:// 等）
+    text = re.sub(r"(?<!:)\/\/[^\n]*", "", text)
+    return text
 PLACEHOLDER = re.compile(r"\$\{([^}]+)\}")
 MAX_EXPANSION = 64  # 展开组合数上限——超出 = 词表不可枚举，按不猜整体跳过
 SLUG_IDENTS = ("slug", "pageSlug", "page")  # `${slug}` 族 = 页面表词表（collect_testids 的 pages）
@@ -220,24 +238,24 @@ def expand_template_testid(body: str, src: str, pages: list[str]) -> list[str] |
 def collect_testids(root: Path,
                     globs: list | None = None) -> tuple[dict[str, set[str]], dict[str, int], list[str]]:
     """兼容入口（3 元组）：模板展开值集合见 `collect_testids_expanded`。"""
-    per_page, counts, files, _expanded = collect_testids_expanded(root, globs)
+    per_page, counts, files, _expanded, *rest = collect_testids_expanded(root, globs)
     return per_page, counts, files
 
 
 def collect_testids_expanded(
     root: Path, globs: list | None = None,
-) -> tuple[dict[str, set[str]], dict[str, int], list[str], set[str]]:
+) -> tuple[dict[str, set[str]], dict[str, int], list[str], set[str], dict[str, list[str]]]:
     """扫**前端源码**取 testid 实然集合（E1 统一，不再按 origin 分流）：
-    `(按页归集, 全站字面量计数, 扫到的源文件, 模板展开值全集)`。
+    `(按页归集, 全站声明文件数计数, 扫到的源文件, 模板展开值全集, 同文件字面量重复清单)`。
 
     前端源文件的**文件名不是页 slug**（如页面组件 / 路由文件），按 **testid 自身的页前缀**归属；
     **页清单 = 索引页面表（契约 §3.2，唯一真相源）∪ 分片名**——无页面表时才退化为
     「分片名 ∪ testid 首段」（旧口径会把 `error-component` 这类非页 testid 当成页，`3509 §B106`）。
     归不到页的归入 `""`（仍参与全站唯一性，不参与分页等价）。
     **模板字面量**（2026-10-04）：`data-testid={`…${slug}…`}` 按可枚举词表展开入按页归集
-    （`${slug}` = 页面表；其余 = 同文件静态属性）；`counts` 只计**字面量**——全站唯一是
-    「字面量重复」判据，展开值不是重复字面量。**展开值的挂载范围静态未知**（外壳可能只挂载
-    部分页），故展开值**只参与「缺失」判罚、不参与「多余」判罚**（多余 = 调用方排除纯展开值）。
+    （`${slug}` = 页面表；其余 = 同文件静态属性）；`counts` 只计**声明文件数**（F22，2026-10-15）——
+    全站唯一是「跨文件重复」判据，同文件内模板壳与命令式赋值混用不误伤；同文件字面量重复单独 WARN 报警。
+    **展开值的挂载范围静态未知**（外壳可能只挂载部分页），故展开值**只参与「缺失」判罚、不参与「多余」判罚**。
     """
     cases = root / "product" / "e2e" / "cases"
     shard_pages = sorted(p.stem for p in cases.glob("*.md")) if cases.is_dir() else []
@@ -245,7 +263,10 @@ def collect_testids_expanded(
     texts = [(f, f.read_text(encoding="utf-8", errors="ignore")) for f in files]
     all_tids: set[str] = set()
     for _f, text in texts:
-        all_tids.update(TESTID_ATTR.findall(text))
+        clean = strip_comments(text)
+        all_tids.update(TESTID_ATTR.findall(clean))
+        all_tids.update(DATASET_TESTID.findall(clean))
+        all_tids.update(SETATTR_TESTID.findall(clean))
     states = index_page_states(root)
     if states:
         pages = sorted(set(states) | set(shard_pages))
@@ -254,15 +275,38 @@ def collect_testids_expanded(
     per_page: dict[str, set[str]] = {}
     counts: dict[str, int] = {}
     expanded: set[str] = set()
+    same_file_dups: dict[str, list[str]] = {}
     for f, text in texts:
-        for tid in TESTID_ATTR.findall(text):
+        clean_text = strip_comments(text)
+        rel = f.relative_to(root).as_posix()
+        # 收集字面量形态（静态属性、dataset、setAttribute）
+        raw_lits = (
+            TESTID_ATTR.findall(clean_text)
+            + DATASET_TESTID.findall(clean_text)
+            + SETATTR_TESTID.findall(clean_text)
+        )
+        file_unique = set(raw_lits)
+        for tid in file_unique:
             counts[tid] = counts.get(tid, 0) + 1
             per_page.setdefault(tid_owner(tid, pages) or "", set()).add(tid)
-        for body in TEMPLATE_TESTID_ATTR.findall(text):
-            for tid in expand_template_testid(body, text, pages) or []:
+        
+        # 检查同文件重复声明（字面量出现次数 > 1）
+        file_counts = Counter(raw_lits)
+        dups = [t for t, cnt in file_counts.items() if cnt > 1]
+        if dups:
+            same_file_dups[rel] = sorted(dups)
+
+        # 收集模板字面量形态并展开
+        tpl_bodies = (
+            TEMPLATE_TESTID_ATTR.findall(clean_text)
+            + DATASET_TESTID_TPL.findall(clean_text)
+            + SETATTR_TESTID_TPL.findall(clean_text)
+        )
+        for body in tpl_bodies:
+            for tid in expand_template_testid(body, clean_text, pages) or []:
                 expanded.add(tid)
                 per_page.setdefault(tid_owner(tid, pages) or "", set()).add(tid)
-    return per_page, counts, [f.relative_to(root).as_posix() for f, _t in texts], expanded
+    return per_page, counts, [f.relative_to(root).as_posix() for f, _t in texts], expanded, same_file_dups
 
 
 def tid_owner(tid: str, pages: list[str]) -> str | None:
@@ -364,7 +408,7 @@ def validate(root: Path) -> Result:
                 "`python3 .atlas/scripts/gen_testid_stub.py --root .` 生成"
                 "（rings/e2e/reference.md §4.1）")
 
-    src_ids, counts, sources, expanded = collect_testids_expanded(root, globs)
+    src_ids, counts, sources, expanded, same_file_dups = collect_testids_expanded(root, globs)
     states = index_page_states(root)
     # 归属页词表：有页面表则以它为准（唯一真相源）；否则沿用「前端前缀 ∪ 分片名」（`3509 §B106`）
     attr_pages = (sorted(set(states) | {p.stem for p in cases.glob("*.md")}) if states
@@ -413,6 +457,14 @@ def validate(root: Path) -> Result:
     cross = {t for t, n in counts.items() if n > 1}
     res.add("testid 全站唯一", "PASS" if not cross else "FAIL",
             f"重复={_format_list(cross)} (💡 提示: 同一 data-testid 在全站跨页面中必须唯一)" if cross else "")
+
+    # 同文件重复声明（WARN 保信号，Minor-3：同文件多处声明建议关注 strict-mode 语义）
+    if same_file_dups:
+        dup_items = [f"{f}:{_format_list(tids)}" for f, tids in sorted(same_file_dups.items())]
+        res.add("同文件 testid 重复声明", "WARN",
+                f"同文件多次出现字面量={'; '.join(dup_items)} (💡 同文件多处赋值建议梳理或验证 strict-mode 唯一性)")
+    else:
+        res.add("同文件 testid 重复声明", "PASS", "")
 
     # 未归属任何用例页的前端 testid（命名违规或缺分片）
     stray = sorted(src_ids.get("", set()))

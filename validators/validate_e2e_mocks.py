@@ -286,11 +286,14 @@ def validate(root: Path) -> Result:
     res.add("mock 先于 step", "PASS" if not ordering_bad else "FAIL",
             "；".join(ordering_bad[:6]))
 
-    # —— 零步基线空转（知悉项）
+    # —— 零步基线空转 / mock 探针豁免（契约 §5.8 知悉项与 R6 豁免）
     if mode == "on" and mock_pages:
         res.add("零步基线空转", "WARN",
                 f"页={mock_pages}：基线不挂桩，无后端环境下探针全 null = 恒真守卫失效"
                 "（契约 §5.8 知悉项；恢复守卫强度须另立 mock-default 批）")
+    elif mock_pages:
+        res.add("零步基线空转", "PASS",
+                f"页={mock_pages}：mock 用例断言不参与零步基线（初态由桩环境定义，契约 §5.8 R6 探针豁免）")
     else:
         res.add("零步基线空转", "PASS", "无 mock 页或未启用打桩")
 

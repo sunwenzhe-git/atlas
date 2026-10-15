@@ -4,6 +4,27 @@
 
 ---
 
+## [v0.1.0-beta.14] - 2026-10-15
+
+### 🚀 AI 原生自愈与免阻断架构升级 (AI-Native Resilience & Zero Friction)
+
+* **【生成器自愈化】审查门免阻断自愈 (`scripts/gen_e2e_scripts.py`, `_support/stack_profile.py`, `validators/validate_stack_profile.py`)**：
+  - 彻底终结 `review.json` 缺失直接抛 `exit 2` 阻断写盘、逼迫 AI 人工造假报告桩的历史包袱；
+  - 规范化扩充 `e2e.review` 字段白名单与模式枚举：支持 `mode: gate`（严格审查门）、`mode: auto-baseline`（自愈基线模式）与 `mode: off`（免审）；
+  - 当项目处于存量接管形态（`origin: adopt`）或声明了 `review: null` / `auto-baseline` 时，若未发现历史审查报告，在全量校验通过后自动自愈生成最小可证伪基线审查报告（`*-adopt-baseline` 或 `*-auto-baseline`），放行脚本写盘。
+* **【提取器增强】JS 动态 testid 提取与文件级 counts 重构 (`validators/validate_testids.py`)**：
+  - 全面支持原生 JS 命令式赋值语法：捕获 `el.dataset.testid = "..."`、`el.dataset['testid'] = "..."` 与 `el.setAttribute("data-testid", "...")`（含单/双引号、JSX 花括号与可枚举模板字符串）；
+  - 引入源码注释预清洗（`strip_comments`），自动剥离 HTML 注释与 JS/TS 行/块注释，避免废弃 id 产生幻影报错；
+  - 重构 `counts` 全站唯一规则为「声明文件数」，同一文件内的 HTML 与 JS 共存、条件分支或动态列表赋值计数为 1（天然豁免），跨文件冲突严格报警，业务代码无需在 HTML 补 `<template>` 假桩。
+* **【存量脚手架自适应】Python pytest.ini 无损兜底 (`patches/project-wiring/apply-wiring.py`)**：
+  - 项目装配接线（`apply-wiring.py`）智能识别 Python 特征（FastAPI/Flask 栈、`framework: pytest`、`requirements.txt` / `pyproject.toml` 等）；
+  - 根目录无 pytest 配置时自动生成默认 `pytest.ini` 并配置 `pythonpath = .` 与 AC 标记；已有配置无损追加，彻底免除 Python 模块导入找不到路径的环境摩擦。
+* **【Mock 零步探针容忍】打桩用例自动免除零步恒真探针 (`scripts/gen_e2e_scripts.py`)**：
+  - 识别用例分片中的 `mock:` 段，整体免除注入零步基线探针（`probes`），彻底根除外部接口打桩导致的页面初始容器被误判为“恒真（假阳性）”；
+  - 用例本身的 Playwright 测试体 100% 完整保留严格断言，AI 与开发者无需再机械式手写 `initial:` 豁免前缀。
+
+---
+
 ## [v0.1.0-beta.13] - 2026-10-14
 
 ### 🚀 核心协议全栈化与沙箱前沿加固 (Core Protocols & Usability)

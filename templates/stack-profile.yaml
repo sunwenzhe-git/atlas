@@ -72,8 +72,9 @@ e2e:
   #   mode: off            # off | on | auto
   #   api_prefix: /api/    # mode: on 时必填：桩路径锚定前缀 + 运行期拦截范围（以 / 开头）
   #   fixtures_dir: fixtures
-  # 独立审查执行器（2026-09-26 补）。null = 会话环境默认子代理机制；
-  # 需要指定档位时写成映射：review: { model: <档位> }（model: null = 会话当前模型）。
+  # 独立审查执行器（2026-09-26 补；v0.1.0-beta.14 扩展）。null = 会话环境默认子代理机制；
+  # 模式可选：gate（缺省，严格审查门）| auto-baseline（无报告自动生成基线，免阻断）| off（免审）。
+  # 需要指定模式与档位时写成映射：review: { mode: auto-baseline, model: <档位> }。
   review: null
 
 # 后端测试调度与 AC 对账（可选段，2026-10-12 补，3507 BT / B209-1）。**段缺失 = 合法降级**

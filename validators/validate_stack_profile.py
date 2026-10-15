@@ -56,6 +56,11 @@ MOCK_MODES = ("off", "on", "auto")
 # fabricated（纯前端桩项目：setup 不发请求直写假令牌，必填收窄为 storage_key）。
 APP_LOGIN_MODES = ("real", "fabricated")
 
+# 独立审查调度通道词表（shared/stack-profile.md §2，rings/e2e §12.6；v0.1.0-beta.14）
+# mode: gate（缺省 = 严格独立审查门）/ auto-baseline（无报告时自动兜底生成基线，免阻断）/ off（免审）
+REVIEW_KEYS = ("mode", "model")
+REVIEW_MODES = ("gate", "auto-baseline", "off")
+
 # 后端测试调度段白名单（shared/stack-profile.md §2；B209-1 / 3507 BT，2026-10-12）。
 # 可选能力：段缺失 = 降级（由项目自行执行）；声明了就必须合法。
 BACKEND_TEST_KEYS = ("command", "test_dir", "framework", "mode", "ac_marker")
@@ -206,6 +211,23 @@ def validate(root: Path) -> Result:
     else:
         res.add("e2e.mock（可选段）", "PASS",
                 "未声明 = off（分片出现 mock: 行 ⇒ FAIL，防全后端项目误用；rings/e2e §5.8）")
+
+    review = e2e_prof.get("review") if isinstance(e2e_prof, dict) else None
+    if isinstance(review, dict) and review:
+        unknown_rev = [k for k in review if k not in REVIEW_KEYS]
+        res.add("e2e.review 键白名单", "PASS" if not unknown_rev else "FAIL",
+                f"未知键={unknown_rev} 允许={list(REVIEW_KEYS)}")
+        rev_mode = review.get("mode")
+        res.add("e2e.review.mode 枚举", "PASS" if rev_mode is None or rev_mode in REVIEW_MODES else "FAIL",
+                f"值={rev_mode!r} 允许={list(REVIEW_MODES)}（缺省 gate）")
+    elif isinstance(review, str):
+        res.add("e2e.review 模式枚举", "PASS" if review in REVIEW_MODES else "FAIL",
+                f"值={review!r} 允许={list(REVIEW_MODES)}")
+    elif review is not None and not isinstance(review, dict):
+        res.add("e2e.review 段形态", "FAIL", f"值={review!r}（应为映射、模式标量或 null）")
+    else:
+        res.add("e2e.review（可选段）", "PASS",
+                "未声明 = null（缺省走 gate 门禁；可配置 mode: auto-baseline 开启 AI-Native 免阻断自愈）")
 
     res.add("prototype 段（已退役 E1）", "N/A",
             "atlas 不再消费；存量项目可保留（历史）或删除（shared/stack-profile.md §2）")

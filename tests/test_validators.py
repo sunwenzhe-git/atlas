@@ -2009,6 +2009,57 @@ def test_goto_path_must_be_in_page_table() -> None:
     assert ok["goto 路径 ∈ 页面表"][0] == "PASS", ok
 
 
+def test_f22_imperative_testid_extraction_and_counts() -> None:
+    """F22（R6「融与化」）：识别 dataset.testid 与 setAttribute 命令式注入，
+    counts 改为按声明文件数计数，跨文件重复 FAIL，同文件多次声明降 WARN。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        src = root / "src"
+        src.mkdir(parents=True)
+        # 单文件内：静态属性 + dataset 赋值 + setAttribute 注入 + setAttribute 模板
+        (src / "notes.js").write_text(
+            """
+            // 静态声明
+            const tpl = '<li data-testid="notes-item"></li>';
+            // dataset 注入（同文件重复 notes-item）
+            li.dataset.testid = "notes-item";
+            // setAttribute 字面量
+            btn.setAttribute("data-testid", "notes-submit");
+            // setAttribute 模板展开
+            el.setAttribute("data-testid", `${slug}-header`);
+            """,
+            encoding="utf-8",
+        )
+        (root / "product").mkdir(parents=True, exist_ok=True)
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: f22-test\norigin: greenfield\napps:\n  - name: web\n    kind: frontend\n    path: src\n",
+            encoding="utf-8",
+        )
+        per_page, counts, files, expanded, dups = vt.collect_testids_expanded(root, ["src"])
+        # 1. 抽取源覆盖：字面量与注入全部抽取
+        assert "notes-item" in counts
+        assert "notes-submit" in counts
+        # 2. counts 为声明文件数：同文件出现两次 notes-item，文件数仍为 1
+        assert counts["notes-item"] == 1
+        assert counts["notes-submit"] == 1
+        # 3. 模板注入展开：notes-header 进入 expanded
+        assert "notes-header" in expanded
+        # 4. 同文件重复检测记录 dups
+        assert "src/notes.js" in dups
+        assert "notes-item" in dups["src/notes.js"]
+
+        # 5. 跨文件重复注入：新增第二个文件同样注入 notes-submit
+        (src / "other.js").write_text(
+            'btn2.dataset.testid = "notes-submit";',
+            encoding="utf-8",
+        )
+        _per_page2, counts2, _files2, _expanded2, _dups2 = vt.collect_testids_expanded(root, ["src"])
+        assert counts2["notes-submit"] == 2  # 跨两个文件
+        cross = {t for t, n in counts2.items() if n > 1}
+        assert "notes-submit" in cross
+
+
+
 
 def test_goto_missing_path_and_auth_whitelist() -> None:
     """契约 §5.5/§5.7（2026-09-30，审查 D3/D4）：`goto` 缺路径参数 FAIL；
@@ -2538,4 +2589,77 @@ def test_prd_illegal_nested_directories_fails() -> None:
         row0_bad = [c for c in res_bad.checks if c["check"] == "参数0 目录规范"][0]
         assert row0_bad["status"] == "FAIL"
         assert "domains" in row0_bad["detail"]
+
+
+def test_validate_testids_strip_comments() -> None:
+    """v0.1.0-beta.14: 注释中的 testid 必须被剥离，不得产生幻影实然 testid。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        src = root / "src"
+        src.mkdir(parents=True)
+        (src / "app.js").write_text(
+            """
+            // el.dataset.testid = "notes-commented-line";
+            /*
+               <div data-testid="notes-commented-block"></div>
+               el.setAttribute("data-testid", "notes-commented-setattr");
+            */
+            <!-- <span data-testid="notes-commented-html"></span> -->
+            el.dataset.testid = "notes-real-live";
+            """,
+            encoding="utf-8",
+        )
+        (root / "product").mkdir(parents=True, exist_ok=True)
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: comment-test\norigin: greenfield\napps:\n  - name: web\n    kind: frontend\n    path: src\n",
+            encoding="utf-8",
+        )
+        _per_page, counts, _files, _expanded, _dups = vt.collect_testids_expanded(root, ["src"])
+        assert "notes-real-live" in counts
+        assert "notes-commented-line" not in counts
+        assert "notes-commented-block" not in counts
+        assert "notes-commented-setattr" not in counts
+        assert "notes-commented-html" not in counts
+
+
+def test_stack_profile_review_section_validation() -> None:
+    """v0.1.0-beta.14: 校验 e2e.review 配置段（mode: gate | auto-baseline | off）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product").mkdir(parents=True)
+        p = root / "product" / "stack-profile.yaml"
+
+        base = (
+            "product: demo\n"
+            "apps:\n"
+            "  - name: web\n"
+            "    path: web\n"
+            "    kind: frontend\n"
+            "    role: landing\n"
+            "    stack: demo\n"
+            "e2e:\n"
+            "  runner: node-playwright\n"
+        )
+        # 1. review 为空 / null：合法
+        p.write_text(base + "  review: null\n", encoding="utf-8")
+        res = {c["check"]: c for c in vsp.validate(root).checks}
+        assert res["e2e.review（可选段）"]["level"] == "PASS"
+
+        # 2. mode: auto-baseline：合法
+        p.write_text(base + "  review:\n    mode: auto-baseline\n", encoding="utf-8")
+        res = {c["check"]: c for c in vsp.validate(root).checks}
+        assert res["e2e.review.mode 枚举"]["level"] == "PASS"
+        assert res["e2e.review 键白名单"]["level"] == "PASS"
+
+        # 3. 标量形式 review: auto-baseline：合法
+        p.write_text(base + "  review: auto-baseline\n", encoding="utf-8")
+        res = {c["check"]: c for c in vsp.validate(root).checks}
+        assert res["e2e.review 模式枚举"]["level"] == "PASS"
+
+        # 4. 未知键与非法 mode：FAIL
+        p.write_text(base + "  review:\n    mode: invalid-mode\n    bad_key: 1\n", encoding="utf-8")
+        res = {c["check"]: c for c in vsp.validate(root).checks}
+        assert res["e2e.review.mode 枚举"]["level"] == "FAIL"
+        assert res["e2e.review 键白名单"]["level"] == "FAIL"
+
 

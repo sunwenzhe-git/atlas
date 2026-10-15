@@ -962,6 +962,59 @@ def test_review_gate_levels_and_path_match_the_shared_contract() -> None:
         assert "Critical" in text, ring
 
 
+def test_review_gate_auto_heals_on_adopt() -> None:
+    """v0.1.0-beta.14: 存量 adopt 模式下缺失审查报告时自动自愈放行，绝不抛 exit 2 阻断写盘。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=PROFILE.replace("product: demo", "product: demo\norigin: adopt"), review=False)
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stderr + r.stdout
+        assert (root / "product" / "e2e" / "scripts" / "home.spec.ts").exists()
+        reports = list((root / "product" / "e2e" / "reviews").glob("*-adopt-baseline/review.json"))
+        assert len(reports) == 1, reports
+        report_data = json.loads(reports[0].read_text(encoding="utf-8"))
+        assert report_data["ok"] is True
+        assert report_data["status"] == "WARN"
+        assert report_data["basis"] == "auto-baseline"
+        assert report_data["reviewed"] == 0
+        assert report_data["expected"] >= 1
+
+
+def test_review_gate_auto_heals_on_empty_review() -> None:
+    """v0.1.0-beta.14: 声明 review: null 或 review.mode: auto-baseline 时自动自愈放行。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=PROFILE.replace("runner: node-playwright", "runner: node-playwright\n  review: null"), review=False)
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stderr + r.stdout
+        assert (root / "product" / "e2e" / "scripts" / "home.spec.ts").exists()
+        reports = list((root / "product" / "e2e" / "reviews").glob("*-auto-baseline/review.json"))
+        assert len(reports) == 1, reports
+        report_data = json.loads(reports[0].read_text(encoding="utf-8"))
+        assert report_data["ok"] is True
+        assert report_data["status"] == "WARN"
+        assert report_data["basis"] == "auto-baseline"
+
+
+def test_mock_case_exempt_from_zero_step_baseline() -> None:
+    """v0.1.0-beta.14: 含有 mock: 段的用例自动免除零步基线探针（防初始容器误报恒真）。"""
+    mock_case = CASE.replace(
+        "expected:\n  - text home-title 首页        # 页面标题文案为「首页」\n  - visible home-cta-btn        # 主操作按钮可见",
+        "mock:\n  - GET /api/home -> fixtures/home.json\nexpected:\n  - text home-title 首页        # 页面标题文案为「首页」\n  - visible home-cta-btn        # 主操作按钮可见",
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product" / "e2e" / "fixtures").mkdir(parents=True, exist_ok=True)
+        (root / "product" / "e2e" / "fixtures" / "home.json").write_text("{}", encoding="utf-8")
+        make(root, profile=PROFILE.replace("runner: node-playwright", "runner: node-playwright\n  mock:\n    mode: on\n    api_prefix: /api"), case=mock_case)
+        assert run(root, "--apply").returncode == 0
+        text = spec_of(root)
+        # 零步基线探针中不包含 mock 用例的任何断言
+        assert "test('test_home__zero_step_baseline'" not in text or not zs_probes(text)
+        # 但用例本身的测试体内仍完整保留 toBeVisible 断言
+        assert "await expect(page.getByTestId('home-cta-btn')).toBeVisible();" in text
+
+
 def test_testid_guard_uses_auto_wait_not_immediate_count() -> None:
     """契约 §7.1（`3509 §B99`②）：元素齐全守卫必须**自动等待**判定——
 
@@ -1351,3 +1404,142 @@ def test_retired_page_spec_cleaned_and_visible() -> None:
         dry2 = run(root, "--json")
         data2 = json.loads(dry2.stdout)
         assert not any("retired.spec.ts" in r["file"] for r in data2["results"]), data2["results"]
+
+
+def test_f24_zero_step_probe_exemptions() -> None:
+    """F24（R6「融与化」）：
+    1. 含 mock 的用例断言整组跳过零步基线探针集，并在生成物中显式披露豁免注释（点名用例 ID）；
+    2. 普通非 mock 用例断言保持进入探针集（契约 §5.6 R9 守卫）；
+    3. 纯 mock 页面在基线不挂桩环境下依然生成带空转守卫的基线测试。"""
+    spec = importlib.util.spec_from_file_location("gen_e2e", GEN)
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+
+    cases = [
+        # 用例 1：含 mock 的用例（初态由桩环境定义，不参与裸基线探针）
+        {
+            "id": "E2E-HOME-MOCK",
+            "mock": ["GET /api/quote -> fixtures/quote.json"],
+            "testid": ["quote-card"],
+            "expected": [
+                "visible quote-card # 外部提醒区域",
+                "text quote-card 今日箴言",
+            ],
+        },
+        # 用例 2：普通用例（普通断言进探针）
+        {
+            "id": "E2E-HOME-REGULAR",
+            "testid": ["home-cta-btn", "home-title"],
+            "expected": [
+                "visible home-cta-btn # 按钮可见",
+                "text home-title 首页 # 标题断言",
+            ],
+        },
+    ]
+
+    code = gen.ts_zero_step_baseline("home", "http://127.0.0.1:8000/home", cases)
+    assert code, "必须生成零步基线代码"
+    # 1. 披露 mock 豁免注释并指名用例 ID
+    assert "mock 用例断言不参与零步基线" in code
+    assert "E2E-HOME-MOCK" in code
+
+    # 解析嵌入的 probes JSON
+    m = re.search(r"const ATLAS_ZS_home = (\{.*?\});", code)
+    assert m, f"未提取到探针 JSON: {code}"
+    zs_data = json.loads(m.group(1))
+    probes = zs_data["probes"]
+    labels = [p["label"] for p in probes]
+
+    # 验证豁免：
+    # mock 用例断言全都不在 probes
+    assert not any("E2E-HOME-MOCK" in l for l in labels), labels
+
+    # 验证普通用例断言照入：
+    assert any("visible home-cta-btn" in l for l in labels), labels
+    assert any("text home-title 首页" in l for l in labels), labels
+
+
+def test_f21_baseline_shape_lock_and_sort_precedence() -> None:
+    """F21（R6「融与化」）：
+    1. 形状锁：basis 键必须满足 status=WARN 且 checks=[] 且 reviewed=0 且 expected>=1；
+    2. Critical 先行：即使声明 basis 键，若 status=FAIL 且含 Critical，照旧被拒；
+    3. 同日排序消歧：同一天内真审报告优于基线报告。"""
+    spec = importlib.util.spec_from_file_location("gen_e2e", GEN)
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        rdir = root / "product" / "e2e" / "reviews"
+        rdir.mkdir(parents=True)
+
+        # 1. 形状锁负向：带 basis 但 status 不是 WARN
+        bad_basis_dir = rdir / "2026-10-15-bad-basis"
+        bad_basis_dir.mkdir()
+        (bad_basis_dir / "review.json").write_text(
+            json.dumps({"ok": True, "status": "PASS", "basis": "auto-baseline", "expected": 1, "reviewed": 1}),
+            encoding="utf-8",
+        )
+        level, _ = gen.review_report_status(rdir)
+        assert level == "invalid", level
+
+        # 2. Critical 先行：status=FAIL 且含 Critical，即使用 basis 也必须报 critical
+        (bad_basis_dir / "review.json").write_text(
+            json.dumps({
+                "ok": False,
+                "status": "FAIL",
+                "basis": "auto-baseline",
+                "checks": [{"level": "Critical", "check": "致命缺口"}],
+            }),
+            encoding="utf-8",
+        )
+        level, detail = gen.review_report_status(rdir)
+        assert level == "critical" and "Critical" in detail, (level, detail)
+
+        # 3. 同日排序消歧：同一天下存在基线报告与真审报告
+        # 基线目录
+        baseline_dir = rdir / "2026-10-16-adopt-baseline"
+        baseline_dir.mkdir()
+        (baseline_dir / "review.json").write_text(
+            json.dumps({
+                "ok": True,
+                "status": "WARN",
+                "basis": "auto-baseline",
+                "expected": 1,
+                "reviewed": 0,
+                "checks": [],
+            }),
+            encoding="utf-8",
+        )
+        # 真审目录（字母排序可能在 baseline 后面或前面，如 2026-10-16-real-review）
+        real_dir = rdir / "2026-10-16-real-review"
+        real_dir.mkdir()
+        (real_dir / "review.json").write_text(
+            json.dumps({
+                "ok": True,
+                "status": "PASS",
+                "expected": 1,
+                "reviewed": 1,
+                "checks": [],
+            }),
+            encoding="utf-8",
+        )
+        # 即使 baseline_dir 字母顺序排在 real 之前，latest 必须挑中 real_dir
+        chosen = gen.latest_review_report(rdir)
+        assert chosen == real_dir, f"挑中={chosen}, 预期={real_dir}"
+
+
+def test_f21_bootstrap_review_cli() -> None:
+    """F21: --bootstrap-review 输出机器可读任务包。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        r = run(root, "--bootstrap-review")
+        assert r.returncode == 0, r.stderr
+        data = json.loads(r.stdout)
+        assert data["kind"] == "atlas-bootstrap-review-package"
+        assert data["expected_shards"] >= 1
+        assert "D1-D10" in data["dimensions_reference"]
+
+
+

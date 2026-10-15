@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -157,6 +159,36 @@ def test_stub_frontend_empty_lists_empty_actual() -> None:
         text, n = stub.render(root, ["web"])
         assert n == 1
         assert "| （空） | 前端暂无 `data-testid`（全部页未实现） |" in text, text
+
+
+def test_f23_tests_adapter_python3_m_pytest() -> None:
+    """F23（R6「融与化」）：adapters/tests.py 探测到 pytest 配置时输出 python3 -m pytest 命令形态。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product").mkdir(parents=True, exist_ok=True)
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: legacy-test\norigin: adopt\napps:\n  - name: svc\n    path: svc\n    kind: backend\n",
+            encoding="utf-8",
+        )
+        (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+        svc = root / "svc"
+        svc.mkdir(parents=True)
+        (svc / "test_notes.py").write_text("def test_x(): pass\n", encoding="utf-8")
+        out_json = root / "tests.json"
+
+        cmd = [
+            sys.executable,
+            str(PKG_ROOT / "adapters" / "tests.py"),
+            "--root", str(root),
+            "--out", str(out_json),
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        assert res.returncode == 0, res.stderr
+        data = json.loads(out_json.read_text(encoding="utf-8"))
+        assert data["adapter_version"] == "0.1.1"
+        assert len(data["items"]) == 1
+        assert data["items"][0]["run_command"] == "python3 -m pytest"
+
 
 
 def main() -> int:

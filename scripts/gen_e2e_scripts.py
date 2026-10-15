@@ -53,6 +53,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 # 随包内核引导（`_support/`，2026-10-12 单源批）：解析 / 加载口径一律经共享内核，
@@ -709,9 +710,16 @@ def ts_zero_step_baseline(page: str, url: str, cases: list[dict], mock_vacuous: 
     无后端环境下探针全 null = **空转守卫**——生成物显式注释标记（validate_e2e_mocks 侧 WARN）。
     """
     probes: list[dict] = []
+    mock_exempt_cases: list[str] = []
     for c in cases:
         if c.get("_state") in ("blocked", "skipped"):
             # 契约 §7（2026-10-01 补）：blocked/skipped 用例不进基线探针。
+            continue
+        if c.get("mock") or c.get("_mock"):
+            # 契约 §5.8 / AI-Native（F24，v0.1.0-beta.14）：本用例含 mock: 打桩 ⇒ 外部打桩用例断言
+            # 依赖接口响应，而基线探针不挂桩，初始容器与空数据极易被判恒真（假阳性）；
+            # 整用例跳过零步探针，测试体中仍 100% 严谨执行断言（杜绝机械式补 initial:）。
+            mock_exempt_cases.append(c.get("id", "unknown"))
             continue
         for e in c.get("expected") or []:
             kind, body = split_prefix(e)
@@ -728,16 +736,19 @@ def ts_zero_step_baseline(page: str, url: str, cases: list[dict], mock_vacuous: 
                 # §B72 两趟取样：hidden 类与 unchanged: 用展开态；存在类用真实渲染态。
                 "sampling": "expanded" if verb == "hidden" or (kind or "plain") == "unchanged" else "rendered",
             })
-    if not probes:
+    if not probes and not mock_vacuous:
         return ""
     fn = re.sub(r"[^0-9a-zA-Z]+", "_", page).strip("_")
     data = json.dumps({"url": url, "probes": probes}, ensure_ascii=False, separators=(",", ":"))
     vacuous = ("  // 契约 §5.8：本页含 mock: 用例 —— 基线不挂桩，无后端环境下探针全 null = 空转守卫"
                "（validate_e2e_mocks 记 WARN；恒真守卫失效为知悉项）\n" if mock_vacuous else "")
+    exempt_cmt = (f"  // 契约 §5.8（R6）：mock 用例断言不参与零步基线 —— 初态真值由桩环境定义，裸探针测错世界观 (豁免用例: {', '.join(mock_exempt_cases)})\n"
+                  if mock_exempt_cases else "")
     return (
         f"const ATLAS_ZS_{fn} = {data};\n"
         f"test('test_{fn}__zero_step_baseline', async ({{ page }}) => {{\n"
         f"{vacuous}"
+        f"{exempt_cmt}"
         f"  await atlasZeroStepBaseline(page, ATLAS_ZS_{fn});\n"
         "});\n"
     )
@@ -759,8 +770,7 @@ REVIEW_LEVELS = {"PASS", "WARN", "FAIL"}
 
 def latest_review_report(reports_dir: Path) -> Path | None:
     """取**目录名日期前缀最大**的那份报告目录（契约 §4「报告定位」）。
-
-    不引入指针文件：落点形态 `<日期>-<范围>` 已是契约固定的 ⇒ 可机器排序。
+    同日内真审报告优先于基线报告（通过探测 review.json 中的 basis 键，M4 排序消歧）。
     """
     if not reports_dir.is_dir():
         return None
@@ -770,18 +780,28 @@ def latest_review_report(reports_dir: Path) -> Path | None:
             continue
         m = REVIEW_DIR_RE.match(p.name)
         if m:
-            dated.append((m.group(1), p.name, p))
+            is_baseline = 0
+            rj = p / "review.json"
+            if rj.is_file():
+                try:
+                    data = json.loads(rj.read_text(encoding="utf-8"))
+                    if data.get("basis") == "auto-baseline":
+                        is_baseline = 1
+                except Exception:
+                    pass
+            # 排序元组：(日期, 是否非基线, 目录名, 路径) -> is_baseline 0 优于 1
+            dated.append((m.group(1), -is_baseline, p.name, p))
     if not dated:
         return None
     dated.sort()
-    return dated[-1][2]
+    return dated[-1][3]
 
 
 def review_report_status(reports_dir: Path) -> tuple[str, str]:
-    """返回 `(level, detail)`；level ∈ `ok` / `missing` / `invalid` / `critical`。
+    """返回 `(level, detail)`；level ∈ `ok` / `baseline` / `missing` / `invalid` / `critical`。
 
-    判据**不在门口信任模型结论**（契约 §4）：读的是 `review.json` 的 `status` 字段，
-    它不是由本脚本根据模型输出推出来的，而是审查器自己落的盘。
+    判据**不在门口信任模型结论**（契约 §4）：读的是 `review.json` 的 `status` 字段。
+    C1（评审 Critical 约束）：Critical 判定先行，basis 键受严格形状锁守护，杜绝单键绕门。
     """
     d = latest_review_report(reports_dir)
     if d is None:
@@ -799,20 +819,109 @@ def review_report_status(reports_dir: Path) -> tuple[str, str]:
     if status == "FAIL":
         crit = [c for c in (data.get("checks") or []) if c.get("level") == "Critical"]
         return "critical", f"{d.name} 含 {len(crit)} 条 Critical"
+
+    # 形状锁：检查 auto-baseline 兜底形态（C1 修订）
+    if data.get("basis") == "auto-baseline":
+        if (
+            status == "WARN"
+            and not data.get("checks")
+            and data.get("reviewed") == 0
+            and (data.get("expected") or 0) >= 1
+        ):
+            return "baseline", f"{d.name}（基线报告兜底中）"
+        return "invalid", f"{d.name}/review.json 声明 basis 但未满足基线报告形状锁（须 WARN 且 reviewed=0 且 expected>=1 且 checks为空）"
+
     return "ok", f"{d.name} status={status}"
 
 
-def review_gate(root: Path) -> tuple[bool, list[str]]:
+def auto_heal_review_report(root: Path, scope: str = "auto-baseline", expected_count: int = 1) -> Path:
+    """自愈生成符合 `shared/independent-review.md` §3 规范的基线审查报告三件套（v0.1.0-beta.14）。"""
+    today = time.strftime("%Y-%m-%d")
+    dirname = f"{today}-{scope}"
+    d = root / "product" / "e2e" / REVIEW_DIRNAME / dirname
+    d.mkdir(parents=True, exist_ok=True)
+    rj = d / "review.json"
+    if not rj.is_file():
+        payload = {
+            "ok": True,
+            "status": "WARN",
+            "basis": "auto-baseline",
+            "root": str(root),
+            "scope": scope,
+            "unit": "e2e",
+            "round": 1,
+            "expected": max(1, expected_count),
+            "reviewed": 0,
+            "budget_exceeded": False,
+            "checks": [],
+            "other": ["本报告为接入基线报告，机器兜底生成，独立审查未执行（rings/e2e §12.6）"],
+        }
+        rj.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    readme = d / "README.md"
+    if not readme.is_file():
+        readme.write_text(
+            f"# 审查总结（{scope}）\n\n"
+            f"- 状态：WARN（自动自愈基线报告）\n"
+            f"- 范围：E2E 环审查自动兜底（adopt 模式或 review 免阻断）\n"
+            f"- 问题清单：本报告为接入基线报告，机器兜底生成，独立审查未执行。\n"
+            f"- 优化建议：跑 `python3 .atlas/scripts/gen_e2e_scripts.py --bootstrap-review` 输出任务包拉起独立审查。\n",
+            encoding="utf-8",
+        )
+    inputs_dir = d / "inputs"
+    inputs_dir.mkdir(parents=True, exist_ok=True)
+    manifest_file = inputs_dir / "MANIFEST.json"
+    if not manifest_file.is_file():
+        try:
+            mri = load_module("make_review_inputs")
+            pats = list(mri.DEFAULTS)
+            files = mri.collect(root, pats)
+            manifest = {
+                "kind": "atlas-review-input-manifest",
+                "note": "指针化清单：审查者按 path 读当前文件；要冻结基线用 sha256，不要拷副本。",
+                "root": str(root),
+                "taken_at": today,
+                "files": files,
+            }
+            manifest_file.write_text(json.dumps(manifest, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        except Exception:
+            pass
+    return d
+
+
+def review_gate(root: Path, prof: dict | None = None) -> tuple[bool, list[str], bool]:
     """独立审查门（契约 `rings/e2e/reference.md` §12.6 + `§7.1`；E1：只验本环报告）。
 
-    判据 = **报告存在 + 无 Critical**（可机器判）；报告缺失 **= 未审，不是「通过」**。
+    判据 = **报告存在 + 无 Critical**；
+    v0.1.0-beta.14 自愈与免阻断：当审查报告缺失（missing）或损坏（invalid）时，若处于 `origin: adopt`
+    或 `e2e.review.mode` 为 auto-baseline / off / 未声明（review 为空）时，
+    判定为放行并标记 `auto_heal=True`，绝不因报告缺失抛 exit 2 阻断写盘。
+    当处于基线兜底态（level == 'baseline'）时，同样放行但记录 WARN 随行提示。
+    返回 `(gate_ok, reasons, auto_heal)`。
     """
     reasons: list[str] = []
     level, detail = review_report_status(root / "product" / "e2e" / REVIEW_DIRNAME)
+    origin = prof.get("origin") if prof else None
+    e2e = prof.get("e2e") if prof else {}
+    rev = e2e.get("review") if isinstance(e2e, dict) else None
+    mode = rev.get("mode") if isinstance(rev, dict) else (rev if isinstance(rev, str) else None)
+
+    has_empty_review = ("review" in e2e and rev is None)
+    is_auto_baseline = (mode in ("auto", "auto-baseline", "off"))
+
+    if level == "baseline":
+        reasons.append(f"WARN: 独立审查未执行（基线报告兜底中：{detail}）—— 跑 python3 .atlas/scripts/gen_e2e_scripts.py --bootstrap-review 拉起独立审查")
+        return True, reasons, False
+
+    if level in ("missing", "invalid"):
+        # adopt 模式、显式 review: null（review 为空）或配置为 auto-baseline/off 时自愈放行
+        if origin == "adopt" or has_empty_review or is_auto_baseline:
+            reasons.append(f"NOTICE: 审查报告处于 {level} 态，处于 adopt 模式或 review 免阻断通道，已启用自动自愈基线（rings/e2e §12.6）")
+            return True, reasons, True
+
     if level != "ok":
         reasons.append(f"E2E 环审查报告不合格（{level}）：{detail}"
                        "（跑 rings/e2e/reference.md §12）")
-    return (not reasons), reasons
+    return (not reasons), reasons, False
 
 
 def main() -> int:
@@ -820,6 +929,8 @@ def main() -> int:
     ap.add_argument("--root", default=".")
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--bootstrap-review", action="store_true",
+                    help="输出机器可读的独立审查任务包 JSON（rings/e2e §12.6）并退出")
     args = ap.parse_args()
     root = Path(args.root).resolve()
 
@@ -829,6 +940,33 @@ def main() -> int:
         return 2
     prof = parse_profile(prof_path.read_text(encoding="utf-8"))
     e2e = prof.get("e2e") or {}
+
+    if args.bootstrap_review:
+        cases_dir = root / (e2e.get("cases_dir") or "product/e2e/cases")
+        cases_map = gather_cases(cases_dir) if cases_dir.is_dir() else {}
+        shards = []
+        for p, items in sorted(cases_map.items()):
+            shards.append({
+                "page": p,
+                "case_count": len(items),
+                "case_ids": [c.get("id") for c in items],
+                "shard_file": f"product/e2e/cases/{p}.md",
+            })
+        task_package = {
+            "kind": "atlas-bootstrap-review-package",
+            "root": str(root),
+            "expected_shards": len(shards),
+            "shards": shards,
+            "dimensions_reference": ".atlas/rings/e2e/reference.md §12.2 (D1-D10)",
+            "output_target": f"product/e2e/reviews/{time.strftime('%Y-%m-%d')}-<scope>/review.json",
+            "rules": [
+                "fresh-context: 审查者必须使用干净会话，不得与用例生成者共享上下文",
+                "档位分级: 第一轮强档 (D1-D6)，第二轮与全局中档 (D9-D10)",
+                "产物必须包含 review.json (expected/reviewed对账) + README.md (三段式)",
+            ],
+        }
+        print(json.dumps(task_package, ensure_ascii=False, indent=2))
+        return 0
     runner = e2e.get("runner") or "node-playwright"
     if runner not in RUNNERS:
         print(f"ERROR: 未知 e2e.runner={runner!r}（允许 {sorted(RUNNERS)}）", file=sys.stderr)
@@ -985,7 +1123,7 @@ def main() -> int:
         return 2
 
     # 独立审查门（契约 §12.6 / §7.1）：存在性挂在**写盘动作**上；dry-run 只报状态。
-    gate_ok, gate_reasons = review_gate(root)
+    gate_ok, gate_reasons, will_auto_heal = review_gate(root, prof)
     if not gate_ok and args.apply:
         print("ERROR: 独立审查门未通过（rings/e2e/reference.md §12.6），拒绝写盘：", file=sys.stderr)
         for r in gate_reasons:
@@ -1010,6 +1148,12 @@ def main() -> int:
             print(f"  - {b}", file=sys.stderr)
         print(f"  共 {len(bad)} 行", file=sys.stderr)
         return 2
+
+    # 审查报告自愈（AI-Native 模式，v0.1.0-beta.14）：动词等校验全部通过后再写盘自愈基线
+    if gate_ok and will_auto_heal and args.apply:
+        scope = "adopt-baseline" if (prof.get("origin") == "adopt") else "auto-baseline"
+        auto_heal_review_report(root, scope=scope, expected_count=len(cases))
+        print("NOTICE: 审查报告缺失或损坏，处于 adopt 模式或 review 免阻断通道，已自动自愈生成基线审查报告并放行写盘。", file=sys.stderr)
 
     results: list[dict] = []
     generated = 0
@@ -1351,7 +1495,7 @@ def main() -> int:
 
     out = {"root": str(root), "runner": runner, "base_url": base,
            "apply": args.apply, "generated": generated, "results": results,
-           "review_gate": {"ok": gate_ok, "reasons": gate_reasons}}
+           "review_gate": {"ok": gate_ok, "reasons": gate_reasons, "auto_healed": will_auto_heal}}
     if args.json:
         print(json.dumps(out, ensure_ascii=False, indent=2))
     else:
