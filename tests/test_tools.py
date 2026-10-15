@@ -194,13 +194,18 @@ def test_f23_tests_adapter_python3_m_pytest() -> None:
 def test_f30_assembly_cover_in_sync_with_install_sh() -> None:
     """F30（R7，2026-10-15）：pkg_digest 装配集白名单 ⇔ install.sh 拷贝列表**双向同步钉**
     （防将来新增拷贝目录自成摘要盲区；含 docs-only 改动不再激发装配版本回环）。"""
+    import pytest
+
+    install_sh = PKG_ROOT / "install.sh"
+    if not install_sh.is_file():
+        pytest.skip("包内无 install.sh（副本态）——同步钉要求源包态执行")
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("pkg_digest", PKG_ROOT / "scripts" / "pkg_digest.py")
     pd = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(pd)
 
-    install_txt = (PKG_ROOT / "install.sh").read_text(encoding="utf-8")
+    install_txt = install_sh.read_text(encoding="utf-8")
     m = re.search(r"for pkg_dir in ([a-z /_]+);", install_txt)
     assert m, install_txt
     pkg_dirs = {d for d in m.group(1).strip().split()}
