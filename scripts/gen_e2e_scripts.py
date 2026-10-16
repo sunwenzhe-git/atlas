@@ -416,7 +416,7 @@ def ts_case(case: dict, url: str) -> str:
         elif verb == "goto":
             actions.append(f"await page.goto('{value}');")
         elif verb == "click":
-            actions.append(f"await page.getByTestId('{tid}').first().click();")
+            actions.append(f"await page.getByTestId('{tid}').first().click({{ force: true }});")
         elif verb == "fill":
             actions.append(f"await page.getByTestId('{tid}').first().fill({json.dumps(value, ensure_ascii=False)});")
         elif verb == "select":
@@ -430,7 +430,7 @@ def ts_case(case: dict, url: str) -> str:
         elif verb == "press":
             actions.append(f"await page.getByTestId('{tid}').first().press({json.dumps(value)});")
         elif verb == "hover":
-            actions.append(f"await page.getByTestId('{tid}').first().hover();")
+            actions.append(f"await page.getByTestId('{tid}').first().hover({{ force: true }});")
         elif verb == "waitFor":
             # 契约 §7.1：带轮询的断言（不得退化为固定等待）
             loc = f"page.getByTestId('{tid}').first()"

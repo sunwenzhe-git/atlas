@@ -380,6 +380,134 @@ def test_update_guard_refuses_dirty_touchpoints_and_force_overrides() -> None:
         assert stamped != "dirty local edit\n" and stamped.count("\n") == 3, stamped
 
 
+def test_f54_dry_run_writes_nothing_and_leaves_no_residue_on_fresh_target() -> None:
+    """F54（issue #21，D92，2026-10-16）：--dry-run 不得产生任何装配态变更。
+
+    恒等铁律「干跑不干」的破例闪位：版本戳落盘是旧脚本的唯一裸写（run() 外、无
+    DRY_RUN 判据）⇒ `--update --dry-run` 里守卫被预览语义放行、载荷一文件未拷，
+    戳却被更新为源包当前摘要 ⇒ 配合一次被守卫拒住的真跑 = 副本「戳新/内容旧」，
+    而装配版本门（自写自读闭环）读到新戳报 ok「一致」。同族面：干跑首装经
+    stamp_file 的 mkdir 残留 `<target>/.atlas/` ⇒ 卡随后的真首装（临时守卫判
+    「已装配过」恒拒）。钉对两态双证：存量装配干跑 ⇒ VERSION 逐字节不变；全新
+    target 干跑 ⇒ `.atlas/` 不在场。交互场景（干跑 + 被拒真跑）的完整时序在
+    install.sh 内由同一闸门收口，不再单测硬排时序。
+    """
+    import subprocess
+    import tempfile
+
+    if not INSTALL.is_file():
+        import pytest
+        pytest.skip("包内无 install.sh（副本态）—— F54 集成用例要求源包态执行", allow_module_level=False)
+
+    def sh(*a: str):
+        r = subprocess.run(a, capture_output=True, env={"PATH": "/usr/bin:/bin:/opt/homebrew/bin",
+                                                        "LANG": "C.UTF-8"})
+        return r.returncode, r.stdout.decode("utf-8", errors="replace") + r.stderr.decode("utf-8", errors="replace")
+
+    with tempfile.TemporaryDirectory() as td:
+        # ① 存量装配态干跑：VERSION 逐字节不变（旧路径 ⇒ 被真写为源包摘要 ⇒ 红）
+        root = Path(td) / "proj"
+        (root / ".atlas" / "scripts").mkdir(parents=True)
+        (root / ".trellis").mkdir()
+        (root / ".atlas" / "VERSION").write_text(
+            "f54-fixture-stamp\n2026-10-16T00:00:00+08:00\nnowhere\n", encoding="utf-8")
+        before = (root / ".atlas" / "VERSION").read_bytes()
+        r = sh("bash", str(PKG_ROOT / "install.sh"),
+               "--update", "--target", str(root),
+               "--no-skill", "--no-patch", "--no-wiring", "--dry-run")
+        assert r[0] == 0, r[1]
+        assert "[dry-run] 装配版本戳" in r[1], r[1]
+        assert (root / ".atlas" / "VERSION").read_bytes() == before, "干跑真写了版本戳（恒等铁律破例）"
+
+        # ② 全新 target 干跑：不残留 <target>/.atlas/（旧路径 stamp_file mkdir 副作用 ⇒ 红）
+        fresh = Path(td) / "fresh"
+        (fresh / ".trellis").mkdir(parents=True)   # 免 .trellis 缺席走 --force 预拦链路
+        r2 = sh("bash", str(PKG_ROOT / "install.sh"),
+                "--force", "--dry-run", "--target", str(fresh))
+        assert r2[0] == 0, r2[1]
+        assert not (fresh / ".atlas").exists(), "干跑首装残留 .atlas/（stamp_file mkdir 副作用）"
+
+
+def test_f55_update_untracked_touchpoint_warns_and_proceeds_tracked_dirty_still_blocks() -> None:
+    """F55（issue #22，D93，2026-10-16）：脏树守卫按 porcelain 状态列分两个真语义。
+
+    整目录未跟踪（porcelain 折叠 `?? .atlas/`，git 无改动基线可护，属「包产物不入库」
+    的合法形态）⇒ 不构成「脏」：WARN 放行，--update 不再恒拒 ⇒ --force 不再被逼成
+    常规；WARN 必须双摘要可见化（副本版本戳 ⇔ 当前源包摘要——评审 B-1 下限口径）。
+    已跟踪触点的未提交改动 ⇒ 拒路径逐字节不变（F34 主语义），且两桶皆非空时拒优先，
+    拒绝不被可放行项遮蔽。
+
+    变异口径：**前半**（未跟踪 ⇒ 放行）是变异钉——退回「只看路径列」⇒ 本测红
+    （M78）；**后半**（已跟踪脏 ⇒ 拒 / --force 过）在旧路径本就绿，是防回归钉；
+    **M77**（摘 F54 干跑闸）由上一条用例红。WARN 的双摘要文案带「当前源包」字样
+    （匹配与不匹配两分支同查，避免对源包并发变更计时敏感——本仓并行会话常态）。
+    """
+    import subprocess
+    import tempfile
+
+    if not INSTALL.is_file():
+        import pytest
+        pytest.skip("包内无 install.sh（副本态）—— F55 集成用例要求源包态执行", allow_module_level=False)
+
+    def sh(*a: str):
+        r = subprocess.run(a, capture_output=True, env={"PATH": "/usr/bin:/bin:/opt/homebrew/bin",
+                                                        "LANG": "C.UTF-8"})
+        return r.returncode, r.stdout.decode("utf-8", errors="replace") + r.stderr.decode("utf-8", errors="replace")
+
+    def g(*a: str, cwd: Path):
+        env = dict({"PATH": "/usr/bin:/bin:/opt/homebrew/bin", "LANG": "C.UTF-8",
+                    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+        r = subprocess.run(a, capture_output=True, env=env, cwd=str(cwd))
+        assert r.returncode == 0, r.stdout + r.stderr
+        return r
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "proj"
+        (root / ".atlas" / "scripts").mkdir(parents=True)
+        (root / ".atlas" / "VERSION").write_text("f55-fixture-stamp\nwhen\nnowhere\n", encoding="utf-8")
+        (root / ".trellis").mkdir()
+        (root / ".trellis" / "workflow.md").write_text("# w\n", encoding="utf-8")
+        (root / "AGENTS.md").write_text("# agents\n", encoding="utf-8")
+        g("git", "init", "-q", cwd=root)
+        # 只提交指针文件，**有意不 add .atlas/** —— 拟 issue #22 现场形态（版面产物不入库）
+        g("git", "add", "AGENTS.md", ".trellis/workflow.md", cwd=root)
+        g("git", "commit", "-qm", "init", cwd=root)
+
+        # 前半（变异钉 M78）：未跟踪 ⇒ WARN 放行，不再恒拒
+        r = sh("bash", str(PKG_ROOT / "install.sh"),
+               "--update", "--target", str(root),
+               "--no-skill", "--no-patch", "--no-wiring")
+        assert r[0] == 0, r[1]
+        assert "未跟踪项" in r[1], r[1]
+        assert "装配触点存在未提交改动" not in r[1], r[1]
+        assert "当前源包" in r[1], r[1]   # 双摘要可见化（评审 B-1）
+        stamped = (root / ".atlas" / "VERSION").read_text(encoding="utf-8").splitlines()[0]
+        assert stamped != "f55-fixture-stamp" and len(stamped) == 16, r[1]  # 整包真刷新了
+
+        # 后半（回归钉）：已跟踪脏 ⇒ 拒优先，--force 越过（F34 文案逐字节保留）
+        (root / "AGENTS.md").write_text("# agents\n# dirty local edit\n", encoding="utf-8")
+        r2 = sh("bash", str(PKG_ROOT / "install.sh"),
+                "--update", "--target", str(root),
+                "--no-skill", "--no-patch", "--no-wiring")
+        assert r2[0] == 1, r2[1]
+        assert "装配触点存在未提交改动" in r2[1], r2[1]
+        r3 = sh("bash", str(PKG_ROOT / "install.sh"),
+                "--update", "--target", str(root),
+                "--no-skill", "--no-patch", "--no-wiring", "--force")
+        assert r3[0] == 0, r3[1]
+        assert "感知到装配触点未提交改动" in r3[1], r3[1]
+        assert "另有未跟踪项" in r3[1], r3[1]   # 两桶可比可见，拒通知不吞未跟踪面
+
+        # --force 不改指针文件（守卫只是放行，AGENTS.md 脏改动仍在场）⇒ 还原后复跑
+        (root / "AGENTS.md").write_text("# agents\n", encoding="utf-8")
+        r4 = sh("bash", str(PKG_ROOT / "install.sh"),
+                "--update", "--target", str(root),
+                "--no-skill", "--no-patch", "--no-wiring")
+        assert r4[0] == 0, r4[1]
+        assert "当前源包" in r4[1], r4[1]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--json", action="store_true")

@@ -19,6 +19,8 @@
 #
 # 模式：
 #   --update: 刷新已有项目的 .atlas/ 资产与平台 Skills 瘦桩（要求目标已初始化 .atlas/）。
+#   --update 的触点守卫：已跟踪触点存在未提交改动 ⇒ 拒（--force 越过）；触点整目录
+#   未跟踪（如 .atlas/ 不入库）⇒ WARN 放行、不消费 --force（覆盖自负，先回灌更稳）。
 #
 # 幂等：.atlas/ 与 skill 瘦桩默认刷新（属包下发物，用 --no-skill 跳过 skill）；
 #       product/ 下的既有内容永不覆盖；workflow.md 补丁只做锚点插入、重跑即恢复；
@@ -57,6 +59,22 @@ TARGET="$(cd "$TARGET" && pwd)"
 
 say() { printf '%s\n' "$*"; }
 run() { if [ "$DRY_RUN" -eq 1 ]; then say "  [dry-run] $*"; else "$@"; fi; }
+
+# 当前源包内容摘要（F55 守卫双摘要可见化用；算法单点 = scripts/pkg_digest.py，
+# 与 `.atlas/VERSION` 戳、atlas_check 装配版本门同源）。任何失败（python3 缺席 /
+# EmptyAssembly）输出空 ⇒ 调用侧按「摘要不可核」说清，不虚报一致性。
+compute_src_digest() {
+  python3 - "$1" 2>/dev/null <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / "scripts"))
+from pkg_digest import digest
+try:
+    print(digest(Path(sys.argv[1])))
+except Exception:
+    pass
+PY
+}
 
 # ---------------------------------------------------------------- 前置检查
 
@@ -105,21 +123,36 @@ if [ "$DRY_RUN" -eq 0 ] && [ -d "$TARGET/.atlas" ] && [ "${ATLAS_ALLOW_OVERWRITE
   exit 1
 fi
 
-# ── 触点脏树守卫（F34，2026-10-15）：--update 整包覆盖前的装配触点检查 ──
+# ── 触点脏树守卫（F34，2026-10-15；F55 两语义拆分，2026-10-16 issue #22 / D93）──
 # R6 现场教训：并行终端与沙箱会话共写仓库时，update 的 rm -rf 会把副本侧未提交的
 # 线束改动一并卷走（提交归属被污染）。守卫必须位于整包拷贝（rm -rf）**之前**。
+# F55（D93）：守卫读 porcelain **状态列**，分类后分两个真语义——已跟踪触点上的
+# 未提交改动（git 有基线可护，覆盖丢真改动）⇒ 拒，--force 越过；触点整目录未跟踪
+# （porcelain 折叠成 `?? .atlas/`，git 根本无基线可护，是「包产物不入库」的合法
+# 形态）⇒ 不构成「脏」：WARN 放行 + 双摘要可见化（副本版本戳 ⇔ 当前源包摘要）。
+# 旧路径只看路径列 ⇒ 未跟踪在场被折成 `.atlas/*` 命中 ⇒ 守卫恒拒，--force 被逼成
+# 常规、守卫退化。两桶皆非空 ⇒ 拒优先，拒绝不被可放行项遮蔽。
 if [ "$IS_UPDATE" -eq 1 ] && [ "$DRY_RUN" -eq 0 ] && command -v git >/dev/null 2>&1; then
   if git -C "$TARGET" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     DIRTY_TOUCH=""
+    UNTRACKED_TOUCH=""
     while IFS= read -r raw; do
       [ -z "$raw" ] && continue
-      case "$raw" in
-        .atlas/*|.atlas|.trellis/workflow.md|.trellis/config.yaml|AGENTS.md) DIRTY_TOUCH="$DIRTY_TOUCH $raw" ;;
+      raw_path="${raw:3}"
+      case "$raw_path" in
+        .atlas/*|.atlas|.trellis/workflow.md|.trellis/config.yaml|AGENTS.md)
+          case "${raw:0:2}" in
+            \?\?) UNTRACKED_TOUCH="$UNTRACKED_TOUCH $raw_path" ;;
+            *) DIRTY_TOUCH="$DIRTY_TOUCH $raw_path" ;;
+          esac ;;
       esac
-    done < <(git -C "$TARGET" status --porcelain 2>/dev/null | cut -c4-)
+    done < <(git -C "$TARGET" status --porcelain 2>/dev/null)
     if [ -n "$DIRTY_TOUCH" ]; then
       if [ "$FORCE" -eq 1 ]; then
         say "（--force：感知到装配触点未提交改动：${DIRTY_TOUCH} —— 整包覆盖自负）"
+        if [ -n "$UNTRACKED_TOUCH" ]; then
+          say "（另有未跟踪项：${UNTRACKED_TOUCH} —— git 对其无改动基线，覆盖自负）"
+        fi
       else
         say "错误：装配触点存在未提交改动（${DIRTY_TOUCH}）；--update 的整包覆盖会冲掉"
         say "      副本侧未回灌的线束改动（含 .atlas/ 与指针文件）。"
@@ -127,6 +160,24 @@ if [ "$IS_UPDATE" -eq 1 ] && [ "$DRY_RUN" -eq 0 ] && command -v git >/dev/null 2
         say "      - 明知覆盖、仍要继续：加 --force"
         exit 1
       fi
+    elif [ -n "$UNTRACKED_TOUCH" ]; then
+      COPY_STAMP=""
+      if [ -f "$TARGET/.atlas/VERSION" ]; then
+        IFS= read -r COPY_STAMP < "$TARGET/.atlas/VERSION" 2>/dev/null || true
+      fi
+      SRC_DIGEST="$(compute_src_digest "$SCRIPT_DIR" || true)"
+      say "  [WARN] 装配触点存在未跟踪项：${UNTRACKED_TOUCH}——git 对未跟踪触点无改动基线可保护，"
+      if [ -n "$COPY_STAMP" ] && [ -n "$SRC_DIGEST" ]; then
+        if [ "$COPY_STAMP" = "$SRC_DIGEST" ]; then
+          say "         本副本与当前源包一致（${COPY_STAMP}，无年轮差）；整包刷新照常进行。"
+        else
+          say "         本副本（${COPY_STAMP}）与当前源包（${SRC_DIGEST}）不一致——覆盖自负。"
+        fi
+      else
+        say "         摘要不可核（副本无 .atlas/VERSION 或源包摘要不可算）——覆盖自负。"
+      fi
+      say "         副本侧若有未回灌的本地改动，覆盖即丢失：先按 ATLAS-UPSTREAM.md 回灌"
+      say "         （scripts/backflow.py 三态对账）再刷新更稳。"
     fi
   fi
 fi
@@ -444,7 +495,16 @@ fi
 
 # P3 装配版本戳（2026-10-05）：源包内容摘要落 <target>/.atlas/VERSION，副本侧
 # atlas_check「装配版本」行周期复核——不一致 ⇒ WARN（源包已前进/落后，重装前先回灌对账）。
-if OUT="$(python3 - "$SCRIPT_DIR" "$TARGET/.atlas/VERSION" <<'PY'
+# F54（D92，2026-10-16 issue #21）：落戳挂 DRY_RUN 闸——全脚本其余写盘都经 run() /
+# DRY_RUN 判据，唯独这一处是裸 heredoc ⇒ `--update --dry-run` 一次（此时守卫被预览
+# 语义放行、载荷一文件未拷，戳却已被更新为源包当前摘要）+ 一次被守卫拒住的真跑 =
+# 副本「戳新 / 内容旧」，被装配版本门（自写自读闭环）报成 ok「一致」。顺带关闭同族
+# 面：旧路径干跑且源包新装的 stamp_file 含 mkdir ⇒ 全新 target 干跑会残留
+# <target>/.atlas/，卡住随后的真首装（临时守卫判「已装配过」恒拒）。
+if [ "$DRY_RUN" -eq 1 ]; then
+  say "  [dry-run] 装配版本戳（未落盘：干跑不产生装配态变更）"
+else
+  if OUT="$(python3 - "$SCRIPT_DIR" "$TARGET/.atlas/VERSION" <<'PY'
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(sys.argv[1]) / "scripts"))
@@ -452,13 +512,14 @@ from pkg_digest import stamp_file  # noqa: E402
 print(stamp_file(Path(sys.argv[1]), Path(sys.argv[2])))
 PY
 )"; then
-  say "  [ok] .atlas/VERSION 装配版本戳（${OUT}）"
-else
-  # 硬错而非 WARN（F37，2026-10-15）：落戳失败 = 装配集为空（摘要算不出来）或脚本缺失。
-  # 「装配 0 文件」不得被记成一次合法装配，且 WARN 会让后续步骤照常往下走。
-  say "  [FAIL] 版本戳落盘失败：装配集为空或 pkg_digest 不可用 ⇒ 装配态无法对账。"
-  say "         诊断：python3 \"$SCRIPT_DIR/scripts/pkg_digest.py\" \"$SCRIPT_DIR\""
-  exit 1
+    say "  [ok] .atlas/VERSION 装配版本戳（${OUT}）"
+  else
+    # 硬错而非 WARN（F37，2026-10-15）：落戳失败 = 装配集为空（摘要算不出来）或脚本缺失。
+    # 「装配 0 文件」不得被记成一次合法装配，且 WARN 会让后续步骤照常往下走。
+    say "  [FAIL] 版本戳落盘失败：装配集为空或 pkg_digest 不可用 ⇒ 装配态无法对账。"
+    say "         诊断：python3 \"$SCRIPT_DIR/scripts/pkg_digest.py\" \"$SCRIPT_DIR\""
+    exit 1
+  fi
 fi
 
 # 首建提示（2026-10-15 三易其稿，保留最终口径与理由）：

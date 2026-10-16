@@ -373,7 +373,7 @@ def test_generates_actions_and_asserts() -> None:
         text = (scripts / "home.spec.ts").read_text(encoding="utf-8")
         assert "await page.goto('/home');" in text, text
         # step → 动作
-        assert "await page.getByTestId('home-cta-btn').first().click();" in text, text
+        assert "await page.getByTestId('home-cta-btn').first().click({ force: true });" in text, text
         # expected → 断言（不是只做存在性检查）
         assert 'await expect(page.getByTestId(\'home-title\').first()).toHaveText("首页");' in text, text
         assert "await expect(page.getByTestId('home-cta-btn').first()).toBeVisible();" in text, text
@@ -479,8 +479,8 @@ def test_unchanged_pre_is_sampled_right_before_the_submitting_action() -> None:
         assert run(root, "--apply").returncode == 0
         text = spec_of(root)
         pre = text.index("await expect(page.getByTestId('home-create-project-modal').first()).toBeHidden();")
-        arrange = text.index("await page.getByTestId('home-cta-btn').first().click();")
-        submit = text.index("await page.getByTestId('home-create-submit-btn').first().click();")
+        arrange = text.index("await page.getByTestId('home-cta-btn').first().click({ force: true });")
+        submit = text.index("await page.getByTestId('home-create-submit-btn').first().click({ force: true });")
         assert arrange < pre < submit, (
             "「行动前」采样点不对：应在准备步骤之后、提交性动作之前",
             text[max(0, pre - 300):pre + 120],
@@ -597,7 +597,7 @@ def test_unchanged_prefix_emits_pre_and_post_assertions() -> None:
         text = spec_of(root)
         target = "await expect(page.getByTestId('home-create-project-modal').first()).toBeHidden();"
         first = text.index(target)
-        submit = text.index("await page.getByTestId('home-create-submit-btn').first().click();")
+        submit = text.index("await page.getByTestId('home-create-submit-btn').first().click({ force: true });")
         second = text.index(target, first + 1)
         assert first < submit < second, "行动前 / 行动后两处断言顺序不对"
         assert text.count(target) == 2, "unchanged: 必须恰好发射前 + 后两处"
@@ -969,7 +969,7 @@ def test_step_anchor_emits_assertion_after_that_step() -> None:
         assert run(root, "--apply").returncode == 0
         text = spec_of(root)
         probes = zs_probes(text)
-    c = text.index("await page.getByTestId('home-cta-btn').first().click();")
+    c = text.index("await page.getByTestId('home-cta-btn').first().click({ force: true });")
     a = text.index("await expect(page.getByTestId('home-cta-btn').first()).toBeVisible();")
     z = text.index("await expect(page.getByTestId('home-cta-btn').first()).toBeHidden();")
     assert c < a < z, text
@@ -1304,7 +1304,7 @@ def test_delta_relative_assertion() -> None:
     }
     ts = gn.ts_case(case, "/")
     assert ts.index("const __delta_home_title = await atlasIntOf") < ts.index(
-        "await page.getByTestId('home-cta-btn').first().click()"
+        "await page.getByTestId('home-cta-btn').first().click({ force: true })"
     ), ts
     assert (
         "await expect.poll(() => atlasIntOf(page.getByTestId('home-title').first()), "
@@ -1319,9 +1319,9 @@ def test_delta_relative_assertion() -> None:
         "testid": ["home-tab-btn", "home-save-btn", "home-title"],
     }
     ts2 = gn.ts_case(case2, "/")
-    assert ts2.index("await page.getByTestId('home-tab-btn').first().click()") < ts2.index(
+    assert ts2.index("await page.getByTestId('home-tab-btn').first().click({ force: true })") < ts2.index(
         "const __delta_home_title = await atlasIntOf"
-    ) < ts2.index("await page.getByTestId('home-save-btn').first().click()"), ts2
+    ) < ts2.index("await page.getByTestId('home-save-btn').first().click({ force: true })"), ts2
     # 生成期中止三态：值形态 / 叠写 / 缺 step
     for kwargs, kw in (
         ({"expected": ["delta home-title 3"]}, "±N"),
@@ -1762,8 +1762,8 @@ def test_strict_mode_actions_and_asserts_use_first() -> None:
     }
     spec = gn.ts_case(case, "/strict")
     # 动作全部带 .first()
-    assert "await page.getByTestId('item-btn').first().click();" in spec
-    assert "await page.getByTestId('item-card').first().hover();" in spec
+    assert "await page.getByTestId('item-btn').first().click({ force: true });" in spec
+    assert "await page.getByTestId('item-card').first().hover({ force: true });" in spec
     assert "await page.getByTestId('item-input').first().fill(\"hello\");" in spec
     assert "await page.getByTestId('item-input').first().press(\"Enter\");" in spec
     assert "await page.getByTestId('item-checkbox').first().check();" in spec

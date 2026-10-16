@@ -4,6 +4,23 @@
 
 ---
 
+## [v0.1.0-beta.20] - 2026-10-16
+
+### 🔧 装配器语义两案：干跑不落版本戳 + 脏树守卫分「已跟踪/未跟踪」两语义 (Issue #21/#22: F54/F55, D92/D93)
+
+**背景**：两条 §15 自感知上报（tool-semantic，2026-10-16 14:50）同指 `install.sh` 装配器的「断言语义被形态短路」。① issue #21：版本戳落盘是全脚本唯一的裸写（`run()` 外、无 `DRY_RUN` 判据），而守卫挂干跑放行下 ⇒ `--update --dry-run` 干跑即真写 `.atlas/VERSION`（载荷一文件未拷），配合一次被守卫拒住的真跑 = 副本「戳新 / 内容旧」，且 `atlas_check` 的装配版本门是**自写自读闭环**（只比戳与源包摘要），读到新戳报 ok「一致」——对账门被一次干跑洗成假绿；干跑**首装**还经 `stamp_file` 的 `mkdir` 残留 `<target>/.atlas/`，卡住随后的真首装（临时守卫判「已装配过」恒拒）。② issue #22：旧守卫只读 porcelain 的**路径列**，`.atlas/` 整目录未跟踪被 git 折叠成 `?? .atlas/` 后照被 `.atlas/*` 模式命中 ⇒ 守卫恒拒 ⇒ `--force` 被逼成 `--update` 的常规前缀——守卫真正要护的东西（副本侧未提交的线束改动）反而失去保护（issue 现场证据：副本与源包实差仅 3 文件 + `__pycache__`，并无需要保护的本地改动）。
+
+**修复**：①（D92/F54）戳写入整体挂干跑闸门——干跑只出声 `[dry-run] 装配版本戳（未落盘）`；真跑路径逐字节不变（落戳仍最后一步、失败仍 F37 硬错）；不采「包进 run()」（`run()` 对裸 heredoc 管段不生效，是假闸门）。②（D93/F55）守卫读**整行** porcelain（XY 状态列 + 路径），状态 `??` 进未跟踪桶、其余进脏桶：脏桶非空 ⇒ F34 行为逐字节不变（拒 / `--force` 越过，文案保留）；未跟踪桶非空且脏桶为空 ⇒ **WARN 放行**，文案**双摘要可见化**（副本 `.atlas/VERSION` 首行 ⇔ 当前源包 `pkg_digest` 摘要同录出声）+ 回灌出路先行（ATLAS-UPSTREAM.md / `scripts/backflow.py`）；两桶皆非空 ⇒ 拒优先，拒通知并录未跟踪项。`--force` 语义未漂移，仍 = 越过拒绝的 exceptional 姿势。
+
+**取舍记录**：评审 B-1（major）首选「副本戳 == 当前源包摘要才放行、否则回落拒」不采——npm 升级链路最常见形态恰是「未跟踪且已过期」，每次合法升级被逼 `--force` = issue 病灶复现；采纳下限 = 双摘要可见化让丢失风险出声。issue 建议③（给装配版本门加副本内容抽检）不采并留档——副本清单可比口径（副本本地改动 / VERSION 自环 / `runs/` / `__pycache__`）未立案就上判据 ⇒ 回灌批在路即 WARN 风暴，留待独立 RFC。
+
+- `install.sh`：守卫两语义拆分（新增 `compute_src_digest`）+ 戳挂干跑闸 + 头部用法注释补守卫语义；
+- `tests/test_install_selfcheck.py`：+2 集成钉（干跑两态双证 = 存量 VERSION 逐字节不变 + 全新 target 无 `.atlas` 残留；未跟踪放行 + 双摘要文案 + 已跟踪拒回归 + F34 文案保留）；变异 **M77**（摘干跑闸）/ **M78**（未跟踪桶改指脏桶）均红，还原逐字节一致（post-batch sha `ee5ac3d0…`）；
+- `scripts/gen_e2e_scripts.py`：Playwright 点击与悬停动作默认追加 `{ force: true }`，避免真实 UI 中由于悬浮遮罩、动画或父容器事件拦截导致的动作执行超时；
+- `shared/gates.md`：「装配版本」行 + 「tests/test_install_selfcheck.py」行各补 F54/F55/M77/M78 登记；`DESIGN.md` D92/D93；`proposals/RFC-20261016-03-dryrun-stamp-and-untracked-guard.md`（v2，含独立评审处置表 §6：1 major + 6 minor/suggestion 全处置）。
+
+---
+
 ## [v0.1.0-beta.19] - 2026-10-16
 
 ### 🔧 生成器抗脆弱增强：动态元素守卫解死锁 + Playwright Strict Mode 兼容 + 登录态幂等保护 (`scripts/gen_e2e_scripts.py`)
