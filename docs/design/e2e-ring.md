@@ -117,7 +117,7 @@ product/e2e/
 | 类型 | `smoke` / `acceptance` / `exception` / `permission` |
 | 状态 | `red` / `green` / `blocked` / `skipped`（E1 起）；`prototype-pass` = **E0 历史终态**（存量合法、不再产生） |
 | 状态原因 | `<枚举>：<中文说明>`；枚举 `ENV_ISSUE` / `NOT_IMPLEMENTED` / `SPEC_AMBIGUOUS` / `BLOCKED_DEP` / `DEFERRED` / `OUT_OF_SCOPE` / `OTHER` |
-| ID | `E2E-<PAGE>-NNN`，PAGE 大写，每页独立、三位定长、删除不复用 |
+| ID | `E2E-<PAGE>-NNN`，PAGE = 页 slug 的**大写原文**（多段 slug **连字符原样保留**、不收敛），每页独立、三位定长、删除不复用 |
 
 - 分片另有 `intent` 字段：**可证伪的一句话声明**（这条用例证明什么），不得是「页面显示正确」类模糊表述。
 - **`step` / `expected` 行式语法**：`<动词> <testid> [<值>]  # 中文说明`，词表封闭：

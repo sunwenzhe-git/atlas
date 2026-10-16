@@ -353,3 +353,23 @@ def test_resolve_pw_ignores_python_playwright_without_node_module(monkeypatch) -
         assert pw is None, f"不应采信 Python Playwright: {pw}"
         assert "stack-profile 未声明 e2e.node_modules" in why, why
 
+
+
+def test_node_ids_maps_multi_segment_case_id() -> None:
+    """契约 §5.3：`PAGE` 段 = 页面 slug 的大写原文（多段 slug 连字符原样保留）。
+
+    ⇒ `node_ids()` 必须能把多段 ID 的生成行映射回用例 ID —— 否则控制台取不到 node id，
+    该用例在控制台上不可单条执行（`file:line` 是 Playwright 的原生过滤形态）。
+    """
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        scripts = Path(td)
+        (scripts / "app-agent-detail.spec.ts").write_text(
+            "import { test } from './atlas-hold';\n"
+            "test('E2E-APP-AGENT-DETAIL-001 多段 slug 页用例', async ({ page }) => {\n"
+            "  await page.goto('/');\n"
+            "});\n",
+            encoding="utf-8"
+        )
+        mapping = cons.node_ids(scripts)
+    assert mapping == {"E2E-APP-AGENT-DETAIL-001": "app-agent-detail.spec.ts:2"}, mapping

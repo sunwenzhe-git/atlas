@@ -71,6 +71,9 @@ if str(HERE.parent) not in sys.path:
     sys.path.insert(0, str(HERE.parent))
 from _support.siblings import load_module  # noqa: E402
 
+# 用例 ID 文法体单源（正文归 rings/e2e/reference.md §5.3）；锚点在使用处自留。
+case_id = load_module("case_id")
+
 
 # ---------------------------------------------------------------- 用例真相源（只读）
 
@@ -224,7 +227,7 @@ def node_ids(scripts_dir: Path) -> dict:
         return out
     for ts in sorted(scripts_dir.glob("*.spec.ts")):
         for lineno, line in enumerate(ts.read_text(encoding="utf-8").splitlines(), start=1):
-            m = re.match(r"\s*test\(['\"](E2E-[A-Z0-9]+-\d+)[ '\"].*async", line)
+            m = re.match(rf"\s*test\(['\"]({case_id.GRAMMAR})[ '\"].*async", line)
             if m:
                 out[m.group(1)] = f"{ts.name}:{lineno}"
     return out

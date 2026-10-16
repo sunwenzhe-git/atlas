@@ -54,6 +54,8 @@ from _support.siblings import load_module  # noqa: E402
 
 # 保名兼容（本文件内与外部按名引用）
 parse_block = load_module("case_block").parse_block
+# 用例 ID 文法体单源（正文归 rings/e2e/reference.md §5.3；锚点本处自留）
+case_id = load_module("case_id")
 
 MAIN_COLUMNS = ["用例ID", "页面", "中文标题", "类型", "关联AC", "需求", "状态", "状态原因", "分片"]
 REV_COLUMNS = ["页面", "断言落点用例", "链路经过用例"]
@@ -62,7 +64,7 @@ TYPES = {"smoke", "acceptance", "exception", "permission"}
 STATES = {"red", "prototype-pass", "green", "blocked", "skipped"}
 REASON_PREFIX = {"ENV_ISSUE", "NOT_IMPLEMENTED", "SPEC_AMBIGUOUS", "BLOCKED_DEP", "DEFERRED", "OUT_OF_SCOPE", "OTHER"}
 
-ID_RE = re.compile(r"^E2E-[A-Z0-9]+-\d{3}$")
+ID_RE = re.compile(rf"^{case_id.GRAMMAR}$")
 AC_RE = re.compile(r"^AC-[A-Z0-9]+-\d{3}$")
 # 契约 §8.2（2026-09-25 补）：PRD 环登记「结构类 AC」的小节标题 ——
 # 该小节内的 AC 其被测属性**只能在初始态观测**（骨架 / 默认面板 / 按数据渲染构成）。

@@ -2893,3 +2893,92 @@ def test_stack_profile_review_section_validation() -> None:
         assert res["e2e.review 键白名单"]["level"] == "FAIL"
 
 
+
+
+# ---------------------------------------------------------------- 用例 ID 文法（§5.3）
+#
+# `PAGE` 段 = 页面 slug 的**大写原文**（多段 slug 连字符原样保留）。
+# 文法体唯一实现 = `_support/case_id.py`；本文件按各自锚点取用（锚点不共享）。
+
+_MULTI_PAGE = "app-agent-detail"
+
+_ID_ACCEPT = (
+    "E2E-APP-AGENT-DETAIL-001",      # 多段 PAGE
+    "E2E-APP-WORKFLOW-DETAIL-003",   # 多段 PAGE
+    "E2E-MARKET-APP-AGENT-001",      # 多段 PAGE
+    "E2E-CONFIG-004",                # 单段 PAGE（放宽后不回归）
+)
+
+_ID_REJECT = (
+    ("E2E-APP-AGENT-DETAIL-0001", "四位尾号"),
+    ("e2e-app-agent-001", "全小写"),
+    ("E2E--001", "空 PAGE 段"),
+    ("E2E-APP-AGENT-DETAIL-01", "非三位定长"),
+    ("E2E-001", "缺 PAGE 段"),
+    ("E2E-APP-AGENT-DETAIL-001X", "尾随字符"),
+)
+
+
+def test_e2e_index_id_re_accepts_multi_segment_and_single_segment() -> None:
+    """契约 §5.3：`PAGE` = slug 的大写原文 ⇒ 多段 slug 的 ID 必须被接受。
+
+    同时断言**单源接线**（AC-4 前向侧）：`ID_RE` 由 `case_id.GRAMMAR` 组装，
+    不是本文件自有的字面量 —— 若本处改回裸正则，本断言即红。
+    """
+    for s in _ID_ACCEPT:
+        assert ve.ID_RE.match(s), f"{s} 应被 ID_RE 接受"
+    assert ve.ID_RE.pattern == rf"^{ve.case_id.GRAMMAR}$", ve.ID_RE.pattern
+
+
+def test_e2e_index_id_re_rejects_six_malformed_shapes() -> None:
+    """放宽的**只有**「PAGE 段可含连字符」这一维；六类坏形态仍须被拒。"""
+    for s, why in _ID_REJECT:
+        assert not ve.ID_RE.match(s), f"{s}（{why}）应被 ID_RE 拒绝"
+
+
+def test_e2e_index_multi_segment_page_gate_passes() -> None:
+    """集成侧：多段 slug 的索引 + 分片跑整门，`ID 格式` 与 `索引↔分片标题一致`
+    **同时** PASS —— 同一 ID 不再被同脚本两个正则分别判「不合法」与「合法」。"""
+    cid = "E2E-APP-AGENT-DETAIL-001"
+    case = f"""
+## {cid} 多段 slug 页用例
+
+```atlas-case
+id: {cid}
+intent: 多段 slug 页面下的用例 ID 成立且断言可判定
+pages:
+  - {_MULTI_PAGE}
+precondition:
+  - 已打开该页
+step:
+  - click {_MULTI_PAGE}-cta-btn          # 点击主操作按钮
+expected:
+  - text {_MULTI_PAGE}-title 页面标题     # 页面标题文案
+testid:
+  - {_MULTI_PAGE}-cta-btn
+  - {_MULTI_PAGE}-title
+```
+"""
+    cols = list(ve.MAIN_COLUMNS)
+    fragment = f"e2e-app-agent-detail-001"
+    index = (
+        "# E2E 索引\n\n"
+        "| " + " | ".join(cols) + " |\n"
+        "| " + " | ".join(["---"] * len(cols)) + " |\n"
+        f"| {cid} | {_MULTI_PAGE} | 多段 slug 页用例 | smoke | AC-HOME-001 | | red | | "
+        f"[cases/{_MULTI_PAGE}.md#{fragment}](cases/{_MULTI_PAGE}.md#{fragment}) |\n\n"
+        "## 页面 ↔ 用例\n\n"
+        "| 页面 | 断言落点用例 | 链路经过用例 |\n|---|---|---|\n"
+        f"| {_MULTI_PAGE} | {cid} | |\n"
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        d = root / "product" / "e2e" / "cases"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{_MULTI_PAGE}.md").write_text(case, encoding="utf-8")
+        mk_index(root, index)
+        res = ve.validate(root)
+        lv = {c["check"]: c["level"] for c in res.checks}
+    assert lv["ID 格式"] == "PASS", lv["ID 格式"]
+    assert lv["索引↔分片标题一致"] == "PASS", lv["索引↔分片标题一致"]

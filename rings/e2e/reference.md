@@ -164,6 +164,17 @@ product/e2e/
 
 `E2E-<PAGE>-NNN`：`PAGE` = 页面 slug 的**大写**；`NNN` 每页从 `001` 起、三位定长、**删除后不复用**；全站唯一由 `PAGE` 段保证。
 
+**`PAGE` 的推导（对单段与多段 slug 同一条规则）**：对 slug **只做大小写变换，不做分段变换** —— `PAGE` 即 slug 的**大写原文**，连字符原样保留。
+
+| slug（§3.2 形态） | `PAGE` | 用例 ID 例 |
+|---|---|---|
+| 单段 `config` | `CONFIG` | `E2E-CONFIG-004` |
+| 多段 `prompt-management` | `PROMPT-MANAGEMENT` | `E2E-PROMPT-MANAGEMENT-007` |
+
+**本条不做收敛、不设「slug → PAGE」映射表**：多段 slug 是 §3.2 允许的正常形态，故 `PAGE` 段与 slug 互为双向可推（`PAGE` 转小写即 slug）；全站唯一由页面表内 slug 唯一保证（slug 真相源见 §3.2）。
+
+机器可读形态 = `E2E-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{3}`；唯一实现见 `_support/case_id.py`（各消费者按各自锚点取用，锚点不共享）。
+
 ### 5.4 单段执行与通过标准（E1）
 
 **靶场唯一** = 真实应用（`e2e.app_base_url`）：真前端 + 真后端（后端 API 可先返受控假数据，但**不得**在前端代码里塞 mock 层）。地址的唯一来源见 §7。

@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import re
@@ -381,3 +382,88 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# ---------------------------------------------------------------- 用例 ID 文法单源
+#
+# 两条断言都是**结构性**判据，不按固定子串找：固定子串只覆盖「逐字复制」，
+# 等价改写（`[A-Z\d]`、相邻字符串拼接、f-string 片段、`re.escape`）都绕得过去。
+_TAIL_ANCHOR = re.compile(r"\\d\{3\}|\{3\}")
+
+
+def _case_id_grammar_holders() -> list[str]:
+    """持有「含 `E2E-` 且含三位尾号锚」字符串常量的文件（包根相对路径，已排序）。
+
+    按**常量内容**判而不是按固定子串判 —— 否则 `[A-Z0-9]` 写成 `[A-Z\\d]` 这种
+    语义等价的一行改写即可绕过「唯一实现」那半条断言。
+    """
+    holders: set[str] = set()
+    for d in ("scripts", "validators", "_support", "extensions"):
+        base = PKG_ROOT / d
+        if not base.is_dir():
+            continue
+        for p in sorted(base.rglob("*.py")):
+            for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
+                if (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                        and "E2E-" in node.value and _TAIL_ANCHOR.search(node.value)):
+                    holders.add(str(p.relative_to(PKG_ROOT)))
+                    break
+    return sorted(holders)
+
+
+def _case_id_actual_consumers() -> list[str]:
+    """实际取用单源的文件（AST 检出，不看注释 / docstring 里的提及）。
+
+    检出形态：属性访问 `case_id.GRAMMAR`，或调用 `load_module("case_id")`。
+    """
+    users: set[str] = set()
+    for d in ("scripts", "validators", "_support", "extensions"):
+        base = PKG_ROOT / d
+        if not base.is_dir():
+            continue
+        for p in sorted(base.rglob("*.py")):
+            for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
+                if (isinstance(node, ast.Attribute) and node.attr == "GRAMMAR"
+                        and isinstance(node.value, ast.Name) and node.value.id == "case_id"):
+                    users.add(str(p.relative_to(PKG_ROOT)))
+                    break
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                        and node.func.id == "load_module" and node.args
+                        and isinstance(node.args[0], ast.Constant)
+                        and node.args[0].value == "case_id"):
+                    users.add(str(p.relative_to(PKG_ROOT)))
+                    break
+    return sorted(users)
+
+
+def test_f45_e2e_case_id_grammar_single_implementation_and_registered_consumers() -> None:
+    r"""F45（契约 §5.3）：用例 ID 文法体只允许一处实现（`_support/case_id.py`），
+    且取用者集合 ⇔ `CONSUMERS` 登记表。
+
+    ① **唯一实现** —— 任何「含 `E2E-` 且含三位尾号锚」的字符串常量只允许出现在
+       `_support/case_id.py`。已咬合：逐字复制 / 字符类等价改写（`[A-Z\d]`）/
+       相邻字符串拼接 / 更松的 `\w+` 形态。
+    ② **登记面** —— 实际取用者（AST 检出）必须恰好等于 `CONSUMERS`：登记了却没接上、
+       接上了却没登记，两个方向都红。
+
+    **已知残留（登记，非静默）**：把文法**拆到多个常量再拼装**（如
+    `re.compile("E2E-" + "[A-Z0-9]+-" + r"\d{3}")`）或经 `re.escape` 构造的写法绕过本门 ——
+    它按**常量内容**判，不看运行期拼装结果。该形态属刻意构造，且与「按源码文本找正则」这一
+    路线的边界一致（同族局限见 `tests/test_canonical_consistency.py` 的否决词钉白名单局限）。
+    另注：`scripts/gen_e2e_scripts.py` 与 `scripts/e2e_console.py` 另有**更宽松**的 ID 文本
+    匹配（`E2E-\S+` / 表行前缀），它们不实现本文法体、也未经本门 —— 见契约 §5.3 的边界说明。
+    """
+    ci = load("case_id", "_support/case_id.py")
+
+    holders = _case_id_grammar_holders()
+    assert holders == ["_support/case_id.py"], (
+        f"文法常量应只存在于 _support/case_id.py；实况={holders}"
+        "（新增取用者请经 load_module(\"case_id\") 取用，并登记进 CONSUMERS）"
+    )
+
+    actual = _case_id_actual_consumers()
+    declared = sorted(ci.CONSUMERS)
+    assert actual == declared, (
+        f"实际取用者={actual} 与 CONSUMERS 登记表={declared} 不一致"
+        "（少登记 ⇒ 补进 CONSUMERS；假登记 ⇒ 去掉或接上单源）"
+    )

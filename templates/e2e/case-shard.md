@@ -3,11 +3,12 @@
 > 一页一分片。每条用例 = `## <ID> <中文标题>` + 紧随的 ` ```atlas-case ` 块（行式键值）。
 > 断言落点页 = 本页；跨页流程在 `pages:` 记全链路，绝不复制。
 > `seed:` 是**可选的机器可判数据前提**（语法 `upsert <实体> <字段>=<值>`）；通道由 `stack-profile.yaml` 的 `e2e.seed.hook` 声明（缺省 = 合法降级 + 明确警告）。
+> `PAGE` = 本页 slug 的**大写原文**（多段 slug **连字符原样保留**：`app-agent-detail` → `APP-AGENT-DETAIL`），见 §5.3。
 
-## E2E-[必填：PAGE]-001 [必填：中文标题]
+## E2E-[必填：页slug大写]-001 [必填：中文标题]
 
 ```atlas-case
-id: E2E-[必填：PAGE]-001
+id: E2E-[必填：页slug大写]-001
 intent: [必填：可证伪的一句话声明——这条用例证明什么]
 pages:
   - [必填：本页 slug]

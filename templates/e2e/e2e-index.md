@@ -3,10 +3,11 @@
 > **唯一入口，机器可校验**。ID 全站唯一、每个 ID 都有可达分片链接、分片里没有索引外的孤儿用例。
 > `分片` = 相对链接 `cases/<page>.md#<id 小写>`。状态类字段（`状态`/`状态原因`）只在索引；`testid` 只在分片。
 > 词表、ID 与字段契约见 `.atlas/rings/e2e/reference.md` §5。
+> `PAGE` = 页 slug 的**大写原文**（多段 slug **连字符原样保留**：`app-agent-detail` → `APP-AGENT-DETAIL`），见 §5.3。
 
 | 用例ID | 页面 | 中文标题 | 类型 | 关联AC | 需求 | 状态 | 状态原因 | 分片 |
 |---|---|---|---|---|---|---|---|---|
-| E2E-[必填：PAGE]-001 | [必填：页 slug] | [必填] | smoke / acceptance / exception / permission | AC-[必填]-001 | [需求ID；空 = 项目级基线] | red | [仅 blocked/skipped 填 `<枚举>：<中文说明>`] | [cases/[必填].md#e2e-[必填]-001](cases/[必填].md#e2e-[必填]-001) |
+| E2E-[必填：页slug大写]-001 | [必填：页 slug] | [必填] | smoke / acceptance / exception / permission | AC-[必填]-001 | [需求ID；空 = 项目级基线] | red | [仅 blocked/skipped 填 `<枚举>：<中文说明>`] | [cases/[必填].md#e2e-[必填]-001](cases/[必填].md#e2e-[必填]-001) |
 
 ## 页面表（页 ↔ 路由 ↔ 实现状态）
 
