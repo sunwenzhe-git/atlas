@@ -16,9 +16,31 @@
   （`路由` 列按 §3.1 只有业务段，不可直接导航），见 `rings/e2e/reference.md` §5.5。
   **入本元组 = 被当成数组**（本元组内每个键都初始化为 list）——实隔时踩过：
   `case.get("守卫").strip()` 报 `'list' object has no attribute 'strip'`。
+- **行内注释口径（2026-10-16，issue #R1）**：**标量键**的值经 `strip_inline_comment` 剥掉行内
+  `#` 注释（取用 `_support/stack_profile.py` 的**同一函数对象**，经包内 bootstrap；不得复制
+  第二份等价实现）；**列表项逐字节不变**（`d[key].append(s[2:].strip())`）。
+  **为什么两支持不同口径**（下一轮别把这里当「口径分裂」再改回去）：
+  ① **标量键**的值被下游当作**代码字面量**发射（`scripts/gen_e2e_scripts.py` 的 `guard_url`
+  → `page.goto('<值>')`）——注释会成为可执行代码的一部分；② **列表项**有下游剥注释通道
+  （`scripts/gen_e2e_scripts.py` 的 `parse_line` → `line.partition("#")`，docstring 明写
+  「机器只看 `#` 之前」），且列表项的 `#` 是**给人读的 note**，必须先原样交给该通道（例如
+  `expected:` 里 `#` 后的 `initial:` 理由说明）。**标量剥、列表项不剥**是刻意设计。
 - 纯标准库（契约 `rings/e2e/reference.md` §8.3）。
 """
 from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+# 随包内核引导（`_support/`，2026-10-16，issue #R1）：本模块**在包内**取用
+# `_support/stack_profile.strip_inline_comment`。只**引用函数对象**，不新增定义——
+# `tests/test_shared_kernel.py::test_definitions_are_single_sourced` 按 `def <name>(` 计数，
+# 任何第二处定义（含等价实现）都会红。
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.siblings import load_module  # noqa: E402
+
+strip_inline_comment = load_module("stack_profile").strip_inline_comment
 
 # 键空间 = `rings/e2e/reference.md` §5.1 用例块字段（消费方按需读取）。
 _BLOCK_KEYS = ("pages", "precondition", "seed", "mock", "step", "expected", "testid", "落点", "会话")
@@ -27,8 +49,9 @@ _BLOCK_KEYS = ("pages", "precondition", "seed", "mock", "step", "expected", "tes
 def parse_block(body: str) -> dict:
     """解析 `atlas-case` 块体 → dict（键见 `_BLOCK_KEYS`）。
 
-    语义（与原两处实现逐字一致）：`- ` 开头的行归当前键；`<key>:` 开新键（键在键空间内）；
-    `key: value` 带值形态追加一条；键空间外的 `key: value` 以标量入表。
+    语义（与原两处实现逐字一致；**唯一例外** = 键空间外的标量键剥行内注释，见模块 docstring）：
+    `- ` 开头的行归当前键；`<key>:` 开新键（键在键空间内）；`key: value` 带值形态追加一条；
+    键空间外的 `key: value` 以标量入表（**标量值剥行内 `#` 注释**）。
     """
     d: dict = {k: [] for k in _BLOCK_KEYS}
     key = None
@@ -47,6 +70,7 @@ def parse_block(body: str) -> dict:
                 if v:
                     d[k].append(v)
             else:
-                d[k] = v
+                # 标量键：行内 `#` 注释剥掉（同一函数对象，见模块 docstring 的「为什么两支持不同口径」）。
+                d[k] = strip_inline_comment(v)
                 key = None
     return d

@@ -4,6 +4,36 @@
 
 ---
 
+## [Unreleased] - 2026-10-16
+
+### 🪲 E2E 生成链四处缺陷闭环：标量注释污染 · 元素守卫空转 · 守卫门不剥注释 · `force` 与被测属性相抵（Issue #R1–#R4 / D94–D97）
+
+**背景**：卢森堡文件上传禁用需求的 E2E 环执行期间撞出四条链路缺陷。合起来才致命的一环：R1 制造污染 → R3 的门把污染判成 PASS ⇒ **无门可见**，污染直达 Playwright 的 URL 字面量。
+
+**修复（源包）**：
+
+- **R1/D94（标量注释污染 ⇒ 剥注释收敛为单源出口）**：`_support/case_block.py` 的**标量键分支**改经内核 `_support/stack_profile.strip_inline_comment`（经包内 bootstrap 取用**同一函数对象**，不新增第二份实现）；`validators/validate_e2e_index.py` 的 `goto` 门两处 + `会话` 门手写 `split("#", 1)[0].strip()` 收敛为同一函数。**列表项逐字节不变** —— 列表项的 `#` 是给人读的 note，由消费侧 `parse_line` 单点消费（docstring 写明「标量剥 / 列表项不剥」的理由，防下一轮再被误判为口径分裂而改坏）。
+- **R3/D94（守卫门自带剥注释）**：`validators/validate_e2e_index.py` 的 `守卫` 门内取值路径先经同一 `strip_inline_comment` 再进 `_route_hit`（与 `goto` 门 / `会话` 门对齐）。**能力边界**：不关闭「合法前缀 + **无注释的真垃圾尾**」（`/x/1/FUZZY` 仍 PASS，需值形态判据 + 契约增量，登记为独立待办）；前缀命中口径不动。
+- **R2/R2'/D95（元素齐全守卫空转 ⇒ 回归契约正文，⚠ 行为恢复）**：`scripts/gen_e2e_scripts.py` 的守卫 id 面从 `case["step"][0]`（首步为 `goto`/`refresh` 时为**空表** ⇒ 守卫静默消失）**回归** `case.get("testid")`（= 契约 §7.1「每条用例的 `testid:` 清单守卫」的应然清单）。
+  **⚠ 这是对采用方的行为恢复，非纯 bugfix**：未被契约合规（无 `hidden` 占位槽，`rings/e2e/reference.md` §4）的动态元素守卫会**开始真红** —— 那是正确反馈，不是回归；静态侧由 `validate_testids.py` 的「应然落点 / 常驻槽位」门前置拦截，二者互为双保险。
+- **R4/D96（`force` 与被测属性相抵）**：`rings/e2e/reference.md` §5.5 的 `click` / `hover` 条目补**缺省 `{ force: true }` 的授权 + 适用边界（硬）+ `native` 步级开关 + 值域封闭**；`scripts/gen_e2e_scripts.py` 的 `click`/`hover` 读第三位，`native` ⇒ 不追加 `force`（保留 `.first()` 的 strict-mode 修复）；校验器 `step 动词合法` 邻位新增「step 开关取值合法」（坏值 ⇒ FAIL，与生成器中止双保险）。
+- **S1/D97（同类未爆现场：零步基线侧）**：零步基线探针的 `case_testids` 逐项经同一 `strip_inline_comment`（否则与走已剥 `parse_line` 的 `step_operated_testids` 集比对时会静默不命中 ⇒ F24 规则二的「纯在场守卫豁免」失效）。
+- **R1 同类（守卫面侧，`check` 复核 C3）**：`scripts/gen_e2e_scripts.py` 的元素守卫 id 面逐项经同一 `strip_inline_comment`（`testid:` 项与 `step:` 项同形，可带行内说明；不剥则守卫面发射带注释的 id ⇒ `toHaveCount(1)` 恒不命中 ⇒ 假红）。至此 `case["testid"]` 的三个消费者（守卫面 / 零步基线探针 / 应然落点门前置）口径一致。
+
+**证据纪律**：六条修复各带「坏输入必红 → 还原后绿（逐字节一致）」成对证据（变异 **M79–M84 / M86**）；重定向尺子而非删断言（原把空表钉成期望的 `test_guard_only_watches_first_step_target` 改为断应然清单）；`tests/test_suite_hygiene.py` 不回归。
+
+**独立复核（`trellis-check`，2026-10-16）**：自行复跑 M79/M83/M84 三条变异（未用作者自备工具）⇒ 3/3 成立（逐字节还原 sha256 前后一致）；逐条读 `git diff tests/` ⇒ 未见解重弱化（3 条被删断言均在新增处有对应物，无 `or True`、无新增 `skip`/`xfail`）；同时抓出两处**引证错误**（生成物 diff 行数夸大 24→实为 18；残留行号清单少报 10 处实况）——已在本版按实况订正。
+
+- `_support/case_block.py` / `validators/validate_e2e_index.py` / `scripts/gen_e2e_scripts.py`：剥注释单源收敛 + 守卫面回归 + `force` 开关 + F5 同类现场；
+- `rings/e2e/reference.md` §5.5：`click` / `hover` 条目补默认 `force` 的授权 / 边界 / 开关 / 值域；
+- `tests/test_shared_kernel.py`（+2：标量剥·列表项不剥 + `strip_inline_comment` 同一函数对象 `is` 钉）；`tests/test_gen_e2e_scripts.py`（尺子重定向 + 新增「首步 `goto` ⇒ 守卫非空」/ 守卫面剥注释 / `native` / 坏值中止 / F5 五条钉）；`tests/test_validators.py`（+2：守卫门剥注释绕过 `parse_block` 的钉 + 开关值域 FAIL 钉）；
+
+**未做（登记为独立待办，非本版范围）**：
+
+- **值形态判据**：`/x/1/FUZZY` 这类「合法前缀 + **无注释的真垃圾尾**」仍判 PASS（需在 `_route_hit` 前叠「值形态」判据 + `reference.md` §8.2 契约增量；当前前缀命中口径是有意设计，单独收紧会把合法带参路径打红）。
+- **其余文本期门的剥注释口径收敛**：`validators/validate_e2e_index.py` 仍有 **10 处**手写 `split("#", 1)[0].strip()`（139/271/722/732/763/780/812/824/833/856；全源包共 17 处），与内核口径**不等价**（内核认引号 + 要求 `#` 前有空白）——改动会变其它门的既有判定，不在本版签字面内。因此「剥注释全局一个函数对象」**在本次收敛面内成立**（`is` 已证），**非全局字面全真**。
+- `DESIGN.md`：D94–D97 决策行（含 F2 的「行为恢复」措辞与 R3 的能力边界登记）。
+
 ## [v0.1.0-beta.20] - 2026-10-16
 
 ### 🔧 装配器语义两案：干跑不落版本戳 + 脏树守卫分「已跟踪/未跟踪」两语义 (Issue #21/#22: F54/F55, D92/D93)

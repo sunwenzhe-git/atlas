@@ -512,6 +512,68 @@ def test_guard_path_in_page_table_passes() -> None:
         assert rows["守卫 路径 ∈ 页面表"]["level"] == "PASS", rows["守卫 路径 ∈ 页面表"]
 
 
+def test_guard_gate_strips_inline_comment_without_parse_block() -> None:
+    """F3（2026-10-16，issue #R3）：守卫门的**取值路径**自带剥注释（与 `goto` 门 / `会话` 门同源）。
+
+    必须**绕过 `parse_block`** 造坏输入：F1 之后端到端已无法再造污染值，挂 `parse_block` 上就恒真。
+    钉子把门内取值路径的输入人为**回注**注释 ⇒ ① 有修复（门内剥）⇒ PASS；
+    ② 撤掉修复（守卫门用未剥值）⇒ FAIL（本钉子红）。
+    """
+    real = ve.parse_block
+
+    def polluted(body: str) -> dict:
+        d = real(body)
+        if isinstance(d.get("守卫"), str):
+            d["守卫"] = d["守卫"] + "   # 行内说明"
+        return d
+
+    ve.parse_block = polluted
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            mk_prototype(root)
+            mk_cases(root, CASE_GOOD.replace("step:", "守卫: /home\nstep:", 1))
+            # 页面表路由 = `/home`（根路由 `/` 仅精确匹配，不能当前缀锚用）：
+            # 带注释原始值 `/home   # 行内说明` 不剥就**不**命中 ⇒ 本钉子靠 F3 的门内剥注释才绿。
+            mk_index(root, INDEX_GOOD.replace(
+                "## 页面 ↔ 用例",
+                "## 页面表（页 ↔ 路由）\n\n| 页面 | 路由 | 域 | 实现状态 |\n|---|---|---|---|\n"
+                "| home | /home | demo | 已实现 |\n\n## 页面 ↔ 用例"))
+            rows = {c["check"]: c for c in ve.validate(root).checks}
+        assert rows["守卫 路径 ∈ 页面表"]["level"] == "PASS", rows["守卫 路径 ∈ 页面表"]
+    finally:
+        ve.parse_block = real
+
+
+def test_empty_testid_list_fails_block_field_gate() -> None:
+    """AC-3 / R2（契约 §5.5 的「元素齐全守卫」应然面）：**空 `testid:` ⇒ 文本期门出声（FAIL）**。
+
+    生成器的守卫 id 面取自 `testid:`（F2）⇒ 空清单会生成空循环（守卫消失）；本门
+    （`分片块字段齐`，`needed` 含 `testid` 且按 `not d.get(k)` 判非空）把该形态在**文本期**
+    挡下 ⇒ 「守卫面为空」不会静默抵达生成物。撤掉该字段的非空判据 ⇒ 本钉子红（变异 M85）。
+    """
+    rows = _ve_rows(CASE_GOOD.replace(
+        "testid:\n  - home-cta-btn\n  - home-title\n", "testid:\n"))
+    assert rows["分片块字段齐"]["level"] == "FAIL", rows["分片块字段齐"]
+
+
+def test_click_switch_value_domain_in_index_gate() -> None:
+    """F4（契约 §5.5，2026-10-16，issue #R4）：`click` / `hover` 第三位非 `native` 且非空 ⇒
+    「step 开关取值合法」FAIL；`native` / 缺省 ⇒ PASS。
+
+    与生成器中止**双保险**（防「校验器放行 / 生成器认不得」的半通态）。
+    """
+    bad = _ve_rows(CASE_GOOD.replace(
+        "  - click home-cta-btn          # 点击主操作按钮",
+        "  - click home-cta-btn force    # 坏开关"))
+    assert bad["step 开关取值合法"]["level"] == "FAIL", bad["step 开关取值合法"]
+
+    good = _ve_rows(CASE_GOOD.replace(
+        "  - click home-cta-btn          # 点击主操作按钮",
+        "  - click home-cta-btn native   # 原生语义"))
+    assert good["step 开关取值合法"]["level"] == "PASS", good["step 开关取值合法"]
+
+
 def test_session_preset_in_whitelist_passes() -> None:
     """正向：键在 `e2e.session_preset.keys` 白名单内 ⇒ 「会话 取值合法」PASS。"""
     rows = _ve_rows(SESSION_CASE, "e2e:\n  session_preset:\n    keys:\n      - env\n")

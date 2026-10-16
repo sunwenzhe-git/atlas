@@ -1143,9 +1143,10 @@ def test_testid_guard_uses_auto_wait_not_immediate_count() -> None:
         make(root)
         assert run(root, "--apply").returncode == 0
         text = spec_of(root)
-        guard = ("for (const id of [\"home-cta-btn\"]) {\n"
+        guard = ("for (const id of [\"home-cta-btn\", \"home-title\"]) {\n"
                  "    await expect(page.getByTestId(id)).toHaveCount(1);\n"
                  "  }")
+        # 守卫面 = 该用例 `testid:` **应然清单**（2026-10-16，issue #R2；CASE 夹具两项）
         assert guard in text, text[:1200]
         assert ".count() > 0 && (await" not in text.split("test(")[0].split("tsVisible")[0], text[:600]
 
@@ -1701,12 +1702,19 @@ def test_f21_bootstrap_review_cli() -> None:
         assert "D1-D10" in data["dimensions_reference"]
 
 
-def test_guard_only_watches_first_step_target() -> None:
-    """防守卫死锁：前置在场守卫仅断言 step[0] 的操作目标，动态 testid 不被提前判定死锁；
-    若 step[0] 为 goto/refresh 等无 testid 操作，守卫安全为空。
+def test_guard_watches_case_testid_list_not_first_step() -> None:
+    """**尺子重定向**（2026-10-16，issue #R2）：守卫面 = 该用例 `testid:` **应然清单**（契约
+    §7.1「每条用例的 `testid:` 清单守卫」），**不**从 `step[0]` 猜。
+
+    本用例重定向自 `test_guard_only_watches_first_step_target` —— 原判据把「空表」钉成期望
+    （`step[0]` 无 testid ⇒ 守卫安全为空），而空表 = 空循环 = **守卫消失**，与契约正文相抵。
+    **不删断言**：场景 1 的「动态元素不得出现在守卫面」**反转为**「守卫面 = 全部应然清单
+    （含动态项）」；场景 2 的「空表」改为断言其 `testid:` 清单内容。
+    「防死锁」意图的合法落点 = 契约 §4 的 **hidden 占位槽**机制（实现侧满足：动作产物元素
+    以占位槽满足「用例开始时 count=1」）—— 故动态元素**就在**守卫面里，是否合规由实现侧承接。
     """
     gn = _load_gen()
-    # 场景 1：step[0] 是有 testid 的动作，testid 列表包含动态元素
+    # 场景 1：动态元素已按契约 §4 打占位槽 ⇒ 守卫面 = 全部应然清单
     case1 = {
         "id": "E2E-DYNAMIC-001",
         "_title": "动态创建元素",
@@ -1715,11 +1723,13 @@ def test_guard_only_watches_first_step_target() -> None:
         "testid": ["static-create-btn", "dynamic-item", "dynamic-item-delete-btn"],
     }
     spec1 = gn.ts_case(case1, "/dynamic")
-    # 守卫只断言 static-create-btn，绝不断言 dynamic-item
-    assert "for (const id of [\"static-create-btn\"]) {" in spec1, spec1
-    assert "dynamic-item" not in spec1.split("await page.goto")[1].split("for (const id")[1].split("}")[0]
+    assert ('for (const id of ["static-create-btn", "dynamic-item", "dynamic-item-delete-btn"]) {'
+            in spec1), spec1
+    # 应然清单里的动态项**必须**在守卫面内（契约要求的红：未打占位槽的项目在此真红，是正确反馈）
+    guard1 = spec1.split("for (const id of")[1].split("}")[0]
+    assert "dynamic-item" in guard1, guard1
 
-    # 场景 2：step[0] 是无 testid 的 goto/refresh，守卫安全为空
+    # 场景 2：step[0] 是无 testid 的 goto/refresh ⇒ 守卫面仍 = 该用例 `testid:` 清单（非空）
     case2 = {
         "id": "E2E-DYNAMIC-002",
         "_title": "刷新后检查",
@@ -1728,7 +1738,47 @@ def test_guard_only_watches_first_step_target() -> None:
         "testid": ["static-btn"],
     }
     spec2 = gn.ts_case(case2, "/dynamic")
-    assert "for (const id of []) {" in spec2, spec2
+    assert 'for (const id of ["static-btn"]) {' in spec2, spec2
+    assert "for (const id of []) {" not in spec2, spec2
+
+
+def test_goto_first_step_keeps_guard_non_empty() -> None:
+    """新增钉子（2026-10-16，issue #R2）：**首步为 `goto` 的用例 ⇒ 守卫面非空**。
+
+    改前**零覆盖**（卢森堡批 6 条用例首步全是 `goto`，6/6 生成 `for (const id of [])`）。
+    撤掉修复（守卫面改回 `first_step_tids`）⇒ 本钉子红；还原 ⇒ 绿。
+    """
+    gn = _load_gen()
+    case = {
+        "id": "E2E-GOTO-FIRST-001",
+        "_title": "带参页守卫导航",
+        "step": ["goto /detail/1", "click detail-save-btn"],
+        "expected": ["visible detail-save-btn"],
+        "testid": ["detail-save-btn"],
+    }
+    spec = gn.ts_case(case, "/detail")
+    assert 'for (const id of ["detail-save-btn"]) {' in spec, spec
+    assert "for (const id of []) {" not in spec, spec
+
+
+def test_guard_id_face_strips_inline_comment() -> None:
+    """守卫 id 面逐项剥行内注释（2026-10-16，R1 同类的**守卫面侧**）。
+
+    `testid:` 项与 `step:` 项同形，同样可带行内 `#` 说明；不剥则守卫面发射带注释的 id
+    ⇒ `toHaveCount(1)` 恒不命中 ⇒ 假红。与零步基线侧 `case_testids` 同口径（同一函数对象）。
+    撤掉修复（守卫面回到原样发射）⇒ 本钉子红；还原 ⇒ 绿。
+    """
+    gn = _load_gen()
+    case = {
+        "id": "E2E-TID-COMMENT-001",
+        "_title": "应然清单项带行内说明",
+        "step": ["click item-save-btn"],
+        "expected": ["visible item-save-btn"],
+        "testid": ["item-save-btn   # 行内说明"],
+    }
+    spec = gn.ts_case(case, "/item")
+    assert 'for (const id of ["item-save-btn"]) {' in spec, spec
+    assert "# 行内说明" not in spec.split("for (const id of")[1].split("}")[0], spec
 
 
 def test_strict_mode_actions_and_asserts_use_first() -> None:
@@ -1794,6 +1844,96 @@ def test_auth_setup_idempotent_preserves_existing_state() -> None:
         assert "existsSync(stateFile)" in setup
         assert "readFileSync(stateFile" in setup
         assert "跳过覆写" in setup
+
+
+# ── issue #R4（2026-10-16）：`click` / `hover` 的 `force` 默认 + `native` 步级开关 ──────
+def test_click_hover_force_default_and_native_switch() -> None:
+    """契约 §5.5（2026-10-16，issue #R4）：`click` / `hover` **缺省**发 `{ force: true }`
+    （I4：默认路径逐字节不变）；第三位 `native` ⇒ 按运行器原生语义执行（**不**追加 force）。
+
+    撤掉修复（`step_force_arg` 恒返 force）⇒ 本钉子的 `native` 部分红。
+    """
+    gn = _load_gen()
+    case = {
+        "id": "E2E-FORCE-001",
+        "_title": "可操作性被测属性",
+        "step": ["click act-save-btn", "hover act-menu-btn native"],
+        "expected": ["visible act-save-btn"],
+        "testid": ["act-save-btn", "act-menu-btn"],
+    }
+    spec = gn.ts_case(case, "/act")
+    # 缺省：force 保留（逐字节同改前）
+    assert "await page.getByTestId('act-save-btn').first().click({ force: true });" in spec, spec
+    # native：不追加 force，但保留 `.first()`（strict-mode 修复不得回退）
+    assert "await page.getByTestId('act-menu-btn').first().hover();" in spec, spec
+    assert "hover({ force: true })" not in spec, spec
+
+
+def test_click_switch_value_domain_closed() -> None:
+    """值域封闭（契约 §5.5）：第三位非 `native` 且非空 ⇒ 生成器**报错中止**（不静默降级）。"""
+    gn = _load_gen()
+    case = {
+        "id": "E2E-FORCE-002",
+        "_title": "坏开关",
+        "step": ["click act-btn force"],
+        "expected": ["visible act-btn"],
+        "testid": ["act-btn"],
+    }
+    try:
+        gn.ts_case(case, "/act")
+    except ValueError as exc:
+        assert "native" in str(exc), exc
+    else:
+        raise AssertionError("坏开关取值未报错（静默降级 = 值域未封闭）")
+
+    # 端到端：坏值经真跑生成进程 ⇒ 非零退出
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        bad = CASE.replace("  - click home-cta-btn          # 点击主操作按钮",
+                           "  - click home-cta-btn force    # 坏开关")
+        make(root, case=bad)
+        r = run(root, "--apply")
+        assert r.returncode != 0, (r.returncode, r.stdout, r.stderr)
+
+
+# ── issue #R1/S1（2026-10-16）：`testid:` 项带行内注释 ⇒ F24 规则二豁免仍生效 ────────
+COMMENTED_TID_CASE = """# home 页面用例
+
+## E2E-HOME-001 首页主操作可见
+
+```atlas-case
+id: E2E-HOME-001
+intent: 打开首页后主操作按钮可见
+pages:
+  - home
+precondition:
+  - 已打开首页
+step:
+  - click home-title            # 操作另一元素（不碰 home-cta-btn）
+expected:
+  - visible home-cta-btn        # 纯在场守卫（已在守卫面覆盖）
+testid:
+  - home-cta-btn   # 行内说明（本项注释不得影响豁免判据）
+  - home-title
+```
+"""
+
+
+def test_testid_item_inline_comment_keeps_guard_only_visible_exemption() -> None:
+    """F5（2026-10-16，issue #R1 同族未爆现场）：`testid:` **项**带行内注释时，
+    「纯在场守卫豁免」（F24 规则二）仍生效 —— 该断言不产生零步探针。
+
+    撤掉修复（`case_testids = set(c.get("testid") or [])`）⇒ 集合里是
+    `home-cta-btn   # 行内说明` ⇒ `target_id in case_testids` 不命中 ⇒ 用例被误判为
+    「非纯在场守卫」⇒ 探针非空 ⇒ 本钉子红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=COMMENTED_TID_CASE)
+        assert run(root, "--apply").returncode == 0
+        text = spec_of(root)
+        assert "const ATLAS_ZS_home" not in text, text[:1200]
+        assert "test('test_home__zero_step_baseline'" not in text, text[:1200]
 
 
 

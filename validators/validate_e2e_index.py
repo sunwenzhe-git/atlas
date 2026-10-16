@@ -57,6 +57,9 @@ parse_block = load_module("case_block").parse_block
 # 用例 ID 文法体单源（正文归 rings/e2e/reference.md §5.3；锚点本处自留）
 case_id = load_module("case_id")
 stack_profile = load_module("stack_profile")
+# 契约 §5.5（2026-10-16，issue #R1/#R3）：行内注释剥除口径与内核**同一函数对象**（I3）——
+# 本文件不再自持 `split("#", 1)[0].strip()` 的第二份口径（`goto` 门两处 + `会话` 门 + `守卫` 门共用）。
+strip_inline_comment = stack_profile.strip_inline_comment
 
 MAIN_COLUMNS = ["用例ID", "页面", "中文标题", "类型", "关联AC", "需求", "状态", "状态原因", "分片"]
 REV_COLUMNS = ["页面", "断言落点用例", "链路经过用例"]
@@ -602,6 +605,7 @@ def validate(root: Path) -> Result:
     auth_bad: list[str] = []
     guard_bad: list[str] = []
     session_bad: list[str] = []
+    switch_bad: list[str] = []
     # 会话预设键白名单（契约 §5.5 / `shared/stack-profile.md` §2，2026-10-16，issue #13）。
     # 段缺失 / keys 为空 ⇒ 该靶场不允许任何会话预设（用例出现 `会话:` 行即 FAIL）。
     _prof_path = root / "product" / "stack-profile.yaml"
@@ -629,13 +633,21 @@ def validate(root: Path) -> Result:
         step = d.get("step", [])
         # 动词合法性（契约 §5.5）：step 首个 token ∈ ACTION_VERBS；expected 首个 token ∈ ASSERT_VERBS
         for s in step:
-            first = s.split("#", 1)[0].strip().split(" ", 1)[0].strip()
+            first = strip_inline_comment(s).split(" ", 1)[0].strip()
             if first not in ACTION_VERBS:
                 verb_bad.append(f"{g['用例ID']}:{first}")
+            # 契约 §5.5（2026-10-16 补，issue #R4）：`click` / `hover` 的**第三位**是步级开关，
+            # 值域封闭 —— 仅允许 `native` 或省略。与生成器中止**双保险**（镜像 `auth` 白名单：
+            # 文本期挡 + 生成期中止，防「校验器放行 / 生成器认不得」的半通态）。
+            if first in ("click", "hover"):
+                _sw = strip_inline_comment(s).split(None, 2)
+                third = _sw[2].strip() if len(_sw) > 2 else ""
+                if third and third != "native":
+                    switch_bad.append(f"{g['用例ID']}:{first} <{third}>")
         # 契约 §5.7（2026-09-23 补）：用例**不得**依赖原型专有的调试/演示参数。
         # `goto` 带查询参数 ⇒ FAIL —— 那种手段在真实应用上不存在，用例过不了第二段。
         for s in step:
-            code = s.split("#", 1)[0].strip()
+            code = strip_inline_comment(s)
             parts = code.split(" ", 1)
             if parts[0] == "goto" and "?" in (parts[1] if len(parts) > 1 else ""):
                 goto_param.append(f"{g['用例ID']}:{parts[1].strip()}")
@@ -645,7 +657,7 @@ def validate(root: Path) -> Result:
         # 动态段用例友好）；根路由 `/` 仅精确匹配（否则一切路径都被它吞掉）。
         # `goto` 缺路径参数也是 FAIL（独立审查 D4：否则校验器放行、生成器渲染 `page.goto("")`）。
         for s in step:
-            code = s.split("#", 1)[0].strip()
+            code = strip_inline_comment(s)
             parts = code.split(" ", 1)
             if parts[0] != "goto":
                 continue
@@ -667,7 +679,7 @@ def validate(root: Path) -> Result:
         # 与生成器中止**双保险**（文本期挡 + 生成期中止）：白名单是项目级声明，
         # 防把「数据态」走私成会话参数（§5.7 禁令不破）。
         for entry in d.get("会话") or []:
-            code = entry.split("#", 1)[0].strip()
+            code = strip_inline_comment(entry)
             if "=" not in code:
                 session_bad.append(f"{g['用例ID']}:缺 `=` → {code}")
                 continue
@@ -683,8 +695,12 @@ def validate(root: Path) -> Result:
         # 它必须命中页面表 `路由` 列（同 §8.2 的前缀口径）。缺路径 / 越界 ⇒ FAIL。
         _guard = d.get("守卫")
         if isinstance(_guard, str) and _guard.strip():
-            if page_routes and not _route_hit(_guard.strip(), page_routes):
-                guard_bad.append(f"{g['用例ID']}:{_guard.strip()}")
+            # 契约 §5.5（2026-10-16 补，issue #R3）：**门内取值路径自带剥注释**——即使日后
+            # 出现绕过 `parse_block` 的带注释原始值（上游 F1 之后端到端已造不出污染值），
+            # 本门也不把注释当路径。与 `goto` 门 / `会话` 门共用同一 `strip_inline_comment`。
+            _guard_path = strip_inline_comment(_guard).strip()
+            if page_routes and not _route_hit(_guard_path, page_routes):
+                guard_bad.append(f"{g['用例ID']}:{_guard_path}")
 
         # 契约 §5.6 R7（2026-09-23 补；**2026-09-25 修正为真矛盾对**）：同一条用例内，对同一
         # testid 不得既断言「可见 / 有文案」又断言「不可见」—— 否则必有一条永远为真（假绿）。
@@ -843,6 +859,9 @@ def validate(root: Path) -> Result:
 
     res.add("expected 非空且无占位", "PASS" if not empty_exp else "FAIL", f"{_format_list(empty_exp)}")
     res.add("step 动词合法", "PASS" if not verb_bad else "FAIL", f"词表外={_format_list(verb_bad)}")
+    # 契约 §5.5（2026-10-16 补，issue #R4）：`click` / `hover` 步级开关的值域（仅 `native` 或省略）。
+    res.add("step 开关取值合法", "PASS" if not switch_bad else "FAIL",
+            f"值域外={_format_list(switch_bad)}")
     res.add("goto 不带查询参数", "PASS" if not goto_param else "FAIL", f"依原型调试参数的用例={_format_list(goto_param)}")
     res.add("goto 路径 ∈ 页面表", "PASS" if not goto_path else "FAIL", f"页面表外路径={_format_list(goto_path)}")
     res.add("守卫 路径 ∈ 页面表", "PASS" if not guard_bad else "FAIL",

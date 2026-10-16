@@ -166,6 +166,34 @@ testid:
     assert d2["pages"] == ["login", "extra"]
 
 
+def test_block_scalar_strips_inline_comment_list_item_keeps_note() -> None:
+    """I1（2026-10-16，issue #R1）：**标量键**的行内 `#` 注释被剥（机器面取值），
+    **列表项逐字节不变**（其 `#` 是给人读的 note，由消费侧 `parse_line` 单点消费）。
+
+    坏输入必红（变异 M83）：把标量分支还原为 `d[k] = v` ⇒ 第一条断言红
+    （`/x/1   # 说明` 被整段当值，再作为 JS 字面量发射）。
+    """
+    d = cb.parse_block("守卫: /x/1   # 说明\nstep:\n- goto /x   # note\nintent: 一  # 二\n")
+    assert d["守卫"] == "/x/1"                  # 标量：剥注释
+    assert d["intent"] == "一"                  # 标量：剥注释（同口径）
+    assert d["step"] == ["goto /x   # note"]    # 列表项：逐字节不变
+
+
+def test_strip_inline_comment_is_one_function_object() -> None:
+    """I3（2026-10-16，issue #R1/#R3/#F5）：「剥注释」口径全局只有**一个函数对象**
+    （不是等价实现）—— 四消费者（内核 / 块体解析器 / 生成器 / 索引校验器）同一对象。
+
+    这是「无共享通道 ⇒ 就地复制」的结构守卫：引用别名合法，**第二次实现**（哪怕输出
+    相同）非法；`test_definitions_are_single_sourced` 从 `def <name>(` 面扣，本钉从
+    对象同一性面扣（两面互补）。
+    """
+    gen = _load("gen_e2e_scripts", "scripts/gen_e2e_scripts.py")
+    idx = _load("validate_e2e_index", "validators/validate_e2e_index.py")
+    assert cb.strip_inline_comment is sp.strip_inline_comment
+    assert gen.strip_inline_comment is sp.strip_inline_comment
+    assert idx.strip_inline_comment is sp.strip_inline_comment
+
+
 def test_definitions_are_single_sourced() -> None:
     """结构唯一性守卫（M46）：四个共享函数在全包只准各有一处定义（单源文件）。
 
@@ -199,10 +227,12 @@ def test_consumer_aliases_are_the_kernel_objects() -> None:
     idx = _load("validate_e2e_index", "validators/validate_e2e_index.py")
     assert gen.parse_profile is sp.parse_profile
     assert gen.parse_block is cb.parse_block
+    assert gen.strip_inline_comment is sp.strip_inline_comment
     assert vsp.parse_profile is sp.parse_profile
     assert vsp.strip_inline_comment is sp.strip_inline_comment
     assert vsp.yaml_scalar is sp.yaml_scalar
     assert idx.parse_block is cb.parse_block
+    assert idx.strip_inline_comment is sp.strip_inline_comment
 
 
 def test_loader_fails_loud_when_missing() -> None:

@@ -71,6 +71,8 @@ from _support.siblings import load_module  # noqa: E402
 
 _sp = load_module("stack_profile")
 parse_profile = _sp.parse_profile  # 单源别名（原实现已并入 `_support/stack_profile.py`）
+# 契约 §5.5（2026-10-16，issue #R1/#F5）：行内注释剥除口径与内核**同一函数对象**（I3）。
+strip_inline_comment = _sp.strip_inline_comment
 
 CASE_BLOCK = re.compile(r"```atlas-case\s*\n(.*?)```", re.S)
 RUNNERS = {"node-playwright": ".spec.ts"}  # 单轨（3507 BO）：python-playwright 已退役
@@ -92,6 +94,31 @@ MOCK_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "hover", "refresh", "goto", "waitFor", "download", "upload")
 ASSERT_VERBS = ("text", "contains", "count", "countOptions", "visible", "hidden", "enabled", "disabled", "checked", "unchecked", "value", "attr", "delta")
 NO_TESTID_VERBS = ("refresh", "goto")  # 这两个动词第二个 token 不是 testid（goto 的值是路径）
+# 契约 §5.5（2026-10-16 补，issue #R4）：`click` / `hover` 默认追加 `{ force: true }`
+# （动机：真实 UI 里悬浮遮罩 / 动画 / 父容器事件拦截会造出动作执行超时的**假红**）。
+# **步级开关** `native` = 按运行器原生语义执行（不追加 `force`）；**值域封闭** = 仅 `native`
+# 或省略，其它取值 ⇒ 报错中止（校验器邻位同步 FAIL，两条机器面双保险）。
+FORCE_SWITCH = "native"
+FORCE_SWITCH_VERBS = ("click", "hover")
+
+
+def step_force_arg(verb: str, value: str, line: str, cid: str) -> str:
+    """`click` / `hover` 的 `force` 参数串：缺省 `" { force: true }"`；`native` ⇒ `""`。
+
+    契约 §5.5（2026-10-16，issue #R4）：第三位非 `native` 且非空 ⇒ 报错中止（镜像 `auth` /
+    `download` 的「词表外取值即中止」纪律，不静默降级）。**适用边界**：被测属性本身是
+    「可操作性 / 不可交互 / 用户不可达」的用例必须用 `native` —— `force` 会跳过
+    *receives events / stable* 检查，使该属性**无法被证伪**。
+    """
+    v = value.strip()
+    if v == FORCE_SWITCH:
+        return ""
+    if v:
+        raise ValueError(
+            f"{cid}: `{verb}` 第三位只允许 `{FORCE_SWITCH}` 或省略，得 {v!r}"
+            f"：{line!r}（契约 §5.5）")
+    return " { force: true }"
+
 # 契约 §5.6 R9：`expected` 行可加**行首前缀**，显式声明该断言的判据形状。
 #   `initial:`   —— 「本就该在初始态成立」⇒ 完全豁免零步基线（单向）。
 #   `unchanged:` —— 「本用例的被测属性是『该动作不改变它』」⇒ 生成物在**行动前**断言其成立、
@@ -378,12 +405,16 @@ def ts_case(case: dict, url: str) -> str:
     # 直接拿它导航会落到路由匹配不上的地址，守卫在 goto 后即红。有 `守卫:` 时用它，
     # 缺省回落页面表路由 ⇒ **对无参页面逐字节零变化**。
     guard_url = (case.get("守卫") or "").strip() or url
-    first_step_tids = []
-    if case.get("step"):
-        _, first_tid, _, _ = parse_line(case["step"][0])
-        if first_tid:
-            first_step_tids.append(first_tid)
-    ids = json.dumps(first_step_tids, ensure_ascii=False)
+    # 契约 §5.5 / §7.1（"元素齐全守卫按自动等待判定"）：守卫 id 面 = **该用例 `testid:` 应然清单**
+    # （实测：首步为 `goto`/`refresh` 的用例取 `step[0]` 会得到**空表** ⇒ 守卫静默消失）。
+    # 2026-10-16（issue #R2）从 `first_step_tids`（猜）**回归**契约正文口径；空表本身是
+    # 真信号（应然清单未声明 / 动态元素未打占位槽），由实现侧按 `reference.md` §4 的
+    # 「hidden 占位槽」机制满足，不得以空表吸收。
+    # 契约 §5.5（2026-10-16，R1 同类的守卫面侧）：`testid:` **项**与 `step:` 项同形，同样可带
+    # 行内 `#` 说明 —— 逐项经同一 `strip_inline_comment`（与零步基线侧 `case_testids` 同口径）。
+    # 不剥则守卫面发射带注释的 id（如 `["foo   # 行内说明"]`）⇒ `toHaveCount(1)` 恒不命中 ⇒ 假红。
+    ids = json.dumps([strip_inline_comment(t).strip() for t in (case.get("testid") or [])],
+                     ensure_ascii=False)
     step_note = "\\n".join("//   - " + s for s in case.get("step", []))
     assert_note = "\\n".join("//   - " + s for s in case.get("expected", []))    # 契约 §5.7（2026-09-30）：blocked/skipped ⇒ test.skip（状态真相源 = 索引）。
     state = case.get("_state", "")
@@ -416,7 +447,9 @@ def ts_case(case: dict, url: str) -> str:
         elif verb == "goto":
             actions.append(f"await page.goto('{value}');")
         elif verb == "click":
-            actions.append(f"await page.getByTestId('{tid}').first().click({{ force: true }});")
+            actions.append(
+                f"await page.getByTestId('{tid}').first().click("
+                f"{step_force_arg(verb, value, s, cid).strip()});")
         elif verb == "fill":
             actions.append(f"await page.getByTestId('{tid}').first().fill({json.dumps(value, ensure_ascii=False)});")
         elif verb == "select":
@@ -430,7 +463,9 @@ def ts_case(case: dict, url: str) -> str:
         elif verb == "press":
             actions.append(f"await page.getByTestId('{tid}').first().press({json.dumps(value)});")
         elif verb == "hover":
-            actions.append(f"await page.getByTestId('{tid}').first().hover({{ force: true }});")
+            actions.append(
+                f"await page.getByTestId('{tid}').first().hover("
+                f"{step_force_arg(verb, value, s, cid).strip()});")
         elif verb == "waitFor":
             # 契约 §7.1：带轮询的断言（不得退化为固定等待）
             loc = f"page.getByTestId('{tid}').first()"
@@ -756,7 +791,12 @@ def ts_zero_step_baseline(page: str, url: str, cases: list[dict], mock_vacuous: 
             # 整用例跳过零步探针，测试体中仍 100% 严谨执行断言（杜绝机械式补 initial:）。
             mock_exempt_cases.append(c.get("id", "unknown"))
             continue
-        case_testids = set(c.get("testid") or [])
+        # 契约 §5.5（2026-10-16 补，issue #F5）：`testid:` **项**同样可能带行内注释（与 `step:`
+        # 项同形）——逐项经同一 `strip_inline_comment`；否则与 `step_operated_testids`（走已剥的
+        # `parse_line`）集比对时会静默不命中 ⇒ 「纯在场守卫豁免」判据（F24 规则二）失效。
+        case_testids = {
+            strip_inline_comment(t).strip() for t in (c.get("testid") or [])
+        }
         step_operated_testids = {parse_line(s)[1] for s in (c.get("step") or [])}
         for e in c.get("expected") or []:
             kind, body = split_prefix(e)
