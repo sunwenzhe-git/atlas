@@ -4,6 +4,23 @@
 
 ---
 
+## [v0.1.0-beta.23] - 2026-10-16
+
+
+### 🔧 包自检门前置降级 —— 缺 `.atlas/tests` 记 `SKIP`，不再恒红 (Issue #17: F53, D91)
+
+**背景（残余面）**：issue #17 的装配面根因（`package.json.files` 漏 `tests` ⇒ 经 npm 装配的项目恒无 `.atlas/tests`）已在本日 beta.18 批（D86/F47）修掉，但 `scripts/atlas_check.py` 的包自检门（`check_factory`）本身**无前置判据**：存量装配（beta.17 及以前发行版的 npm 装配态）与源包开发态（仓根无 `.atlas/`）下 `pytest .atlas/tests` 收集失败（退出码 4）⇒ 全量模式恒红 `FAIL`，而 `--fast` 一跑就 OK——同一扇门两条路给两个相反结论（「红灯训练成噪声」族）。另有一个评审实出的现存假绿：`.atlas/tests` 被**文件**占用（装配损坏）时 pytest 收集 0 条退出码 0 ⇒ 被判 `ok`。
+
+- **前置判据**：`.atlas/tests` **不是目录**（不存在 / 被文件占用）⇒ **`SKIP`**（不进 `failures`、不压垮整体判定），文案两层 = 判据面（实测路径 + 旧发行版装配态 / 源包开发态 / 装配损坏三形态点名）+ 出路（源包 `pytest tests`；项目侧重装走齐 `install.sh` / `atlas upgrade`）。同文件三态先例：`_GATE_PRECONDITIONS` / `GEN_NOT_READY`。
+- **目录在场 ⇒ 行为逐字节不变**：真跑 pytest，真红仍 `FAIL`——降级只吃「断言对象不在场」这一种，防把真失败一并洗绿。
+- **评审（tech-proposal-reviewer，1 blocking + 5 major/minor 修后采纳）**：blocking 件 = `DESIGN.md` D86 曾在根因未修时明文否决「遇缺就 SKIP」——按**收窄**处置而非推翻：D91 单列 + D86 行尾收窄注记，并把「装配面根因（装配三表同步）永远不得改靠 SKIP 吸收」单独立句；其余 = file 形态一道覆盖（上假绿关闭）、pytest 可用性盲区进门册「不查什么」、出路动作词齐组进钉、变异号登记、在场零用例（`no tests ran`）取舍显式化。
+- **钉**：A-1（三形态 SKIP + 出路词齐组：`pytest tests` / `install.sh` / `atlas upgrade`）+ A-2（反面钉：目录在场注入必红 ⇒ 仍 `FAIL`）；变异 **M76**（前置分支置死 ⇒ A-1 红；还原逐字节一致，sha `2494e04f525be144`）。
+- **登记补遗**：本批提交时漏了 CHANGELOG 条目与版本步进（同类缺口）⇒ 随本条目补上；另将 F49–F52 批已被占用而未落册的 **D87–D90 四行决策补记进 `DESIGN.md`**（内容自各批提交正文还原；本条目自身即登记缺口的修复本体）。
+
+**取证**：`tests/test_atlas_check.py` 22 → 24 条全绿；`pytest tests -q` ⇒ **455 passed / 4 skipped**（落地前基线 453 passed / 4 skipped，+2 钉无红）；`scripts/atlas_check.py --fast` 源包态自证 OK；`tests/test_canonical_consistency.py` 9 绿（计数 24 条为 pytest 实收口径）。登记面：`proposals/RFC-20261016-02-factory-gate-precondition.md`（v2 含评审处置 §6）、`shared/gates.md` 2.2 对齐测试行、`DESIGN.md` D91 + D86 收窄注记。
+
+---
+
 ## [v0.1.0-beta.22] - 2026-10-16
 
 
