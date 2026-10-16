@@ -373,10 +373,10 @@ def test_generates_actions_and_asserts() -> None:
         text = (scripts / "home.spec.ts").read_text(encoding="utf-8")
         assert "await page.goto('/home');" in text, text
         # step → 动作
-        assert "await page.getByTestId('home-cta-btn').click();" in text, text
+        assert "await page.getByTestId('home-cta-btn').first().click();" in text, text
         # expected → 断言（不是只做存在性检查）
-        assert 'await expect(page.getByTestId(\'home-title\')).toHaveText("首页");' in text, text
-        assert "await expect(page.getByTestId('home-cta-btn')).toBeVisible();" in text, text
+        assert 'await expect(page.getByTestId(\'home-title\').first()).toHaveText("首页");' in text, text
+        assert "await expect(page.getByTestId('home-cta-btn').first()).toBeVisible();" in text, text
         # 中文说明降为注释（step/expected 原文镜像在用例体头部，`# 说明` 形态保留）
         assert "# 点击主操作按钮" in text
         # 单轨化退役面不回流
@@ -478,9 +478,9 @@ def test_unchanged_pre_is_sampled_right_before_the_submitting_action() -> None:
         ))
         assert run(root, "--apply").returncode == 0
         text = spec_of(root)
-        pre = text.index("await expect(page.getByTestId('home-create-project-modal')).toBeHidden();")
-        arrange = text.index("await page.getByTestId('home-cta-btn').click();")
-        submit = text.index("await page.getByTestId('home-create-submit-btn').click();")
+        pre = text.index("await expect(page.getByTestId('home-create-project-modal').first()).toBeHidden();")
+        arrange = text.index("await page.getByTestId('home-cta-btn').first().click();")
+        submit = text.index("await page.getByTestId('home-create-submit-btn').first().click();")
         assert arrange < pre < submit, (
             "「行动前」采样点不对：应在准备步骤之后、提交性动作之前",
             text[max(0, pre - 300):pre + 120],
@@ -595,9 +595,9 @@ def test_unchanged_prefix_emits_pre_and_post_assertions() -> None:
         r = run(root, "--apply")
         assert r.returncode == 0, r.stdout + r.stderr
         text = spec_of(root)
-        target = "await expect(page.getByTestId('home-create-project-modal')).toBeHidden();"
+        target = "await expect(page.getByTestId('home-create-project-modal').first()).toBeHidden();"
         first = text.index(target)
-        submit = text.index("await page.getByTestId('home-create-submit-btn').click();")
+        submit = text.index("await page.getByTestId('home-create-submit-btn').first().click();")
         second = text.index(target, first + 1)
         assert first < submit < second, "行动前 / 行动后两处断言顺序不对"
         assert text.count(target) == 2, "unchanged: 必须恰好发射前 + 后两处"
@@ -621,7 +621,7 @@ def test_initial_prefix_exempts_from_baseline() -> None:
         exprs = " ".join(p["expr"] for p in probes)
         assert "home-cta-btn" not in exprs, exprs               # 已豁免，不进 probe 清单
         assert "home-title" in exprs, exprs                     # 未豁免的另一条仍在
-        assert "await expect(page.getByTestId('home-cta-btn')).toBeVisible();" in text, text
+        assert "await expect(page.getByTestId('home-cta-btn').first()).toBeVisible();" in text, text
         code = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("//"))
         assert "initial:" not in code, code
 
@@ -865,7 +865,7 @@ def test_upload_renders_set_input_files_with_cwd_free_path() -> None:
         "testid": ["home-cta-btn"],
     }
     spec = gn.ts_case(case, "/")
-    assert ('await page.getByTestId(\'home-cta-btn\').setInputFiles('
+    assert ('await page.getByTestId(\'home-cta-btn\').first().setInputFiles('
             'resolve(__dirname, \'..\', \'fixtures\', "uploads/sample.wav"));') in spec, spec
     assert "/Users/" not in spec and "/home/" not in spec, "不得内联构建机绝对路径"
 
@@ -888,7 +888,7 @@ def test_upload_renders_set_input_files_with_cwd_free_path() -> None:
         assert r.returncode == 0, r.stdout + r.stderr
         ts = spec_of(root)
     assert "import { resolve } from 'node:path';" in ts, ts
-    assert ('await page.getByTestId(\'home-cta-btn\').setInputFiles('
+    assert ('await page.getByTestId(\'home-cta-btn\').first().setInputFiles('
             'resolve(__dirname, \'..\', \'fixtures\', "uploads/sample.wav"));') in ts, ts
 
     # 缺 fixture 文件 ⇒ exit 2 列明（fail-loud；校验器侧「引用存在」为双保险）
@@ -969,9 +969,9 @@ def test_step_anchor_emits_assertion_after_that_step() -> None:
         assert run(root, "--apply").returncode == 0
         text = spec_of(root)
         probes = zs_probes(text)
-    c = text.index("await page.getByTestId('home-cta-btn').click();")
-    a = text.index("await expect(page.getByTestId('home-cta-btn')).toBeVisible();")
-    z = text.index("await expect(page.getByTestId('home-cta-btn')).toBeHidden();")
+    c = text.index("await page.getByTestId('home-cta-btn').first().click();")
+    a = text.index("await expect(page.getByTestId('home-cta-btn').first()).toBeVisible();")
+    z = text.index("await expect(page.getByTestId('home-cta-btn').first()).toBeHidden();")
     assert c < a < z, text
     # 步骤锚断言必须进基线（= 不是豁免通道）；`initial:` 那条不进
     assert probes and all("toBeHidden" not in p["expr"] for p in probes), probes
@@ -1129,7 +1129,7 @@ def test_mock_case_exempt_from_zero_step_baseline() -> None:
         # 零步基线探针中不包含 mock 用例的任何断言
         assert "test('test_home__zero_step_baseline'" not in text or not zs_probes(text)
         # 但用例本身的测试体内仍完整保留 toBeVisible 断言
-        assert "await expect(page.getByTestId('home-cta-btn')).toBeVisible();" in text
+        assert "await expect(page.getByTestId('home-cta-btn').first()).toBeVisible();" in text
 
 
 def test_testid_guard_uses_auto_wait_not_immediate_count() -> None:
@@ -1143,7 +1143,7 @@ def test_testid_guard_uses_auto_wait_not_immediate_count() -> None:
         make(root)
         assert run(root, "--apply").returncode == 0
         text = spec_of(root)
-        guard = ("for (const id of [\"home-cta-btn\", \"home-title\"]) {\n"
+        guard = ("for (const id of [\"home-cta-btn\"]) {\n"
                  "    await expect(page.getByTestId(id)).toHaveCount(1);\n"
                  "  }")
         assert guard in text, text[:1200]
@@ -1304,10 +1304,10 @@ def test_delta_relative_assertion() -> None:
     }
     ts = gn.ts_case(case, "/")
     assert ts.index("const __delta_home_title = await atlasIntOf") < ts.index(
-        "await page.getByTestId('home-cta-btn').click()"
+        "await page.getByTestId('home-cta-btn').first().click()"
     ), ts
     assert (
-        "await expect.poll(() => atlasIntOf(page.getByTestId('home-title')), "
+        "await expect.poll(() => atlasIntOf(page.getByTestId('home-title').first()), "
         "{ timeout: ATLAS_WAIT_TIMEOUT_MS }).toBe(__delta_home_title + 1);"
     ) in ts, ts
     # 准备步骤不污染基准：采样在提交动作之前、在先行准备动作之后
@@ -1319,9 +1319,9 @@ def test_delta_relative_assertion() -> None:
         "testid": ["home-tab-btn", "home-save-btn", "home-title"],
     }
     ts2 = gn.ts_case(case2, "/")
-    assert ts2.index("await page.getByTestId('home-tab-btn').click()") < ts2.index(
+    assert ts2.index("await page.getByTestId('home-tab-btn').first().click()") < ts2.index(
         "const __delta_home_title = await atlasIntOf"
-    ) < ts2.index("await page.getByTestId('home-save-btn').click()"), ts2
+    ) < ts2.index("await page.getByTestId('home-save-btn').first().click()"), ts2
     # 生成期中止三态：值形态 / 叠写 / 缺 step
     for kwargs, kw in (
         ({"expected": ["delta home-title 3"]}, "±N"),
@@ -1699,6 +1699,102 @@ def test_f21_bootstrap_review_cli() -> None:
         assert data["kind"] == "atlas-bootstrap-review-package"
         assert data["expected_shards"] >= 1
         assert "D1-D10" in data["dimensions_reference"]
+
+
+def test_guard_only_watches_first_step_target() -> None:
+    """防守卫死锁：前置在场守卫仅断言 step[0] 的操作目标，动态 testid 不被提前判定死锁；
+    若 step[0] 为 goto/refresh 等无 testid 操作，守卫安全为空。
+    """
+    gn = _load_gen()
+    # 场景 1：step[0] 是有 testid 的动作，testid 列表包含动态元素
+    case1 = {
+        "id": "E2E-DYNAMIC-001",
+        "_title": "动态创建元素",
+        "step": ["click static-create-btn", "click dynamic-item-delete-btn"],
+        "expected": ["visible dynamic-item"],
+        "testid": ["static-create-btn", "dynamic-item", "dynamic-item-delete-btn"],
+    }
+    spec1 = gn.ts_case(case1, "/dynamic")
+    # 守卫只断言 static-create-btn，绝不断言 dynamic-item
+    assert "for (const id of [\"static-create-btn\"]) {" in spec1, spec1
+    assert "dynamic-item" not in spec1.split("await page.goto")[1].split("for (const id")[1].split("}")[0]
+
+    # 场景 2：step[0] 是无 testid 的 goto/refresh，守卫安全为空
+    case2 = {
+        "id": "E2E-DYNAMIC-002",
+        "_title": "刷新后检查",
+        "step": ["refresh", "click static-btn"],
+        "expected": ["visible static-btn"],
+        "testid": ["static-btn"],
+    }
+    spec2 = gn.ts_case(case2, "/dynamic")
+    assert "for (const id of []) {" in spec2, spec2
+
+
+def test_strict_mode_actions_and_asserts_use_first() -> None:
+    """Strict Mode 兼容：单体动作与单体状态断言统一发射 .first() / .filter().first()，
+    避免多实例同名元素抛出 strict mode violation；count 保持原样不加 .first()。
+    """
+    gn = _load_gen()
+    case = {
+        "id": "E2E-STRICT-001",
+        "_title": "多实例单体操作与断言",
+        "step": [
+            "click item-btn",
+            "hover item-card",
+            "fill item-input hello",
+            "press item-input Enter",
+            "check item-checkbox",
+            "uncheck item-checkbox",
+        ],
+        "expected": [
+            "visible item-card",
+            "hidden item-badge",
+            "enabled item-btn",
+            "disabled item-del-btn",
+            "checked item-checkbox",
+            "unchecked item-checkbox",
+            "text item-title 标题",
+            "contains item-desc 关键字",
+            "count item-card 3",
+        ],
+        "testid": ["item-btn", "item-card", "item-input", "item-checkbox", "item-badge", "item-del-btn", "item-title", "item-desc"],
+    }
+    spec = gn.ts_case(case, "/strict")
+    # 动作全部带 .first()
+    assert "await page.getByTestId('item-btn').first().click();" in spec
+    assert "await page.getByTestId('item-card').first().hover();" in spec
+    assert "await page.getByTestId('item-input').first().fill(\"hello\");" in spec
+    assert "await page.getByTestId('item-input').first().press(\"Enter\");" in spec
+    assert "await page.getByTestId('item-checkbox').first().check();" in spec
+    assert "await page.getByTestId('item-checkbox').first().uncheck();" in spec
+    # 断言带 .first()
+    assert "await expect(page.getByTestId('item-card').first()).toBeVisible();" in spec
+    assert "await expect(page.getByTestId('item-badge').first()).toBeHidden();" in spec
+    assert "await expect(page.getByTestId('item-btn').first()).toBeEnabled();" in spec
+    assert "await expect(page.getByTestId('item-del-btn').first()).toBeDisabled();" in spec
+    assert "await expect(page.getByTestId('item-checkbox').first().isChecked()).toBe(true)" not in spec # 使用了 toBeChecked
+    assert "await expect(page.getByTestId('item-checkbox').first()).toBeChecked();" in spec
+    assert "await expect(page.getByTestId('item-checkbox').first()).not.toBeChecked();" in spec
+    assert "await expect(page.getByTestId('item-title').first()).toHaveText(\"标题\");" in spec
+    assert "await expect(page.getByTestId('item-desc').filter({ hasText: \"关键字\" }).first()).toBeVisible();" in spec
+    # count 不加 .first()
+    assert "await expect(page.getByTestId('item-card')).toHaveCount(Number(\"3\"));" in spec
+
+
+def test_auth_setup_idempotent_preserves_existing_state() -> None:
+    """真实会话保护：生成的 setup 脚本在 stateFile 存在且非空时跳过覆写，保护开发者录制会话。"""
+    fab = PROFILE.split("  app_login:")[0] + \
+        "  app_login:\n    mode: fabricated\n    storage_key: app_session\n"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=fab)
+        assert run(root, "--apply").returncode == 0
+        setup = (root / "product" / "e2e" / "scripts" / "atlas-auth.setup.ts").read_text(encoding="utf-8")
+        assert "existsSync(stateFile)" in setup
+        assert "readFileSync(stateFile" in setup
+        assert "跳过覆写" in setup
+
 
 
 

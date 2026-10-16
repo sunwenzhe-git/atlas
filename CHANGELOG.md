@@ -4,6 +4,16 @@
 
 ---
 
+## [v0.1.0-beta.19] - 2026-10-16
+
+### 🔧 生成器抗脆弱增强：动态元素守卫解死锁 + Playwright Strict Mode 兼容 + 登录态幂等保护 (`scripts/gen_e2e_scripts.py`)
+
+- **前置守卫解死锁**：前置在场守卫仅断言 `step[0]` 的操作目标，动态生成的 testid 不再被前置判定死锁；若 `step[0]` 为 `goto`/`refresh` 等无 testid 操作，守卫安全为空。
+- **Strict Mode 鲁棒性兼容**：单体动作与单体状态断言（`click`/`fill`/`visible`/`text` 等）统一发射 `.first()` / `.filter({ hasText: ... }).first()`，彻底消除界面中多实例同名元素导致的 Playwright strict mode violation 异常；`count` 断言保持原样。
+- **登录态持久化保护**：生成器的 `auth setup` 脚本在 `stateFile`（如 `state.json`）已存在且非空时跳过覆写，保护开发者录制或现场生成的真实会话不被重跑覆盖。
+
+---
+
 ### 🔧 包自检门前置降级 —— 缺 `.atlas/tests` 记 `SKIP`，不再恒红 (Issue #17: F53, D91)
 
 **背景（残余面）**：issue #17 的装配面根因（`package.json.files` 漏 `tests` ⇒ 经 npm 装配的项目恒无 `.atlas/tests`）已在本日 beta.18 批（D86/F47）修掉，但 `scripts/atlas_check.py` 的包自检门（`check_factory`）本身**无前置判据**：存量装配（beta.17 及以前发行版的 npm 装配态）与源包开发态（仓根无 `.atlas/`）下 `pytest .atlas/tests` 收集失败（退出码 4）⇒ 全量模式恒红 `FAIL`，而 `--fast` 一跑就 OK——同一扇门两条路给两个相反结论（「红灯训练成噪声」族）。另有一个评审实出的现存假绿：`.atlas/tests` 被**文件**占用（装配损坏）时 pytest 收集 0 条退出码 0 ⇒ 被判 `ok`。
@@ -64,9 +74,6 @@
 **取证**：`tests/test_validators.py` +4（正向 1；坏输入 3：指向不存在文件 ⇒ FAIL / 文件内解析不到该 id ⇒ FAIL / 未登记落点 ⇒ WARN）；另修两处受影响的既有夹具（模板展开用例补落点、adopt 单向子集用例的文件名与落点对齐）。源包 **441 passed / 0 failed / 4 skipped**。`shared/gates.md` 计数登记 98 → 102（该门本轮再次咬合）。采用方端到端变异证明：把一条落点改指不存在的文件 ⇒ 「应然落点」FAIL 并指名；恢复 ⇒ PASS。
 
 ---
-
-## [v0.1.0-beta.19] - 2026-10-16
-
 
 ### 🔧 testid 契约：共享元素「一零件一名」+ 同文件静态常量解析 (Issue #19: F49, D87)
 

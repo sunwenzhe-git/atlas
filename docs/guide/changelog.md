@@ -4,6 +4,92 @@
 
 ---
 
+## [v0.1.0-beta.19] - 2026-10-16
+
+### 🔧 生成器抗脆弱增强：动态元素守卫解死锁 + Playwright Strict Mode 兼容 + 登录态幂等保护 (`scripts/gen_e2e_scripts.py`)
+
+- **前置守卫解死锁**：前置在场守卫仅断言 `step[0]` 的操作目标，动态生成的 testid 不再被前置判定死锁；若 `step[0]` 为 `goto`/`refresh` 等无 testid 操作，守卫安全为空。
+- **Strict Mode 鲁棒性兼容**：单体动作与单体状态断言（`click`/`fill`/`visible`/`text` 等）统一发射 `.first()` / `.filter({ hasText: ... }).first()`，彻底消除界面中多实例同名元素导致的 Playwright strict mode violation 异常；`count` 断言保持原样。
+- **登录态持久化保护**：生成器的 `auth setup` 脚本在 `stateFile`（如 `state.json`）已存在且非空时跳过覆写，保护开发者录制或现场生成的真实会话不被重跑覆盖。
+
+---
+
+### 🔧 包自检门前置降级 —— 缺 `.atlas/tests` 记 `SKIP`，不再恒红 (Issue #17: F53, D91)
+
+**背景（残余面）**：issue #17 的装配面根因（`package.json.files` 漏 `tests` ⇒ 经 npm 装配的项目恒无 `.atlas/tests`）已在本日 beta.18 批（D86/F47）修掉，但 `scripts/atlas_check.py` 的包自检门（`check_factory`）本身**无前置判据**：存量装配（beta.17 及以前发行版的 npm 装配态）与源包开发态（仓根无 `.atlas/`）下 `pytest .atlas/tests` 收集失败（退出码 4）⇒ 全量模式恒红 `FAIL`，而 `--fast` 一跑就 OK——同一扇门两条路给两个相反结论（「红灯训练成噪声」族）。另有一个评审实出的现存假绿：`.atlas/tests` 被**文件**占用（装配损坏）时 pytest 收集 0 条退出码 0 ⇒ 被判 `ok`。
+
+- **前置判据**：`.atlas/tests` **不是目录**（不存在 / 被文件占用）⇒ **`SKIP`**（不进 `failures`、不压垮整体判定），文案两层 = 判据面（实测路径 + 旧发行版装配态 / 源包开发态 / 装配损坏三形态点名）+ 出路（源包 `pytest tests`；项目侧重装走齐 `install.sh` / `atlas upgrade`）。同文件三态先例：`_GATE_PRECONDITIONS` / `GEN_NOT_READY`。
+- **目录在场 ⇒ 行为逐字节不变**：真跑 pytest，真红仍 `FAIL`——降级只吃「断言对象不在场」这一种，防把真失败一并洗绿。
+- **评审（tech-proposal-reviewer，1 blocking + 5 major/minor 修后采纳）**：blocking 件 = `DESIGN.md` D86 曾在根因未修时明文否决「遇缺就 SKIP」——按**收窄**处置而非推翻：D91 单列 + D86 行尾收窄注记，并把「装配面根因（装配三表同步）永远不得改靠 SKIP 吸收」单独立句；其余 = file 形态一道覆盖（上假绿关闭）、pytest 可用性盲区进门册「不查什么」、出路动作词齐组进钉、变异号登记、在场零用例（`no tests ran`）取舍显式化。
+- **钉**：A-1（三形态 SKIP + 出路词齐组：`pytest tests` / `install.sh` / `atlas upgrade`）+ A-2（反面钉：目录在场注入必红 ⇒ 仍 `FAIL`）；变异 **M76**（前置分支置死 ⇒ A-1 红；还原逐字节一致，sha `2494e04f525be144`）。
+- **登记补遗**：发版口径收拢为单版本——本条目一次性收录当日五个批次（F49–F53）的全部内容；另将 F49–F52 批已被占用而未落册的 **D87–D90 四行决策补记进 `DESIGN.md`**（内容自各批提交正文还原）。
+
+**取证**：`tests/test_atlas_check.py` 22 → 24 条全绿；`pytest tests -q` ⇒ **455 passed / 4 skipped**（落地前基线 453 passed / 4 skipped，+2 钉无红）；`scripts/atlas_check.py --fast` 源包态自证 OK；`tests/test_canonical_consistency.py` 9 绿（计数 24 条为 pytest 实收口径）。登记面：`proposals/RFC-20261016-02-factory-gate-precondition.md`（v2 含评审处置 §6）、`shared/gates.md` 2.2 对齐测试行、`DESIGN.md` D91 + D86 收窄注记。
+
+---
+
+### 🔧 `守卫:` 路径 —— 元素齐全守卫在带参页面上不再导航到匹配不上的地址 (Issue #23: F52, D90)
+
+**背景（两条条文合取后不可用）**：契约 §3.1 明定「带参路由取**业务段**」（`/projects` 而非 `/projects/:id`）⇒ 索引页面表 `路由` 列**按设计**不承载路径参数；而生成器 `page_urls()` 把该列当**唯一 URL 来源**，用于用例体开头的**元素齐全守卫**导航。带参页面的守卫因此落到路由匹配不上的地址：页面不渲染 ⇒ 守卫在 `goto` 后即红，用例自身的带参 `goto` 来不及生效。同一列还被 §8.2 的「`goto` 路径 ∈ 页面表」门当**前缀锚**用 ⇒ **一个字段被两种相反语义的用途消费**。
+
+- **契约 §5.5 新增可选标量键 `守卫:`**：值 = 一条具体路径，生成器的**守卫导航**改用它；**缺省回落页面表 `路由` 列** ⇒ **对无参页面逐字节零变化**（零变化承诺同 §5.8）。
+- **值仍不得私藏于分片**：`守卫:` 必须命中页面表 `路由` 列（口径同 §8.2：精确，或**非根路由**的子路径前缀命中）⇒ 新门行 **「守卫 路径 ∈ 页面表」**；判定逻辑抽成 `_route_hit()` 与 `goto` 路径门**共用**（同一套口径，避免两处各写一遍）。
+- **零步基线仍用页面表 `路由`**：本字段是用例级的（同页不同用例可指不同实例），基线是页级产物；基线在带参页面上探不到元素时按「null = 不成立」处理 ⇒ 不产生假阳性。
+- **一处实现坑（已记入内核注释）**：`守卫` 是**标量键**，**不得**登记进 `_support/case_block.py` 的 `_BLOCK_KEYS` —— 该元组内每个键都初始化为 list，入了就变成数组（实测踩到：`case.get("守卫").strip()` 报 `'list' object has no attribute 'strip'`）。
+
+**取证**：新增钉子 4 条 —— 校验器 2（正向 1：`/home/42` 前缀命中 `/home` ⇒ PASS；坏输入 1：页面表外路径 ⇒ FAIL）、生成器 2（**带 `守卫:` ⇒ 守卫导航用该具体路径**；**零变化承诺**：同一用例带/不带 `守卫:` 各生成一次，两份产物**只差那一行**且该行含 `page.goto(`）。源包全量 **453 passed / 0 failed / 4 skipped**。`shared/gates.md` 计数登记 106 → 108（该门本轮第四次咬合）。
+
+---
+
+### 🔧 会话前提：`会话:` 通道 —— 宿主注入型会话态成为可声明、可隔离、可机检的前提 (Issue #13: F51, D89)
+
+**背景（现场实证）**：有类需求的**被测属性本身就是**「会话被宿主以某个注入参数载入 ⇒ 界面呈相应形态」（身份 / 租户 / 管控 / 灰度类标记）。契约原无通道：`goto` 带 `?` 即 FAIL（§5.7/§8.2）、`auth` 只管登录态、`seed:` 绑数据实体 ⇒ 这类用例只能写成散文 `precondition`，而断言在初始态即成立 ⇒ 撞 §5.6 R9 恒真禁制，两条豁免通道又都不适用。
+
+- **契约 §5.5 新增可选字段 `会话:`**（`- <键>=<值>`）：**前提构造，等同 `step`**；生成器编译为**首屏导航前**注册的 `addInitScript`，写入 **`sessionStorage`**。
+  - 为何是 `sessionStorage`（用户裁定 Q1-A）：`storageState` 只覆盖 localStorage，而它跳标签页 / 跳用例持续 ⇒ 会污染后续用例（含「不传参 ⇒ 保持可用」类**对照用例**）。代码注释里写明了这条理由，防后人「优化」成 localStorage。
+  - **与 R9 的关系（关键）**：**零步基线不施加 `会话:`**（基线是独立生成的页级测试体）⇒ 依赖该前提的断言在基线（默认会话）下不成立，R9 自动满足，不必也不得去借 `initial:`。
+- **取值优先级（用户裁定 Q2-C）**：用例声明的值兜底，运行期环境变量 `ATLAS_SESSION_<键规范化>` **优先覆盖**；两者皆空 ⇒ **运行期报错中止**（不静默跑成默认态 = 假绿）。敏感值只经环境进入。
+- **键白名单 = `stack-profile.yaml` 的 `e2e.session_preset.keys`**（`shared/stack-profile.md` §2 新行）：白名单外 / 整段未声明 ⇒ **文本期 FAIL + 生成器中止**（双保险）。白名单是**项目级声明**，正是 §5.7 禁令的边界落点：会话 / 身份 / 权限 / 灰度类注入键是**前提**（与 `app_login` 预置会话同类），**数据实体状态仍只能用真实界面动作达到**——不得把「某个数据对象已存在」走私成会话键。
+- **落点**：`rings/e2e/reference.md` §5.1/§5.5 + `shared/stack-profile.md` §2 + `_support/case_block.py`（`_BLOCK_KEYS` 增 `会话`）+ `_support/stack_profile.py`（`_E2E_SUBBLOCK_KEYS` 增 `session_preset`，并补**块列表**解析：`<键>:` + `- 项`，惰化物化 ⇒ 对既有 profile 零行为变化）+ `scripts/gen_e2e_scripts.py`（`atlasSessionPreset` helper + 发射先于 `page.goto` + 白名单中止）+ `validators/validate_stack_profile.py`（段/键形态两行）+ `validators/validate_e2e_index.py`（门行「会话 取值合法」）。
+
+**取证**：新增钉子 8 条 —— 校验器 4（正向 1 / 坏输入 3）、生成器 4（发射先于首航 / 未声明白名单 ⇒ exit 2 / 键在白名单外 ⇒ exit 2 / **零步基线测试体里不得出现 `atlasSessionPreset`**）。源包 **449 passed / 0 failed / 4 skipped**。`shared/gates.md` 计数登记 102 → 106（该门本轮第三次咬合）。契约字段登记门亦咬合一次：生成器先引用了 `e2e.session_preset` 而 §2 未声明 ⇒ 红，按门要求补契约后才复绿。
+
+---
+
+### 🔧 应然落点：应然 testid 的承载元素成为声明式、可机检的资产 (Issue #20: F50, D88)
+
+> 本批动 `rings/e2e/reference.md` §5.1/§5.5、`_support/case_block.py`、`validators/validate_testids.py`。
+
+**背景（现场实证）**：应然 testid 清单取自 AC 文字，而双向集合门只比「值集合相等」⇒ 一个**永不渲染的死字面量**就能把门凑绿而用例仍红。真实案例：某需求三条应然 id 里有两条所描述的控件在该产品里**根本不存在**（该类型控件在对应面板只渲染一句提示文案），分片却按 AC 文字为它们立了 id；门只会把「前端没这个字面量」报成缺口，**无法指出「这个控件压根没有」**。
+
+- **契约 §5.5 新增可选字段 `落点:`**：行形态 `- <tid> <相对项目根的路径>`，声明应然 id 的承载元素；写明分档与理由：**声明了但不对**（文件不存在 / 文件内解析不到该 id）= 假陈述 ⇒ FAIL；**未登记** = 纪律缺口（存量清零过渡）⇒ WARN。
+- **契约 §5.1 字段表**同步登记该键。
+- **`_support/case_block.py`**：`_BLOCK_KEYS` 增 `落点`（单源解析器是它的唯一入口）。
+- **`validators/validate_testids.py`**：
+  - 新增 `file_testid_decls(clean_text, pages)` —— 把「单文件可解析的 testid 声明」抽成**单源**函数（静态字面量 / 同文件静态常量 + 单层引用 / 可枚举模板 / 命令式注入），`collect_testids_expanded` 与新的落点门**共用**（否则「抽取器看到了、落点门看不到」会成为新的半通状态）；
+  - 新增 `shard_landings(cases, pages)`：按 **tid_owner** 归页（与 `shard_testids` 同规——否则跨页共享元素在市场分片登记、却要按 app 页查）；
+  - 新增门行 **「应然落点」**。
+- **顺带修一处同族缺陷**：`case_testid_usage` 原为**手写行扫描**（只认 `step`/`expected`/`testid` 三个小节键）⇒ 新增一个数组键就会把它的条目误吸进 testid 集合（本轮实测：`testid 命名规范` 报 `home-title web/src/home.html` 为违规名）。已改为走单源 `parse_block`。
+
+**取证**：`tests/test_validators.py` +4（正向 1；坏输入 3：指向不存在文件 ⇒ FAIL / 文件内解析不到该 id ⇒ FAIL / 未登记落点 ⇒ WARN）；另修两处受影响的既有夹具（模板展开用例补落点、adopt 单向子集用例的文件名与落点对齐）。源包 **441 passed / 0 failed / 4 skipped**。`shared/gates.md` 计数登记 98 → 102（该门本轮再次咬合）。采用方端到端变异证明：把一条落点改指不存在的文件 ⇒ 「应然落点」FAIL 并指名；恢复 ⇒ PASS。
+
+---
+
+### 🔧 testid 契约：共享元素「一零件一名」+ 同文件静态常量解析 (Issue #19: F49, D87)
+
+> 本批只动 `rings/e2e/reference.md` §4 与 `validators/validate_testids.py`。**双向集合门的强度未放宽**；新增的只是一条**静态可枚举**的声明形态。
+
+**背景**：采用方现场撞到的形态 —— 同一共享组件在多页 / 多语境渲染同一语义元素，而应然 testid 按页命名；契约原先只承认「恰一处静态字面」（`data-testid={变量}` 对抽取不可见），使「一个零件一个名」这条路在抽取器侧**没有合法声明形态**。已按采用方裁定（跨页也只取一个名）落策略。
+
+- **契约 §4 新增「共享元素取名策略：一零件一名」**：共享元素只取**一个** testid，页面段 = **归属页**（`tid_owner`），不随渲染页变化 ⇒「同一 testid 在多个页面渲染」**合法**（唯一性判据 = **声明处计数**，不是渲染点计数）。契约就此**不采用**「按当前页 slug 派生前缀」的模板机制作为共享元素的默认形态（`${slug}` 模板仍合法，但只用于共享外壳确实按页派生前缀的场合）。
+- **契约 §4 新增「抽取器接受的声明形态」清单**：静态字面量 / **同文件静态字符串常量 + 单层引用** / 可枚举模板字面量 / 命令式注入（`dataset` / `setAttribute`）。**非静态初始化式、跨文件导入、未在本文件声明的标识符一律不解析 ⇒ 报缺失**（宁缺不猜）。
+- **`validators/validate_testids.py`**：新增 `CONST_DECL` + `IDENT_TESTID_ATTR`，把 `const X = 'a-b-c'` … `data-testid={X}` 解析为与字面量**同档**的声明 —— 计入**声明处计数**（跨文件重名照报）、参与双向集合**两侧**判罚（孤儿照判）；同一常量在同文件被引用 ≥2 次计入「同文件重复声明」。
+- **契约 §4「常驻槽位口径」补一句**：占位槽的可交互态应取**与用例断言期望相反**的态（断言 `disabled` 的入口用未禁用占位、断言 `enabled` 的用已禁用占位）——守卫照命中，而真实元素缺席时断言**照样红**，不得以占位元素充当断言证据（假绿通道，`shared/independent-review.md` §2 第 3 条）。
+
+**取证**：`tests/test_validators.py` **+4**（正向 1：常量引用 ⇒ PASS；坏输入 3：非静态初始化式 ⇒ 缺失 FAIL / 跨文件导入 ⇒ 缺失 FAIL / 同常量引两次 ⇒ 同文件重复 WARN 并指名）。源包全量 `pytest tests/ -q` → **437 passed / 0 failed / 4 skipped**。`shared/gates.md` 的 `tests/test_validators.py` 计数登记 **94 → 98**（该门本轮**咬合一次**——按「红检查是证据」改登记而非放宽判据）。
+
+---
+
 ## [v0.1.0-beta.18] - 2026-10-16
 
 

@@ -378,7 +378,12 @@ def ts_case(case: dict, url: str) -> str:
     # 直接拿它导航会落到路由匹配不上的地址，守卫在 goto 后即红。有 `守卫:` 时用它，
     # 缺省回落页面表路由 ⇒ **对无参页面逐字节零变化**。
     guard_url = (case.get("守卫") or "").strip() or url
-    ids = json.dumps(case.get("testid") or [], ensure_ascii=False)
+    first_step_tids = []
+    if case.get("step"):
+        _, first_tid, _, _ = parse_line(case["step"][0])
+        if first_tid:
+            first_step_tids.append(first_tid)
+    ids = json.dumps(first_step_tids, ensure_ascii=False)
     step_note = "\\n".join("//   - " + s for s in case.get("step", []))
     assert_note = "\\n".join("//   - " + s for s in case.get("expected", []))    # 契约 §5.7（2026-09-30）：blocked/skipped ⇒ test.skip（状态真相源 = 索引）。
     state = case.get("_state", "")
@@ -411,24 +416,24 @@ def ts_case(case: dict, url: str) -> str:
         elif verb == "goto":
             actions.append(f"await page.goto('{value}');")
         elif verb == "click":
-            actions.append(f"await page.getByTestId('{tid}').click();")
+            actions.append(f"await page.getByTestId('{tid}').first().click();")
         elif verb == "fill":
-            actions.append(f"await page.getByTestId('{tid}').fill({json.dumps(value, ensure_ascii=False)});")
+            actions.append(f"await page.getByTestId('{tid}').first().fill({json.dumps(value, ensure_ascii=False)});")
         elif verb == "select":
             # 契约 §5.5（B173-1）：发射实现无关 helper，不再钉死原生 `<select>` ——
             # 语义 = 「选中 label 的那一项」，DOM 机制由 helper 按元素自适应。
             actions.append(f"await atlasSelect(page, '{tid}', {json.dumps(value, ensure_ascii=False)});")
         elif verb == "check":
-            actions.append(f"await page.getByTestId('{tid}').check();")
+            actions.append(f"await page.getByTestId('{tid}').first().check();")
         elif verb == "uncheck":
-            actions.append(f"await page.getByTestId('{tid}').uncheck();")
+            actions.append(f"await page.getByTestId('{tid}').first().uncheck();")
         elif verb == "press":
-            actions.append(f"await page.getByTestId('{tid}').press({json.dumps(value)});")
+            actions.append(f"await page.getByTestId('{tid}').first().press({json.dumps(value)});")
         elif verb == "hover":
-            actions.append(f"await page.getByTestId('{tid}').hover();")
+            actions.append(f"await page.getByTestId('{tid}').first().hover();")
         elif verb == "waitFor":
             # 契约 §7.1：带轮询的断言（不得退化为固定等待）
-            loc = f"page.getByTestId('{tid}')"
+            loc = f"page.getByTestId('{tid}').first()"
             if value == "":
                 actions.append(f"await expect({loc}).toBeVisible({{ timeout: ATLAS_WAIT_TIMEOUT_MS }});")
             else:
@@ -454,7 +459,7 @@ def ts_case(case: dict, url: str) -> str:
             if not rel:
                 raise ValueError(f"`upload` 需要 fixtures 相对路径参数: {s!r}（契约 §5.5）")
             actions.append(
-                f"await page.getByTestId('{tid}').setInputFiles("
+                f"await page.getByTestId('{tid}').first().setInputFiles("
                 f"resolve(__dirname, '..', 'fixtures', {json.dumps(rel, ensure_ascii=False)}));"
             )
         else:
@@ -468,19 +473,19 @@ def ts_case(case: dict, url: str) -> str:
         verb, tid, value, _ = parse_line(e)
         v = json.dumps(value, ensure_ascii=False)
         if verb == "text":
-            line = f"await expect(page.getByTestId('{tid}')).toHaveText({v});"
+            line = f"await expect(page.getByTestId('{tid}').first()).toHaveText({v});"
         elif verb == "contains":
-            line = f"await expect(page.getByTestId('{tid}')).toContainText({v});"
+            line = f"await expect(page.getByTestId('{tid}').filter({{ hasText: {v} }}).first()).toBeVisible();"
         elif verb == "count":
             line = f"await expect(page.getByTestId('{tid}')).toHaveCount(Number({v}));"
         elif verb == "visible":
-            line = f"await expect(page.getByTestId('{tid}')).toBeVisible();"
+            line = f"await expect(page.getByTestId('{tid}').first()).toBeVisible();"
         elif verb == "hidden":
-            line = f"await expect(page.getByTestId('{tid}')).toBeHidden();"
+            line = f"await expect(page.getByTestId('{tid}').first()).toBeHidden();"
         elif verb == "enabled":
-            line = f"await expect(page.getByTestId('{tid}')).toBeEnabled();"
+            line = f"await expect(page.getByTestId('{tid}').first()).toBeEnabled();"
         elif verb == "disabled":
-            line = f"await expect(page.getByTestId('{tid}')).toBeDisabled();"
+            line = f"await expect(page.getByTestId('{tid}').first()).toBeDisabled();"
         elif verb == "value":
             # 契约 §5.5（契约 §5.5）：值写作 `""` / `(空)` 时是**空串**，
             # 必须渲染成空串实参 —— 直接 json.dumps 会得到两个字面引号字符，
@@ -492,9 +497,9 @@ def ts_case(case: dict, url: str) -> str:
             # 契约 §5.5（契约 §5.5）：数该元素内的 `option` 子元素个数。
             line = f"await expect(page.getByTestId('{tid}').locator('option')).toHaveCount(Number({v}));"
         elif verb == "checked":
-            line = f"await expect(page.getByTestId('{tid}')).toBeChecked();"
+            line = f"await expect(page.getByTestId('{tid}').first()).toBeChecked();"
         elif verb == "unchecked":
-            line = f"await expect(page.getByTestId('{tid}')).not.toBeChecked();"
+            line = f"await expect(page.getByTestId('{tid}').first()).not.toBeChecked();"
         elif verb == "attr":
             # 契约 §5.5（契约 §5.5）：`attr <testid> <name> <value>`。
             aname, _, aval = value.strip().partition(" ")
@@ -502,7 +507,7 @@ def ts_case(case: dict, url: str) -> str:
             if not aname or not aval:
                 raise ValueError(f"`attr` 需要 `<name> <value>` 两个参数: {raw!r}（契约 §5.5）")
             line = (
-                f"await expect(page.getByTestId('{tid}')).toHaveAttribute("
+                f"await expect(page.getByTestId('{tid}').first()).toHaveAttribute("
                 f"{json.dumps(aname, ensure_ascii=False)}, {json.dumps(aval, ensure_ascii=False)});"
             )
         elif verb == "delta":
@@ -517,9 +522,9 @@ def ts_case(case: dict, url: str) -> str:
             if not case.get("step"):
                 raise ValueError(f"{cid}: delta 相对断言需要至少一条 step（行动前采样点不存在）")
             var = "__delta_" + re.sub(r"[^0-9a-zA-Z]", "_", tid)
-            delta_pre.append(f"const {var} = await atlasIntOf(page.getByTestId('{tid}'));")
+            delta_pre.append(f"const {var} = await atlasIntOf(page.getByTestId('{tid}').first());")
             line = (
-                f"await expect.poll(() => atlasIntOf(page.getByTestId('{tid}')), "
+                f"await expect.poll(() => atlasIntOf(page.getByTestId('{tid}').first()), "
                 f"{{ timeout: ATLAS_WAIT_TIMEOUT_MS }}).toBe({var} + {int(value.strip())});"
             )
         else:
@@ -1418,7 +1423,7 @@ def main() -> int:
             "async function atlasDownload(page, tid, pattern) {\n"
             "  const [download] = await Promise.all([\n"
             "    page.waitForEvent('download', { timeout: ATLAS_WAIT_TIMEOUT_MS }),\n"
-            "    page.getByTestId(tid).click(),\n"
+            "    page.getByTestId(tid).first().click(),\n"
             "  ]);\n"
             "  const name = download.suggestedFilename();\n"
             "  expect(name, `下载文件名 ${name} 不匹配 ${pattern}`).toMatch(atlasGlob(pattern));\n"
@@ -1580,14 +1585,24 @@ def main() -> int:
     elif login_mode == "fabricated":
         # 契约 §5.8（2026-10-12）：纯前端桩项目 —— 不发真实登录请求，直写假令牌。
         # 真实登录语义（换取失败 ⇒ 报错中止）只属 real；fabricated 无凭据面、无网络面。
+        # 幂等守卫：文件存在且非空时跳过覆写，保护开发者录制的真实会话。
         setup_ts = (
             "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py；重跑覆盖。\n"
             "import { test } from '@playwright/test';\n"
-            "import { mkdirSync, writeFileSync } from 'node:fs';\n"
+            "import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';\n"
             "import { dirname } from 'node:path';\n\n"
             "test('atlas auth setup', async () => {\n"
             f"  const storageKey = {json.dumps(storage_key)};\n"
             f"  const stateFile = {json.dumps(state_rel)};\n"
+            "  if (existsSync(stateFile)) {\n"
+            "    try {\n"
+            "      const existing = readFileSync(stateFile, 'utf-8');\n"
+            "      if (existing.trim() && JSON.parse(existing)) {\n"
+            "        console.log('[atlas] 保留已有登录态文件，跳过覆写: ' + stateFile);\n"
+            "        return;\n"
+            "      }\n"
+            "    } catch { /* 损坏文件则重新生成 */ }\n"
+            "  }\n"
             "  console.warn('[atlas] app_login.mode=fabricated：不发真实登录请求，"
             "直写固定假令牌（纯前端桩项目，契约 §5.8）');\n"
             "  const origin = process.env.ATLAS_BASE_URL ?? " + json.dumps(base) + ";\n"
@@ -1603,7 +1618,7 @@ def main() -> int:
         setup_ts = (
             "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py；重跑覆盖。\n"
             "import { test, expect } from '@playwright/test';\n"
-            "import { mkdirSync, writeFileSync } from 'node:fs';\n"
+            "import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';\n"
             "import { dirname } from 'node:path';\n\n"
             "test('atlas auth setup', async ({ request }) => {\n"
             "  const user = process.env.ATLAS_APP_USER;\n"
@@ -1615,6 +1630,15 @@ def main() -> int:
             f"  const storageKey = {json.dumps(storage_key)};\n"
             f"  const stateFile = {json.dumps(state_rel)};\n"
             "  if (!user || !password) {\n"
+            "    if (existsSync(stateFile)) {\n"
+            "      try {\n"
+            "        const existing = readFileSync(stateFile, 'utf-8');\n"
+            "        if (existing.trim() && JSON.parse(existing)) {\n"
+            "          console.log('[atlas] 保留已有登录态文件，跳过覆写: ' + stateFile);\n"
+            "          return;\n"
+            "        }\n"
+            "      } catch { /* 忽略并重置 */ }\n"
+            "    }\n"
             "    console.warn('[atlas] 警告：未设置 ATLAS_APP_USER/ATLAS_APP_PASSWORD ⇒ 跳过登录预置（需要登录态的用例会失败）');\n"
             "    mkdirSync(dirname(stateFile), { recursive: true });\n"
             "    writeFileSync(stateFile, JSON.stringify({ cookies: [], origins: [] }));\n"
