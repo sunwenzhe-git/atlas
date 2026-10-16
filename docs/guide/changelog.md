@@ -4,6 +4,56 @@
 
 ---
 
+## [v0.1.0-beta.18] - 2026-10-16
+
+
+### 🔧 路由适配器识别完整性与挂载前缀合成 · 事实区渲染往返不变式 (Issue #15/#16/#17: F46/F47/F48, D83–D86)
+
+> 本批钉号用 `M-R*` 前缀（与在飞批的 M 号段解耦，避开并发占用）。
+
+* **【routes 适配器：两形态识别 + 挂载前缀合成】（`adapters/routes.py`, `shared/stack-profile.md` §3.2, `rings/structure/reference.md` §4 C + §6.2, `shared/gates.md` 2.1 + §3, `tests/test_adapter_routes.py`；`proposals/RFC-20261016-01`，issue #15；F46 / D83+D84）**：
+  - **候选判据从「文件名」改成「内容」**（数组形态 + JSX `<Route>` 形态，含**同文件嵌套深度栈**）⇒ 模块入口表（`index.*`）不再被静默排除；接入项目实测 **19 → 52 条 / 1 → 10 个源文件**。
+  - **挂载前缀合成**（新增能力）：站点表条目「路径 → 懒加载 / 导入的模块文件」即挂载关系；模块级表的**模块相对**路径必须合成成全站路径后再入表——否则多模块同名路径撞上渲染行键 `(应用, 页面/路由)` 被 `dedup_by_row_key` 折叠成**假事实**（比缺口更糟）。
+  - **歧义口径写死**（评审 F2）：入边 ≥2 / 成环 / 基名不可求值 ⇒ **未解析 + 计数，条目一律不产出**（宁缺不产假路径）；站点级 vs 模块级用**本地证据**（本文件是否挂载了自己的 router）判，**不看 basename**——否则「别名解析失效」会被字面量 basename 兜住（缺陷不可观测），而「无入边 + 无 basename」的模块表会静默退化成站点级、把相对路径泄成全站路径。
+  - **覆盖率出声**：输出 JSON 增 `route_coverage`（契约正文已登记）+ stderr 逐文件列未解析原因；**明确不收**页内 tab 驱动的伪路由（不是路由声明，继续由 agent 语义撰写）。
+  - 钉（均逐字节还原复绿）：**M-R3** 候选闸还原成文件名 / **M-R4** 合成退化为模块相对路径 / **M-R5** 未解析仍产出相对路径 / **M-R6** 别名解析退回尾段字面相等 / **M-R7** 子路由按「无 basename」误判站点级。
+* **【事实区渲染：「写出 ⇒ 读回」不变式 + 渲染即自校】（`scripts/refresh_structure.py`, `rings/structure/reference.md` §6.2, `tests/test_refresh_facts.py`；`proposals/RFC-20261016-01`，issue #16；F47 / D85）**：
+  - 单元格换行 → `<br>`（**保行结构**，不用空格把成员粘起来）+ 裸 `|` 转义 ⇒ 逐单元格往返一致；此前多行取值把一行撑成多行，`parse_rows` 丢首行、跳续行 ⇒ **事实丢行 + 每轮判「新增」**（漂移标记常驻、baseline 棘轮**永不释放**）。真实数据实测：1987 条 / 88 条含换行 ⇒ 修后第二遍 **0 漂移、字节幂等、1939 行全部读回**。
+  - `_norm` 把 `<br>` 与换行视作**等价**（键稳定从此无条件成立）；**渲染即自校**对渲染出的字符串逐单元格比对、与是否写盘解耦（dry-run 同样出品），不一致 ⇒ stderr `WARN[render_table]`。
+  - 钉：**M-R1** 摘掉单行化 / **M-R2** 换行→空格（防「用空格糊过去也算修好」）/ **M-R9** `_norm` 不折叠 `<br>` / **M-R10** 摘掉自校调用（自校必须**活着能咬**）。
+* **【装配面三表同步：`package.json.files` 补 `tests`】（`package.json`, `tests/test_tools.py`；`proposals/RFC-20261016-01`，issue #17；F48 / D86）**：F30 只钉了 `install.sh` ⇔ `pkg_digest` 两张表，**第三张漏了 `tests`** ⇒ npm 分发不含 `tests/` ⇒ 经 npm 全局包装配的项目**恒无** `.atlas/tests` ⇒ `atlas_check` 全量模式的包自检门恒红（采用者自己修不了，而 `--fast` 一跑就 OK）。补 `files` 条目 + 守恒钉第三条腿；钉：**M-R8** 从 `files` 摘掉 `tests` ⇒ `test_f47_npm_files_cover_assembly_list` 红。
+
+### 🚪 走查断链与登录预置两案落地 (Issue #10/#11: RFC-20261015-01/02, 评审修后采纳)
+
+* **【走查与 E2E 控制台：术语交叉指认 + `manual.md` 产出方 + 存在性披露】（`rings/e2e/reference.md` §6.2/§5.4 末/§10 执行纪律/§10.1, `rings/prd/reference.md` §4·八, `shared/gates.md` 2.5, `docs/design/e2e-ring.md`, `scripts/e2e_console.py`, `templates/e2e/console/app.js`, `tests/test_e2e_console.py`；`proposals/RFC-20261015-01`，issue #10；D81）**：
+  - 「走查」一词被两道不同阶段的门共用（跨 `3507 AQ` / `3508 §170` 两份决策记录复用同一 B124 标签）⇒ 读成「硬软自相矛盾」。定案 = **仓库既有的两名各自保留 + 撞车点交叉指认**：`走查单确认门`（硬，= e2e §6.2 前置门）、`验收走查门`（不阻塞后续域）；`rings/e2e/reference.md:383` / `:569` / prd §八 标题下三处互指。**不发明第三名、不全局改名**（波及 7 源文件 + 开户模板节标题，可逆性最差）。明示翻转触发器：确认门连续挡住两批以上需求的 e2e 落笔（gates 台账可查）⇒ 重议改软。
+  - **`manual.md` 定位收窄 = 「控制台盖不住的手工项」**（B124 原话），不是走查单载体——收口走查的符合性对照物明文指向**已确认的 §八 节**（`rings/e2e/reference.md:176`）；issue 的「双写无主」判为**伪冲突**，不建回填协议、不做回指弱关联。
+  - **产出方**：e2e 环在页面表就绪后盘点落项（§10 新增执行纪律 5）；**验收走查现场**新识别的手工项**授权人侧当场直写**（评审补的盲区——现场发现时 e2e 环已收工，无授权落点会让缺陷在运行时复发）；控制台写盘点不变（账本 + 索引）。
+  - **存在性披露**：§5.4 收口走查留痕 README 增**「手工项：N 项 / 已评估：0 / 待评估」**评估行（不发明 §11 新报告行——「评估过没有」是 per-域跨时间状态，不是「每次变更」状态）；控制台 `manual_state: missing` ⇒ meta 行显式「未创建」——「文件缺失 = 空清单不阻塞」保留，但**「没有」与「忘了」不得同形**（**M73**：摘通道 ⇒ `test_manual_absence_is_disclosed_not_silent` 红）。不采纳 issue 的「开户落空 manual.md」：零占位符（`global-rules.md` §5）+ 空文件不区分「评估过为 0」与「忘了」。
+  - **顺序死锁不改门即消解**：§八 的入口来自功能六件套，不依赖 e2e 环的索引页面表；「manual.md 页面列须按压页面表路由」的前置依赖只在把 `manual.md` 当走查载体时才被造出来——不造该依赖（§6.2 补边界句：门只约束「本环不落笔用例」）。
+* **【靶场登录预置：`app_login.mode` 增 `none` + 「段缺失 = 合法降级」撤销（分两阶段升档）】（`shared/stack-profile.md` §2, `rings/e2e/reference.md` §5.8/§7.1, `apply/reference.md` adopt 行/三问门, `templates/stack-profile.yaml`, `scripts/gen_e2e_scripts.py`, `validators/validate_stack_profile.py`, `_support/stack_profile.py`, `tests/` 五文件, `shared/gates.md` 2.2/2.1；`proposals/RFC-20261015-02`，issue #11；D80）**：
+  - **`mode: none` = 靶场无访问门的显式声明**（家族先例 `e2e.mock.mode: off` / `e2e.review.mode: off`——「在 X 段里用 mode 值声明 X 通道不需要」）：不生成登录预置设施（`atlas-auth.setup.ts` 不出、配置无 setup 项目 / storageState）、不打警告；段内五取证字段残留 ⇒ 校验器 FAIL + 生成器报错（与 `fabricated` 的「收窄」相反 = **「全弃」**）；**空段 = 未声明**（**M71**：none 分支仍生成设施 ⇒ `test_setup_mode_none_generates_no_login_facilities` 红）。
+  - **语义改判**：段缺失 = **未声明**（不再是「合法降级」——硬要求（§7.1 登录态（硬））的输入不得靠「缺失即静默放行」吸收）。**分两阶段**：第一阶段 `validate_stack_profile` **WARN 指名**（`app_base_url` 已声明 ⇒ 项目准备真跑；**文案中性**——本器判不了靶场有没有门，不得断言「每次都需人工登录」；未声明 base_url 不提前吹，**M70**）；**第二阶段 = 下一次真跑准备日（时间锚，无条件）** 推给生成器 `not_ready`（退出码 3 + 机读键 `not_ready: "app_login"`，与 `app_base_url` 同通道，SKIP 原因两态扩三态）。**第 1 次咬合（升档依据）= 2026-10-15 现场**（pass1→pass5 会话失效 + 人工登录复用），登记 `gates.md` 2.2「E2E 真跑」行。**连带面明示**：升档日 `生成物最新` 门一并 SKIP 为有意回退；enforcement 点（生成器）与 gate 点（真跑门）解耦是有意设计——迁移窗口内盘上旧脚本不误杀。
+  - **产出方补齐（与 #10 同一病理）**：adopt 开户问数「**靶场接入取证**」（`app_base_url` + 登录形态三选一必须显式——`real` 四值 / `mode: none` / `fabricated` + `storage_key`；凭据只提醒来源，**询问不落盘**）；三问第 3 问判「是」而未声明 ⇒ 兜底追问（UX 加速器，判据正文仍是机器门）。
+  - **`yaml_scalar` null 家族收窄为 YAML 口径**（只认 `null` / `~` / 空；裸 `none` = 合法字符串）：旧口径把裸 `none` 吞成 null ⇒ 缺省判据把它读成 `real`，三态判据静默失效（**M72**；全量回归无受影响夹具）。
+  - **词表守恒补缺**：`APP_LOGIN_MODES` 是唯一无「⊆ 模板 ⊆ 契约正文」守恒钉的 MODES 族（`SEED_MODES` / `ORIGINS` / `RUNNERS` 都有）⇒ 本批补上（`test_validators.py` 89→**91** 条 / `test_gen_e2e_scripts.py` 53→**55** 条）。变异 **M69**（none 字段互斥卸恒真 ⇒ 残留夹具变绿）。
+  - **升档迁移动作（存量项目）**：`app_base_url` 已声明 + `app_login` 缺失的项目，在升档日前**加一行** `app_login: {mode: none}`（无门）或补齐 `real` 四值（有门）；`real/fabricated` 已声明的项目零影响。
+* 两方案评审 = tech-proposal-reviewer 子代理「**修后采纳**」（v2 各按其修正点落地：修 3 处事实错误 / 重写自相矛盾的升档条件 / 指定机读键 / 换出更省的留痕落点；完整修订记录见两份 RFC 文末）；设计记录 = `DESIGN.md` D80 / D81；全量 **418 passed / 4 skipped**（bun 执行级 skip 为既有），canonical 一致性全绿。
+
+### 🧩 用例 ID 文法单源与 `PAGE` 段推导写全 (Issue #14: F45, D82)
+
+* **【`PAGE` 段推导写全 + 文法单源 + 无裸正则普查钉】（`rings/e2e/reference.md` §5.3, `_support/case_id.py`, `validators/validate_e2e_index.py`, `scripts/e2e_console.py`, `templates/e2e/e2e-index.md`, `templates/e2e/case-shard.md`, `tests/test_validators.py`, `tests/test_e2e_console.py`, `tests/test_tools.py`, `shared/gates.md`；issue #14；D82）**：
+  - **契约写全推导**：§5.3 原只写「`PAGE` = 页面 slug 的**大写**」，多段 slug 无解 ⇒ 补「**只做大小写变换、不做分段变换**」——连字符原样保留、不设收敛、不设 `slug → PAGE` 映射表；单段 / 多段各给一例，并写出机器可读形态。`slug.upper()` 即 `PAGE`，故 `PAGE` 段与 slug 双向可推，「全站唯一由 `PAGE` 段保证」自然成立。
+  - **文法单源**：同一文法体原在索引校验器与控制台两处各存一份、各自只支持单段（前者 `ID 格式` 门对多段 slug 恒红，后者从生成产物反查用例 ID 时静默取不到）⇒ 经 `_support/case_id.py` 收敛为唯一实现（同语言逐字节双拷贝的单源先例 = `_support/case_block.py`）。**锚点仍各留**：整格判定（`^…$`）与「从生成产物取 ID 前缀」不是同一判定，不合并。载体已就位（`_support` 已在装配白名单、`load_module` 已泛化查找、两消费方已 `import`）⇒ 新增 1 文件 + 2 处取用，**不动**装配与加载机制。
+  - **无裸正则污染门**（`tests/test_tools.py`，**M75** 咬合）：① 文法持有者集合恰为 `{_support/case_id.py}` —— 判据按**常量内容**（含 `E2E-` 且含三位尾号锚）而非固定子串，故字符类等价改写（`[A-Z\d]`）、相邻字符串拼接、更松的 `\w+` 形态一并被咬；② 实际取用者 ⇔ `CONSUMERS` 登记面，两个方向都红。**已知残留已登记**：把文法拆到多个常量再拼装、或经 `re.escape` 构造的写法仍绕过（属刻意构造，与「按源码文本找正则」路线的边界一致）。
+  - **反向两态留档**（`global-rules.md` §6）：**M74** 把单源文法改回单段 ⇒ 文法钉子红、逐字节还原后复绿；**M75** 在普查面内注入自写裸正则 ⇒ 普查钉红、删除后复绿。两态均断言「注入前基线 GREEN / 注入前字节确实改变且锚点恰好命中 1 次 / 还原后 sha 相同」。
+  - **不新增报响门**：控制台取不到 node id 时下游已返回 409（不是假绿通道）；立门会在「生成前的合法中途态」假红（`未就绪 ≠ 失败` 同族）且触 §12 先量。本批只对齐文法。
+  - **模板占位符**给形态引导（`PAGE` = 页 slug 的大写原文），脚手架不再留白。
+  - **实测**：源包 `pytest tests/ -q` = `423 passed, 4 skipped`（本批净增 5 条）；本项目 `validate_e2e_index.py` 的 `ID 格式` 门由 FAIL 转 PASS，6 条存量 ID 一条未改（零迁移）；其余门逐项同态。
+  - 被否：纯同步钉（不共享实现 —— 把登记面内的漂移留给守卫，而跨语言对才用同步钉）；收敛为单段（各读数实测碰撞或丢双射，且需新增映射表）；顺手统一 `AC_RE`（PRD 环明文禁止多段 `CODE`，单段是有意收紧）。
+
+---
+
 ## [v0.1.0-beta.17] - 2026-10-15
 
 

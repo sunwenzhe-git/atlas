@@ -4,7 +4,7 @@
 
 ---
 
-## [v0.1.0-beta.19] - 2026-10-16
+## [v0.1.0-beta.18] - 2026-10-16
 
 
 ### 🔧 路由适配器识别完整性与挂载前缀合成 · 事实区渲染往返不变式 (Issue #15/#16/#17: F46/F47/F48, D83–D86)
@@ -22,9 +22,6 @@
   - `_norm` 把 `<br>` 与换行视作**等价**（键稳定从此无条件成立）；**渲染即自校**对渲染出的字符串逐单元格比对、与是否写盘解耦（dry-run 同样出品），不一致 ⇒ stderr `WARN[render_table]`。
   - 钉：**M-R1** 摘掉单行化 / **M-R2** 换行→空格（防「用空格糊过去也算修好」）/ **M-R9** `_norm` 不折叠 `<br>` / **M-R10** 摘掉自校调用（自校必须**活着能咬**）。
 * **【装配面三表同步：`package.json.files` 补 `tests`】（`package.json`, `tests/test_tools.py`；`proposals/RFC-20261016-01`，issue #17；F48 / D86）**：F30 只钉了 `install.sh` ⇔ `pkg_digest` 两张表，**第三张漏了 `tests`** ⇒ npm 分发不含 `tests/` ⇒ 经 npm 全局包装配的项目**恒无** `.atlas/tests` ⇒ `atlas_check` 全量模式的包自检门恒红（采用者自己修不了，而 `--fast` 一跑就 OK）。补 `files` 条目 + 守恒钉第三条腿；钉：**M-R8** 从 `files` 摘掉 `tests` ⇒ `test_f47_npm_files_cover_assembly_list` 红。
-
-## [v0.1.0-beta.18] - 2026-10-16
-
 
 ### 🚪 走查断链与登录预置两案落地 (Issue #10/#11: RFC-20261015-01/02, 评审修后采纳)
 
