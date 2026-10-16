@@ -4,6 +4,24 @@
 
 ---
 
+## [v0.1.0-beta.21] - 2026-10-16
+
+
+### 🔧 会话前提：`会话:` 通道 —— 宿主注入型会话态成为可声明、可隔离、可机检的前提 (Issue #13: F51, D89)
+
+**背景（现场实证）**：有类需求的**被测属性本身就是**「会话被宿主以某个注入参数载入 ⇒ 界面呈相应形态」（身份 / 租户 / 管控 / 灰度类标记）。契约原无通道：`goto` 带 `?` 即 FAIL（§5.7/§8.2）、`auth` 只管登录态、`seed:` 绑数据实体 ⇒ 这类用例只能写成散文 `precondition`，而断言在初始态即成立 ⇒ 撞 §5.6 R9 恒真禁制，两条豁免通道又都不适用。
+
+- **契约 §5.5 新增可选字段 `会话:`**（`- <键>=<值>`）：**前提构造，等同 `step`**；生成器编译为**首屏导航前**注册的 `addInitScript`，写入 **`sessionStorage`**。
+  - 为何是 `sessionStorage`（用户裁定 Q1-A）：`storageState` 只覆盖 localStorage，而它跳标签页 / 跳用例持续 ⇒ 会污染后续用例（含「不传参 ⇒ 保持可用」类**对照用例**）。代码注释里写明了这条理由，防后人「优化」成 localStorage。
+  - **与 R9 的关系（关键）**：**零步基线不施加 `会话:`**（基线是独立生成的页级测试体）⇒ 依赖该前提的断言在基线（默认会话）下不成立，R9 自动满足，不必也不得去借 `initial:`。
+- **取值优先级（用户裁定 Q2-C）**：用例声明的值兜底，运行期环境变量 `ATLAS_SESSION_<键规范化>` **优先覆盖**；两者皆空 ⇒ **运行期报错中止**（不静默跑成默认态 = 假绿）。敏感值只经环境进入。
+- **键白名单 = `stack-profile.yaml` 的 `e2e.session_preset.keys`**（`shared/stack-profile.md` §2 新行）：白名单外 / 整段未声明 ⇒ **文本期 FAIL + 生成器中止**（双保险）。白名单是**项目级声明**，正是 §5.7 禁令的边界落点：会话 / 身份 / 权限 / 灰度类注入键是**前提**（与 `app_login` 预置会话同类），**数据实体状态仍只能用真实界面动作达到**——不得把「某个数据对象已存在」走私成会话键。
+- **落点**：`rings/e2e/reference.md` §5.1/§5.5 + `shared/stack-profile.md` §2 + `_support/case_block.py`（`_BLOCK_KEYS` 增 `会话`）+ `_support/stack_profile.py`（`_E2E_SUBBLOCK_KEYS` 增 `session_preset`，并补**块列表**解析：`<键>:` + `- 项`，惰化物化 ⇒ 对既有 profile 零行为变化）+ `scripts/gen_e2e_scripts.py`（`atlasSessionPreset` helper + 发射先于 `page.goto` + 白名单中止）+ `validators/validate_stack_profile.py`（段/键形态两行）+ `validators/validate_e2e_index.py`（门行「会话 取值合法」）。
+
+**取证**：新增钉子 8 条 —— 校验器 4（正向 1 / 坏输入 3）、生成器 4（发射先于首航 / 未声明白名单 ⇒ exit 2 / 键在白名单外 ⇒ exit 2 / **零步基线测试体里不得出现 `atlasSessionPreset`**）。源包 **449 passed / 0 failed / 4 skipped**。`shared/gates.md` 计数登记 102 → 106（该门本轮第三次咬合）。契约字段登记门亦咬合一次：生成器先引用了 `e2e.session_preset` 而 §2 未声明 ⇒ 红，按门要求补契约后才复绿。
+
+---
+
 ## [v0.1.0-beta.20] - 2026-10-16
 
 

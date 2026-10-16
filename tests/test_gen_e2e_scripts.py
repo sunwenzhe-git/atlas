@@ -143,6 +143,63 @@ def zs_probes(spec_text: str, page: str = "home") -> list[dict]:
     return json.loads(m.group(1))["probes"]
 
 
+# ── issue #13（2026-10-16）：`会话:` 的发射与零步基线隔离 ────────────────────
+PROFILE_SESSION = PROFILE + "  session_preset:\n    keys:\n      - env\n"
+SESSION_CASE = CASE.replace("step:", "会话:\n  - env=staging\nstep:", 1)
+
+
+def test_session_preset_emitted_before_first_goto() -> None:
+    """`会话:` 编译为 addInitScript 注册，且必须**先于首屏 `page.goto`**。
+
+    变异证明：把 `session_open` 挪到 `page.goto` 之后 ⇒ 本用例红（addInitScript 只对未来
+    导航生效，后注 = 首屏拿不到会话态 = 用例实际在默认态下跑）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=SESSION_CASE, profile=PROFILE_SESSION)
+        assert run(root, "--apply").returncode == 0
+        text = spec_of(root)
+        assert "await atlasSessionPreset(page," in text, text[:600]
+        # 比较必须限定在**该用例体**内（页头里也有 `await page.goto(` —— 基线 helper）
+        seg = text[text.index("E2E-HOME-001"):]
+        assert seg.index("await atlasSessionPreset(page,") < seg.index("await page.goto("), seg[:400]
+
+
+def test_session_preset_without_whitelist_aborts() -> None:
+    """坏输入：项目未声明 `e2e.session_preset.keys` ⇒ 生成器 exit 2（不猜、不静默降级）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=SESSION_CASE, profile=PROFILE)
+        r = run(root, "--apply")
+        assert r.returncode == 2, (r.returncode, r.stdout + r.stderr)
+        assert "会话" in r.stderr, r.stderr
+
+
+def test_session_preset_key_outside_whitelist_aborts() -> None:
+    """坏输入：键在白名单外 ⇒ 生成器 exit 2。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=SESSION_CASE,
+             profile=PROFILE + "  session_preset:\n    keys:\n      - otherFlag\n")
+        r = run(root, "--apply")
+        assert r.returncode == 2, (r.returncode, r.stdout + r.stderr)
+        assert "白名单" in r.stderr, r.stderr
+
+
+def test_zero_step_baseline_carries_no_session() -> None:
+    """零步基线**不施加** `会话:`（前提构造不计入基线）——护栏：基线测试体里不得出现
+    `atlasSessionPreset`。否则依赖会话前提的断言会在基线（默认会话）下成立 ⇒ 恒真门误报。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=SESSION_CASE, profile=PROFILE_SESSION)
+        assert run(root, "--apply").returncode == 0
+        text = spec_of(root)
+        marker = "test('test_home__zero_step_baseline'"
+        assert marker in text, text[:600]
+        baseline_body = text.split(marker, 1)[1].split("\ntest(", 1)[0]
+        assert "atlasSessionPreset" not in baseline_body, baseline_body
+
+
 def test_retired_python_runner_rejected() -> None:
     """单轨化（B201-4 / 3507 BO）：`python-playwright` 已退役——显式声明 ⇒ 生成器 exit 2
     响亮拒绝（不静默改行为）；校验器侧同判（`test_validators.py` 的 runner 枚举钉）。

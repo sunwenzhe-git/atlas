@@ -470,6 +470,47 @@ def test_testids_pass() -> None:
         assert vt.validate(root).status == "PASS"
 
 
+# ── issue #13（2026-10-16）：会话预设（`会话:` 行 + 项目侧键白名单）────────────────
+SESSION_CASE = CASE_GOOD.replace("step:", "会话:\n  - env=staging\nstep:", 1)
+
+
+def _ve_rows(case: str, profile_extra: str = "") -> dict:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        if profile_extra:
+            p = root / "product" / "stack-profile.yaml"
+            p.write_text(p.read_text(encoding="utf-8") + profile_extra, encoding="utf-8")
+        mk_cases(root, case)
+        mk_index(root)
+        return {c["check"]: c for c in ve.validate(root).checks}
+
+
+def test_session_preset_in_whitelist_passes() -> None:
+    """正向：键在 `e2e.session_preset.keys` 白名单内 ⇒ 「会话 取值合法」PASS。"""
+    rows = _ve_rows(SESSION_CASE, "e2e:\n  session_preset:\n    keys:\n      - env\n")
+    assert rows["会话 取值合法"]["level"] == "PASS", rows["会话 取值合法"]
+
+
+def test_session_preset_without_whitelist_fails() -> None:
+    """坏输入 1：项目未声明 `e2e.session_preset.keys` ⇒ 该靶场不允许会话预设 ⇒ FAIL。"""
+    rows = _ve_rows(SESSION_CASE)
+    assert rows["会话 取值合法"]["level"] == "FAIL", rows["会话 取值合法"]
+
+
+def test_session_preset_key_outside_whitelist_fails() -> None:
+    """坏输入 2：键在白名单外（白名单只放了别的键）⇒ FAIL（防把数据态走私成会话参数）。"""
+    rows = _ve_rows(SESSION_CASE, "e2e:\n  session_preset:\n    keys: [otherFlag]\n")
+    assert rows["会话 取值合法"]["level"] == "FAIL", rows["会话 取值合法"]
+
+
+def test_session_preset_malformed_line_fails() -> None:
+    """坏输入 3：`会话:` 行缺 `=` ⇒ FAIL。"""
+    rows = _ve_rows(CASE_GOOD.replace("step:", "会话:\n  - env\nstep:", 1),
+                    "e2e:\n  session_preset:\n    keys:\n      - env\n")
+    assert rows["会话 取值合法"]["level"] == "FAIL", rows["会话 取值合法"]
+
+
 def test_testids_mismatch_fail() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)

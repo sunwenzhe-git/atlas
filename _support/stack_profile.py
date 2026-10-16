@@ -24,7 +24,7 @@ _DEFAULTS: dict = {
 # 值 = 空映射的顶层段（解析时直接初始化 dict，供后续缩进行填充）
 _DICT_SECTIONS = ("graph", "backend_test")
 # `e2e` 下「缩进 2 且值为空」开子块的键（§2 e2e 表；`app_login` / `seed` / `mock` / `review`）
-_E2E_SUBBLOCK_KEYS = ("app_login", "seed", "mock", "review")
+_E2E_SUBBLOCK_KEYS = ("app_login", "seed", "mock", "review", "session_preset")
 
 
 def strip_inline_comment(line: str) -> str:
@@ -71,6 +71,7 @@ def parse_profile(text: str) -> dict:
     data["adapters"] = {}
     section = None
     cur = None
+    pending_list_key = None   # 块列表头候选（`keys:` + `- 项`，见下）
     for raw in text.splitlines():
         line = strip_inline_comment(raw.rstrip())
         s = line.strip()
@@ -102,6 +103,19 @@ def parse_profile(text: str) -> dict:
                 cur[m.group(1)] = yaml_scalar(m.group(2))
         elif section in ("adapters", "prototype", "e2e", "backend_test") \
                 or (section == "graph" and isinstance(data["graph"], dict)):
+            # 块列表项（`shared/stack-profile.md` §2 的 `e2e.session_preset.keys` 族，2026-10-16）：
+            # 形态 = `<键>:` 后跟若干更深缩进的 `- 项`。旧实现不支持 ⇒ 列表头被读成 None。
+            # **惰化物化**：只有当真有 `- 项` 行到达时才把 None 改成 list
+            # （⇒ 对既有 profile 的「空值 = None」语义零行为变化）。
+            m_item = re.match(r"^\s*-\s*(.+?)\s*$", line)
+            if m_item and section == "e2e" and cur is not None and pending_list_key is not None:
+                bucket = data[section][cur].get(pending_list_key)
+                if bucket is None:
+                    bucket = []
+                    data[section][cur][pending_list_key] = bucket
+                if isinstance(bucket, list):
+                    bucket.append(yaml_scalar(m_item.group(1)))
+                continue
             m = re.match(r"^\s+([\w.-]+):\s*(.*?)\s*$", line)
             if m:
                 if section == "graph":
@@ -118,7 +132,10 @@ def parse_profile(text: str) -> dict:
                     continue
                 if cur is not None and indent > 2:
                     data[section][cur][key] = v
+                    # 空值 = 块列表头候选；有值时清掉候选
+                    pending_list_key = key if v is None else None
                     continue
                 cur = None
+                pending_list_key = None
                 data[section][key] = v
     return data

@@ -48,6 +48,9 @@ GRAPH_KEYS = ("backend", "pinned")
 # mode：enforce（缺省 = 现行为，每用例运行期播种）/ declare（只对账不发射，B197-1，2026-10-07）。
 SEED_KEYS = ("hook", "mode")
 SEED_MODES = ("declare", "enforce")
+# 会话预设段（`shared/stack-profile.md` §2 / `rings/e2e/reference.md` §5.5，2026-10-16，issue #13）
+SESSION_PRESET_KEYS = ("keys",)
+SESSION_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.\-]*$")
 # 网络边界打桩通道词表（`shared/stack-profile.md` §2 `e2e.mock` 段同源，rings/e2e §5.8；
 # 2026-10-12）。mode：off（缺省 = 现行为：mock: 行即 FAIL，防全后端项目误用）/ on（放行）/ auto（混合穿透）。
 MOCK_KEYS = ("mode", "api_prefix", "fixtures_dir")
@@ -182,6 +185,29 @@ def validate(root: Path) -> Result:
     else:
         res.add("e2e.seed（可选段）", "PASS",
                 "未声明 = 合法降级（mode 缺省 enforce；hook 未声明 ⇒ 生成期 WARN + 运行期警告）")
+
+    # 契约 `rings/e2e/reference.md` §5.5 / `shared/stack-profile.md` §2（2026-10-16，issue #13）：
+    # **会话预设键白名单**。段缺失 / 空 = 该靶场不允许任何会话预设（用例出现 `会话:` 行 ⇒
+    # 文本期 FAIL + 生成器中止双保险）。白名单是**项目级声明**，它把「哪些宿主注入键可预设」
+    # 收在项目侧，防把「数据态」走私成会话参数（§5.7 的禁令不破）。
+    session_preset = e2e_prof.get("session_preset") if isinstance(e2e_prof, dict) else None
+    if isinstance(session_preset, dict) and session_preset:
+        unknown_keys = [k for k in session_preset if k not in SESSION_PRESET_KEYS]
+        res.add("e2e.session_preset 键白名单", "PASS" if not unknown_keys else "FAIL",
+                f"未知键={unknown_keys} 允许={list(SESSION_PRESET_KEYS)}")
+        keys = session_preset.get("keys")
+        if not isinstance(keys, list) or not keys:
+            res.add("e2e.session_preset.keys 形态", "FAIL",
+                    f"值={keys!r}（应为非空列表；空 / 缺失 = 不允许任何会话预设，与整段不声明同义）")
+        else:
+            bad_keys = [str(k) for k in keys if not SESSION_KEY_RE.match(str(k))]
+            res.add("e2e.session_preset.keys 形态", "PASS" if not bad_keys else "FAIL",
+                    f"非法键={bad_keys}（须匹配 ^[A-Za-z][A-Za-z0-9_.\\-]*$）")
+    elif session_preset:
+        res.add("e2e.session_preset 段形态", "FAIL", f"值={session_preset!r}（应为映射或 null）")
+    else:
+        res.add("e2e.session_preset（可选段）", "PASS",
+                "未声明 = 不允许任何会话预设（用例出现 `会话:` 行 ⇒ 校验器 FAIL + 生成器中止）")
 
     app_login = e2e_prof.get("app_login") if isinstance(e2e_prof, dict) else None
     if isinstance(app_login, dict) and app_login:

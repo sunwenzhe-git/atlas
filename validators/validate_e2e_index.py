@@ -56,6 +56,7 @@ from _support.siblings import load_module  # noqa: E402
 parse_block = load_module("case_block").parse_block
 # 用例 ID 文法体单源（正文归 rings/e2e/reference.md §5.3；锚点本处自留）
 case_id = load_module("case_id")
+stack_profile = load_module("stack_profile")
 
 MAIN_COLUMNS = ["用例ID", "页面", "中文标题", "类型", "关联AC", "需求", "状态", "状态原因", "分片"]
 REV_COLUMNS = ["页面", "断言落点用例", "链路经过用例"]
@@ -588,6 +589,19 @@ def validate(root: Path) -> Result:
     verb_bad, assert_bad, goto_param, contradict = [], [], [], []
     goto_path: list[str] = []
     auth_bad: list[str] = []
+    session_bad: list[str] = []
+    # 会话预设键白名单（契约 §5.5 / `shared/stack-profile.md` §2，2026-10-16，issue #13）。
+    # 段缺失 / keys 为空 ⇒ 该靶场不允许任何会话预设（用例出现 `会话:` 行即 FAIL）。
+    _prof_path = root / "product" / "stack-profile.yaml"
+    _session_keys: set[str] = set()
+    if _prof_path.is_file():
+        try:
+            _e2e_cfg = stack_profile.parse_profile(_prof_path.read_text(encoding="utf-8")).get("e2e") or {}
+            _sp_cfg = _e2e_cfg.get("session_preset") if isinstance(_e2e_cfg, dict) else None
+            if isinstance(_sp_cfg, dict):
+                _session_keys = {str(k).strip() for k in (_sp_cfg.get("keys") or []) if str(k).strip()}
+        except Exception:
+            _session_keys = set()
     nested_prefix, unchanged_no_action = [], []
     initial_no_reason = []
     after_bad = []
@@ -639,6 +653,22 @@ def validate(root: Path) -> Result:
         auth = d.get("auth", "preset")
         if auth not in ("preset", "none"):
             auth_bad.append(f"{g['用例ID']}:auth={auth}")
+        # 契约 §5.5（2026-10-16 补，issue #13）：`会话:` 行形态 + 键白名单。
+        # 与生成器中止**双保险**（文本期挡 + 生成期中止）：白名单是项目级声明，
+        # 防把「数据态」走私成会话参数（§5.7 禁令不破）。
+        for entry in d.get("会话") or []:
+            code = entry.split("#", 1)[0].strip()
+            if "=" not in code:
+                session_bad.append(f"{g['用例ID']}:缺 `=` → {code}")
+                continue
+            k, v = code.split("=", 1)
+            k, v = k.strip(), v.strip()
+            if not k or not v:
+                session_bad.append(f"{g['用例ID']}:键或值为空 → {code}")
+                continue
+            if k not in _session_keys:
+                session_bad.append(
+                    f"{g['用例ID']}:{k}（不在 e2e.session_preset.keys，白名单={sorted(_session_keys)}）")
         # 契约 §5.6 R7（2026-09-23 补；**2026-09-25 修正为真矛盾对**）：同一条用例内，对同一
         # testid 不得既断言「可见 / 有文案」又断言「不可见」—— 否则必有一条永远为真（假绿）。
         #
@@ -799,6 +829,8 @@ def validate(root: Path) -> Result:
     res.add("goto 不带查询参数", "PASS" if not goto_param else "FAIL", f"依原型调试参数的用例={_format_list(goto_param)}")
     res.add("goto 路径 ∈ 页面表", "PASS" if not goto_path else "FAIL", f"页面表外路径={_format_list(goto_path)}")
     res.add("auth 取值合法", "PASS" if not auth_bad else "FAIL", f"白名单外（允许 preset|none）={_format_list(auth_bad)}")
+    res.add("会话 取值合法", "PASS" if not session_bad else "FAIL",
+            f"形态非法 / 白名单外={_format_list(session_bad)}（契约 §5.5：键须在 `e2e.session_preset.keys` 内）" if session_bad else "")
     res.add("断言不自相矛盾", "PASS" if not contradict else "FAIL",
             f"同一 testid 既断言可见又断言不可见={_format_list(contradict)}")
     res.add("expected 动词合法", "PASS" if not assert_bad else "FAIL", f"词表外={_format_list(assert_bad)}")

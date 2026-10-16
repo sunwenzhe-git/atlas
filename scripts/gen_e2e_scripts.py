@@ -362,12 +362,20 @@ def render_reverse_view(index_text: str, cases: dict) -> str | None:
     return index_text.split(REV_TITLE, 1)[0].rstrip("\n") + "\n\n" + "\n".join(out) + "\n"
 
 
+def session_env_name(key: str) -> str:
+    """会话键 → 运行期覆盖用的环境变量名（`ATLAS_SESSION_<规范化键>`）。
+
+    契约 §5.5（2026-10-16，issue #13）：取值优先级 = **运行期环境变量 > 用例声明值**；
+    两者皆空 ⇒ 报错中止（不静默跑成默认态 = 假绿）。同 `app_login` 的凭据纪律：敏感值只经环境进入。
+    """
+    return "ATLAS_SESSION_" + re.sub(r"[^0-9A-Za-z]+", "_", key).strip("_").upper()
+
+
 def ts_case(case: dict, url: str) -> str:
     cid = case["id"]
     ids = json.dumps(case.get("testid") or [], ensure_ascii=False)
     step_note = "\\n".join("//   - " + s for s in case.get("step", []))
-    assert_note = "\\n".join("//   - " + s for s in case.get("expected", []))
-    # 契约 §5.7（2026-09-30）：blocked/skipped ⇒ test.skip（状态真相源 = 索引）。
+    assert_note = "\\n".join("//   - " + s for s in case.get("expected", []))    # 契约 §5.7（2026-09-30）：blocked/skipped ⇒ test.skip（状态真相源 = 索引）。
     state = case.get("_state", "")
     state_reason = case.get("_state_reason", "")
     if state in ("blocked", "skipped"):
@@ -542,10 +550,18 @@ def ts_case(case: dict, url: str) -> str:
     if case.get("_mock") is not None:
         mock_open = ("  const __mock = await atlasMockTable(page, "
                      + json.dumps(case["_mock"], ensure_ascii=False) + ");\n")
+    # 契约 §5.5 `会话:`（2026-10-16，issue #13）：**前提构造**——写进 sessionStorage 的
+    # addInitScript 必须在首屏 `page.goto` **之前**注册（addInitScript 只对未来导航生效）。
+    # 本调用也必须在元素齐全守卫之前（守卫读的就是该会话态下的 DOM）。
+    session_open = ""
+    if case.get("_session"):
+        session_open = ("  await atlasSessionPreset(page, "
+                        + json.dumps(case["_session"], ensure_ascii=False) + ");\n")
     body = (
         f"test({json.dumps(cid + ' ' + (case.get('_title') or ''), ensure_ascii=False)}, async ({{ page }}) => {{\n"
         f"  {step_note}\n  {assert_note}\n"
         f"{mock_open}"
+        f"{session_open}"
         f"  await page.goto('{url}');\n"
         f"  for (const id of {ids}) {{\n    await expect(page.getByTestId(id)).toHaveCount(1);\n  }}\n"
         f"{indented}\n}});\n"
@@ -1130,6 +1146,49 @@ def main() -> int:
             print(f"  - {b}", file=sys.stderr)
         print(f"  共 {len(bad_mock)} 条", file=sys.stderr)
         return 2
+    # 契约 §5.5 `会话:`（2026-10-16，issue #13）：宿主注入型会话前提。
+    # 机器面双保险（与「文本期门」同源）：键必须在 `e2e.session_preset.keys` 白名单内——
+    # 白名单是**项目级声明**，防把「数据态」走私成会话参数（§5.7 的禁令不破）；
+    # 白名单缺失 / 键不在表内 / 行无 `=` / 空键空值 ⇒ 报错中止（不猜、不静默降级）。
+    preset_cfg = e2e.get("session_preset") if isinstance(e2e, dict) else None
+    preset_keys = set()
+    if isinstance(preset_cfg, dict):
+        preset_keys = {str(k).strip() for k in (preset_cfg.get("keys") or []) if str(k).strip()}
+    bad_session: list[str] = []
+    for items in cases.values():
+        for c in items:
+            c["_session"] = None
+            entries = c.get("会话") or []
+            if not entries:
+                continue
+            if not preset_keys:
+                bad_session.append(
+                    f"{c['id']}: 出现 `会话:` 行，但 stack-profile 未声明 `e2e.session_preset.keys`"
+                    "（该靶场不允许任何会话预设；契约 §5.5）")
+                continue
+            parsed: dict[str, dict[str, str]] = {}
+            for entry in entries:
+                if "=" not in entry:
+                    bad_session.append(f"{c['id']}: `会话:` 行缺 `=`：{entry!r}")
+                    continue
+                k, v = entry.split("=", 1)
+                k, v = k.strip(), v.strip()
+                if not k or not v:
+                    bad_session.append(f"{c['id']}: `会话:` 行键或值为空：{entry!r}")
+                    continue
+                if k not in preset_keys:
+                    bad_session.append(
+                        f"{c['id']}: 会话键 {k!r} 不在 `e2e.session_preset.keys` 白名单内（={sorted(preset_keys)}）")
+                    continue
+                parsed[k] = {"value": v, "env": session_env_name(k)}
+            if parsed:
+                c["_session"] = parsed
+    if bad_session:
+        print("ERROR: `会话:` 行不合法（契约 rings/e2e/reference.md §5.5）：", file=sys.stderr)
+        for b in bad_session[:40]:
+            print(f"  - {b}", file=sys.stderr)
+        print(f"  共 {len(bad_session)} 条", file=sys.stderr)
+        return 2
     # upload fixture 引用闭环（契约 §5.5，B201-1，2026-10-12）：值 = 相对
     # `product/e2e/fixtures/` 的文件路径（与 §5.8 mock 同基线、同一 fixtures 树）。
     # 生成期检查存在（缺 ⇒ exit 2 列明——镜像 §5.8 mock 的 fail-loud；校验器侧
@@ -1299,6 +1358,26 @@ def main() -> int:
             "  for (const el of await page.locator('[data-atlas-panel]').all()) {\n"
             "    try { await el.evaluate('(e) => { e.hidden = false; }'); } catch { /* 忽略 */ }\n"
             "  }\n"
+            "}\n"
+            "async function atlasSessionPreset(page: any, preset: any) {\n"
+            "  // 契约 §5.5 `会话:`：在**首屏文档起始前**把预设会话键值写进 sessionStorage。\n"
+            "  // 为何是 sessionStorage 而不是 localStorage：storageState 只覆盖 localStorage，\n"
+            "  // 而 localStorage 跳标签页 / 跳用例持续 ⇒ 会污染后续用例（含「不传参 ⇒ 保持可用」\n"
+            "  // 类对照用例）；sessionStorage 天然按 tab / context 隔离。addInitScript 保证\n"
+            "  // 每个新文档起始即生效（本调用必须在 `page.goto` 之前）。\n"
+            "  // 取值优先级（Q2-C 裁定）：运行期环境变量 > 用例声明值；两者皆空 ⇒ 报错中止。\n"
+            "  const resolved: Record<string, string> = {};\n"
+            "  for (const [k, spec] of Object.entries(preset as Record<string, any>)) {\n"
+            "    const fromEnv = process.env[(spec as any).env];\n"
+            "    const value = fromEnv && fromEnv.length > 0 ? fromEnv : (spec as any).value;\n"
+            "    if (!value) {\n"
+            "      throw new Error(`会话预设 ${k} 无取值：用例未声明且环境变量 ${(spec as any).env} 未设置 ⇒ 拒绝以默认态续跑（假绿）`);\n"
+            "    }\n"
+            "    resolved[k] = value;\n"
+            "  }\n"
+            "  await page.addInitScript((kv: Record<string, string>) => {\n"
+            "    for (const [k, v] of Object.entries(kv)) { try { window.sessionStorage.setItem(k, v); } catch { /* 忽略 */ } }\n"
+            "  }, resolved);\n"
             "}\n"
             "async function atlasZeroStepBaseline(page: any, data: any) {\n"
             "  // 契约 §5.6 R9：初始态观测（数据驱动；两趟取样 §B72）。\n"
