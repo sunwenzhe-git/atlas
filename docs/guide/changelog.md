@@ -4,6 +4,18 @@
 
 ---
 
+## [v0.1.0-beta.21] - 2026-10-16
+
+### 🪲 E2E 生成链四处缺陷闭环：标量注释污染 · 元素守卫空转 · 守卫门不剥注释 · `force` 与被测属性相抵（Issue #R1–#R4 / D94–D97）
+
+- **标量注释污染单源收敛（R1/D94）**：`_support/case_block.py` 的标量键分支改经内核 `_support/stack_profile.strip_inline_comment`，消除标量值尾部 `#` 注释直达生成脚本 URL 字面量的问题；列表项保持原样（其 `#` 为自然语言说明）。
+- **守卫门自带剥注释（R3/D94）**：`validators/validate_e2e_index.py` 的 `守卫:` 路径门先经单源 `strip_inline_comment` 再做路由比对，消除门与生成器的消费歧义。
+- **元素齐全守卫回归契约正文（R2/D95，⚠ 行为恢复）**：`scripts/gen_e2e_scripts.py` 的元素守卫 id 面回归 `case.get("testid")` 契约应然清单；未声明 `hidden` 占位槽的动态元素守卫开始真红（正确反馈），静态侧由常驻槽位门双重防腐。
+- **Playwright `force` 动作步级开关（R4/D96）**：`rings/e2e/reference.md` §5.5 确立 `click`/`hover` 默认 `{ force: true }` 的契约授权与适用边界；新增 `native` 步级开关（如 `- click btn native`）用于禁用 force，保护可交互性被测属性的真实判定；校验器与生成器双向强检值域。
+- **基线与守卫剥注释同源（S1/D97）**：零步基线探针与用例元素守卫 id 逐项剥离行内注释，彻底消除带说明 testid 导致的 `toHaveCount(1)` 假红。
+
+---
+
 ## [v0.1.0-beta.20] - 2026-10-16
 
 ### 🔧 装配器语义两案：干跑不落版本戳 + 脏树守卫分「已跟踪/未跟踪」两语义 (Issue #21/#22: F54/F55, D92/D93)
