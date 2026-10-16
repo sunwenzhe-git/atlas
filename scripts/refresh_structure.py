@@ -204,8 +204,29 @@ API_HEADER = ["方法", "路径", "用途", "请求要点", "响应要点", "来
 MODEL_HEADER = ["表/模型", "字段", "类型", "约束/默认", "关系", "枚举"]
 
 
+# ---- 单元格「写出 ⇒ 读回」不变式（2026-10-16，issue #16；RFC-20261016-01 D84）----
+#
+# 病根：render_table 只转义裸 `|`，假定单元格单行；适配器给多行取值（类型字面量等）时该
+# 行在盘面断成多行 ⇒ parse_rows 丢掉首行（列数不符）、跳过续行（不以竖线开头）⇒① 事实
+# 丢行；② old_rows_by_key 读不回该键 ⇒ 每轮刷新都判「新增」⇒ 漂移标记常驻、baseline
+# 棘轮永不释放（一个永不收敛的假告警）。
+# 定案：写侧单行化（换行 → `<br>`，保留行结构而不是用空格把成员粘起来）+ 渲染即自校。
+CELL_NEWLINE_RE = re.compile(r"\r\n|\r|\n")
+CELL_BREAK = "<br>"
+
+
+def cell_text(v) -> str:
+    """单元格取值 → 单行文本（换行 → `<br>`）。「写出 ⇒ 读回」不变式的定义式一侧。"""
+    return CELL_NEWLINE_RE.sub(CELL_BREAK, str(v if v is not None else ""))
+
+
 def _norm(s) -> str:
-    return " ".join(str(s).split())
+    """行键归一化：`<br>` 与换行**等价**（D84；2026-10-16，issue #16）。
+
+    缺了这条时：适配器原值（真换行）与盘面读回值（`<br>`）归一化后不等 ⇒ 键列含换行时
+    `old_rows_by_key` 读不回 ⇒ 与写侧单行化要治的是同一族幻影漂移。
+    """
+    return " ".join(str(s).replace(CELL_BREAK, " ").split())
 
 
 def _lit(glob: str) -> int:
@@ -272,14 +293,44 @@ def old_rows_by_key(path: Path, header: list[str], keys: list[str]) -> dict:
     return out
 
 
-def render_table(header: list[str], rows: list[list[str]]) -> list[str]:
+def render_table(header: list[str], rows: list[list[str]], *, where: str = "") -> list[str]:
     lines = ["| " + " | ".join(header) + " |", "|" + "|".join("---" for _ in header) + "|"]
+    want: list[list[str]] = []
     for cells in rows:
-        c = (list(cells) + [""] * len(header))[: len(header)]
+        # 单行化（D84）：多行取值不得把一行撑成多行——盘面断行就是丢行 + 幻影漂移
+        c = [cell_text(x) for x in (list(cells) + [""] * len(header))[: len(header)]]
+        want.append([x.strip() for x in c])
         # 单元格内的裸 `|` 转义，保证「写出 ⇒ parse_rows 读回」往返一致（见 parse_rows 注）
-        c = [str(x).replace("|", "\\|") for x in c]
-        lines.append("| " + " | ".join(c) + " |")
+        lines.append("| " + " | ".join(x.replace("|", "\\|") for x in c) + " |")
+    _selfcheck_round_trip(header, want, lines, where)
     return lines
+
+
+def _selfcheck_round_trip(header: list[str], want: list[list[str]], lines: list[str], where: str) -> None:
+    """渲染即自校（D84 条 3）：对**渲染出的字符串**逐单元格比对，与是否写盘解耦
+
+    （dry-run 同样出品）。取 WARN 不取硬错：本脚本是 `after_finish` hook，契约规定
+    hook 失败只告警、不阻塞任务（`rings/structure/reference.md` §8）。真正会咬的门是
+    同名单测——`tests/test_refresh_facts.py` 的往返用例。
+    """
+    got = parse_rows("\n".join(lines))[1:]          # 去掉表头行
+    bad = ""
+    if len(got) != len(want):
+        bad = f"行数 读回={len(got)} ≠ 渲染前={len(want)}"
+    else:
+        for i, (g, w) in enumerate(zip(got, want), 1):
+            if len(g) != len(header):
+                bad = f"第 {i} 行列数 读回={len(g)} ≠ {len(header)}"
+                break
+            for j, (gc, wc) in enumerate(zip(g, w), 1):
+                if gc != wc:
+                    bad = f"第 {i} 行第 {j} 列 读回={gc!r} ≠ 期望={wc!r}"
+                    break
+            if bad:
+                break
+    if bad:
+        print(f"WARN[render_table] 「写出 ⇒ 读回」不变式不成立（{where or '未命名表'}）：{bad}"
+              " —— 事实区可能已损坏（丢行 / 幻影漂移）；见 RFC-20261016-01 D84", file=sys.stderr)
 
 
 def write_facts(path: Path, body_lines: list[str], apply: bool, results: list[dict]) -> None:
@@ -372,7 +423,7 @@ def render_routes(base: Path, data: dict, apps: list[dict], domains: list[dict],
     write_facts(path, ["# 全站路由总表", "",
                        "> 事实区由 `refresh_structure.py` 从适配器产物刷新；语义列（域/用途/关键交互）保留既有。",
                        "> `实现状态` 仅 landing（`current/`）需要，legacy 用「—」。", ""]
-                + render_table(ROUTES_HEADER, rows), apply, results)
+                + render_table(ROUTES_HEADER, rows, where="global/routes.md"), apply, results)
     record_drift(path, old, new_keys, "routes", results, existed)
 
 
@@ -412,7 +463,7 @@ def render_apis(base: Path, items: list[dict], pointers: list[dict], apps: list[
         rows = [merge_cells(old, API_HEADER, ["方法", "路径"], enum, c) for c in cds]
         write_facts(path, [f"# {dom} · 接口清单（{role}）", "",
                            "> 事实区自动渲染；语义列（用途/请求要点/响应要点）保留既有。", ""]
-                    + render_table(API_HEADER, rows), apply, results)
+                    + render_table(API_HEADER, rows, where=f"{role}/{dom}/apis.md"), apply, results)
         record_drift(path, old, new_keys, "apis", results, existed)
     scell_rows = [{"方法": "—", "路径": p.get("spec_entry", ""), "来源模块": p.get("app", ""),
                    "用途": "真相源入口", "请求要点": "", "响应要点": ""} for p in pointers]
@@ -426,7 +477,7 @@ def render_apis(base: Path, items: list[dict], pointers: list[dict], apps: list[
         record_drift(spath, sold, skeys, "apis", results, sexisted)
         write_facts(spath, ["# 跨域共享接口 / 真相源入口", "",
                             "> 无 domain globs 命中、或 api 为「机器可读描述」指针形态时落此；请在域内引用或补 globs。", ""]
-                    + render_table(API_HEADER, srows), apply, results)
+                    + render_table(API_HEADER, srows, where="global/apis-shared.md"), apply, results)
 
 
 def render_models(base: Path, items: list[dict], apps: list[dict], domains: list[dict], apply: bool, results: list[dict]) -> None:
@@ -445,7 +496,7 @@ def render_models(base: Path, items: list[dict], apps: list[dict], domains: list
         cds, new_keys = dedup_by_row_key([cells(it) for it in its], ["表/模型", "字段"])
         rows = [merge_cells(old, MODEL_HEADER, ["表/模型", "字段"], enum, c) for c in cds]
         write_facts(path, [f"# {dom} · 数据模型（{role}）", "", "> 事实区自动渲染。", ""]
-                    + render_table(MODEL_HEADER, rows), apply, results)
+                    + render_table(MODEL_HEADER, rows, where=f"{role}/{dom}/data-models.md"), apply, results)
         record_drift(path, old, new_keys, "models", results, existed)
     if shared:
         spath = base / "global" / "data-models-shared.md"
@@ -455,7 +506,7 @@ def render_models(base: Path, items: list[dict], apps: list[dict], domains: list
         rows = [merge_cells({}, MODEL_HEADER, ["表/模型", "字段"], enum, c) for c in scds]
         write_facts(spath, ["# 跨域共享数据模型（无域归属）", "",
                             "> 无 domain globs 命中时落此；请在域内引用或补 globs。", ""]
-                    + render_table(MODEL_HEADER, rows), apply, results)
+                    + render_table(MODEL_HEADER, rows, where="global/data-models-shared.md"), apply, results)
         record_drift(spath, sold, skeys, "models", results, sexisted)
 
 

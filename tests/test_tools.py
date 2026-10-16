@@ -467,3 +467,31 @@ def test_f45_e2e_case_id_grammar_single_implementation_and_registered_consumers(
         f"实际取用者={actual} 与 CONSUMERS 登记表={declared} 不一致"
         "（少登记 ⇒ 补进 CONSUMERS；假登记 ⇒ 去掉或接上单源）"
     )
+
+
+def test_f47_npm_files_cover_assembly_list() -> None:
+    """F45（2026-10-16，issue #17；RFC-20261016-01 D85）：装配面**三张表**必须同步 ——
+    `install.sh` 拷贝列表 ⇔ `pkg_digest.ASSEMBLY_COVER_DIRS`（F30 已钉）⇔ **`package.json.files`**
+    （本钉补的第三条腿）。
+
+    为何要补：第三张表漏了 `tests` ⇒ npm 分发不含 `tests/`，而 install.sh 第 1 步要拷它、
+    pkg_digest 把它算进摘要 ⇒ 经 npm 全局包装配的项目**恒无** `.atlas/tests` ⇒ `atlas_check`
+    全量模式的包自检门恒红（采用者侧自己修不了的红，而 `--fast` 一跑就 OK）。
+
+    变异：把 `tests` 从 `package.json.files` 摘掉 ⇒ 本用例红（M-R8）。
+    """
+    import pytest
+
+    install_sh = PKG_ROOT / "install.sh"
+    pkg_json = PKG_ROOT / "package.json"
+    if not install_sh.is_file() or not pkg_json.is_file():
+        pytest.skip("包内无 install.sh / package.json（副本态）——同步钉要求源包态执行")
+
+    m = re.search(r"for pkg_dir in ([a-z /_]+);", install_sh.read_text(encoding="utf-8"))
+    assert m, "install.sh 的 pkg_dir 循环没找到"
+    pkg_dirs = {d for d in m.group(1).strip().split()}
+    files = set(json.loads(pkg_json.read_text(encoding="utf-8")).get("files") or [])
+    missing = sorted(pkg_dirs - files)
+    assert not missing, (
+        f"install.sh 会拷 {missing}，但 package.json.files 不发布它们 ⇒ 经 npm 装配的项目副本"
+        "缺这些目录（issue #17：`.atlas/tests` 恒缺 ⇒ 包自检门恒红，而源包态跑不出来）")

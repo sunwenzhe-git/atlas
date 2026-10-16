@@ -267,6 +267,99 @@ def test_pipe_in_cell_value_round_trips() -> None:
         assert (sd / "current" / "home" / "data-models.md").read_text(encoding="utf-8") == before
 
 
+def test_multiline_cell_value_round_trips() -> None:
+    """回归（2026-10-16，issue #16；RFC-20261016-01 D84）：适配器给**多行取值**时（对象 /
+    函数类型字面量等），原实现原样写进单元格 ⇒ 该行在盘面断成多行 ⇒ `parse_rows` 丢掉首行
+    （列数不符）、跳过续行（不以竖线开头）⇒ ① 事实丢行；② 键读不回 ⇒ 每轮刷新都判「新增」
+    ⇒ 漂移标记常驻、baseline 棘轮永不释放。写侧单行化（换行 → `<br>`）后必须往返一致。
+
+    变异：摘掉 `render_table` 的单行化 ⇒ 本用例红（丢行 + 漂移不收敛）（M-R1）；
+          把换行换成**空格** ⇒ 行结构断言红（防「用空格糊过去也算修好」）（M-R2）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build(root)
+        sd = root / ".trellis" / "spec" / "structure"
+        sd.mkdir(parents=True, exist_ok=True)
+
+        (root / ".adapter-out" / "models" / "app.json").write_text(json.dumps({
+            "category": "models",
+            "items": [{"table": "users", "field": "payload",
+                       "type": "{\n  a: string\n  b: { c: number }\n}",
+                       "source_file": "app/pages/home.py"}],
+            "enums": [],
+        }, ensure_ascii=False), encoding="utf-8")
+        r1 = run(root, "--apply")
+        assert r1.returncode == 0, r1.stderr + r1.stdout
+        # 渲染即自校（D84 条 3）必须在不变式成立时静默
+        assert "WARN[render_table]" not in r1.stderr, r1.stderr
+        dm = (sd / "current" / "home" / "data-models.md").read_text(encoding="utf-8")
+        # ① 行结构保留：换行变 `<br>`，不得被空格把两个成员粘平
+        assert "<br>" in dm, dm
+        assert "b: { c: number }" in dm, dm
+        assert "a: string b: {" not in dm, dm
+        # ② 该行能被读回（丢行的直接标志）
+        assert "| users | payload |" in dm, dm
+        # ③ 第二轮：键读得回 ⇒ 无漂移、内容幂等
+        before = dm
+        r2 = run(root, "--apply")
+        assert r2.returncode == 0, r2.stderr + r2.stdout
+        assert "结构漂移" not in r2.stdout, r2.stdout
+        assert not (root / ".adapter-out" / "_drift.json").exists()
+        assert (sd / "current" / "home" / "data-models.md").read_text(encoding="utf-8") == before
+
+
+def test_key_column_with_newline_does_not_phantom_drift() -> None:
+    """D84 条 2（2026-10-16，评审 F3）：**行键列自身含换行**时，适配器原值（真换行）与
+    盘面读回值（`<br>`）必须归一化等价，否则仍是同一族幻影漂移（键读不回 ⇒ 判「新增」）。
+
+    变异：`_norm` 退回 `" ".join(str(s).split())` ⇒ 本用例红（第二轮报漂移）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build(root)
+        sd = root / ".trellis" / "spec" / "structure"
+        sd.mkdir(parents=True, exist_ok=True)
+
+        (root / ".adapter-out" / "models" / "app.json").write_text(json.dumps({
+            "category": "models",
+            "items": [{"table": "users", "field": "a\nb", "type": "string",
+                       "source_file": "app/pages/home.py"}],
+            "enums": [],
+        }, ensure_ascii=False), encoding="utf-8")
+        r1 = run(root, "--apply")
+        assert r1.returncode == 0, r1.stderr + r1.stdout
+        assert "WARN[render_table]" not in r1.stderr, r1.stderr
+        assert "users | a<br>b" in (sd / "current" / "home" / "data-models.md").read_text(encoding="utf-8")
+        r2 = run(root, "--apply")
+        assert "结构漂移" not in r2.stdout, r2.stdout
+        assert not (root / ".adapter-out" / "_drift.json").exists()
+
+
+def test_render_selfcheck_fires_on_unroundtrippable_row(capsys) -> None:
+    """D85 条 3：渲染即自校必须**活着能咬** —— 否则它只是一段没人验证的代码。
+
+    输入形态是**人为构造**的：整行单元格只由 `-` / `:` / 空格组成 ⇒ `parse_rows` 会把它当表头
+    分隔行跳过 ⇒ 读回少一行（这是表格格式本身的残留边界，真实适配器数据到不了这里）。本用例钉
+    的是机制：不变式真的被检查，且不成立时**当轮出声**。
+
+    变异：摘掉 `_selfcheck_round_trip` 调用 ⇒ 本用例红（M-R10）。
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("rs_selfcheck", SCRIPT)
+    rs = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rs)
+
+    rs.render_table(rs.MODEL_HEADER, [["-", "-", "-", "-", "-", "-"],
+                                      ["users", "id", "int", "", "", ""]], where="probe")
+    err = capsys.readouterr().err
+    assert "WARN[render_table]" in err and "probe" in err, err
+    # 正常形态不得出声（防「永远在报」的噪声型门）
+    rs.render_table(rs.MODEL_HEADER, [["users", "id", "int", "", "", ""]], where="probe")
+    assert "WARN[render_table]" not in capsys.readouterr().err
+
+
 STUB_ADAPTER = '''#!/usr/bin/env python3
 """F25 夹具 stub 适配器：契约形（--root/--app/--out），按 app 写入产品 JSON。"""
 import argparse

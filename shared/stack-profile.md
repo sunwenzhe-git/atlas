@@ -131,7 +131,8 @@
   "category": "routes",
   "items": [ { "...": "见下表的类别字段" } ],
   "source_files": ["相对路径", "..."],
-  "adapter_version": "0.1.0"
+  "adapter_version": "0.1.0",
+  "route_coverage": { "...": "仅 routes：识别与挂载合成的覆盖计数，见下" }
 }
 ```
 
@@ -143,6 +144,10 @@
 | `api` | `method` · `path` · `summary?` · `source_module` · `source_file` | 有机器可读描述时**不产 `items`**，改产 `{category:"api", spec_entry:"…", source_files:[…]}`（见 §3.5） |
 | `models` | 每字段一行：`table` · `field` · `type` · `constraints?` · `default?` · `relation?` · `enum?` · `source_file`；另加顶层 `enums[]`：`{table, field, values:[{value, meaning}]}` | 对应 `data-models.md` 表；`source_file` 供「表→域」归属（C7） |
 | `tests` | `type`(unit/integration/e2e/other) · `location` · `run_command?` · `status?` | `status` 属运行事实，适配器留空由 agent 补 |
+
+- **`route_coverage`（仅 `routes`；2026-10-16 补，issue #15，D83/D84）**：识别与挂载合成的**覆盖计数**，形如 `{declared, site_level, mounted, skipped_items, skipped:[{file, reason, items}]}`。语义 = 「声明路由表的文件数 → 站点级 / 已挂载 / 未解析（逐文件原因）」。
+  - **为何要它**：候选闸与挂载前缀都会丢弃条目（命名不匹配、前缀求不出），而丢弃**必须可见**——不完整的事实表冒充「structure ⇔ 代码」配门比诚实缺口更糟（`global-rules.md` §15 同族）。同理须在 stderr 逐文件列出未解析原因。
+  - **未解析的条目一律不产出**（宁缺不产假路径）：回退成模块相对路径会与其它模块的同名路径撞行键，被 `dedup_by_row_key` 折叠成**假事实**，比缺口更糟。
 
 - **`tests` 的 `run_command` 由测试文件的后缀族推定，配置只在同族内细化命令**（2026-10-15 补，issue #4）：`.py` ⇒ Python 族（有 pytest 配置 ⇒ `python3 -m pytest`）；`.ts/.js/.tsx/.jsx` ⇒ Node 族（playwright / vitest / jest / `package.json scripts.test` 依次取命令）。**配置探测扫整项目**，不随 `--app` 收窄——配置是项目级的、落在项目根；只有测试文件盘点按 app 收窄（否则逐 app 调用拿不到根级配置，命令被静默降级成 `null`）。
 - **后缀族与配置族冲突时不产矛盾条目**（2026-10-15 补）：item 仍出（测试文件存在是事实），`run_command` 置 `null`（**不作主张**），并在 stderr 报 `WARN[tests]` 点名该文件与冲突的配置，**退出码恒 0**——非零会被 `refresh_structure --chain` 当成适配器失败而中止整条链。反例即 issue #4：根有仅声明 atlas `ac` marker 的 `pytest.ini`，全仓唯一测试文件是 `.test.ts`，旧实现给出 `python3 -m pytest` 这条**错误事实**，且「非空且形态合法」骗过接线前置（`§B118` 只识别「产出为空」）。
