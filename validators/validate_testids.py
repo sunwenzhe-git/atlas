@@ -64,6 +64,15 @@ DATASET_TESTID = re.compile(r"""(?:\.dataset\.testid|\.dataset\[["']testid["']\]
 SETATTR_TESTID = re.compile(r"""\.setAttribute\(\s*["']data-testid["']\s*,\s*["']([a-zA-Z0-9_\-]+)["']\s*\)""")
 DATASET_TESTID_TPL = re.compile(r"""(?:\.dataset\.testid|\.dataset\[["']testid["']\])\s*=\s*`([^`]+)`""")
 SETATTR_TESTID_TPL = re.compile(r"""\.setAttribute\(\s*["']data-testid["']\s*,\s*`([^`]+)`\s*\)""")
+# 同文件静态字符串常量 + 单层引用（issue #19，2026-10-16）：`const X = 'a-b-c'; … data-testid={X}`。
+# 值仍**静态可枚举**（单跳、同文件），且字面量仍只出现在常量声明处**一处** ⇒ 与字面量同档：
+# 计入声明处计数（跨文件重名照报）、参与双向集合两侧判罚。
+# **跨文件导入不解析**（无模块图，宁缺不猜）：共享常量请把字面量落在使用点文件内的常量或占位分支。
+# 非静态初始化（函数调用 / 三元 / 拼接 / 未在本文件声明的标识符）**不解析** ⇒ 报缺失（不猜）。
+CONST_DECL = re.compile(
+    r"""(?:^|[^\w$])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*[^=;\n]+)?=\s*["']([a-zA-Z0-9_\-]+)["']""",
+    re.M)
+IDENT_TESTID_ATTR = re.compile(r"""data-testid\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*\}""")
 
 
 def strip_comments(text: str) -> str:
@@ -298,7 +307,10 @@ def collect_testids_expanded(
             + DATASET_TESTID.findall(clean_text)
             + SETATTR_TESTID.findall(clean_text)
         )
-        file_unique = set(raw_lits)
+        # 同文件静态常量解析（issue #19）：未在本文件声明的标识符不解析（跨文件导入 / 非静态初始化）。
+        consts = dict(CONST_DECL.findall(clean_text))
+        ident_tids = [consts[i] for i in IDENT_TESTID_ATTR.findall(clean_text) if i in consts]
+        file_unique = set(raw_lits) | set(ident_tids)
         for tid in file_unique:
             counts[tid] = counts.get(tid, 0) + 1
             per_page.setdefault(tid_owner(tid, pages) or "", set()).add(tid)
@@ -307,7 +319,7 @@ def collect_testids_expanded(
         # 同名静态 testid 在同文件出现 ≥2 次 = 运行期 strict-mode 歧义真信号；
         # 「静态属性 + 命令式赋值（dataset/setAttribute）混用」与「多处渲染函数重复赋值」
         # 是 vanilla JS 的合法惯用法（R6 现网实证：主沙箱三条 WARN 全为此形态），豁免不报。
-        file_counts = Counter(TESTID_ATTR.findall(clean_text))
+        file_counts = Counter(TESTID_ATTR.findall(clean_text) + ident_tids)
         dups = [t for t, cnt in file_counts.items() if cnt > 1]
         if dups:
             same_file_dups[rel] = sorted(dups)

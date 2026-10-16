@@ -475,6 +475,69 @@ def test_testids_mismatch_fail() -> None:
         assert vt.validate(root).status == "FAIL"
 
 
+# ── issue #19（2026-10-16）：同文件静态字符串常量 + 单层引用 ─────────────────
+# 形态：`const HOME_CTA = 'home-cta-btn'` … `data-testid={HOME_CTA}`。
+# 值仍静态可枚举、字面量仍只出现一处（常量声明处）⇒ 与字面量同档。
+# 下列四条中，第 1 条为正向（必绿），后三条为**坏输入必红**证据。
+CONST_HOME_HTML = HOME_HTML.replace(
+    '<button data-testid="home-cta-btn">开始</button>',
+    "<script>const HOME_CTA = 'home-cta-btn';</script>"
+    "<button data-testid={HOME_CTA}>开始</button>",
+)
+
+
+def test_testids_same_file_static_const_resolves() -> None:
+    """正向：同文件静态常量 + 单层引用 ⇒ 与字面量同档，双向集合相等 ⇒ PASS。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root, home=CONST_HOME_HTML)
+        mk_cases(root)
+        res = vt.validate(root)
+        assert res.status == "PASS", [c for c in res.checks if c["level"] != "PASS"]
+
+
+def test_testids_nonstatic_initializer_not_resolved() -> None:
+    """坏输入 1：初始化式非字符串字面量（拼接）⇒ **不解析** ⇒ 报缺失 ⇒ FAIL。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root, home=HOME_HTML.replace(
+            '<button data-testid="home-cta-btn">开始</button>',
+            "<script>const HOME_CTA = prefix + '-cta-btn';</script>"
+            "<button data-testid={HOME_CTA}>开始</button>",
+        ))
+        mk_cases(root)
+        assert vt.validate(root).status == "FAIL"
+
+
+def test_testids_cross_file_import_not_resolved() -> None:
+    """坏输入 2：常量声明在**另一个文件**（跨文件导入）⇒ 不解析（无模块图，宁缺不猜）⇒ FAIL。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root, home=HOME_HTML.replace(
+            '<button data-testid="home-cta-btn">开始</button>',
+            "<button data-testid={HOME_CTA}>开始</button>",
+        ))
+        (root / "web" / "src" / "consts.js").write_text(
+            "export const HOME_CTA = 'home-cta-btn';\n", encoding="utf-8")
+        mk_cases(root)
+        assert vt.validate(root).status == "FAIL"
+
+
+def test_testids_const_reused_twice_flags_same_file_dup() -> None:
+    """坏输入 3：同一常量在同文件被引用两次 ⇒ 同文件重复声明 WARN 且指名该 id。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root, home=HOME_HTML.replace(
+            '<button data-testid="home-cta-btn">开始</button>',
+            "<script>const HOME_CTA = 'home-cta-btn';</script>"
+            "<button data-testid={HOME_CTA}>开始</button>"
+            "<span data-testid={HOME_CTA}></span>",
+        ))
+        mk_cases(root)
+        dup = {c["check"]: c for c in vt.validate(root).checks}["同文件 testid 重复声明"]
+        assert dup["level"] == "WARN" and "home-cta-btn" in dup["detail"], dup
+
+
 def test_testids_derived_from_step_and_expected() -> None:
     """`3509 §B40/§B64`：用例侧 testid 集合 = `testid:` 声明 **∪** step/expected 派生。
 
