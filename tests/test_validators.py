@@ -64,6 +64,9 @@ expected:
 testid:
   - home-cta-btn
   - home-title
+落点:
+  - home-cta-btn web/src/home.html
+  - home-title web/src/home.html
 ```
 """
 
@@ -523,6 +526,53 @@ def test_testids_cross_file_import_not_resolved() -> None:
         assert vt.validate(root).status == "FAIL"
 
 
+# ── issue #20（2026-10-16）：应然落点（声明式 + 可机检）─────────────────────
+LAND_NONE = CASE_GOOD.replace(
+    "落点:\n  - home-cta-btn web/src/home.html\n  - home-title web/src/home.html\n", "")
+
+
+def test_testids_landing_missing_is_warn() -> None:
+    """未登记落点 ⇒ WARN（存量清零过渡档），且不报 FAIL。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, LAND_NONE)
+        rows = {c["check"]: c for c in vt.validate(root).checks}
+        assert rows["应然落点"]["level"] == "WARN", rows["应然落点"]
+        assert vt.validate(root).status != "FAIL"
+
+
+def test_testids_landing_wrong_file_fails() -> None:
+    """坏输入 1：落点指向**不存在的文件** ⇒ 假陈述 ⇒ FAIL。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD.replace("web/src/home.html", "web/src/nope.html"))
+        rows = {c["check"]: c for c in vt.validate(root).checks}
+        assert rows["应然落点"]["level"] == "FAIL", rows["应然落点"]
+
+
+def test_testids_landing_id_absent_in_file_fails() -> None:
+    """坏输入 2：落点文件存在但**其内解析不到该 id** ⇒ 假陈述 ⇒ FAIL。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD.replace(
+            "- home-title web/src/home.html", "- home-title product/stack-profile.yaml"))
+        rows = {c["check"]: c for c in vt.validate(root).checks}
+        assert rows["应然落点"]["level"] == "FAIL", rows["应然落点"]
+
+
+def test_testids_landing_correct_passes() -> None:
+    """正向：落点齐且均可解析 ⇒ PASS。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root)
+        rows = {c["check"]: c for c in vt.validate(root).checks}
+        assert rows["应然落点"]["level"] == "PASS", rows["应然落点"]
+
+
 def test_testids_const_reused_twice_flags_same_file_dup() -> None:
     """坏输入 3：同一常量在同文件被引用两次 ⇒ 同文件重复声明 WARN 且指名该 id。"""
     with tempfile.TemporaryDirectory() as td:
@@ -753,7 +803,11 @@ def test_testids_template_literal_expansion_unblocks_strict() -> None:
         (root / "web" / "src" / "Shell.tsx").write_text(SHELL_TSX, encoding="utf-8")
         mk_cases(root, CASE_GOOD.replace(
             "  - home-cta-btn\n  - home-title\n",
-            "  - home-cta-btn\n  - home-title\n  - home-page\n  - home-nav-config\n"))
+            "  - home-cta-btn\n  - home-title\n  - home-page\n  - home-nav-config\n"
+        ).replace(
+            "落点:\n  - home-cta-btn web/src/home.html\n  - home-title web/src/home.html\n",
+            "落点:\n  - home-cta-btn web/src/home.html\n  - home-title web/src/home.html\n"
+            "  - home-page web/src/Shell.tsx\n  - home-nav-config web/src/Shell.tsx\n"))
         mk_index(root, _with_page_table("已实现"))
         res = vt.validate(root)
         assert res.status == "PASS", [c for c in res.checks if c["level"] in ("FAIL", "WARN")]
@@ -1933,7 +1987,8 @@ def test_testids_adopt_unidirectional_subset_check() -> None:
         src = root / "web" / "src"
         src.mkdir(parents=True)
         # 页面包含用例引用的 testid，外加存量历史多余未引 testid
-        (src / "HomePage.tsx").write_text(
+        # 文件名取 `home.html`：与 `CASE_GOOD` 的 `落点:` 声明一致（落点门校验文件存在 + 文件内可解析）
+        (src / "home.html").write_text(
             '<button data-testid="home-cta-btn">去</button>\n'
             "<h1 data-testid='home-title'>首页</h1>\n"
             "<div data-testid='home-extra-legacy'>历史存量未引组件</div>\n",
@@ -1960,7 +2015,7 @@ def test_testids_adopt_unidirectional_subset_check() -> None:
 
         # 3. 切回 adopt 模式：若用例引用的代码缺失（正向缺失），依然严格判 FAIL
         (root / "product" / "stack-profile.yaml").write_text(adopt_profile, encoding="utf-8")
-        (src / "HomePage.tsx").write_text(
+        (src / "home.html").write_text(
             "<h1 data-testid='home-title'>首页</h1>\n",  # 缺少 home-cta-btn
             encoding="utf-8",
         )

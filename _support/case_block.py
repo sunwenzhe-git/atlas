@@ -7,12 +7,14 @@
 本模块把口径收敛为唯一实现；两消费者经 `_support.siblings.load_module("case_block")` 取用。
 
 - 语义 = 原两处实现逐字节等价（键空间 / 「- 」行归集 / 标量键）。
+- `落点`（2026-10-16，issue #20）：应然 id 承载元素的**声明式落点**（`<tid> <相对项目根的路径>`），
+  由 `validators/validate_testids.py` 的「应然落点」门校验（文件存在 + 文件内可解析到该 id）。
 - 纯标准库（契约 `rings/e2e/reference.md` §8.3）。
 """
 from __future__ import annotations
 
 # 键空间 = `rings/e2e/reference.md` §5.1 用例块字段（消费方按需读取）。
-_BLOCK_KEYS = ("pages", "precondition", "seed", "mock", "step", "expected", "testid")
+_BLOCK_KEYS = ("pages", "precondition", "seed", "mock", "step", "expected", "testid", "落点")
 
 
 def parse_block(body: str) -> dict:

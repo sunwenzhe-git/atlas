@@ -4,6 +4,28 @@
 
 ---
 
+## [v0.1.0-beta.20] - 2026-10-16
+
+
+### 🔧 应然落点：应然 testid 的承载元素成为声明式、可机检的资产 (Issue #20: F50, D88)
+
+> 本批动 `rings/e2e/reference.md` §5.1/§5.5、`_support/case_block.py`、`validators/validate_testids.py`。
+
+**背景（现场实证）**：应然 testid 清单取自 AC 文字，而双向集合门只比「值集合相等」⇒ 一个**永不渲染的死字面量**就能把门凑绿而用例仍红。真实案例：某需求三条应然 id 里有两条所描述的控件在该产品里**根本不存在**（该类型控件在对应面板只渲染一句提示文案），分片却按 AC 文字为它们立了 id；门只会把「前端没这个字面量」报成缺口，**无法指出「这个控件压根没有」**。
+
+- **契约 §5.5 新增可选字段 `落点:`**：行形态 `- <tid> <相对项目根的路径>`，声明应然 id 的承载元素；写明分档与理由：**声明了但不对**（文件不存在 / 文件内解析不到该 id）= 假陈述 ⇒ FAIL；**未登记** = 纪律缺口（存量清零过渡）⇒ WARN。
+- **契约 §5.1 字段表**同步登记该键。
+- **`_support/case_block.py`**：`_BLOCK_KEYS` 增 `落点`（单源解析器是它的唯一入口）。
+- **`validators/validate_testids.py`**：
+  - 新增 `file_testid_decls(clean_text, pages)` —— 把「单文件可解析的 testid 声明」抽成**单源**函数（静态字面量 / 同文件静态常量 + 单层引用 / 可枚举模板 / 命令式注入），`collect_testids_expanded` 与新的落点门**共用**（否则「抽取器看到了、落点门看不到」会成为新的半通状态）；
+  - 新增 `shard_landings(cases, pages)`：按 **tid_owner** 归页（与 `shard_testids` 同规——否则跨页共享元素在市场分片登记、却要按 app 页查）；
+  - 新增门行 **「应然落点」**。
+- **顺带修一处同族缺陷**：`case_testid_usage` 原为**手写行扫描**（只认 `step`/`expected`/`testid` 三个小节键）⇒ 新增一个数组键就会把它的条目误吸进 testid 集合（本轮实测：`testid 命名规范` 报 `home-title web/src/home.html` 为违规名）。已改为走单源 `parse_block`。
+
+**取证**：`tests/test_validators.py` +4（正向 1；坏输入 3：指向不存在文件 ⇒ FAIL / 文件内解析不到该 id ⇒ FAIL / 未登记落点 ⇒ WARN）；另修两处受影响的既有夹具（模板展开用例补落点、adopt 单向子集用例的文件名与落点对齐）。源包 **441 passed / 0 failed / 4 skipped**。`shared/gates.md` 计数登记 98 → 102（该门本轮再次咬合）。采用方端到端变异证明：把一条落点改指不存在的文件 ⇒ 「应然落点」FAIL 并指名；恢复 ⇒ PASS。
+
+---
+
 ## [v0.1.0-beta.19] - 2026-10-16
 
 

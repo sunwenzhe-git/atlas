@@ -32,6 +32,14 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+# 随包内核引导（`_support/`，2026-10-12 单源批）：用例块解析取单源实现
+# （`落点` 键与 `step`/`expected`/`testid` 同源解析，见 `_support/case_block.py`）。
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.siblings import load_module  # noqa: E402
+
+parse_block = load_module("case_block").parse_block
+
 
 def _format_list(items: list[str] | set[str], max_show: int = 20) -> str:
     lst = sorted(items) if isinstance(items, set) else list(items)
@@ -264,6 +272,59 @@ def collect_testids(root: Path,
     return per_page, counts, files
 
 
+def file_testid_decls(clean_text: str, pages: list[str] | None = None) -> tuple[set[str], list[str], set[str]]:
+    """单文件**可解析**的 testid 声明：返回 `(声明集合, 静态属性同形态出现序列, 模板展开值集合)`。
+
+    **单源**：`collect_testids_expanded`（全量抽取）与「应然落点」门共用本函数 —— 落点校验
+    与全量抽取必须同一口径，否则会出现「抽取器看到了、落点门看不到」的新半通状态（issue #20）。
+    已剥注释的文本为入口（调用方先 `strip_comments`）。
+
+    **模板展开值单列**：双向集合门对它们**只判缺失、不判多余**（共享外壳的挂载范围静态未知），
+    故不能并入声明集合（并入会被计入「声明处计数」，从而对它启用「多余」判罚）。
+    落点门的成员判定 = **声明 ∪ 展开**（模板形态也是合法声明）。
+    """
+    raw_lits = (
+        TESTID_ATTR.findall(clean_text)
+        + DATASET_TESTID.findall(clean_text)
+        + SETATTR_TESTID.findall(clean_text)
+    )
+    # 同文件静态常量解析（issue #19）：未在本文件声明的标识符不解析（跨文件导入 / 非静态初始化）。
+    consts = dict(CONST_DECL.findall(clean_text))
+    ident_tids = [consts[i] for i in IDENT_TESTID_ATTR.findall(clean_text) if i in consts]
+    tpl_values: set[str] = set()
+    if pages:
+        for body in (
+            TEMPLATE_TESTID_ATTR.findall(clean_text)
+            + DATASET_TESTID_TPL.findall(clean_text)
+            + SETATTR_TESTID_TPL.findall(clean_text)
+        ):
+            tpl_values.update(expand_template_testid(body, clean_text, pages) or [])
+    # 静态属性同形态出现序列：供「同文件重复声明」计数（R6.3 收窄）。
+    return set(raw_lits) | set(ident_tids), TESTID_ATTR.findall(clean_text) + ident_tids, tpl_values
+
+
+def shard_landings(cases: Path, proto_pages: list[str] | None = None) -> dict[str, dict[str, list[str]]]:
+    """分片声明的 testid 落点 → `{页 slug: {tid: [路径, ...]}}`（契约 §5.5 的 `落点:` 行）。
+
+    `落点:` 行形态：`- <tid> <相对项目根的路径>`。
+    **归页口径与 `shard_testids` 同规**：按 testid 的**归属页**（`tid_owner` 最长前缀）归集，
+    不按分片文件名 —— 否则共享元素在市场分片里登记、却要按 app 页查（口径不一 = 新的半通）。
+    """
+    pages = proto_pages or []
+    out: dict[str, dict[str, list[str]]] = {}
+    for md in sorted(cases.glob("*.md")):
+        home = page_of(md)
+        for block in CASE_BLOCK.findall(md.read_text(encoding="utf-8", errors="ignore")):
+            for line in parse_block(block).get("落点") or []:
+                parts = line.split(None, 1)
+                if len(parts) != 2:
+                    continue
+                tid, path = parts[0].strip(), parts[1].strip().strip("`")
+                owner = tid_owner(tid, pages) or home
+                out.setdefault(owner, {}).setdefault(tid, []).append(path)
+    return out
+
+
 def collect_testids_expanded(
     root: Path, globs: list | None = None,
 ) -> tuple[dict[str, set[str]], dict[str, int], list[str], set[str], dict[str, list[str]]]:
@@ -301,16 +362,8 @@ def collect_testids_expanded(
     for f, text in texts:
         clean_text = strip_comments(text)
         rel = f.relative_to(root).as_posix()
-        # 收集字面量形态（静态属性、dataset、setAttribute）
-        raw_lits = (
-            TESTID_ATTR.findall(clean_text)
-            + DATASET_TESTID.findall(clean_text)
-            + SETATTR_TESTID.findall(clean_text)
-        )
-        # 同文件静态常量解析（issue #19）：未在本文件声明的标识符不解析（跨文件导入 / 非静态初始化）。
-        consts = dict(CONST_DECL.findall(clean_text))
-        ident_tids = [consts[i] for i in IDENT_TESTID_ATTR.findall(clean_text) if i in consts]
-        file_unique = set(raw_lits) | set(ident_tids)
+        # 单源：与「应然落点」门共用（见 file_testid_decls）
+        file_unique, static_occ, tpl_values = file_testid_decls(clean_text, pages)
         for tid in file_unique:
             counts[tid] = counts.get(tid, 0) + 1
             per_page.setdefault(tid_owner(tid, pages) or "", set()).add(tid)
@@ -319,21 +372,15 @@ def collect_testids_expanded(
         # 同名静态 testid 在同文件出现 ≥2 次 = 运行期 strict-mode 歧义真信号；
         # 「静态属性 + 命令式赋值（dataset/setAttribute）混用」与「多处渲染函数重复赋值」
         # 是 vanilla JS 的合法惯用法（R6 现网实证：主沙箱三条 WARN 全为此形态），豁免不报。
-        file_counts = Counter(TESTID_ATTR.findall(clean_text) + ident_tids)
+        file_counts = Counter(static_occ)
         dups = [t for t, cnt in file_counts.items() if cnt > 1]
         if dups:
             same_file_dups[rel] = sorted(dups)
 
-        # 收集模板字面量形态并展开
-        tpl_bodies = (
-            TEMPLATE_TESTID_ATTR.findall(clean_text)
-            + DATASET_TESTID_TPL.findall(clean_text)
-            + SETATTR_TESTID_TPL.findall(clean_text)
-        )
-        for body in tpl_bodies:
-            for tid in expand_template_testid(body, clean_text, pages) or []:
-                expanded.add(tid)
-                per_page.setdefault(tid_owner(tid, pages) or "", set()).add(tid)
+        # 模板字面量形态的展开值：**只参与「缺失」判罚、不参与「多余」判罚**（单源：file_testid_decls）
+        for tid in tpl_values:
+            expanded.add(tid)
+            per_page.setdefault(tid_owner(tid, pages) or "", set()).add(tid)
     return per_page, counts, [f.relative_to(root).as_posix() for f, _t in texts], expanded, same_file_dups
 
 
@@ -380,36 +427,30 @@ def case_testid_usage(md: Path) -> list[tuple[str, set[str], set[str]]]:
     """
     out: list[tuple[str, set[str], set[str]]] = []
     for block in CASE_BLOCK.findall(md.read_text(encoding="utf-8")):
-        cid, section = "", None
+        # 单源解析（2026-10-16，issue #20）：改用 `_support/case_block.parse_block`，
+        # 不再手写行扫描 —— 手写版只认 `step`/`expected`/`testid` 三个小节键，
+        # 新增一个数组键（如 `落点`）就会把它的条目误吸进 testid 集合（本轮实测踩到：
+        # 「testid 命名规范」报 `home-title web/src/home.html` 为违规名）。
+        block_dict = parse_block(block)
+        cid = block_dict.get("id") if isinstance(block_dict.get("id"), str) else ""
+        if not cid:
+            continue
         used: set[str] = set()
-        listed: set[str] = set()
-        for line in block.splitlines():
-            t = line.strip()
-            if t.startswith("id:"):
-                cid = t.split(":", 1)[1].strip()
-                continue
-            if t in ("step:", "expected:", "testid:"):
-                section = t[:-1]
-                continue
-            if section is None or not t.startswith("- "):
-                continue
-            item = t[2:].strip()
-            if section == "testid":
-                listed.add(item)
-                continue
-            code = item.split("#", 1)[0].strip()
-            # 行首前缀都要先剥（豁免通道 `initial:` / `unchanged:`，以及步骤锚 `after:<N>`）——
-            # 否则 `after:2 visible X` 会把**动词**当成 testid（实测踩到：本门报「原型无 visible」）。
-            m = _AFTER_RE.match(code)
-            if m:
-                code = code[m.end():].strip()
-            if code.startswith(("initial:", "unchanged:")):
-                code = code.split(":", 1)[1].strip()
-            parts = code.split()
-            if len(parts) >= 2 and parts[0] not in _NO_TID_VERBS:
-                used.add(parts[1])
-        if cid:
-            out.append((cid, used, listed))
+        for section in ("step", "expected"):
+            for item in block_dict.get(section) or []:
+                code = item.split("#", 1)[0].strip()
+                # 行首前缀都要先剥（豁免通道 `initial:` / `unchanged:`，以及步骤锚 `after:<N>`）——
+                # 否则 `after:2 visible X` 会把**动词**当成 testid（实测踩到：本门报「原型无 visible」）。
+                m = _AFTER_RE.match(code)
+                if m:
+                    code = code[m.end():].strip()
+                if code.startswith(("initial:", "unchanged:")):
+                    code = code.split(":", 1)[1].strip()
+                parts = code.split()
+                if len(parts) >= 2 and parts[0] not in _NO_TID_VERBS:
+                    used.add(parts[1])
+        listed = {i.strip() for i in (block_dict.get("testid") or [])}
+        out.append((cid, used, listed))
     return out
 
 
@@ -591,6 +632,42 @@ def validate(root: Path) -> Result:
                 json.dumps(unequal_soft, ensure_ascii=False) + hint_msg)
     else:
         res.add("分页双向集合相等", "PASS", "")
+
+    # 应然落点（issue #20，2026-10-16）：**应然 id 的落点必须是声明式且可机检的资产**。
+    # 动因：应然清单取自 AC 文字，而双向集合门只比「值集合相等」⇒ 一个**永不渲染的死字面量**
+    # 就能把门凑绿，而用例仍红（现场实证：两条应然 id 所描述的控件在该产品里根本不存在）。
+    # 本门把「落点」变成可校验声明：每个应然 id 至少登记一个 `落点: - <tid> <路径>`，
+    # 且该文件必须存在、其内必须**可解析**到该 id（口径与全量抽取同源 = `file_testid_decls`）。
+    # 分档：**声明了但不对**（文件不存在 / 文件里解析不到该 id）= 假陈述 ⇒ FAIL；
+    # **未登记落点** = 纪律缺口（存量清零过渡）⇒ WARN（升 FAIL 触发见 shared/gates.md）。
+    landings = shard_landings(cases, attr_pages)
+    bad_land, no_land = [], []
+    for page, ids in sorted(shard_ids.items()):
+        for tid in sorted(ids):
+            paths = (landings.get(page) or {}).get(tid) or []
+            if not paths:
+                no_land.append(f"{page}:{tid}")
+                continue
+            for relp in paths:
+                cand = root / relp
+                if not cand.is_file():
+                    bad_land.append(f"{page}:{tid} → {relp}（文件不存在）")
+                    continue
+                try:
+                    decls, _occ, tpl = file_testid_decls(
+                        strip_comments(cand.read_text(encoding="utf-8", errors="ignore")), attr_pages)
+                except OSError:
+                    bad_land.append(f"{page}:{tid} → {relp}（不可读）")
+                    continue
+                if tid not in decls and tid not in tpl:
+                    bad_land.append(f"{page}:{tid} → {relp}（该文件内无可解析声明）")
+    if bad_land:
+        res.add("应然落点", "FAIL", f"声明与实然不符={_format_list(bad_land)}")
+    elif no_land:
+        res.add("应然落点", "WARN",
+                f"未登记落点={_format_list(no_land)} (💡 分片 `落点:` 行登记 `<tid> <相对项目根的路径>`；“落点”是应然 id 承载元素的声明式证据，见契约 §5.5)")
+    else:
+        res.add("应然落点", "PASS", "")
 
     # 前端有页但无分片（页清单以页面表为准；表外的 testid 前缀归「前端 testid 归属」报）
     if states:
