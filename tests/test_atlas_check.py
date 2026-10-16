@@ -86,6 +86,59 @@ def test_atlas_check_skips_missing_gates_without_claiming_pass() -> None:
         assert all(r["name"] and r["status"] for r in rows)
 
 
+def test_f53_factory_gate_skips_when_tests_dir_absent() -> None:
+    """D91（2026-10-16，issue #17 残余；RFC-20261016-02 F53）：全量模式的包自检门
+    落在装配时可能不会被落下的目录上——`install.sh` 拷贝列表含 `tests`，但 npm 旧发行版
+    不发布 `tests/` ⇒ 存量装配恒无 `.atlas/tests`；源包开发态（仓根）同缺。无前置判据时
+    pytest exit 4 ⇒ 全量恒红 FAIL，而 `--fast` 一跑就 OK——两相反结论并存（issue #17）。
+
+    修法（D91）：`.atlas/tests` 不是目录 ⇒ SKIP（不是 FAIL），SKIP 不进 failures ⇒
+    整体判定不再被这道自己修不了的红压垮；文案必须同时给判据面（实测路径 + 形态区分）
+    与出路（pytest tests / install.sh / atlas upgrade）。
+
+    变异 M76：摘掉 `check_factory` 的前置分支 ⇒ 本用例红（回到 exit 4）；还原逐字节一致。
+    三种形态同吃 SKIP（D91 判据一道覆盖，收窄注记见 DESIGN.md D86/D91）：① 根本无 `.atlas/`（源包开发态）；
+    ② 有 `.atlas/` 无 `tests/`（存量装配态）；③ `.atlas/tests` 是**文件**（装配损坏）。
+    """
+    for make in (None, "atlas_only", "file_form"):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            if make == "atlas_only":
+                (root / ".atlas").mkdir()
+            elif make == "file_form":
+                (root / ".atlas").mkdir()
+                (root / ".atlas" / "tests").write_text("not a directory", encoding="utf-8")
+            code, out = run(["--root", ".", "--json"], root)
+            payload = json.loads(out)
+            assert code == 0, out
+            row = next(r for r in payload["rows"] if r["name"] == "对齐测试(.atlas/tests)")
+            assert row["status"] == "SKIP", (make, row)
+            # 出路动作词齐组（M68 同款纪律）：文件面 / 命令 / 重装路缺一即为无出路文案
+            for token in (str(root / ".atlas" / "tests"), "pytest tests",
+                          "install.sh", "atlas upgrade"):
+                assert token in row["detail"], (make, token, row["detail"])
+            assert not payload["failures"], (make, payload["failures"])
+
+
+def test_f53_factory_gate_still_fails_on_red_tests() -> None:
+    """D91 反面钉：目录**在场** ⇒ 行为逐字节不变，真红仍 FAIL。
+
+    防「把真失败一并降级成 SKIP」——D91 的降级只吃「目录不在场」这一种断言成立不了；
+    有测试对象的装配态里依旧是 FAIL（issue #17 同族不会被本修洗绿）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        d = root / ".atlas" / "tests"
+        d.mkdir(parents=True)
+        (d / "test_red.py").write_text("def test_red():\n    assert False\n", encoding="utf-8")
+        code, out = run(["--root", ".", "--json"], root)
+        payload = json.loads(out)
+        assert code == 1, out
+        st = {r["name"]: r["status"] for r in payload["rows"]}
+        assert st.get("对齐测试(.atlas/tests)") == "FAIL", st
+        assert any(f["name"] == "对齐测试(.atlas/tests)" for f in payload["failures"])
+
+
 def test_atlas_check_fails_when_a_gate_fails() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
