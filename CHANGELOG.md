@@ -4,9 +4,6 @@
 
 ---
 
-## [v0.1.0-beta.23] - 2026-10-16
-
-
 ### 🔧 包自检门前置降级 —— 缺 `.atlas/tests` 记 `SKIP`，不再恒红 (Issue #17: F53, D91)
 
 **背景（残余面）**：issue #17 的装配面根因（`package.json.files` 漏 `tests` ⇒ 经 npm 装配的项目恒无 `.atlas/tests`）已在本日 beta.18 批（D86/F47）修掉，但 `scripts/atlas_check.py` 的包自检门（`check_factory`）本身**无前置判据**：存量装配（beta.17 及以前发行版的 npm 装配态）与源包开发态（仓根无 `.atlas/`）下 `pytest .atlas/tests` 收集失败（退出码 4）⇒ 全量模式恒红 `FAIL`，而 `--fast` 一跑就 OK——同一扇门两条路给两个相反结论（「红灯训练成噪声」族）。另有一个评审实出的现存假绿：`.atlas/tests` 被**文件**占用（装配损坏）时 pytest 收集 0 条退出码 0 ⇒ 被判 `ok`。
@@ -15,14 +12,11 @@
 - **目录在场 ⇒ 行为逐字节不变**：真跑 pytest，真红仍 `FAIL`——降级只吃「断言对象不在场」这一种，防把真失败一并洗绿。
 - **评审（tech-proposal-reviewer，1 blocking + 5 major/minor 修后采纳）**：blocking 件 = `DESIGN.md` D86 曾在根因未修时明文否决「遇缺就 SKIP」——按**收窄**处置而非推翻：D91 单列 + D86 行尾收窄注记，并把「装配面根因（装配三表同步）永远不得改靠 SKIP 吸收」单独立句；其余 = file 形态一道覆盖（上假绿关闭）、pytest 可用性盲区进门册「不查什么」、出路动作词齐组进钉、变异号登记、在场零用例（`no tests ran`）取舍显式化。
 - **钉**：A-1（三形态 SKIP + 出路词齐组：`pytest tests` / `install.sh` / `atlas upgrade`）+ A-2（反面钉：目录在场注入必红 ⇒ 仍 `FAIL`）；变异 **M76**（前置分支置死 ⇒ A-1 红；还原逐字节一致，sha `2494e04f525be144`）。
-- **登记补遗**：本批提交时漏了 CHANGELOG 条目与版本步进（同类缺口）⇒ 随本条目补上；另将 F49–F52 批已被占用而未落册的 **D87–D90 四行决策补记进 `DESIGN.md`**（内容自各批提交正文还原；本条目自身即登记缺口的修复本体）。
+- **登记补遗**：发版口径收拢为单版本——本条目一次性收录当日五个批次（F49–F53）的全部内容；另将 F49–F52 批已被占用而未落册的 **D87–D90 四行决策补记进 `DESIGN.md`**（内容自各批提交正文还原）。
 
 **取证**：`tests/test_atlas_check.py` 22 → 24 条全绿；`pytest tests -q` ⇒ **455 passed / 4 skipped**（落地前基线 453 passed / 4 skipped，+2 钉无红）；`scripts/atlas_check.py --fast` 源包态自证 OK；`tests/test_canonical_consistency.py` 9 绿（计数 24 条为 pytest 实收口径）。登记面：`proposals/RFC-20261016-02-factory-gate-precondition.md`（v2 含评审处置 §6）、`shared/gates.md` 2.2 对齐测试行、`DESIGN.md` D91 + D86 收窄注记。
 
 ---
-
-## [v0.1.0-beta.22] - 2026-10-16
-
 
 ### 🔧 `守卫:` 路径 —— 元素齐全守卫在带参页面上不再导航到匹配不上的地址 (Issue #23: F52, D90)
 
@@ -36,9 +30,6 @@
 **取证**：新增钉子 4 条 —— 校验器 2（正向 1：`/home/42` 前缀命中 `/home` ⇒ PASS；坏输入 1：页面表外路径 ⇒ FAIL）、生成器 2（**带 `守卫:` ⇒ 守卫导航用该具体路径**；**零变化承诺**：同一用例带/不带 `守卫:` 各生成一次，两份产物**只差那一行**且该行含 `page.goto(`）。源包全量 **453 passed / 0 failed / 4 skipped**。`shared/gates.md` 计数登记 106 → 108（该门本轮第四次咬合）。
 
 ---
-
-## [v0.1.0-beta.21] - 2026-10-16
-
 
 ### 🔧 会话前提：`会话:` 通道 —— 宿主注入型会话态成为可声明、可隔离、可机检的前提 (Issue #13: F51, D89)
 
@@ -54,9 +45,6 @@
 **取证**：新增钉子 8 条 —— 校验器 4（正向 1 / 坏输入 3）、生成器 4（发射先于首航 / 未声明白名单 ⇒ exit 2 / 键在白名单外 ⇒ exit 2 / **零步基线测试体里不得出现 `atlasSessionPreset`**）。源包 **449 passed / 0 failed / 4 skipped**。`shared/gates.md` 计数登记 102 → 106（该门本轮第三次咬合）。契约字段登记门亦咬合一次：生成器先引用了 `e2e.session_preset` 而 §2 未声明 ⇒ 红，按门要求补契约后才复绿。
 
 ---
-
-## [v0.1.0-beta.20] - 2026-10-16
-
 
 ### 🔧 应然落点：应然 testid 的承载元素成为声明式、可机检的资产 (Issue #20: F50, D88)
 
@@ -176,7 +164,6 @@
     token 首位 + 显式分隔符，散文提及不算声明）；profile 缺失 / `adapters.api` 未声明 ⇒ 不产行。同日实测咬合：标签前缀正则会把「未取证」本身当 `<标签>:` 前缀吃掉 ⇒ 判据顺序定为「声明位直取优先、标签兜底」（更新至 `_d_form_token` 注释与 F43 钉子）。变异证明：M64，`tests/test_structure_validator.py`（24 条）。
 * **【`apis.md` 指针形态判据锚定化（F44，issue #6 同族兄弟残留）】（`validators/validate_structure.py`）**：
   - 旧判据是无锚定全文子串 `"真相源" in t`：清单型 `apis.md` 的语义段只要写一句「本域接口真相源由网关维护」，整表就被误判「清单与指针混写」FAIL——与 issue #6 的 `categories.A/H` 措辞判形态同一族疾病，落在兄弟判据上。现改**锚定声明**：行首（或表格单元格首）出现 `真相源` token、其后接显式分隔符或就此结束才算指针形态；散文提及一律不算，真按指针落笔时豁免照常成立。`表格列` 门里对指针文件的豁免同步换用同一判据。变异证明：M66，判据退回全文子串 ⇒ `test_f44_list_form_prose_mention_of_zhenxiangyuan_not_flagged` 红（还原逐字节一致）。
-
 
 
 * **【`.adapter-out/` 单一位点 = 项目根】（`scripts/refresh_structure.py`, `scripts/atlas_check.py`, `adapters/_graph.py`, `shared/stack-profile.md` §3.1/§3.6, `DESIGN.md` D41/D77, `rings/structure/reference.md` §6.1；issue #8）**：
