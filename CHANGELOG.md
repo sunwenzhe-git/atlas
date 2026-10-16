@@ -4,6 +4,26 @@
 
 ---
 
+## [v0.1.0-beta.18] - 2026-10-16
+
+
+### 🚪 走查断链与登录预置两案落地 (Issue #10/#11: RFC-20261015-01/02, 评审修后采纳)
+
+* **【走查与 E2E 控制台：术语交叉指认 + `manual.md` 产出方 + 存在性披露】（`rings/e2e/reference.md` §6.2/§5.4 末/§10 执行纪律/§10.1, `rings/prd/reference.md` §4·八, `shared/gates.md` 2.5, `docs/design/e2e-ring.md`, `scripts/e2e_console.py`, `templates/e2e/console/app.js`, `tests/test_e2e_console.py`；`proposals/RFC-20261015-01`，issue #10；D81）**：
+  - 「走查」一词被两道不同阶段的门共用（跨 `3507 AQ` / `3508 §170` 两份决策记录复用同一 B124 标签）⇒ 读成「硬软自相矛盾」。定案 = **仓库既有的两名各自保留 + 撞车点交叉指认**：`走查单确认门`（硬，= e2e §6.2 前置门）、`验收走查门`（不阻塞后续域）；`rings/e2e/reference.md:383` / `:569` / prd §八 标题下三处互指。**不发明第三名、不全局改名**（波及 7 源文件 + 开户模板节标题，可逆性最差）。明示翻转触发器：确认门连续挡住两批以上需求的 e2e 落笔（gates 台账可查）⇒ 重议改软。
+  - **`manual.md` 定位收窄 = 「控制台盖不住的手工项」**（B124 原话），不是走查单载体——收口走查的符合性对照物明文指向**已确认的 §八 节**（`rings/e2e/reference.md:176`）；issue 的「双写无主」判为**伪冲突**，不建回填协议、不做回指弱关联。
+  - **产出方**：e2e 环在页面表就绪后盘点落项（§10 新增执行纪律 5）；**验收走查现场**新识别的手工项**授权人侧当场直写**（评审补的盲区——现场发现时 e2e 环已收工，无授权落点会让缺陷在运行时复发）；控制台写盘点不变（账本 + 索引）。
+  - **存在性披露**：§5.4 收口走查留痕 README 增**「手工项：N 项 / 已评估：0 / 待评估」**评估行（不发明 §11 新报告行——「评估过没有」是 per-域跨时间状态，不是「每次变更」状态）；控制台 `manual_state: missing` ⇒ meta 行显式「未创建」——「文件缺失 = 空清单不阻塞」保留，但**「没有」与「忘了」不得同形**（**M73**：摘通道 ⇒ `test_manual_absence_is_disclosed_not_silent` 红）。不采纳 issue 的「开户落空 manual.md」：零占位符（`global-rules.md` §5）+ 空文件不区分「评估过为 0」与「忘了」。
+  - **顺序死锁不改门即消解**：§八 的入口来自功能六件套，不依赖 e2e 环的索引页面表；「manual.md 页面列须按压页面表路由」的前置依赖只在把 `manual.md` 当走查载体时才被造出来——不造该依赖（§6.2 补边界句：门只约束「本环不落笔用例」）。
+* **【靶场登录预置：`app_login.mode` 增 `none` + 「段缺失 = 合法降级」撤销（分两阶段升档）】（`shared/stack-profile.md` §2, `rings/e2e/reference.md` §5.8/§7.1, `apply/reference.md` adopt 行/三问门, `templates/stack-profile.yaml`, `scripts/gen_e2e_scripts.py`, `validators/validate_stack_profile.py`, `_support/stack_profile.py`, `tests/` 五文件, `shared/gates.md` 2.2/2.1；`proposals/RFC-20261015-02`，issue #11；D80）**：
+  - **`mode: none` = 靶场无访问门的显式声明**（家族先例 `e2e.mock.mode: off` / `e2e.review.mode: off`——「在 X 段里用 mode 值声明 X 通道不需要」）：不生成登录预置设施（`atlas-auth.setup.ts` 不出、配置无 setup 项目 / storageState）、不打警告；段内五取证字段残留 ⇒ 校验器 FAIL + 生成器报错（与 `fabricated` 的「收窄」相反 = **「全弃」**）；**空段 = 未声明**（**M71**：none 分支仍生成设施 ⇒ `test_setup_mode_none_generates_no_login_facilities` 红）。
+  - **语义改判**：段缺失 = **未声明**（不再是「合法降级」——硬要求（§7.1 登录态（硬））的输入不得靠「缺失即静默放行」吸收）。**分两阶段**：第一阶段 `validate_stack_profile` **WARN 指名**（`app_base_url` 已声明 ⇒ 项目准备真跑；**文案中性**——本器判不了靶场有没有门，不得断言「每次都需人工登录」；未声明 base_url 不提前吹，**M70**）；**第二阶段 = 下一次真跑准备日（时间锚，无条件）** 推给生成器 `not_ready`（退出码 3 + 机读键 `not_ready: "app_login"`，与 `app_base_url` 同通道，SKIP 原因两态扩三态）。**第 1 次咬合（升档依据）= 2026-10-15 现场**（pass1→pass5 会话失效 + 人工登录复用），登记 `gates.md` 2.2「E2E 真跑」行。**连带面明示**：升档日 `生成物最新` 门一并 SKIP 为有意回退；enforcement 点（生成器）与 gate 点（真跑门）解耦是有意设计——迁移窗口内盘上旧脚本不误杀。
+  - **产出方补齐（与 #10 同一病理）**：adopt 开户问数「**靶场接入取证**」（`app_base_url` + 登录形态三选一必须显式——`real` 四值 / `mode: none` / `fabricated` + `storage_key`；凭据只提醒来源，**询问不落盘**）；三问第 3 问判「是」而未声明 ⇒ 兜底追问（UX 加速器，判据正文仍是机器门）。
+  - **`yaml_scalar` null 家族收窄为 YAML 口径**（只认 `null` / `~` / 空；裸 `none` = 合法字符串）：旧口径把裸 `none` 吞成 null ⇒ 缺省判据把它读成 `real`，三态判据静默失效（**M72**；全量回归无受影响夹具）。
+  - **词表守恒补缺**：`APP_LOGIN_MODES` 是唯一无「⊆ 模板 ⊆ 契约正文」守恒钉的 MODES 族（`SEED_MODES` / `ORIGINS` / `RUNNERS` 都有）⇒ 本批补上（`test_validators.py` 89→**91** 条 / `test_gen_e2e_scripts.py` 53→**55** 条）。变异 **M69**（none 字段互斥卸恒真 ⇒ 残留夹具变绿）。
+  - **升档迁移动作（存量项目）**：`app_base_url` 已声明 + `app_login` 缺失的项目，在升档日前**加一行** `app_login: {mode: none}`（无门）或补齐 `real` 四值（有门）；`real/fabricated` 已声明的项目零影响。
+* 两方案评审 = tech-proposal-reviewer 子代理「**修后采纳**」（v2 各按其修正点落地：修 3 处事实错误 / 重写自相矛盾的升档条件 / 指定机读键 / 换出更省的留痕落点；完整修订记录见两份 RFC 文末）；设计记录 = `DESIGN.md` D80 / D81；全量 **418 passed / 4 skipped**（bun 执行级 skip 为既有），canonical 一致性全绿。
+
 ## [v0.1.0-beta.17] - 2026-10-15
 
 

@@ -113,6 +113,8 @@ def test_console_serves_from_package() -> None:
             assert cases["manual"] == [
                 {"id": "M-DEMO-001", "page": "home", "title": "演示手工项", "note": "自己点一遍"},
             ], cases.get("manual")
+            # 存在性披露（RFC-20261015-01）：文件在 ⇒ created
+            assert cases["manual_state"] == "created", cases.get("manual_state")
             assert "prototype" not in cases["sources"], cases["sources"]
 
             for asset in ("/app.js", "/console.css"):
@@ -126,8 +128,44 @@ def test_console_serves_from_package() -> None:
                 proc.kill()
 
 
+def test_manual_absence_is_disclosed_not_silent() -> None:
+    """`manual.md` 不存在 ⇒ payload 带 `manual_state: "missing"`（前端据此在 meta 行显式披露
+    「未创建」）。`RFC-20261015-01` / issue #10：文件缺失 = 空清单不阻塞不变，但「没有」
+    与「忘了」不得同形——明确级别的暴露载体。变异证明 **M73**：摘掉 `manual_state` 通道
+    ⇒ 本用例红（回落静默空栏）。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_project(Path(tmp))
+        (root / "product" / "e2e" / "manual.md").unlink()      # 夹具前提：清单未创建
+        port = free_port()
+        proc = subprocess.Popen(
+            [sys.executable, str(CONSOLE), "--root", str(root), "--port", str(port)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+        try:
+            base = f"http://127.0.0.1:{port}"
+            op = opener()
+            page = None
+            for _ in range(60):
+                try:
+                    page = op.open(base + "/", timeout=2).read()
+                    break
+                except (urllib.error.URLError, ConnectionError):
+                    time.sleep(0.1)
+            assert page is not None
+            cases = json.loads(op.open(base + "/api/cases?source=app", timeout=5).read())
+            assert cases["manual"] == [], cases.get("manual")
+            assert cases["manual_state"] == "missing", cases.get("manual_state")
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:  # pragma: no cover
+                proc.kill()
+
+
 def main() -> int:
-    tests = [test_console_serves_from_package]
+    tests = [test_console_serves_from_package, test_manual_absence_is_disclosed_not_silent]
     failed = 0
     for t in tests:
         try:

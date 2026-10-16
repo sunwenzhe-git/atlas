@@ -115,7 +115,13 @@ def test_profile_golden_expectations() -> None:
 
 
 def test_profile_scalar_forms() -> None:
-    """标量口径：null 家族 → None、引号剥离、顶层标量结束当前段（不吞进上一段）。"""
+    """标量口径：null 家族 → None、引号剥离、顶层标量结束当前段（不吞进上一段）。
+
+    null 家族只认 `null` / `~` / 空（2026-10-16 收窄，RFC-20261015-02）：裸 `none` 是
+    **合法字符串**（`e2e.app_login.mode: none` = 靶场无访问门的显式声明，必须原样读出）——
+    旧口径把它也归入 null ⇒ mode 被吞成 None，缺省判据读成 `real`（变异 M72：把收窄去掉
+    ⇒ 本用例的第二组断言红）。
+    """
     d = sp.parse_profile("prototype: null\norigin: adopt\ne2e:\n  runner: node-playwright\n")
     assert d["prototype"] is None
     assert d["origin"] == "adopt"          # 顶层标量结束段 —— 不吞进 prototype
@@ -123,6 +129,10 @@ def test_profile_scalar_forms() -> None:
     assert sp.yaml_scalar("'x'") == "x"
     assert sp.yaml_scalar("~") is None
     assert sp.strip_inline_comment("a: b   # 注释") == "a: b"
+    # 裸 `none` 收窄后的口径：是字符串不是 null（None 同判——两种 Python 风写法都不是 null）
+    assert sp.yaml_scalar("none") == "none"
+    assert sp.yaml_scalar("None") == "None"
+    assert sp.parse_profile("e2e:\n  app_login:\n    mode: none\n")["e2e"]["app_login"]["mode"] == "none"
 
 
 def test_block_golden_and_shape() -> None:

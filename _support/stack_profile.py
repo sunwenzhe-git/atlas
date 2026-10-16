@@ -50,11 +50,16 @@ def strip_inline_comment(line: str) -> str:
 
 
 def yaml_scalar(raw: str):
-    """把 YAML 标量转成 Python 值：空 / null 家族 → None，带引号则去引号。"""
+    """把 YAML 标量转成 Python 值：null 家族 → None，带引号则去引号。
+
+    null 家族与 YAML 一致：**只认 `null` / `~` / 空**（`2026-10-16 收窄，RFC-20261015-02`
+    —— 旧口径把裸 `none` / `None` 也归入 null，超出 YAML；本 RFC 的 `e2e.app_login.mode: none`
+    是**字符串取值**（靶场无访问门），必须原样读出，不得被吞成 null ⇒ 缺省判据会把它读成 `real`）。
+    """
     v = raw.strip()
     if len(v) >= 2 and v[0] in "'\"" and v[-1] == v[0]:
         return v[1:-1]
-    if v in ("", "null", "Null", "NULL", "~", "none", "None"):
+    if v in ("", "null", "Null", "NULL", "~"):
         return None
     return v
 

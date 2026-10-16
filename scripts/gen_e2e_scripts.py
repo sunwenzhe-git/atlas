@@ -23,14 +23,19 @@
     `test` / `expect`——承载控制台「跑完留窗（ATLAS_KEEP_OPEN）+ 结果哨兵
     （ATLAS_RESULT_FILE）」；环境变量未设时行为与 `@playwright/test` 原生一致。
     py 时代等价物 = conftest.py（已随单轨化退役）。
-  * **预置登录态**：以**真实登录**预置会话——端点 / 表单字段名 / 令牌键 / 存储键 = 取证值，
-    登记在 `e2e.app_login` 段
-    （段缺失 = 合法降级：跳过预置 + 明确警告；字段不齐 ⇒ 生成报错）；凭据只来自运行期
-    环境变量 `ATLAS_APP_USER` / `ATLAS_APP_PASSWORD`（不读项目 `.env`、不硬编码）；
+  * **登录形态与预置（RFC-20261015-02，issue #11；2026-10-16）**：形态声明在 `e2e.app_login.mode`
+    —— `real`（缺省 = 真实登录：OAuth2 表单 → 令牌 → 写进运行器 storageState）、
+    `fabricated`（§5.8：纯前端桩不发请求直写假令牌，必填收窄 `storage_key`）、
+    **`none`（靶场无访问门：不生成登录预置设施，也不打警告 —— 声明过的形态，不是降级）**。
+    取证值（端点 / 表单字段名 / 令牌键 / 存储键）登记在段内；`mode: none` 下五个取证字段
+    一律不得残留（含 `storage_key` —— 无门项目的存储键没有消费方，与 fabricated 的
+    「收窄」相反是「全弃」）；段存在而字段不齐 ⇒ 生成报错。
+    凭据只来自运行期环境变量 `ATLAS_APP_USER` / `ATLAS_APP_PASSWORD`（不读项目 `.env`、不硬编码）；
     未设置 ⇒ 跳过预置 + 明确警告；换取令牌失败 ⇒ 报错中止
     （不得静默续跑——那会退化成「未登录态跑用例」的假绿）。
-    `app_login.mode: fabricated`（§5.8，2026-10-12）= 纯前端桩项目形态：不发真实登录请求，
-    setup 直写固定假令牌进 storageState（必填收窄为 `storage_key`）。
+    **段缺失 = 未声明（不再是「合法降级」）**：`validate_stack_profile` 已 WARN 指名；
+    生成器升档点 = 下一次真跑准备日（见 `shared/gates.md`「E2E 真跑」行——届时改推
+    `not_ready`：退出码 3 + 机读 `not_ready: "app_login"`）。
   * **网络边界打桩**（契约 §5.8，2026-10-12）：`mock:` 行（用例级）在 `e2e.mock.mode: on`
     时编译为**单条** `context.route` 派发表（pathname+method 命中、query 免疫；前缀内未命中
     fail-loud abort + 用例末审计断言点名；OPTIONS 自动 204 + CORS 头）；fixture 内容**生成期
@@ -44,8 +49,10 @@
     python3 gen_e2e_scripts.py --root <项目根> [--apply] [--json]
 
 退出码（`3509 §B110`）：**0** 正常 · **2** 真错（缺 profile / 动词越界 / 审查门不过…） ·
-**3** 前置未声明（`e2e.app_base_url` 为空）—— **3 不是失败**：调用方应判「未就绪」而不是「生成失败」，
-且 `--json` 下 stdout 给出 `{"ok": false, "not_ready": "app_base_url", …}`。
+**3** 前置未声明 —— **3 不是失败**：调用方应判「未就绪」而不是「生成失败」，
+且 `--json` 下 stdout 给出 `{"ok": false, "not_ready": <键>, …}`。
+当阶段键 = `app_base_url`（地址未声明）；`app_login` 未声明按 RFC-20261015-02 于
+下一次真跑准备日并入同一通道（机读键 `"app_login"`，升档记录见 `shared/gates.md`「E2E 真跑」行）。
 """
 from __future__ import annotations
 
@@ -71,11 +78,13 @@ RUNNERS = {"node-playwright": ".spec.ts"}  # 单轨（3507 BO）：python-playwr
 # 与真错（2）分开 ⇒ 调用方（`atlas_check`）判 **SKIP（未就绪）** 而不是 FAIL。
 # 同一根因曾被判成两种结论（`E2E 真跑`=SKIP、`生成物最新`=FAIL）⇒ 永久红门 = 静音门（`§106`）。
 NOT_READY = 3
-# e2e.app_login 段的必填字段（段缺失 = 合法降级；段存在则须齐全，3509 §B101）
+# e2e.app_login 段的必填字段（mode: real 须全齐；fabricated 收窄为 storage_key；3509 §B101）
 APP_LOGIN_FIELDS = ("endpoint", "username_field", "password_field", "token_key", "storage_key")
-# e2e.app_login.mode（契约 §5.8/§7.1，2026-10-12）：real（缺省 = 真实登录语义）/
-# fabricated（纯前端桩项目：setup 直写假令牌，必填收窄为 storage_key）。
-APP_LOGIN_MODES = ("real", "fabricated")
+# e2e.app_login.mode（契约 §5.8/§7.1，2026-10-12；2026-10-16 增 none，RFC-20261015-02）：
+# real（缺省 = 真实登录语义）/ fabricated（纯前端桩项目：setup 直写假令牌，必填收窄为 storage_key）/
+# none（靶场无访问门：不生成登录预置设施、不打警告 —— 声明过的形态，不是降级）。
+# 与既有词表同族（e2e.mock.mode off / e2e.review.mode off：在 X 段里用 mode 值声明「X 通道不需要」）。
+APP_LOGIN_MODES = ("real", "fabricated", "none")
 # 网络边界打桩（契约 §5.8，2026-10-12）：`mock:` 行的方法枚举（行式语法见 parse_mock_line）。
 MOCK_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 
@@ -1006,23 +1015,39 @@ def main() -> int:
         return NOT_READY
 
     app_login = e2e.get("app_login") or None
-    login_mode = (app_login or {}).get("mode") or "real"
-    if app_login is not None and login_mode not in APP_LOGIN_MODES:
-        print(f"ERROR: e2e.app_login.mode 非法: {login_mode!r}（允许 {list(APP_LOGIN_MODES)}；缺省 real）"
-              "——契约见 shared/stack-profile.md §2 + rings/e2e/reference.md §5.8", file=sys.stderr)
-        return 2
-    if app_login is not None:
-        # fabricated（契约 §5.8，2026-10-12）：纯前端桩项目——不发真实登录请求，
-        # setup 直写假令牌 ⇒ 必填收窄为 storage_key（其余取证字段无消费方）。
-        required = ("storage_key",) if login_mode == "fabricated" else APP_LOGIN_FIELDS
-        missing = [k for k in required if not (app_login.get(k) or "").strip()]
-        if missing:
-            print(f"ERROR: e2e.app_login 段不完整（mode={login_mode}，缺 {missing}）——要么补齐，"
-                  "要么整段删除（未声明 = 合法降级：跳过登录预置 + 明确警告）", file=sys.stderr)
-            return 2
-    else:
+    if app_login is None:
+        # RFC-20261015-02（issue #11）：段缺失不再是「合法降级」。当阶段（第一阶段）仍按既有
+        # 占位形态生成 + 警告；**升档点 = 下一次真跑准备日**（`shared/gates.md`「E2E 真跑」行）：
+        # 届时把这里的警告改推 `NOT_READY`（机读键 `"app_login"`，message 带显式 token）。
+        # `validate_stack_profile` 侧已先行 WARN 指名 —— 缺口在两道机器面上都看得见。
         print("WARN: stack-profile 未声明 e2e.app_login —— 将跳过登录态预置"
-              "（生成物与运行期均会警告；依赖预置登录态的用例会失败）", file=sys.stderr)
+              "（依赖预置登录态的用例会失败。有门项目请补 real 取证四值；无门项目请显式声明"
+              " mode: none；升档记录见 shared/gates.md「E2E 真跑」行）", file=sys.stderr)
+        login_mode = "real"
+    else:
+        login_mode = app_login.get("mode") or "real"
+        if login_mode not in APP_LOGIN_MODES:
+            print(f"ERROR: e2e.app_login.mode 非法: {login_mode!r}（允许 {list(APP_LOGIN_MODES)}；缺省 real）"
+                  "——契约见 shared/stack-profile.md §2 + rings/e2e/reference.md §5.8", file=sys.stderr)
+            return 2
+        if login_mode == "none":
+            # none（2026-10-16，RFC-20261015-02）：显式声明「靶场无访问门」⇒ 五个取证字段一律
+            # 不得残留（含 storage_key —— 无门项目的存储键没有消费方）。与 fabricated 的
+            # 「收窄」相反：全弃（fabricated = 收窄，none = 全弃，两条判据同构成镜像）。
+            leftover = [k for k in APP_LOGIN_FIELDS if (app_login.get(k) or "").strip()]
+            if leftover:
+                print(f"ERROR: e2e.app_login.mode=none 与残留取证字段互斥（{leftover}）"
+                      "——无门项目请写 app_login: {mode: none}，整段不留取证值", file=sys.stderr)
+                return 2
+        else:
+            # fabricated（契约 §5.8，2026-10-12）：纯前端桩项目——不发真实登录请求，
+            # setup 直写假令牌 ⇒ 必填收窄为 storage_key（其余取证字段无消费方）。
+            required = ("storage_key",) if login_mode == "fabricated" else APP_LOGIN_FIELDS
+            missing = [k for k in required if not (app_login.get(k) or "").strip()]
+            if missing:
+                print(f"ERROR: e2e.app_login 段不完整（mode={login_mode}，缺 {missing}）——要么补齐，"
+                      "要么按形态声明（真实登录=real；无门=mode: none）", file=sys.stderr)
+                return 2
 
     # 数据播种通道（契约 §5.7，2026-09-28）：`e2e.seed.hook`（项目自定实现，路径相对项目根）。
     # `e2e.seed.mode`（B197-1，2026-10-07）：声明 / 发射解耦开关——enforce（缺省 = 现行为，
@@ -1350,39 +1375,70 @@ def main() -> int:
     # 运行器原生配置：承载 baseURL（不硬编码在用例脚本里）
     # node 运行器全机制版（2026-09-30 拉平）：storageState 预置登录（setup 项目）、
     # auth:none 由用例 describe 内 test.use 覆盖（ts_case 渲染）。
+    # mode: none（2026-10-16，RFC-20261015-02）：靶场无访问门 ⇒ 不生成「setup 项目 +
+    # storageState」设施 —— 无门项目里那套编排没有被编排的对象（B124 同族教训：
+    # 外加编排是对原设计的稀释）。用例级 `auth: none` 依然成立：describe 内 test.use
+    # 显式给空 storageState，不依赖全局预置。
     state_rel = ".atlas-auth/state.json"
-    cfg = (
-        "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py；重跑覆盖。\n"
-        "import { defineConfig } from '@playwright/test';\n\n"
-        "// 会话预置登录（契约 §5.7 / §5.4）：setup 项目真实登录一次 → state 文件；\n"
-        "// 凭据来自运行期环境变量 ATLAS_APP_USER / ATLAS_APP_PASSWORD（不读项目 .env、不硬编码）；\n"
-        "// 未设置 ⇒ setup 写空 state 并警告（不静默）；换取失败 ⇒ setup 抛错中止（不静默续跑）。\n"
-        "export default defineConfig({\n"
-        "  reporter: [\n"
-        "    ['list'],\n"
-        "    ['json', { outputFile: '.atlas-run/results.json' }],\n"
-        "  ],\n"
-        "  outputDir: '.atlas-run',\n"
-        "  // 契约 rings/e2e §8：执行一次一条（并发 = 1）。零步基线必须先于改态用例，\n"
-        "  // 并行调度会乱序 ⇒ 恒真误报 / 前提被前序用例污染。\n"
-        "  workers: 1,\n"
-        "  fullyParallel: false,\n"
-        f"  use: {{ baseURL: process.env.ATLAS_BASE_URL ?? '{base}',  // E1 单段\n"
-        "    // F11（2026-10-14）：慢动作经 `ATLAS_SLOWMO` 注入——Playwright `test` CLI 无\n"
-        "    // `--slowmo` 旗标（1.64 实测 unknown option）；未设 ⇒ 0，行为与原生一致。\n"
-        "    launchOptions: { slowMo: Number(process.env.ATLAS_SLOWMO || 0) } },\n"
-        "  projects: [\n"
-        "    { name: 'setup', testMatch: /atlas-auth[.]setup[.]ts/ },\n"
-        "    {\n"
-        "      name: 'chromium',\n"
-        "      dependencies: ['setup'],\n"
-        "      use: { storageState: "
-        + json.dumps(state_rel)
-        + ", ...(process.env.ATLAS_PLAYWRIGHT_CHANNEL ? { channel: process.env.ATLAS_PLAYWRIGHT_CHANNEL } : {}) },\n"
-        "    },\n"
-        "  ],\n"
-        "});\n"
-    )
+    if login_mode == "none":
+        cfg = (
+            "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py；重跑覆盖。\n"
+            "import { defineConfig } from '@playwright/test';\n\n"
+            "// app_login.mode=none（契约 shared/stack-profile.md §2 / rings/e2e §7.1）：\n"
+            "// 靶场无访问门 ⇒ 无登录预置设施（setup 项目与 storageState 均不生成）。\n"
+            "// 未登录前提的用例（auth: none）自带空 storageState，不依赖全局预置。\n"
+            "export default defineConfig({\n"
+            "  reporter: [\n"
+            "    ['list'],\n"
+            "    ['json', { outputFile: '.atlas-run/results.json' }],\n"
+            "  ],\n"
+            "  outputDir: '.atlas-run',\n"
+            "  // 契约 rings/e2e §8：执行一次一条（并发 = 1）。零步基线必须先于改态用例，\n"
+            "  // 并行调度会乱序 ⇒ 恒真误报 / 前提被前序用例污染。\n"
+            "  workers: 1,\n"
+            "  fullyParallel: false,\n"
+            f"  use: {{ baseURL: process.env.ATLAS_BASE_URL ?? '{base}',\n"
+            "    launchOptions: { slowMo: Number(process.env.ATLAS_SLOWMO || 0) } },\n"
+            "  projects: [\n"
+            "    { name: 'chromium',\n"
+            "      use: { ...(process.env.ATLAS_PLAYWRIGHT_CHANNEL ? { channel: process.env.ATLAS_PLAYWRIGHT_CHANNEL } : {}) },\n"
+            "    },\n"
+            "  ],\n"
+            "});\n"
+        )
+    else:
+        cfg = (
+            "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py；重跑覆盖。\n"
+            "import { defineConfig } from '@playwright/test';\n\n"
+            "// 会话预置登录（契约 §5.7 / §5.4）：setup 项目真实登录一次 → state 文件；\n"
+            "// 凭据来自运行期环境变量 ATLAS_APP_USER / ATLAS_APP_PASSWORD（不读项目 .env、不硬编码）；\n"
+            "// 未设置 ⇒ setup 写空 state 并警告（不静默）；换取失败 ⇒ setup 抛错中止（不静默续跑）。\n"
+            "export default defineConfig({\n"
+            "  reporter: [\n"
+            "    ['list'],\n"
+            "    ['json', { outputFile: '.atlas-run/results.json' }],\n"
+            "  ],\n"
+            "  outputDir: '.atlas-run',\n"
+            "  // 契约 rings/e2e §8：执行一次一条（并发 = 1）。零步基线必须先于改态用例，\n"
+            "  // 并行调度会乱序 ⇒ 恒真误报 / 前提被前序用例污染。\n"
+            "  workers: 1,\n"
+            "  fullyParallel: false,\n"
+            f"  use: {{ baseURL: process.env.ATLAS_BASE_URL ?? '{base}',  // E1 单段\n"
+            "    // F11（2026-10-14）：慢动作经 `ATLAS_SLOWMO` 注入——Playwright `test` CLI 无\n"
+            "    // `--slowmo` 旗标（1.64 实测 unknown option）；未设 ⇒ 0，行为与原生一致。\n"
+            "    launchOptions: { slowMo: Number(process.env.ATLAS_SLOWMO || 0) } },\n"
+            "  projects: [\n"
+            "    { name: 'setup', testMatch: /atlas-auth[.]setup[.]ts/ },\n"
+            "    {\n"
+            "      name: 'chromium',\n"
+            "      dependencies: ['setup'],\n"
+            "      use: { storageState: "
+            + json.dumps(state_rel)
+            + ", ...(process.env.ATLAS_PLAYWRIGHT_CHANNEL ? { channel: process.env.ATLAS_PLAYWRIGHT_CHANNEL } : {}) },\n"
+            "    },\n"
+            "  ],\n"
+            "});\n"
+        )
     write(scripts_dir / "playwright.config.ts", cfg, args.apply, results)
 
     # atlas-hold.ts（契约 §10.1，2026-10-12 控制台 node 轨迁移批）：页面脚本的 test/expect
@@ -1432,7 +1488,12 @@ def main() -> int:
     pass_field = (app_login or {}).get("password_field") or "password"
     token_key = (app_login or {}).get("token_key") or "access_token"
     storage_key = (app_login or {}).get("storage_key") or "access_token"
-    if login_mode == "fabricated":
+    setup_ts: str | None = None
+    if login_mode == "none":
+        # RFC-20261015-02（issue #11）：靶场无访问门 ⇒ 无登录预置设施 —— setup 不生成，
+        # 运行器配置也不含 setup 项目 / storageState（见上文 cfg 的 none 分支）。
+        pass
+    elif login_mode == "fabricated":
         # 契约 §5.8（2026-10-12）：纯前端桩项目 —— 不发真实登录请求，直写假令牌。
         # 真实登录语义（换取失败 ⇒ 报错中止）只属 real；fabricated 无凭据面、无网络面。
         setup_ts = (
@@ -1493,7 +1554,9 @@ def main() -> int:
             "  writeFileSync(stateFile, JSON.stringify(state));\n"
             "});\n"
         )
-    write(scripts_dir / "atlas-auth.setup.ts", setup_ts, args.apply, results)
+    if login_mode != "none":
+        # none ⇒ 无登录预置设施，atlas-auth.setup.ts 不生成（configured 分支见上）。
+        write(scripts_dir / "atlas-auth.setup.ts", setup_ts, args.apply, results)
     gitignore = scripts_dir / ".gitignore"
     if not gitignore.is_file():
         write(gitignore, ".atlas-auth/\n.atlas-run/\n", args.apply, results)

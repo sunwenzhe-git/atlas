@@ -75,6 +75,11 @@ async function load() {
     ac: '', need: '', intent: m.note, note: m.note,
   })));
   S.manualCount = S.manual.length;
+  // 手工面存在性披露（RFC-20261015-01，issue #10）：「没有」与「忘了」不得同形——
+  // missing ⇒ meta 行显式「未创建」，评测留痕另落域收口走查 README（契约 §5.4 末 / §10 纪律 5）
+  const manualNote = (d.manual_state === 'missing')
+    ? ' · 手工项清单未创建（product/e2e/manual.md 不存在）'
+    : ` · 手工项 ${S.manualCount} 条`;
   S.sources = d.sources || {};
   S.cfg = { slowmo: d.slowmo, timeout: d.timeout, head: d.head };
   $('slowmo').value = d.slowmo;
@@ -83,6 +88,7 @@ async function load() {
   const cfg = srcCfg();
   $('meta').textContent = `来源 ${cfg.label || S.source}（${cfg.base_url || '未配置'}）`
     + ` · ${d.head ? '执行时弹出浏览器窗口' : '无头执行（不弹窗口）'} · 一次跑一条 · 单条超时 ${d.timeout}s`
+    + manualNote
     + (c.ts ? ` · 最近提交 ${hhmm(c.ts)}（${c.actor || ''}）` : ' · 尚未提交过');
   const pages = [...new Set(S.cases.map((x) => x.page))];
   $('f-page').innerHTML = '<option value="all">全部</option>' + pages.map((p) => `<option value="${p}">${p}</option>`).join('');

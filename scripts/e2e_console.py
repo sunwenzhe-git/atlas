@@ -692,6 +692,12 @@ class App:
             "ledger": "product/e2e/reviews/console/events.jsonl",
             "cases": snap["cases"],
             "manual": read_manual(self.root),
+            "manual_state": ("created"
+                             if (self.root / "product" / "e2e" / "manual.md").is_file()
+                             else "missing"),
+            # manual_state（RFC-20261015-01，issue #10）：「没有」与「忘了」不得同形——
+            # missing ⇒ 前端显式披露「未创建」，不静默空栏；评估留痕另落域收口走查 README
+            # （rings/e2e/reference.md §5.4 末 / §10 执行纪律 5）。
             "nodeids": snap["nodeids"],
             # 已提交的快照（页面草稿覆盖它；草稿在浏览器本地，见 docstring 的「乙」）
             "committed": {"ts": last.get("ts"), "actor": last.get("actor"), "cases": last.get("cases", {})},

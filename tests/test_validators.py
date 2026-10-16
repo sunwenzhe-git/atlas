@@ -2516,6 +2516,97 @@ e2e:
     assert rows["e2e.app_login.mode 枚举"]["level"] == "FAIL", rows
 
 
+def test_stack_profile_app_login_none_mode_is_explicit_not_degraded() -> None:
+    """stack-profile §2（RFC-20261015-02 / issue #11，2026-10-16）：`mode: none` = 靶场无访问门的
+    **显式声明**（枚举 PASS——声明形态不是降级），且段内五个取证字段一律不得残留（含
+    `storage_key`——无门项目的存储键没有消费方；与 `fabricated` 的「收窄」相反是「全弃」）⇒ 残留 FAIL。
+    同钉补**词表守恒**（此前 `APP_LOGIN_MODES` 是唯一无守恒钉的 MODES 族，照 `SEED_MODES` 先例补上）：
+    `APP_LOGIN_MODES` ⊆ 模板 ⊆ 契约正文。
+    变异证明 M69：「none 字段互斥」判据卸成恒 PASS ⇒ 残留夹具变绿（= 钉失效）。
+    """
+    template = (PKG_ROOT / "templates" / "stack-profile.yaml").read_text(encoding="utf-8")
+    contract = (PKG_ROOT / "shared" / "stack-profile.md").read_text(encoding="utf-8")
+    for v in vsp.APP_LOGIN_MODES:
+        assert v in template, f"模板缺 app_login.mode 取值：{v}"
+        assert v in contract, f"契约缺 app_login.mode 取值：{v}"
+    for k in vsp.APP_LOGIN_KEYS:
+        assert k in contract, f"契约缺 e2e.app_login 子键：{k}"
+
+    def _gate(profile_text: str):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "product").mkdir(parents=True)
+            (root / "app").mkdir(parents=True)
+            (root / "product" / "stack-profile.yaml").write_text(profile_text, encoding="utf-8")
+            res = vsp.validate(root)
+            return {c["check"]: c for c in res.checks}, res
+
+    base = """product: demo
+apps:
+  - name: app
+    path: app
+    kind: frontend
+    role: landing
+    stack: demo
+origin: greenfield
+e2e:
+  runner: node-playwright
+"""
+    rows, res = _gate(base + "  app_login:\n    mode: none\n")
+    assert res.status == "PASS", rows
+    assert rows["e2e.app_login.mode 枚举"]["level"] == "PASS", rows
+    assert rows["e2e.app_login.mode=none 字段互斥"]["level"] == "PASS", rows
+    rows, res = _gate(base + "  app_login:\n    mode: none\n    storage_key: k\n")
+    assert res.status == "FAIL", rows
+    assert rows["e2e.app_login.mode=none 字段互斥"]["level"] == "FAIL", rows
+    assert "storage_key" in rows["e2e.app_login.mode=none 字段互斥"]["detail"], rows
+    rows, _ = _gate(base + "  app_login:\n    mode: magic\n")
+    assert rows["e2e.app_login.mode 枚举"]["level"] == "FAIL", rows
+
+
+def test_stack_profile_login_shape_undeclared_warns_neutrally() -> None:
+    """stack-profile §2（RFC-20261015-02 / issue #11，2026-10-16）：`app_base_url` 已声明
+    （= 项目准备真跑）而 `app_login` 未声明 ⇒ **WARN 指名**——文案必须**中性**：本器判不了
+    靶场有没有访问门，不得断言「每次都需人工登录」（无门项目是声明缺口，不是事实断言对象）；
+    未声明 `app_base_url`（= 还没到真跑）⇒ 不吹（不提前打扰未到期的项目）。
+    变异证明 M70：WARN 前提挂错（缺省就吹）⇒ 「未声明 base_url」夹具变吹（钉失效）。
+    """
+    def _gate(profile_text: str) -> dict:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "product").mkdir(parents=True)
+            (root / "app").mkdir(parents=True)
+            (root / "product" / "stack-profile.yaml").write_text(profile_text, encoding="utf-8")
+            res = vsp.validate(root)
+            return {c["check"]: c for c in res.checks}, res
+
+    base = """product: demo
+apps:
+  - name: app
+    path: app
+    kind: frontend
+    role: landing
+    stack: demo
+origin: greenfield
+e2e:
+  runner: node-playwright
+"""
+    rows, res = _gate(base + "  app_base_url: http://127.0.0.1:8000\n")
+    assert res.status == "WARN", rows
+    assert rows["e2e 登录形态未声明"]["level"] == "WARN", rows
+    # 中性表述：不得出现对无门项目的错误断言
+    assert "将退化为人工登录" in rows["e2e 登录形态未声明"]["detail"], rows
+    assert "mode: none" in rows["e2e 登录形态未声明"]["detail"], rows
+    # 还没到真跑（base_url 未声明）⇒ 不吹
+    rows, res = _gate(base)
+    assert res.status == "PASS", rows
+    assert "e2e 登录形态未声明" not in rows, rows
+    # 声明了形态 ⇒ 不吹（含 none）
+    rows, res = _gate(base + "  app_base_url: http://127.0.0.1:8000\n  app_login:\n    mode: none\n")
+    assert res.status == "PASS", rows
+    assert "e2e 登录形态未声明" not in rows, rows
+
+
 def test_stack_profile_mock_auto_and_fixtures_dir() -> None:
     """验证 mock.mode: auto 与 fixtures_dir 在 validate_stack_profile 中判定为 PASS。"""
     with tempfile.TemporaryDirectory() as td:

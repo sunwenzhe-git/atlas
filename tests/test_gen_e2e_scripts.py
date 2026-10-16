@@ -1081,9 +1081,10 @@ def test_setup_project_real_login_preset_shape() -> None:
 
 
 def test_setup_without_app_login_degrades_loudly() -> None:
-    """契约 §7.1（3509 §B101）：stack-profile 未声明 e2e.app_login = **合法降级**——
-    生成成功 + 生成期 WARN；setup 以占位默认值发射（凭据缺失 ⇒ 空 state + 警告，
-    不发真实登录请求）。
+    """契约 §7.1（RFC-20261015-02，2026-10-16 改判）：stack-profile 未声明 e2e.app_login =
+    **未声明**（不再是「合法降级」）——第一阶段仍生成成功 + 生成期 WARN（升档 = 下一次真跑
+    准备日推 `not_ready`，记录见 `shared/gates.md`「E2E 真跑」行）；setup 以占位默认值发射
+    （凭据缺失 ⇒ 空 state + 警告，不发真实登录请求）。
     """
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -1092,6 +1093,7 @@ def test_setup_without_app_login_degrades_loudly() -> None:
         r = run(root, "--apply")
         assert r.returncode == 0, r.stderr + r.stdout
         assert "e2e.app_login" in r.stderr, r.stderr          # 生成期 WARN（不静默）
+        assert "mode: none" in r.stderr, r.stderr             # WARN 指路：无门项目的声明出口
         setup_ts = (root / "product" / "e2e" / "scripts" / "atlas-auth.setup.ts").read_text(encoding="utf-8")
         assert 'const endpoint = "/login";' in setup_ts, setup_ts  # 占位默认（未声明 ⇒ 非取证值）
 
@@ -1109,6 +1111,42 @@ def test_app_login_section_incomplete_fails_generation() -> None:
         r = run(root, "--apply")
         assert r.returncode != 0, r.stdout
         assert "app_login 段不完整" in r.stderr, r.stderr
+        assert "storage_key" in r.stderr, r.stderr
+
+
+def test_setup_mode_none_generates_no_login_facilities() -> None:
+    """契约 §7.1 / shared/stack-profile.md §2（RFC-20261015-02，issue #11，2026-10-16）：
+    `mode: none` = 靶场无访问门的**显式声明** ⇒ 不生成登录预置设施（`atlas-auth.setup.ts`
+    不出、`playwright.config.ts` 无 storageState / setup 项目），也不打「未声明」警告
+    ——声明过的形态不是降级。无门项目里那套编排没有被编排的对象（B124 同族教训）。
+    变异证明 M71：none 分支仍走 storageState / setup 设施 ⇒ 本用例红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=PROFILE.split("  app_login:")[0] + "  app_login:\n    mode: none\n")
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stderr + r.stdout
+        assert "将跳过登录态预置" not in r.stderr, r.stderr      # 声明形态不打警告
+        cfg = (root / "product" / "e2e" / "scripts" / "playwright.config.ts").read_text(encoding="utf-8")
+        assert "storageState:" not in cfg, cfg                 # 预置绑定不生成（`storageState:` = 功能绑定，注释不计）
+        assert "atlas-auth" not in cfg, cfg                    # setup 项目不生成
+        assert "dependencies: ['setup']" not in cfg, cfg
+        assert "baseURL" in cfg and "ATLAS_BASE_URL" in cfg, cfg  # 其余机制原样
+        assert not (root / "product" / "e2e" / "scripts" / "atlas-auth.setup.ts").is_file()
+
+
+def test_setup_mode_none_rejects_leftover_evidence_fields() -> None:
+    """契约 shared/stack-profile.md §2（RFC-20261015-02）：`mode: none` 与残留取证字段互斥
+    ——无门 ⇒ **全弃**（与 `fabricated` 的「收窄」相反，两条判据同构成镜像）⇒ 生成报错。
+    变异证明：M69（摘掉互斥判据）⇒ 本用例红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=PROFILE.split("  app_login:")[0]
+                  + "  app_login:\n    mode: none\n    storage_key: app_session\n")
+        r = run(root, "--apply")
+        assert r.returncode != 0, r.stdout
+        assert "互斥" in r.stderr, r.stderr
         assert "storage_key" in r.stderr, r.stderr
 
 
