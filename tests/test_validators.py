@@ -486,6 +486,32 @@ def _ve_rows(case: str, profile_extra: str = "") -> dict:
         return {c["check"]: c for c in ve.validate(root).checks}
 
 
+def test_guard_path_outside_page_table_fails() -> None:
+    """坏输入（issue #23）：`守卫:` 值不命中页面表 `路由` 列 ⇒ 「守卫 路径 ∈ 页面表」FAIL。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD.replace("step:", "守卫: /nope/1\nstep:", 1))
+        mk_index(root, _with_page_table("已实现"))
+        rows = {c["check"]: c for c in ve.validate(root).checks}
+        assert rows["守卫 路径 ∈ 页面表"]["level"] == "FAIL", rows["守卫 路径 ∈ 页面表"]
+
+
+def test_guard_path_in_page_table_passes() -> None:
+    """正向：`守卫:` 值按子路径前缀命中页面表（`/home/42` 命中 `/home`）⇒ PASS。"""
+    idx = INDEX_GOOD.replace(
+        "## 页面 ↔ 用例",
+        "## 页面表（页 ↔ 路由）\n\n| 页面 | 路由 | 域 | 实现状态 |\n|---|---|---|---|\n"
+        "| home | /home | demo | 已实现 |\n\n## 页面 ↔ 用例")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD.replace("step:", "守卫: /home/42\nstep:", 1))
+        mk_index(root, idx)
+        rows = {c["check"]: c for c in ve.validate(root).checks}
+        assert rows["守卫 路径 ∈ 页面表"]["level"] == "PASS", rows["守卫 路径 ∈ 页面表"]
+
+
 def test_session_preset_in_whitelist_passes() -> None:
     """正向：键在 `e2e.session_preset.keys` 白名单内 ⇒ 「会话 取值合法」PASS。"""
     rows = _ve_rows(SESSION_CASE, "e2e:\n  session_preset:\n    keys:\n      - env\n")

@@ -373,6 +373,11 @@ def session_env_name(key: str) -> str:
 
 def ts_case(case: dict, url: str) -> str:
     cid = case["id"]
+    # 契约 §5.5 `守卫:`（2026-10-16，issue #23）：**元素齐全守卫导航用的具体路径**。
+    # 页面表 `路由` 列按 §3.1 只承载**业务段**（带参页面形如 `/x` 而真实路由为 `/x/:id`）⇒
+    # 直接拿它导航会落到路由匹配不上的地址，守卫在 goto 后即红。有 `守卫:` 时用它，
+    # 缺省回落页面表路由 ⇒ **对无参页面逐字节零变化**。
+    guard_url = (case.get("守卫") or "").strip() or url
     ids = json.dumps(case.get("testid") or [], ensure_ascii=False)
     step_note = "\\n".join("//   - " + s for s in case.get("step", []))
     assert_note = "\\n".join("//   - " + s for s in case.get("expected", []))    # 契约 §5.7（2026-09-30）：blocked/skipped ⇒ test.skip（状态真相源 = 索引）。
@@ -562,7 +567,7 @@ def ts_case(case: dict, url: str) -> str:
         f"  {step_note}\n  {assert_note}\n"
         f"{mock_open}"
         f"{session_open}"
-        f"  await page.goto('{url}');\n"
+        f"  await page.goto('{guard_url}');\n"
         f"  for (const id of {ids}) {{\n    await expect(page.getByTestId(id)).toHaveCount(1);\n  }}\n"
         f"{indented}\n}});\n"
     )

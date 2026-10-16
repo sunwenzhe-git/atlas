@@ -11,6 +11,11 @@
   由 `validators/validate_testids.py` 的「应然落点」门校验（文件存在 + 文件内可解析到该 id）。
 - `会话`（2026-10-16，issue #13）：**宿主注入型会话前提**（`<键>=<值>`），由生成器在首屏导航前
   经 `addInitScript` 写进 `sessionStorage`（契约 `rings/e2e/reference.md` §5.5）。
+- `守卫`（2026-10-16，issue #23）**是标量键，**不**入本元组**（同 `id` / `intent` / `auth` 的形态）：
+  值 = 元素齐全守卫导航用的具体路径（可选）；缺省 = 页面表 `路由` 列。带参页面用
+  （`路由` 列按 §3.1 只有业务段，不可直接导航），见 `rings/e2e/reference.md` §5.5。
+  **入本元组 = 被当成数组**（本元组内每个键都初始化为 list）——实隔时踩过：
+  `case.get("守卫").strip()` 报 `'list' object has no attribute 'strip'`。
 - 纯标准库（契约 `rings/e2e/reference.md` §8.3）。
 """
 from __future__ import annotations

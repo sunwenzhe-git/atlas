@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
+import difflib
 import json
 import tempfile
 from pathlib import Path
@@ -146,6 +147,41 @@ def zs_probes(spec_text: str, page: str = "home") -> list[dict]:
 # ── issue #13（2026-10-16）：`会话:` 的发射与零步基线隔离 ────────────────────
 PROFILE_SESSION = PROFILE + "  session_preset:\n    keys:\n      - env\n"
 SESSION_CASE = CASE.replace("step:", "会话:\n  - env=staging\nstep:", 1)
+
+
+# ── issue #23（2026-10-16）：`守卫:` —— 元素齐全守卫导航的具体路径 ───────────────
+GUARD_CASE = CASE.replace("step:", "守卫: /home/42\nstep:", 1)
+
+
+def test_guard_route_used_for_element_guard_navigation() -> None:
+    """带 `守卫:` 时，用例体开头的**元素齐全守卫导航**用该具体路径（而非页面表业务段）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=GUARD_CASE)
+        assert run(root, "--apply").returncode == 0
+        text = spec_of(root)
+        seg = text[text.index("E2E-HOME-001"):]
+        i_guard = seg.index("await page.goto('/home/42')")
+        # 紧跟其后必须是存在守卫（而用例自身的 goto 在它之后）
+        assert "for (const id of" in seg[i_guard:i_guard + 200], seg[i_guard:i_guard + 200]
+
+
+def test_guard_absent_keeps_output_byte_identical() -> None:
+    """**零变化承诺**（契约 §5.8 同规）：无 `守卫:` 时生成物与今日逐字节一致。
+
+    证法：同一用例分别带 / 不带 `守卫:` 各生成一次，两份产物**只允许差那一行**（守卫导航）。
+    """
+    with tempfile.TemporaryDirectory() as t1, tempfile.TemporaryDirectory() as t2:
+        r1, r2 = Path(t1), Path(t2)
+        make(r1, case=CASE)
+        make(r2, case=GUARD_CASE)
+        assert run(r1, "--apply").returncode == 0
+        assert run(r2, "--apply").returncode == 0
+        diff = [x for x in difflib.unified_diff(spec_of(r1).splitlines(),
+                                                spec_of(r2).splitlines(), lineterm="")
+                if x[:1] in ("+", "-") and not x.startswith(("+++", "---"))]
+        assert len(diff) == 2, diff
+        assert all("page.goto(" in x for x in diff), diff
 
 
 def test_session_preset_emitted_before_first_goto() -> None:

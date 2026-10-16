@@ -307,6 +307,17 @@ def gather_shards(cases: Path) -> tuple[dict[str, dict], dict[str, str]]:
     return blocks, pages
 
 
+def _route_hit(p: str, page_routes) -> bool:
+    """路径 `p` 是否命中页面表 `路由` 列（契约 §8.2）：精确命中，或**非根路由**的子路径前缀命中
+    （`/projects/x` 匹配 `/projects`；根路由 `/` 仅精确）。
+
+    单源：`goto` 路径与 `守卫` 路径两处判定共用本函数（二者是同一套「不得私藏路径」口径）。
+    """
+    if p in page_routes:
+        return True
+    return any(r != "/" and p.startswith(r + "/") for r in page_routes)
+
+
 def validate(root: Path) -> Result:
     res = Result()
     e2e = root / "product" / "e2e"
@@ -589,6 +600,7 @@ def validate(root: Path) -> Result:
     verb_bad, assert_bad, goto_param, contradict = [], [], [], []
     goto_path: list[str] = []
     auth_bad: list[str] = []
+    guard_bad: list[str] = []
     session_bad: list[str] = []
     # 会话预设键白名单（契约 §5.5 / `shared/stack-profile.md` §2，2026-10-16，issue #13）。
     # 段缺失 / keys 为空 ⇒ 该靶场不允许任何会话预设（用例出现 `会话:` 行即 FAIL）。
@@ -643,9 +655,7 @@ def validate(root: Path) -> Result:
             if not page_routes:
                 continue
             p = parts[1].strip()
-            if p in page_routes:
-                continue
-            if any(r != "/" and p.startswith(r + "/") for r in page_routes):
+            if _route_hit(p, page_routes):
                 continue
             goto_path.append(f"{g['用例ID']}:{p}")
         # 契约 §5.7（2026-09-30 补）：`auth` 取值白名单（preset | none）——文本期挡住，
@@ -669,6 +679,13 @@ def validate(root: Path) -> Result:
             if k not in _session_keys:
                 session_bad.append(
                     f"{g['用例ID']}:{k}（不在 e2e.session_preset.keys，白名单={sorted(_session_keys)}）")
+        # 契约 §5.5（2026-10-16 补，issue #23）：`守卫:` 值（具体路径）同样不得私藏于分片 ——
+        # 它必须命中页面表 `路由` 列（同 §8.2 的前缀口径）。缺路径 / 越界 ⇒ FAIL。
+        _guard = d.get("守卫")
+        if isinstance(_guard, str) and _guard.strip():
+            if page_routes and not _route_hit(_guard.strip(), page_routes):
+                guard_bad.append(f"{g['用例ID']}:{_guard.strip()}")
+
         # 契约 §5.6 R7（2026-09-23 补；**2026-09-25 修正为真矛盾对**）：同一条用例内，对同一
         # testid 不得既断言「可见 / 有文案」又断言「不可见」—— 否则必有一条永远为真（假绿）。
         #
@@ -828,6 +845,8 @@ def validate(root: Path) -> Result:
     res.add("step 动词合法", "PASS" if not verb_bad else "FAIL", f"词表外={_format_list(verb_bad)}")
     res.add("goto 不带查询参数", "PASS" if not goto_param else "FAIL", f"依原型调试参数的用例={_format_list(goto_param)}")
     res.add("goto 路径 ∈ 页面表", "PASS" if not goto_path else "FAIL", f"页面表外路径={_format_list(goto_path)}")
+    res.add("守卫 路径 ∈ 页面表", "PASS" if not guard_bad else "FAIL",
+            f"页面表外路径={_format_list(guard_bad)}（契约 §5.5：守卫导航用的具体路径也不得私藏于分片）" if guard_bad else "")
     res.add("auth 取值合法", "PASS" if not auth_bad else "FAIL", f"白名单外（允许 preset|none）={_format_list(auth_bad)}")
     res.add("会话 取值合法", "PASS" if not session_bad else "FAIL",
             f"形态非法 / 白名单外={_format_list(session_bad)}（契约 §5.5：键须在 `e2e.session_preset.keys` 内）" if session_bad else "")
