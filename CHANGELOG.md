@@ -39,6 +39,23 @@
 
 **残留（仍开，非本批）**：全源包其余剥注释站点未收（`validators/validate_e2e_index.py` 10 处手写 `split("#",1)[0].strip()` 等）⇒ D94 ③ 的待办**部分**清偿、未字面全真；**新增观察**：`reset` 取值清洗用 `.strip("\"'")`（两端同时剥，非「剥成对引号」）⇒ 结尾带引号的合法发令会被吃一个字符（无现场证据，未改，登记备查）。
 
+### 📋 `e2e.app_login` 不开第四形态：不可自动预置的靶场走「人工会话取出」**描述路径**（D103；issue #26）
+
+**现场**（百炼/v2前端真跑准备日）：靶场**有访问门**但三态**都装不下** —— 图形验证码（`login_captcha`）+ 服务端 **cookie 会话**（`COOKIE_JSESSIONID`）+ 登录**响应体无令牌**（`data` 是 URL 串）；而 `validate_stack_profile` 只喊「请声明」⇒ **死胡同**（真跑门已能跑到用例，三条红全在未登录态）。
+
+**定案（维护者拍板原话）**：「我想让 ai 主动给人生成这种类似的命令，然后登录完就完全没问题了」+「不用非要机器门吧，描述不是也可以」⇒ **不加字段、不加门**，落**描述 + 出路文案**：
+
+- `rings/e2e/reference.md` §7.1 增「**人工会话取出（描述路径，非机器门）**」节：AI 主动给人 `playwright codegen --save-storage=<e2e.scripts_dir>/.atlas-auth/state.json "<e2e.app_base_url>"`，人登录一次；**四条纪律** = 关窗才落盘 / 会话短命令要**立即**跑 / `<scripts_dir>/.gitignore` 已含 `.atlas-auth/` 且生成器 setup 有**幂等守卫**（无凭据 + 已有合法 state ⇒ 保留，不覆盖人的会话）/ 它是**运行期凭据不是应然资产**。
+- `shared/stack-profile.md` §2：`app_login` 行注明「**三态之外不设第四态**」。
+- `validate_stack_profile` 的 WARN：由「请声明」改为**给出路**（含命令原型）；钉 `test_stack_profile_login_unstated_warn_gives_a_way_out`（`tests/test_validators.py` 112 → **113 条**）+ 变异 **M93**（把出路换成一句空话 ⇒ 红；还原逐字节一致）。
+- **对 D80 ② 的注记（显式登记，不静默）**：D80 的「段缺失不再是合法降级 ⇒ 升档 = `not_ready: app_login`」与本行**相抵于一类项目**（有门但无形态可声明）——该升档落地时**须先把这一类排除**，否则会把「如实未声明」罚成 `not_ready`（`shared/gates.md` 2.2 行已登记该相抵点）。
+
+**被否**：补第四形态 `manual`/`session_import`（契约增量四处同改 + 把**不可复现**固化成标准姿势）；把这类靶场塞进 `real`（一个形态说两件事）；用 `mode: none` 充数（与事实相反）。
+
+**能力边界（不得 oversell）**：该路径**不可复现**（每轮要人登录 ⇒ CI 上不可用）、会话短命 ⇒ 是**兜底**而非 `app_login` 的替代形态；**无机器判据**，如实登记为纪律与盲区面。
+
+**取证**：`pytest tests -q` ⇒ **483 passed / 4 skipped**。
+
 ## [v0.1.0-beta.22] - 2026-10-17
 
 ### ⚙️ E2E 生成链第三动能 `dispatch` + 台账收口三件（D98/D99/D100；v3 定形首跑全绿）

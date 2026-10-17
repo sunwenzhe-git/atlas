@@ -1536,6 +1536,26 @@ def test_stack_profile_origin_greenfield_pass() -> None:
         assert _sp_check(res, "origin 枚举")["level"] == "PASS"
 
 
+def test_stack_profile_login_unstated_warn_gives_a_way_out() -> None:
+    """`e2e.app_login` 未声明而 `app_base_url` 已声明 ⇒ WARN 必须**给出路**（`DESIGN.md` D103）。
+
+    病灶（issue #26 现场）：靶场有访问门但三态都装不下（图形验证码 / cookie 会话 / 响应体无令牌）
+    ⇒ **无形态可声明**，而旧文案只说「请声明」= 死胡同。D103 定的出路 = 描述路径（人工会话取出，
+    AI 主动给人一条命令）。本钉断言那条命令**真的出现在文案里**（文案是这条路的唯一载体 ⇒
+    它一漂，出路就静默消失，回到死胡同）。
+
+    变异证明 **M93**：把文案里的 `playwright codegen --save-storage=` 摘掉 ⇒ 本用例红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_profile(root, PROFILE_BASE.format(origin="adopt") + "  app_base_url: http://localhost:2000/console/\n")
+        res = vsp.validate(root)
+        c = _sp_check(res, "e2e 登录形态未声明")
+        assert c["level"] == "WARN", c
+        assert "playwright codegen --save-storage=" in c["detail"], c["detail"]
+        assert "人工会话取出" in c["detail"], c["detail"]
+
+
 def test_stack_profile_origin_missing_defaults_to_greenfield() -> None:
     """缺省 origin：WARN 提示（不 FAIL），形态仍按 greenfield（E1：prototype 段已退役
     ⇒ N/A，不再有「null 放行」之分；本钉子改守「缺省不是 adopt」）。

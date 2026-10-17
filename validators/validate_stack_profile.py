@@ -231,7 +231,11 @@ def validate(root: Path) -> Result:
         if (base_url or "").strip() and not app_login:
             res.add("e2e 登录形态未声明", "WARN",
                     "e2e.app_base_url 已声明而 e2e.app_login 未声明：有门项目将退化为人工登录且会话"
-                    "短命（长走查必断）；无门项目请显式声明 app_login: {mode: none}"
+                    "短命（长走查必断）；无门项目请显式声明 app_login: {mode: none}；"
+                    "**有门但三态都装不下**（图形验证码 / cookie 会话 / 响应体无令牌）⇒ 保持未声明，"
+                    "按 rings/e2e §7.1「人工会话取出」生成 "
+                    "`playwright codegen --save-storage=<e2e.scripts_dir>/.atlas-auth/state.json \"<e2e.app_base_url>\"` "
+                    "交人登录（AI 主动给命令；描述路径非形态声明，且明示不可复现）"
                     "——升档后未声明 ⇒ 生成器 not_ready（退出码 3），见 gates「E2E 真跑」行")
 
     mock = e2e_prof.get("mock") if isinstance(e2e_prof, dict) else None
