@@ -91,7 +91,7 @@ APP_LOGIN_MODES = ("real", "fabricated", "none")
 MOCK_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 
 # 分片 step / expected 的动词词表（契约 `rings/e2e/reference.md` §5.5，2026-09-23 定）
-ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "hover", "refresh", "goto", "waitFor", "download", "upload")
+ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "hover", "refresh", "goto", "waitFor", "download", "upload", "dispatch")
 ASSERT_VERBS = ("text", "contains", "count", "countOptions", "visible", "hidden", "enabled", "disabled", "checked", "unchecked", "value", "attr", "delta")
 NO_TESTID_VERBS = ("refresh", "goto")  # 这两个动词第二个 token 不是 testid（goto 的值是路径）
 # 契约 §5.5（2026-10-16 补，issue #R4）：`click` / `hover` 默认追加 `{ force: true }`
@@ -466,6 +466,17 @@ def ts_case(case: dict, url: str) -> str:
             actions.append(
                 f"await page.getByTestId('{tid}').first().hover("
                 f"{step_force_arg(verb, value, s, cid).strip()});")
+        elif verb == "dispatch":
+            # 契约 §5.5（2026-10-17，v3 现场实证）：React 合成事件直发——`dispatchEvent('click')`
+            # 绕过 hit-testing / 可点性检查的**整面**。动机（三跑/四跑实证）：该表面常态遮罩下
+            # `native` 永远等不到「receives events」⇒ 整用例挂死；`force` 在动画窗口内被吞
+            # （5s 轮询不动）。dispatch 不追加 force（它本就绕行，无此概念）——但被测属性是
+            # 「可操作性 / 不可交互」的用例**不得用 dispatch**（同 native 适用边界）。
+            if value.strip():
+                raise ValueError(
+                    f"{cid}: `dispatch` 只接受 `<testid>` 一个参数，得 {value.strip()!r}"
+                    f"：{s!r}（契约 §5.5 值域封闭）")
+            actions.append(f"await page.getByTestId('{tid}').first().dispatchEvent('click');")
         elif verb == "waitFor":
             # 契约 §7.1：带轮询的断言（不得退化为固定等待）
             loc = f"page.getByTestId('{tid}').first()"

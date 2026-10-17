@@ -931,6 +931,7 @@ ACTION_SAMPLES = {
     "waitFor": "home-cta-btn",
     "download": "home-cta-btn *.txt",
     "upload": "home-cta-btn uploads/sample.txt",
+    "dispatch": "home-cta-btn",
 }
 
 
@@ -952,6 +953,32 @@ def test_every_action_verb_renders() -> None:
         }
         spec = gn.ts_case(case, "/")
         assert "home-cta-btn" in spec, (verb, spec)
+
+
+def test_dispatch_verb_emits_synthetic_event_without_force() -> None:
+    """契约 §5.5（2026-10-17）：`dispatch` 渲染为 `dispatchEvent('click')`（合成事件直发，
+    不做 hit-testing / 可点性检查，不追加 force）；无第三位（值域封闭，出现 ⇒ 报错中止）。
+    同用例内的 `click` 仍走缺省 force——两动词互不波及。
+    """
+    gn = _load_gen()
+    case = {
+        "id": "E2E-HOME-002",
+        "_title": "合成事件直发",
+        "step": ["dispatch home-cta-btn", "click home-cta-btn"],
+        "expected": ["visible home-cta-btn"],
+        "testid": ["home-cta-btn"],
+    }
+    spec = gn.ts_case(case, "/")
+    assert "await page.getByTestId('home-cta-btn').first().dispatchEvent('click');" in spec, spec
+    d = spec.index("dispatchEvent('click')")
+    f = spec.index(".click({ force: true });")
+    assert d < f, spec
+    try:
+        gn.ts_case({**case, "step": ["dispatch home-cta-btn native"]}, "/")
+    except ValueError as e:
+        assert "dispatch" in str(e) and "native" in str(e), e
+    else:
+        raise AssertionError("dispatch 第三位必须被拒（值域封闭），不得静默吸收")
 
 
 def test_step_anchor_emits_assertion_after_that_step() -> None:

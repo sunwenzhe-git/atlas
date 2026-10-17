@@ -251,6 +251,7 @@ testid:
 | | `check` / `uncheck` | 勾选 / 取消勾选 |
 | | `press` | 按键（值 = 键名） |
 | | `hover` | 悬停。与 `click` **同规**（2026-10-16 补，issue #R4）：**缺省追加 `{ force: true }`**（同动机 + 同适用边界）；**步级开关** `hover <tid> native` ⇒ 不追加 `force`；第三位**仅允许** `native` 或缺省，其它值 ⇒ 校验器 FAIL + 生成器报错中止 |
+| | `dispatch` | **合成事件直发**（2026-10-17 补，v3 现场实证）：`dispatchEvent('click')` 直达 React 合成事件 handler，**不经 hit-testing / 不做可点性检查**。动机 = 力面三态里 force/native 双模罩不住的表面：常态遮罩 + 入场动画（v3 便利贴实证——`native` 因「receives events」永不过而整用例挂死、`force` 在动画窗口被吞 5s 轮询不动）。**适用边界（硬）**：被测属性是「可操作性 / 不可交互 / 用户不可达」的用例**不得用 dispatch**（绕过可点性 ⇒ 该属性无法被证伪——与 `native` 同一条边界）；与 `click` 同样保留 `.first()` 修复。**值域封闭**：无第三位，出现任何取值 ⇒ 校验器 FAIL + 生成器报错中止 |
 | | `refresh` | 刷新页面（无 testid） |
 | | `goto` | 打开路径（值 = 路径，无 testid） |
 | | `waitFor` | 等到 `<testid>` **可见**，且给了值时其**渲染后可见文案**等于该值；超时（默认 10s）即失败 |

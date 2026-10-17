@@ -574,6 +574,24 @@ def test_click_switch_value_domain_in_index_gate() -> None:
     assert good["step 开关取值合法"]["level"] == "PASS", good["step 开关取值合法"]
 
 
+def test_dispatch_verb_value_domain_in_index_gate() -> None:
+    """契约 §5.5（2026-10-17）：`dispatch` 的**第三位** ⇒ 「step 开关取值合法」FAIL；
+    缺省 ⇒ 该行 PASS（dispatch 本身已是合法动作动词，走「step 动词合法」）。
+
+    与生成器中止双保险——尤其治旧安装副本「不认识的第三词静默吸收」（2026-10-17 v3 现场）。
+    """
+    bad = _ve_rows(CASE_GOOD.replace(
+        "  - click home-cta-btn          # 点击主操作按钮",
+        "  - dispatch home-cta-btn native   # 开关不存在"))
+    assert bad["step 开关取值合法"]["level"] == "FAIL", bad["step 开关取值合法"]
+
+    ok = _ve_rows(CASE_GOOD.replace(
+        "  - click home-cta-btn          # 点击主操作按钮",
+        "  - dispatch home-cta-btn       # 合成事件直发"))
+    assert ok["step 开关取值合法"]["level"] == "PASS", ok["step 开关取值合法"]
+    assert ok["step 动词合法"]["level"] == "PASS", ok["step 动词合法"]
+
+
 def test_session_preset_in_whitelist_passes() -> None:
     """正向：键在 `e2e.session_preset.keys` 白名单内 ⇒ 「会话 取值合法」PASS。"""
     rows = _ve_rows(SESSION_CASE, "e2e:\n  session_preset:\n    keys:\n      - env\n")
