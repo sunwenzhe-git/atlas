@@ -1201,6 +1201,27 @@ def test_setup_project_real_login_preset_shape() -> None:
         assert "throw new Error(`[atlas] 应用靶场登录失败" in setup_ts, setup_ts
 
 
+def test_runner_config_declares_expect_timeout_floor() -> None:
+    """issue #28 / `DESIGN.md` D105：生成的运行器配置必须声明 **`expect.timeout` 下限**。
+
+    现场（2026-10-17，百炼/v2前端真跑）：URL 链全对、元素真在（探针实测 `disabled=true` + 合规
+    aria-label），却 `3 failed 1 passed` —— 因为守卫断言 `toHaveCount(1)` 继承 Playwright **默认 5s**
+    的 expect 超时，而该应用首屏要 **14,184ms**（dev bundle 13.8MB）⇒ **假红**（把「还没渲染」
+    判成「元素不存在」）。
+
+    缺省 20s，`ATLAS_EXPECT_TIMEOUT` 可覆盖（运维口，与 `ATLAS_SLOWMO` 同族）。
+
+    变异 **MB5**：从配置发射面摘掉 `expect: {` ⇒ 本钉红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        cfg = (root / "product" / "e2e" / "scripts" / "playwright.config.ts").read_text(encoding="utf-8")
+        assert "expect: { timeout:" in cfg, cfg[:400]
+        assert "20_000" in cfg and "ATLAS_EXPECT_TIMEOUT" in cfg, cfg[:400]
+
+
 def test_base_query_reaches_all_three_navigation_sites() -> None:
     """issue #27 / `DESIGN.md` D104：`e2e.app_base_url` 的 query（宿主注入型前提，如 tenant）
     必须被带到**三处**导航发射面：

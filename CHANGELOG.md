@@ -82,6 +82,17 @@
 - **取证**：`pytest tests -q` ⇒ **487 passed / 4 skipped**；`install.sh` 自检 46 → **47 条**（+`_support/url_merge.py`）。
 - **登记面**：`DESIGN.md` D104 / `rings/e2e/reference.md` §3.2 + §5.5 / `shared/stack-profile.md` §2 / `shared/gates.md`（`生成物最新` 零变化钉 + 2.2 真跑行）/ `duty-review/bugs.md` #27。
 
+### ⏱️ E2E 断言超时下限：生成的运行器配置必须声明 `expect.timeout`（D105；issue #28）
+
+**现场**（#27 落地后）：三处导航 URL 全对、元素**真在**（探针实测 `disabled=true` + 合规 `aria-label`），真跑仍 `3 failed 1 passed`。根因 = 生成的 `playwright.config.ts` **没有 `expect` 段** ⇒ 继承 Playwright **默认 5s**，而该应用首屏实测 **14,184 ms**（dev bundle 13.8MB）⇒「元素还没渲染」被误判成「元素不存在」= **假红**。
+
+- **定案**：生成器在两处 config 分支发射 `expect: { timeout: Number(process.env.ATLAS_EXPECT_TIMEOUT ?? 20_000) }`。
+- **它不是「固定等待」**：`expect` 是轮询式 auto-wait，本改只抬**上限**（不引入 sleep，不破 §5.5 禁令）。
+- **被否**：只给守卫加 timeout（其余断言仍 5s）；调 test 超时（兜底不解决断言级假红）；固定 sleep（契约明禁）。
+- **代价（如实）**：真失败从 5s 变 20s 才红；慢环境可用 `ATLAS_EXPECT_TIMEOUT` 调低。
+- **钉与变异**：`test_runner_config_declares_expect_timeout_floor` + 变异 **MB5**（摘发射 ⇒ 红，还原逐字节一致）。
+- **取证**：`pytest tests -q` ⇒ **488 passed / 4 skipped**。
+
 ## [v0.1.0-beta.22] - 2026-10-17
 
 ### ⚙️ E2E 生成链第三动能 `dispatch` + 台账收口三件（D98/D99/D100；v3 定形首跑全绿）
