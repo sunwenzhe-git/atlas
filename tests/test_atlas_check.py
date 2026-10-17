@@ -345,7 +345,7 @@ def test_check_e2e_fails_loudly_when_node_playwright_missing(monkeypatch) -> Non
     mod = _load_check()
     monkeypatch.setattr(mod.shutil, "which", lambda cmd: None)
     monkeypatch.delenv("NODE_PATH", raising=False)
-    monkeypatch.setattr(mod.subprocess, "run", lambda *args, **kwargs: type("Proc", (), {"returncode": 1, "stdout": ""})())
+    monkeypatch.setattr(mod.subprocess, "run", lambda *args, **kwargs: type("Proc", (), {"returncode": 1, "stdout": "", "stderr": ""})())
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         scripts = root / "product" / "e2e" / "scripts"
@@ -466,7 +466,7 @@ def test_check_e2e_module_unresolvable_fails_loudly(monkeypatch) -> None:
         monkeypatch.setattr(mod.shutil, "which", lambda cmd: None)
         monkeypatch.delenv("NODE_PATH", raising=False)
         monkeypatch.setattr(mod.subprocess, "run",
-                            lambda *a, **k: type("Proc", (), {"returncode": 1, "stdout": ""})())
+                            lambda *a, **k: type("Proc", (), {"returncode": 1, "stdout": "", "stderr": ""})())
         (root / "product" / "stack-profile.yaml").write_text(
             f"e2e:\n  runner: node-playwright\n  node_modules: node_modules\n"
             f"  app_base_url: {_live_base()}\n",
@@ -566,7 +566,7 @@ def test_check_e2e_ignores_python_playwright_without_node_module(monkeypatch) ->
 
         monkeypatch.setattr(mod.shutil, "which", lambda cmd: str(fake_bin) if cmd == "playwright" else None)
         monkeypatch.delenv("NODE_PATH", raising=False)
-        monkeypatch.setattr(mod.subprocess, "run", lambda *args, **kwargs: type("Proc", (), {"returncode": 1, "stdout": ""})())
+        monkeypatch.setattr(mod.subprocess, "run", lambda *args, **kwargs: type("Proc", (), {"returncode": 1, "stdout": "", "stderr": ""})())
 
         (root / "product" / "stack-profile.yaml").write_text(
             f"e2e:\n  runner: node-playwright\n  app_base_url: {_live_base()}\n",

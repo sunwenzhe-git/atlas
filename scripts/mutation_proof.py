@@ -16,11 +16,16 @@
     * **假阴性**：`str.replace` 锚点静默不匹配 ⇒ 注入根本没发生，却报「门不咬」
       ⇒ **注入前断言字节确实改变**（本工具直接抛 `MutationNotApplied`）。
 
+**证据形态（2026-10-17 独立评审补）**：报告必须含**注入 diff**。没有它，「反向破坏的是不是
+自述那一处」无法被独立复现 —— 证据等级止于作者自述（现场实例：某轮 M88 自述「判据被绕过 ⇒
+status 变 ok」，而注入后实际红因是测试夹具缺字段导致的运行期崩，从未触到该断言）。
+
 - **框架无关**：本文件不得出现任何具体框架名。
 - 纯标准库。
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 import os
 import pathlib
@@ -29,7 +34,7 @@ import subprocess
 import sys
 from typing import Callable
 
-__all__ = ["MutationNotApplied", "proof", "run_with_clean_pycache"]
+__all__ = ["MutationNotApplied", "injected_diff", "proof", "run_with_clean_pycache"]
 
 
 class MutationNotApplied(RuntimeError):
@@ -38,6 +43,18 @@ class MutationNotApplied(RuntimeError):
 
 def sha256(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
+
+
+def injected_diff(before: bytes, mutated: bytes, target: pathlib.Path) -> str:
+    """注入的 unified diff（±3 行）——**证据必需项**，不是装饰。
+
+    二进制/不可解码内容按 `replace` 兜底；空 diff 说明注入落在不可解码区（仍如实写出）。
+    """
+    a = before.decode("utf-8", "replace").splitlines(keepends=True)
+    b = mutated.decode("utf-8", "replace").splitlines(keepends=True)
+    return "".join(difflib.unified_diff(a, b, fromfile=f"{target.name}（原）",
+                                       tofile=f"{target.name}（注入后）", n=3)) \
+        or "(空 diff：注入落在不可解码区或只改了行尾)"
 
 
 def run_with_clean_pycache(cmd: list[str], cwd: pathlib.Path, root: pathlib.Path) -> tuple[int, str]:
@@ -97,6 +114,8 @@ def proof(name: str, target: str | pathlib.Path, mutate: Callable[[bytes], bytes
     rc_green, out_green = run()
 
     lines += [
+        "## 注入 diff（证据必需项：没有它，本证据止于作者自述）", "```diff",
+        injected_diff(before, mutated, target), "```", "",
         f"## 注入后（期望 RED）", f"退出码 {rc_red}", "```", out_red, "```", "",
         f"## 还原校验（续）", f"后 sha256 = {h_after}", f"一致 = {same}", "",
         f"## 还原后（期望 GREEN）", f"退出码 {rc_green}", "```", out_green, "```", "",

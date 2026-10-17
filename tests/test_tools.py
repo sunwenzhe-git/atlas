@@ -57,7 +57,13 @@ def test_mutation_proof_happy_path() -> None:
             return run()
 
         assert mp.proof("happy", t, mutate, run_and_reset, td / "out") is True
-        assert (td / "out" / "happy.txt").read_text(encoding="utf-8").count("sha256") >= 2
+        report = (td / "out" / "happy.txt").read_text(encoding="utf-8")
+        assert report.count("sha256") >= 2
+        # 2026-10-17 独立评审：报告必须含**注入 diff** —— 否则「反向破坏的是不是自述那一处」
+        # 无法独立复现，证据止于作者自述（现场实例：某轮变异自述「判据被绕过 ⇒ status 变 ok」，
+        # 注入后实际红因是夹具缺字段导致的运行期崩，从未触到该断言）。
+        assert "## 注入 diff" in report, report
+        assert "-ok" in report and "+bad" in report, report
 
 
 def test_mutation_proof_rejects_noop_mutation() -> None:

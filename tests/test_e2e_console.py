@@ -236,7 +236,7 @@ def test_resolve_pw_and_runner_fail_loud_on_missing_executable(monkeypatch) -> N
     cons = load("e2e_console", "scripts/e2e_console.py")
     monkeypatch.setattr(cons.shutil, "which", lambda cmd: None)
     monkeypatch.delenv("NODE_PATH", raising=False)
-    monkeypatch.setattr(cons.subprocess, "run", lambda *args, **kwargs: type("Proc", (), {"returncode": 1, "stdout": ""})())
+    monkeypatch.setattr(cons.subprocess, "run", lambda *args, **kwargs: type("Proc", (), {"returncode": 1, "stdout": "", "stderr": ""})())
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         # 无 profile
@@ -349,7 +349,7 @@ def test_resolve_pw_ignores_python_playwright_without_node_module(monkeypatch) -
 
         monkeypatch.setattr(cons.shutil, "which", lambda cmd: str(fake_py_pw) if cmd == "playwright" else None)
         monkeypatch.delenv("NODE_PATH", raising=False)
-        monkeypatch.setattr(cons.subprocess, "run", lambda *args, **kwargs: type("Proc", (), {"returncode": 1, "stdout": ""})())
+        monkeypatch.setattr(cons.subprocess, "run", lambda *args, **kwargs: type("Proc", (), {"returncode": 1, "stdout": "", "stderr": ""})())
 
         pw, nm, why, _note = cons.resolve_pw(root)
         assert pw is None, f"不应采信 Python Playwright: {pw}"
@@ -434,7 +434,8 @@ def test_resolve_pw_repairs_unresolvable_module_from_global(monkeypatch) -> None
         pw2, _nm2, _why2, note2 = cons.resolve_pw(root, repair=True)
         assert pw2 == fake_pw, pw2
         assert os.path.realpath(link) == before, "幂等：软链不得被重建/改动"
-        assert "@playwright/test" in note2 and "全局" in note2, note2
+        assert "@playwright/test" in note2 and "全局" in note2, (
+            f"第二次调用必须仍能读回「用了机器全局状态」这一前提事实（实际 note={note2!r}）")
 
 
 def test_resolve_pw_refuses_when_module_unresolvable_without_global(monkeypatch) -> None:
@@ -458,7 +459,7 @@ def test_resolve_pw_refuses_when_module_unresolvable_without_global(monkeypatch)
                             lambda cmd: None if cmd == "playwright" else real_which(cmd))
         monkeypatch.delenv("NODE_PATH", raising=False)
         monkeypatch.setattr(cons.subprocess, "run",
-                            lambda *a, **k: type("Proc", (), {"returncode": 1, "stdout": ""})())
+                            lambda *a, **k: type("Proc", (), {"returncode": 1, "stdout": "", "stderr": ""})())
         p, _nm, why, note = cons.resolve_pw(root, repair=True)
         assert p is None, (p, why)
         assert "不可解析" in why or "node" in why, why

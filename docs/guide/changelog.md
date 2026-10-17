@@ -49,6 +49,18 @@
 
 **取证**：`pytest tests -q` ⇒ **483 passed / 4 skipped**。
 
+### 🪲 变异证明**证据形态**补强：报告必须含注入 diff（独立评审驱动；M88/M90 复验）
+
+**来源**：`proposals/REVIEW-2026-10-17-source-batch.md`（独立评审，干净上下文）判「同批 M88/M90 的变异证据**不足以支撑自述机制**，全批缺注入 diff ⇒ 独立复现性不足」。本条只动**证据面**，不动任何判定逻辑。
+
+- **工具**（`scripts/mutation_proof.py`）：报告新增 **`## 注入 diff`** 段（`injected_diff()`，`difflib` unified diff ±3 行）——没有它，「反向破坏的是不是自述那一处」无法独立复现，证据止于作者自述。四段协议不变。
+- **M88 复验（红因错位已修）**：原报告红因实为**夹具假 `Proc` 缺 `stderr`** ⇒ `atlas_check.run()`（`:122`）崩，**从未触到 status 断言** ⇒ 钉子会响但机制未被证明。六处假 `Proc` 补 `stderr=""` 后重跑：红因已对齐为「status 仍 `FAIL`、但 detail 退化成『无结果』」= **判据被绕过导致真原因丢失**本身。
+- **M90 复验**：断言补具名消息（原为空 `AssertionError:`），报告现含注入描述 + diff ⇒ 与 M89 共用用例但**注入面不同**，可辨。
+- **M88–M93 六枚全部带 diff 重跑**：`/tmp/atlas-mutation-2026-10-17/`（每份含原/后 sha256 + 基线 + **注入 diff** + 注入后 + 还原后）。
+- **钉**：`tests/test_tools.py::test_mutation_proof_happy_path` 补三条断言（报告含 `## 注入 diff` / `-ok` / `+bad`）⇒ 工具能力不会静默丢。
+- **登记面**：`shared/gates.md` 2.5「变异证明」行（查什么 + 假绿测试列）与 2.2「E2E 真跑」行（复验注记）。
+- **取证**：`pytest tests -q` ⇒ **483 passed / 4 skipped**。
+
 ## [v0.1.0-beta.22] - 2026-10-17
 
 ### ⚙️ E2E 生成链第三动能 `dispatch` + 台账收口三件（D98/D99/D100；v3 定形首跑全绿）
