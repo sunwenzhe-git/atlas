@@ -33,6 +33,15 @@ import sys
 import time
 from pathlib import Path
 
+# 随包内核引导（`_support/`，2026-10-12 单源批）：共享实现一律经本引导取用，不就地复制。
+if str(Path(__file__).resolve().parent.parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _support.siblings import load_module  # noqa: E402
+
+# node 运行器单源内核（二进制解析 / **可解析性判据** / 全局兜底修复；issue #24，`DESIGN.md` D101）。
+# 本文件此前与 `scripts/e2e_console.py` 各存一份解析实现（含 `_is_node_playwright` 两份拷贝）。
+pw_runner = load_module("pw_runner")
+
 VALIDATORS = (
     "validate_stack_profile",
     "validate_structure",
@@ -381,21 +390,6 @@ def check_version(root: Path, rows: Row) -> None:
              "（SOURCE_ONLY 拒绝护栏；D79 ⑤）")
 
 
-def _is_node_playwright(p: Path | str) -> bool:
-    try:
-        path = Path(p).resolve()
-        if not path.is_file():
-            return False
-        if "node_modules" in str(path) or path.suffix in (".js", ".mjs", ".cjs"):
-            return True
-        head = path.read_text(encoding="utf-8", errors="ignore")[:300]
-        if "python" in head.lower() or "playwright.__main__" in head:
-            return False
-        return True
-    except Exception:
-        return True
-
-
 def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     prof = root / "product" / "stack-profile.yaml"
     text = prof.read_text(encoding="utf-8") if prof.is_file() else ""
@@ -439,66 +433,29 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
                      f"e2e.reset 失败（exit {code_r}）：{out_r.strip()[-200:]}",
                      command=reset_cmd, full_output=out_r, code=code_r)
             return
-    # node 单轨（3507 BO）：探测项目声明位置（e2e.node_modules）的 playwright
-    # 可执行文件，经 NODE_PATH 解析生成物里的 @playwright/test；
-    # 未找到本地时，通过 shutil.which("playwright") 探测系统全局命令（F19）。
-    # 全局探测命中后，经 npm root -g / NODE_PATH 环境变量解析全局路径；全不可用 ⇒ FAIL 列原因。
+    # node 单轨（3507 BO）：运行器解析 + **可解析性判据**（issue #24，`DESIGN.md` D101）。
+    # 判据本体 = 「从 `product/e2e/scripts/` 出发 `@playwright/test` 可解析」——
+    # 即 `gates.md` 2.2 本行早写明的「按**依赖可导入性**，不按路径存在」；
+    # 二进制存在只是必要条件（此前把它当充要条件 ⇒ ESM 项目上「找得到 bin、解析不到模块」半生效，
+    # 错误落到运行期并被计成「跑失败 / 无结果」）。解析/探针/修复全走单源内核 `_support/pw_runner.py`。
     nm = re.search(r"^[^\S\n]*node_modules:[^\S\n]*(\S+)", text, re.M)
     nm_rel = Path(nm.group(1)) if nm else None
-    nm_dir = (root / nm_rel) if nm_rel else None
-    pw_bin = (nm_dir / ".bin" / "playwright") if nm_dir else None
-    node_path = nm_dir
-    if not pw_bin or not pw_bin.is_file():
-        # F19: 全局 Playwright 探测（防 Python Playwright CLI 误判）
-        g_node_path = os.environ.get("NODE_PATH")
-        if not g_node_path:
-            try:
-                res = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=5)
-                if res.returncode == 0 and res.stdout.strip():
-                    g_node_path = res.stdout.strip()
-            except Exception:
-                pass
-        has_pw_module = False
-        if g_node_path:
-            for p in g_node_path.split(os.pathsep):
-                gnp = Path(p).resolve()
-                if (gnp / "@playwright" / "test").exists() or (gnp / "playwright").exists():
-                    has_pw_module = True
-                    break
-        global_pw = None
-        if has_pw_module:
-            cand = shutil.which("playwright")
-            if cand and _is_node_playwright(cand):
-                global_pw = cand
-            else:
-                candidates = []
-                if g_node_path:
-                    for p in g_node_path.split(os.pathsep):
-                        gnp = Path(p).resolve()
-                        pw_name = "playwright.cmd" if sys.platform == "win32" else "playwright"
-                        candidates.append(gnp.parent / "bin" / pw_name)
-                        candidates.append(gnp.parent.parent / "bin" / pw_name)
-                        candidates.append(gnp / ".bin" / pw_name)
-                try:
-                    res_bin = subprocess.run(["npm", "prefix", "-g"], capture_output=True, text=True, timeout=5)
-                    if res_bin.returncode == 0 and res_bin.stdout.strip():
-                        pw_name = "playwright.cmd" if sys.platform == "win32" else "playwright"
-                        candidates.append(Path(res_bin.stdout.strip()) / "bin" / pw_name)
-                except Exception:
-                    pass
-                for c in candidates:
-                    if c.is_file() and _is_node_playwright(c):
-                        global_pw = str(c)
-                        break
-        if has_pw_module and global_pw:
-            pw_bin = Path(global_pw)
-            node_path = Path(g_node_path) if g_node_path else None
-    if not pw_bin or not pw_bin.is_file():
-        disp_bin = (nm_rel / ".bin" / "playwright") if nm_rel else "未配置"
-        hint = f"（提示：请在 {nm_rel.parent if nm_rel else '.'} 执行 npm i -D @playwright/test）"
+    pw_bin, node_path, runner_source, why = pw_runner.resolve(root, str(nm_rel) if nm_rel else None)
+    if pw_bin is None:
+        disp_bin = (nm_rel / ".bin" / pw_runner.PW_BIN_NAME) if nm_rel else "未配置"
+        hint = f"（提示：请在 {nm_rel.parent if nm_rel else '.'} 执行 npm i -D {pw_runner.MODULE_SPEC}）"
         rows.add("E2E 真跑", "FAIL",
                  f"node-playwright 可执行文件不存在：{disp_bin}（stack-profile e2e.node_modules）{hint}",
-                 command="", full_output=f"pw_bin not found: {pw_bin}\n提示：请先在对应目录安装 @playwright/test")
+                 command="", full_output=f"pw_bin not found: {pw_bin}\n提示：请先在对应目录安装 {pw_runner.MODULE_SPEC}")
+        return
+    # 判据本体（与执行器同一实现、同一修复）：不成立 ⇒ 先试全局兜底修复，复检仍不过 ⇒ FAIL。
+    # 修复成功 ⇒ 真跑能跑，但结论依赖**机器全局状态**（非项目自足）⇒ 降为 WARN 并在行内写明。
+    runner_status, runner_detail, runner_note = pw_runner.ensure_resolvable(
+        scripts, pw_runner.resolution_root(scripts, root), source=runner_source, nm_dir=node_path)
+    if runner_status == "fail":
+        rows.add("E2E 真跑", "FAIL",
+                 f"node 运行器判据不成立：{runner_detail}（判据 = 依赖可导入性，不按路径存在；gates.md 2.2）",
+                 command="", full_output=f"probe failed at {scripts}\n{runner_detail}")
         return
     spec_arg = f"{page}.spec.ts" if page else ""
     node_path_env = f"NODE_PATH={node_path} " if node_path else ""
@@ -575,8 +532,14 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
         except OSError:
             pass
 
+    level = "ok" if code == 0 else "FAIL"
+    if level == "ok" and runner_note:
+        # 运行器来自全局兜底：真跑跑得起来，但结论依赖**机器全局状态**而非项目自足 ⇒ 降档
+        # 可见（WARN 不是失败，也不假装「项目自足」）；本次有没有补链写在词尾。
+        level = "WARN"
+        summary = f"{summary} ｜ {runner_note}" + (f"（{runner_detail}）" if runner_detail else "")
     rows.add("E2E 真跑" + (f"[{page}]" if page else "（六页）"),
-             "ok" if code == 0 else "FAIL", summary,
+             level, summary,
              command=cmd, full_output=full_err_output, code=code)
 
 

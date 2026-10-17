@@ -74,6 +74,10 @@ from _support.siblings import load_module  # noqa: E402
 # 用例 ID 文法体单源（正文归 rings/e2e/reference.md §5.3）；锚点在使用处自留。
 case_id = load_module("case_id")
 
+# node 运行器单源内核（二进制解析 / **可解析性判据** / 全局兜底修复；issue #24）：
+# `atlas_check` 真跑门与本月控制台共用同一实现 —— 此前两处各存一份拷贝。
+pw_runner = load_module("pw_runner")
+
 
 # ---------------------------------------------------------------- 用例真相源（只读）
 
@@ -233,88 +237,34 @@ def node_ids(scripts_dir: Path) -> dict:
     return out
 
 
-def _is_node_playwright(p: Path | str) -> bool:
-    try:
-        path = Path(p).resolve()
-        if not path.is_file():
-            return False
-        if "node_modules" in str(path) or path.suffix in (".js", ".mjs", ".cjs"):
-            return True
-        head = path.read_text(encoding="utf-8", errors="ignore")[:300]
-        if "python" in head.lower() or "playwright.__main__" in head:
-            return False
-        return True
-    except Exception:
-        return True
+def resolve_pw(root: Path, *, repair: bool = False) -> tuple[Path | None, Path | None, str, str]:
+    """node 单轨运行器解析 —— **单源内核** `_support/pw_runner.py`（与 `atlas_check`「E2E 真跑」门
+    同一个 `resolve` / `probe` / `ensure_resolvable`，不造第二份）。
 
+    → `(pw_bin, nm_dir, why, note)`；`why` 非空 ⇔ 不可用（控制台如实拒绝，不静默降级）。
 
-def resolve_pw(root: Path) -> tuple[Path | None, Path | None, str]:
-    """node 单轨运行器解析——与 `atlas_check`「E2E 真跑」门**同一规则**（不造第二份）：
-    stack-profile 的 `e2e.node_modules` → `<该目录>/.bin/playwright` + `NODE_PATH=<该目录>`。
-    当 stack-profile 的 node_modules 未声明或本地 .bin/playwright 不存在时，通过 shutil.which("playwright") 探测系统全局命令；
-    找到后通过 npm root -g（或 NODE_PATH 环境变量）解析全局路径赋值给 NODE_PATH。
-    解析不到 ⇒ (None, None, 原因)——控制台如实拒绝，不静默降级。
+    `repair=True`（**执行器侧**，issue #24）：判据本体 = 「从 `product/e2e/scripts/` 出发
+    `@playwright/test` 可解析」，不成立时按内核走**幂等修复 + 复检**（仅当运行器来自全局兜底）。
+    `note` = 运行器来自全局兜底时的标准说明（**每次都给**——「用了机器全局状态」是跑的前提事实），
+    **调用方必须输出**。
     """
     profile = root / "product" / "stack-profile.yaml"
     if not profile.is_file():
-        return None, None, "无 product/stack-profile.yaml"
+        return None, None, "无 product/stack-profile.yaml", ""
     prof = load_profile_parser(root).parse_profile(profile.read_text(encoding="utf-8"))
     nm = _e2e_section(prof).get("node_modules")
-    nm_dir = (root / str(nm)).resolve() if nm else None
-    pw_bin = (nm_dir / ".bin" / "playwright") if nm_dir else None
-    if pw_bin and pw_bin.is_file():
-        return pw_bin, nm_dir, ""
-
-    # F19: 支持全局 Playwright（npm i -g @playwright/test）执行与 PATH 探测（防 Python Playwright CLI 误判）
-    g_node_path = os.environ.get("NODE_PATH")
-    if not g_node_path:
-        try:
-            res = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=5)
-            if res.returncode == 0 and res.stdout.strip():
-                g_node_path = res.stdout.strip()
-        except Exception:
-            pass
-    has_pw_module = False
-    if g_node_path:
-        for p in g_node_path.split(os.pathsep):
-            gnp = Path(p).resolve()
-            if (gnp / "@playwright" / "test").exists() or (gnp / "playwright").exists():
-                has_pw_module = True
-                break
-        global_pw = None
-        if has_pw_module:
-            cand = shutil.which("playwright")
-            if cand and _is_node_playwright(cand):
-                global_pw = cand
-            else:
-                candidates = []
-                if g_node_path:
-                    for p in g_node_path.split(os.pathsep):
-                        gnp = Path(p).resolve()
-                        pw_name = "playwright.cmd" if sys.platform == "win32" else "playwright"
-                        candidates.append(gnp.parent / "bin" / pw_name)
-                        candidates.append(gnp.parent.parent / "bin" / pw_name)
-                        candidates.append(gnp / ".bin" / pw_name)
-                try:
-                    res_bin = subprocess.run(["npm", "prefix", "-g"], capture_output=True, text=True, timeout=5)
-                    if res_bin.returncode == 0 and res_bin.stdout.strip():
-                        pw_name = "playwright.cmd" if sys.platform == "win32" else "playwright"
-                        candidates.append(Path(res_bin.stdout.strip()) / "bin" / pw_name)
-                except Exception:
-                    pass
-                for c in candidates:
-                    if c.is_file() and _is_node_playwright(c):
-                        global_pw = str(c)
-                        break
-
-    if has_pw_module and global_pw:
-        g_pw_bin = Path(global_pw)
-        g_nm_dir = Path(g_node_path) if g_node_path else None
-        return g_pw_bin, g_nm_dir, ""
-
-    if not nm:
-        return None, None, "stack-profile 未声明 e2e.node_modules（node-playwright 依赖目录，契约 §7）"
-    return None, None, f"node-playwright 可执行文件不存在：{pw_bin}（e2e.node_modules）"
+    pw_bin, nm_dir, source, why = pw_runner.resolve(root, str(nm) if nm else None)
+    if pw_bin is None:
+        return None, None, why, ""
+    if not repair:
+        return pw_bin, nm_dir, "", ""
+    scripts = root / "product" / "e2e" / "scripts"
+    status, detail, note = pw_runner.ensure_resolvable(
+        scripts, pw_runner.resolution_root(scripts, root), source=source, nm_dir=nm_dir)
+    if status == "fail":
+        return None, None, f"node-playwright 运行器不可用：{detail}", ""
+    # note（全局兜底的标准说明）每次都给；detail 只在本次动了手时非空。
+    return pw_bin, nm_dir, "", (f"{note}；{detail}" if detail else note)
 
 
 # ---------------------------------------------------------------- 账本（append-only 唯一真相源）
@@ -434,9 +384,12 @@ class Runner:
         self._proc: subprocess.Popen | None = None
 
     def start(self, case: dict, nodeid: str, slowmo: int, source: str, base_url: str) -> tuple[bool, str]:
-        # node 单轨（2026-10-12 迁移批）：可执行先行解析（与 atlas_check 真跑门同规则），
-        # 解析不到 ⇒ 诚实拒绝，不起注定失败的子进程。
-        pw_bin, nm_dir, why = resolve_pw(self.root)
+        # node 单轨（2026-10-12 迁移批）：运行器先行解析 + **可解析性判据**（issue #24）。
+        # 判据本体 = 「生成物能不能 import 到 @playwright/test」（单源内核 `_support/pw_runner.py`）；
+        # 不成立时执行器走幂等修复（仅全局兜底），且把「用了全局什么」如实播出来；修不好 ⇒ 诚实拒绝。
+        pw_bin, nm_dir, why, note = resolve_pw(self.root, repair=True)
+        if note:
+            self._emit("ℹ " + note)
         if pw_bin is None:
             return False, f"node-playwright 不可用：{why}——解析规则与 atlas_check「E2E 真跑」门一致"
         with self.cond:

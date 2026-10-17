@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -239,7 +240,7 @@ def test_resolve_pw_and_runner_fail_loud_on_missing_executable(monkeypatch) -> N
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         # 无 profile
-        pw, nm, why = cons.resolve_pw(root)
+        pw, nm, why, _note = cons.resolve_pw(root)
         assert pw is None and "stack-profile.yaml" in why
 
         # profile 未声明 e2e.node_modules
@@ -247,7 +248,7 @@ def test_resolve_pw_and_runner_fail_loud_on_missing_executable(monkeypatch) -> N
         (root / "product" / "stack-profile.yaml").write_text(
             "product: demo\napps: []\ne2e: { runner: node-playwright }\n", encoding="utf-8"
         )
-        pw, nm, why = cons.resolve_pw(root)
+        pw, nm, why, _note = cons.resolve_pw(root)
         assert pw is None and "node_modules" in why
 
         # runner.start 必须直接返回 False 并告知原因
@@ -325,10 +326,11 @@ def test_resolve_pw_global_playwright(monkeypatch) -> None:
         monkeypatch.setattr(cons.shutil, "which", lambda cmd: str(fake_pw) if cmd == "playwright" else None)
         monkeypatch.setenv("NODE_PATH", str(fake_global_nm))
 
-        pw, nm, why = cons.resolve_pw(root)
+        pw, nm, why, _note = cons.resolve_pw(root)
         assert why == "", why
         assert pw == fake_pw, pw
         assert nm == fake_global_nm, nm
+        assert _note == "", _note
 
 
 def test_resolve_pw_ignores_python_playwright_without_node_module(monkeypatch) -> None:
@@ -349,10 +351,142 @@ def test_resolve_pw_ignores_python_playwright_without_node_module(monkeypatch) -
         monkeypatch.delenv("NODE_PATH", raising=False)
         monkeypatch.setattr(cons.subprocess, "run", lambda *args, **kwargs: type("Proc", (), {"returncode": 1, "stdout": ""})())
 
-        pw, nm, why = cons.resolve_pw(root)
+        pw, nm, why, _note = cons.resolve_pw(root)
         assert pw is None, f"不应采信 Python Playwright: {pw}"
         assert "stack-profile 未声明 e2e.node_modules" in why, why
 
+
+
+def _mk_resolvable_pw_module(nm: Path, version: str = "9.9.9") -> Path:
+    """在 `nm` 下造一个**真能被 Node 解析**的 `@playwright/test`（issue #24 夹具）。
+
+    判据本体 = 「从 scripts 出发 `@playwright/test` 可解析」⇒ 空目录糊弄不过去。
+    """
+    pkg = nm / "@playwright" / "test"
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "package.json").write_text(
+        json.dumps({"name": "@playwright/test", "version": version,
+                    "main": "index.js", "exports": "./index.js"}),
+        encoding="utf-8")
+    (pkg / "index.js").write_text("module.exports = {};\n", encoding="utf-8")
+    return pkg
+
+
+def _global_pw_fixture(root: Path, cons, monkeypatch):
+    """全局兜底夹具：伪全局 bin + **真包**的全局 `@playwright/test`。
+
+    `shutil.which` 只接管 `playwright`（其余透传原实现）——探针自己要找 `node`，
+    整包置 None 会把「模块不可解析」换成「探针跑不起来」（两种红不同因）。
+    """
+    fake_pw = root / "fake-global-bin" / "playwright"
+    fake_pw.parent.mkdir(parents=True, exist_ok=True)
+    fake_pw.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_pw.chmod(0o755)
+    g_nm = root / "fake-global-node-modules"
+    pkg = _mk_resolvable_pw_module(g_nm)
+    real_which = shutil.which
+    monkeypatch.setattr(cons.shutil, "which",
+                        lambda cmd: str(fake_pw) if cmd == "playwright" else real_which(cmd))
+    monkeypatch.setenv("NODE_PATH", str(g_nm))
+    return fake_pw, g_nm, pkg
+
+
+def test_resolve_pw_repairs_unresolvable_module_from_global(monkeypatch) -> None:
+    """issue #24（**执行器侧**）：判据本体 = 「生成物能不能 import 到 `@playwright/test`」。
+
+    现场（百炼/v2前端，`package.json` 有 `"type": "module"`）：全局兜底（F19）找得到 binary，
+    但 Node 的 ESM 解析器**不读 `NODE_PATH`** ⇒ 模块解析不到，错误落到运行期。本钉子锁三件：
+    ① `repair=False`（纯解析口径）不写盘、不给 note；
+    ② `repair=True` 在 **Node 的搜索路径**上补软链 + 复检通过 ⇒ note 点名全局与补链位置；
+    ③ 第二次调用幂等（同物不动且 note 不变）。
+
+    变异证明：摘掉 `_support/pw_runner.py` 的软链步 ⇒ ② 红（仍报不可解析，且 note 为空）。
+    """
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product").mkdir(parents=True)
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: demo\napps: []\ne2e:\n  runner: node-playwright\n", encoding="utf-8")
+        (root / "product" / "e2e" / "scripts").mkdir(parents=True)
+        fake_pw, _g_nm, pkg = _global_pw_fixture(root, cons, monkeypatch)
+        if not shutil.which("node"):
+            # 无 node ⇒ 探针无法运行：此时必须走「如实拒绝」，不得当成修好了
+            _p, _n, why, _note = cons.resolve_pw(root, repair=True)
+            assert _p is None and "node" in why, why
+            return
+
+        # ① 纯解析：不写盘、无 note
+        pw, _nm, why, note = cons.resolve_pw(root)
+        assert pw == fake_pw and why == "" and note == "", (pw, why, note)
+        assert not (root / "node_modules").exists(), "纯解析不得写盘"
+
+        # ② 修复 + 复检
+        pw, _nm, why, note = cons.resolve_pw(root, repair=True)
+        assert pw == fake_pw and why == "", (pw, why)
+        assert "@playwright/test" in note and "软链" in note, note
+        link = root / "node_modules" / "@playwright" / "test"
+        assert link.is_symlink(), f"应在解析搜索路径上补软链：{link}"
+        assert os.path.realpath(link) == os.path.realpath(pkg)
+
+        # ③ 幂等：第二次不再动手（同物不动），而「用了机器全局状态」这个**前提事实**照样读得回
+        before = os.path.realpath(link)
+        pw2, _nm2, _why2, note2 = cons.resolve_pw(root, repair=True)
+        assert pw2 == fake_pw, pw2
+        assert os.path.realpath(link) == before, "幂等：软链不得被重建/改动"
+        assert "@playwright/test" in note2 and "全局" in note2, note2
+
+
+def test_resolve_pw_refuses_when_module_unresolvable_without_global(monkeypatch) -> None:
+    """issue #24：本地 binary 在、模块不在，且无全局兜底 ⇒ **不得**默默开跑（旧行为 = 放行）。
+
+    这是把「运行期跑失败 / 无结果」提前成「起跑前如实拒绝」的那一半。
+    """
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product" / "e2e" / "scripts").mkdir(parents=True)
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: demo\napps: []\ne2e:\n  runner: node-playwright\n"
+            "  node_modules: node_modules\n", encoding="utf-8")
+        pw = root / "node_modules" / ".bin" / "playwright"
+        pw.parent.mkdir(parents=True)
+        pw.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        pw.chmod(0o755)
+        real_which = shutil.which
+        monkeypatch.setattr(cons.shutil, "which",
+                            lambda cmd: None if cmd == "playwright" else real_which(cmd))
+        monkeypatch.delenv("NODE_PATH", raising=False)
+        monkeypatch.setattr(cons.subprocess, "run",
+                            lambda *a, **k: type("Proc", (), {"returncode": 1, "stdout": ""})())
+        p, _nm, why, note = cons.resolve_pw(root, repair=True)
+        assert p is None, (p, why)
+        assert "不可解析" in why or "node" in why, why
+        assert note == "", note
+
+
+def test_resolve_pw_refuses_to_clobber_foreign_path(monkeypatch) -> None:
+    """坏输入：解析路径上已有**非本工具所建**的 `@playwright/test` ⇒ 拒绝，不覆盖。
+
+    （修复手段是软链；链接位被人占着时静默覆盖 = 替人删文件。）
+    """
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product" / "e2e" / "scripts").mkdir(parents=True)
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: demo\napps: []\ne2e:\n  runner: node-playwright\n", encoding="utf-8")
+        foreign = root / "node_modules" / "@playwright" / "test"
+        foreign.parent.mkdir(parents=True)
+        foreign.symlink_to(root / "nowhere-else")   # 悬空符号链接：探针不过、修复也不得覆盖
+        _fake_pw, _g_nm, _pkg = _global_pw_fixture(root, cons, monkeypatch)
+        if not shutil.which("node"):
+            return
+        p, _nm, why, note = cons.resolve_pw(root, repair=True)
+        assert p is None, (p, why)
+        assert "占用" in why, why
+        assert note == "", note
+        assert os.path.realpath(str(foreign)) == os.path.realpath(str(root / "nowhere-else"))
 
 
 def test_node_ids_maps_multi_segment_case_id() -> None:

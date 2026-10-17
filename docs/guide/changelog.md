@@ -4,6 +4,15 @@
 
 ---
 
+## [Unreleased]
+
+### 🔧 E2E 真跑：node 轨运行器判据换本体（D101；issue #24）
+
+- **判据本体更换**：从「可执行文件存在」改为「从 `e2e.scripts_dir` 出发 `@playwright/test` 可解析」（对齐 `shared/gates.md` 2.2 行早写明的「按依赖可导入性，不按路径存在」）。背景 = 百炼/v2前端现场：ESM 项目（`"type": "module"`）下 Node 的 ESM 解析器**不读 `NODE_PATH`**，全局兜底找得到 binary、解析不到模块 ⇒ 错误落到运行期并被门计成「跑失败 / 无结果」。
+- **单源内核 `_support/pw_runner.py`**：二进制解析 / 探针 / 修复收敛到一处，消除 `atlas_check.py` 与 `e2e_console.py` 的两份拷贝（含两份 `_is_node_playwright`）。
+- **全局兜底改为可生效的修复**：补**幂等软链** + 复检，并输出「用了全局什么」；门侧降 `WARN`、不可修复 ⇒ `FAIL` 点名；项目自装缺模块不修只报；链接位被占拒绝覆盖。
+- **取证**：`pytest tests -q` ⇒ **476 passed / 4 skipped**（基线 472）；`test_atlas_check.py` 24 → **25**、`test_e2e_console.py` 9 → **12**；变异 M88/M89/M90 三枚咬合、还原逐字节一致；`install.sh` 自检 44 → **46**（含顺手补的 `_support/case_id.py`）。
+
 ## [v0.1.0-beta.22] - 2026-10-17
 
 ### ⚙️ E2E 生成链第三动能 `dispatch` + 台账收口三件（D98/D99/D100；v3 定形首跑全绿）

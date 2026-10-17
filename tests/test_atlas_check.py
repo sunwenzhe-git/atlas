@@ -24,6 +24,22 @@ PKG_ROOT = Path(__file__).resolve().parents[1]
 CK = PKG_ROOT / "scripts" / "atlas_check.py"
 
 HOME_HTML = '<html><body><button data-testid="home-cta-btn">x</button></body></html>'
+
+
+def _mk_pw_module(nm: Path, version: str = "9.9.9") -> Path:
+    """在 `nm` 下造一个**真能被 Node 解析**的 `@playwright/test`（issue #24 夹具）。
+
+    判据本体 = 「从 `product/e2e/scripts/` 出发 `@playwright/test` 可解析」⇒ 空目录糊弄不过去：
+    必须有 `package.json` + 入口文件，否则夹具自己就是「解析不到」，红的是夹具不是门。
+    """
+    pkg = nm / "@playwright" / "test"
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "package.json").write_text(
+        json.dumps({"name": "@playwright/test", "version": version,
+                    "main": "index.js", "exports": "./index.js"}),
+        encoding="utf-8")
+    (pkg / "index.js").write_text("module.exports = {};\n", encoding="utf-8")
+    return pkg
 CASE_BAD = """
 ## E2E-HOME-001 首页
 
@@ -304,13 +320,16 @@ def test_check_e2e_reachable_target_is_not_skipped() -> None:
         scripts = root / "product" / "e2e" / "scripts"
         scripts.mkdir(parents=True)
         (scripts / "login.spec.ts").write_text("test('ok', async () => {});\n", encoding="utf-8")
-        nm = root / "fake_nm" / ".bin"
-        nm.mkdir(parents=True)
-        pw = nm / "playwright"
+        # 常规布局：运行器与模块都在 `<root>/node_modules`（Node 从 scripts 起向上搜索的第一跳）。
+        nm_dir = root / "node_modules"
+        (nm_dir / ".bin").mkdir(parents=True)
+        pw = nm_dir / ".bin" / "playwright"
         pw.write_text("#!/bin/sh\necho '1 passed'\nexit 0\n", encoding="utf-8")
         pw.chmod(0o755)
+        _mk_pw_module(nm_dir)
         (root / "product" / "stack-profile.yaml").write_text(
-            f"e2e:\n  runner: node-playwright\n  node_modules: {nm.parent}\n  app_base_url: {_live_base()}\n",
+            "e2e:\n  runner: node-playwright\n  node_modules: node_modules\n"
+            f"  app_base_url: {_live_base()}\n",
             encoding="utf-8")
         rows = mod.Row()
         mod.check_e2e(root, rows, "login")
@@ -350,22 +369,27 @@ def test_check_e2e_node_modules_anchored_to_root() -> None:
         scripts = root / "product" / "e2e" / "scripts"
         scripts.mkdir(parents=True)
         (scripts / "login.spec.ts").write_text("// dummy\n", encoding="utf-8")
-        # 伪造存在于 root / custom_nm / .bin / playwright 的可执行文件
-        pw_mock = root / "custom_nm" / ".bin" / "playwright"
+        # 相对路径以 **root** 为基准锚定（不是 cwd）；且目录名必须是 `node_modules` 才能落在
+        # Node 从 scripts 起向上搜索的路径上（issue #24：判据是「可解析」，不是「文件在不在」）。
+        nm_dir = root / "product" / "node_modules"
+        pw_mock = nm_dir / ".bin" / "playwright"
         pw_mock.parent.mkdir(parents=True)
         pw_mock.write_text("#!/bin/sh\necho '1 passed'\n", encoding="utf-8")
         pw_mock.chmod(0o755)
+        _mk_pw_module(nm_dir)
 
         (root / "product" / "stack-profile.yaml").write_text(
-            f"e2e:\n  runner: node-playwright\n  node_modules: custom_nm\n  app_base_url: {_live_base()}\n",
+            "e2e:\n  runner: node-playwright\n  node_modules: product/node_modules\n"
+            f"  app_base_url: {_live_base()}\n",
             encoding="utf-8")
         (scripts / "playwright.config.ts").write_text("// dummy config", encoding="utf-8")
         
         rows = mod.Row()
         mod.check_e2e(root, rows, "login")
         row = [r for r in rows.rows if r["name"].startswith("E2E 真跑")][0]
-        # 因为 mock playwright 成功存在并被找到且返回 1 passed，不会报 node-playwright 缺失 FAIL
+        # node_modules 值以 root 为基准锚定（不是 cwd）⇒ 找到 binary；模块也在搜索路径上 ⇒ 判据本体成立
         assert "node-playwright 可执行文件不存在" not in row["detail"], row
+        assert row["status"] == "ok", row
 
 
 def test_check_e2e_global_playwright_detected(monkeypatch) -> None:
@@ -385,10 +409,12 @@ def test_check_e2e_global_playwright_detected(monkeypatch) -> None:
         fake_bin.chmod(0o755)
 
         fake_global_nm = root / "fake-global-nm"
-        fake_global_nm.mkdir(parents=True)
-        (fake_global_nm / "@playwright" / "test").mkdir(parents=True)
+        # issue #24：判据是「可解析」⇒ 夹具必须给**真包**（空目录在真探针下 = 解析不到）
+        _mk_pw_module(fake_global_nm, version="9.9.9")
 
-        monkeypatch.setattr(mod.shutil, "which", lambda cmd: str(fake_bin) if cmd == "playwright" else None)
+        _real_which = mod.shutil.which
+        monkeypatch.setattr(mod.shutil, "which",
+                            lambda cmd: str(fake_bin) if cmd == "playwright" else _real_which(cmd))
         monkeypatch.setenv("NODE_PATH", str(fake_global_nm))
 
         # 未声明 node_modules
@@ -400,7 +426,60 @@ def test_check_e2e_global_playwright_detected(monkeypatch) -> None:
         mod.check_e2e(root, rows, "login")
         row = [r for r in rows.rows if r["name"].startswith("E2E 真跑")][0]
         assert "node-playwright 可执行文件不存在" not in row["detail"], row
-        assert row["status"] == "ok", row
+        # issue #24：真跑跑得起来（code 0），但运行器来自**机器全局状态**、非项目自足 ⇒ 降档 WARN 并写明白；
+        # 旧行为下这里是假 ok（只看 binary 在不在）。
+        assert row["status"] == "WARN", row
+        assert "@playwright/test" in row["detail"] and "软链" in row["detail"], row
+        link = root / "node_modules" / "@playwright" / "test"
+        assert link.is_symlink(), f"应已在解析搜索路径上补软链：{link}"
+        assert os.path.realpath(link) == os.path.realpath(fake_global_nm / "@playwright" / "test")
+        # 幂等：再跑一次不得重复动手（同物则不动，且结论不变）
+        before = os.path.realpath(link)
+        rows_again = mod.Row()
+        mod.check_e2e(root, rows_again, "login")
+        row_again = [r for r in rows_again.rows if r["name"].startswith("E2E 真跑")][0]
+        assert row_again["status"] == "WARN", row_again
+        assert os.path.realpath(link) == before, "幂等：软链不得被重建/改动"
+
+
+def test_check_e2e_module_unresolvable_fails_loudly(monkeypatch) -> None:
+    """issue #24：判据本体 = 「从 scripts 出发 `@playwright/test` 可解析」——
+    即 `gates.md` 2.2 本行早写明的「按**依赖可导入性**，不按路径存在」。
+
+    夹具 = 项目**声明了**运行器目录、binary 也在（旧判据下 = ok），但模块不在 Node 的搜索路径上，
+    且无全局兜底 ⇒ 必须 FAIL 并把真原因点出来（旧行为：放行到运行期，报「跑失败 / 无结果」，
+    真红与假红不可区分）。
+
+    变异证明：把 probe 摘回「binary 存在即 ok」⇒ 本用例红（status 变 ok）。
+    """
+    mod = _load_check()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        scripts = root / "product" / "e2e" / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "login.spec.ts").write_text("// dummy\n", encoding="utf-8")
+        (scripts / "playwright.config.ts").write_text("// dummy config", encoding="utf-8")
+        pw = root / "node_modules" / ".bin" / "playwright"
+        pw.parent.mkdir(parents=True)
+        pw.write_text("#!/bin/sh\necho '1 passed'\n", encoding="utf-8")
+        pw.chmod(0o755)
+        monkeypatch.setattr(mod.shutil, "which", lambda cmd: None)
+        monkeypatch.delenv("NODE_PATH", raising=False)
+        monkeypatch.setattr(mod.subprocess, "run",
+                            lambda *a, **k: type("Proc", (), {"returncode": 1, "stdout": ""})())
+        (root / "product" / "stack-profile.yaml").write_text(
+            f"e2e:\n  runner: node-playwright\n  node_modules: node_modules\n"
+            f"  app_base_url: {_live_base()}\n",
+            encoding="utf-8")
+        rows = mod.Row()
+        mod.check_e2e(root, rows, "login")
+        row = [r for r in rows.rows if r["name"].startswith("E2E 真跑")][0]
+        assert row["status"] == "FAIL", row
+        assert "依赖可导入性" in row["detail"], row
+        if shutil.which("node"):
+            assert "@playwright/test" in row["detail"], row
+        # FAIL 不得留下真跑凭据（未跑就不该有 e2e-summary）
+        assert not (root / ".atlas" / "runs" / "e2e-summary.json").exists()
 
 
 def test_check_e2e_ignores_python_playwright_without_node_module(monkeypatch) -> None:

@@ -4,6 +4,22 @@
 
 ---
 
+## [Unreleased]
+
+### 🔧 E2E 真跑：node 轨运行器判据换本体（D101；issue #24）
+
+**背景**：百炼/v2前端真跑准备日，`product/e2e/scripts` 下 `playwright test --list` 报 `Cannot find package '@playwright/test'`——而 `atlas_check` 的「E2E 真跑」门与 E2E 控制台**两侧都放行了**：判据都是「可执行文件存在」。项目 `package.json` 声明 `"type": "module"` ⇒ 生成物走 ESM 解析 ⇒ Node 的 ESM 解析器**不读 `NODE_PATH`**（该通道属 CJS）⇒ 全局兜底（F19）找得到 binary、解析不到模块：错误落到运行期，且被门计成「跑失败 / 无结果」（真原因不可见）。`shared/gates.md` 2.2「E2E 真跑」行早已写明「解释器按**依赖可导入性**选（不按路径存在）」——是实现漂离了已落口径。
+
+**定案**：
+- **判据本体** = 「从 `e2e.scripts_dir` 出发 `@playwright/test` 可解析」（探针 = `node --input-type=module -e "import('@playwright/test')"`，解析基准 = cwd，本机实测）。
+- **单源内核** `_support/pw_runner.py`（新）：二进制解析 / 探针 / 修复收敛到一处——消除 `scripts/atlas_check.py` 与 `scripts/e2e_console.py` 的两份拷贝（含两份 `_is_node_playwright`）。
+- **全局兜底改为可生效的修复**：不可解析且运行器来自全局 ⇒ 执行器在 Node 的 `node_modules` 搜索路径上补**幂等软链** + 复检，并输出「用了全局什么」；门侧修复成功 ⇒ 降 **`WARN`**（跑得起来，但结论依赖机器全局状态、非项目自足），不可修复 ⇒ `FAIL` 点名真原因。项目自装目录里缺模块 = 项目自身缺口 ⇒ **不修只报**（避免把全局版本混进项目依赖）；链接位被非本工具占用 ⇒ **拒绝覆盖**。
+- `NODE_PATH` 保留（CJS 项目的真通道）但**不再冒充判据**。
+
+**取证**：`pytest tests -q` ⇒ **476 passed / 0 failed / 4 skipped**（beta.22 基线 472 passed ⇒ +4 钉）；`tests/test_atlas_check.py` 24 → **25 条**、`tests/test_e2e_console.py` 9 → **12 条**；变异 **M88**（判据退回「binary 存在即 ok」）/ **M89**（摘软链步）/ **M90**（摘 `global_note`）三枚咬合、还原逐字节一致；`install.sh` 自检 44 → **46 条**（+`_support/pw_runner.py`；并顺手补存量漏登记的 `_support/case_id.py`——它一直在装配面上却不在自检清单里）。
+
+**落地文件**：`DESIGN.md`（D101）/ `shared/gates.md`（2.2 真跑行判据与钉 + 2.3 计数行）/ `shared/stack-profile.md`（`e2e.node_modules` 字段语义）/ `rings/e2e/reference.md` §7（运行器前置）/ `_support/pw_runner.py`（新）/ `scripts/atlas_check.py` / `scripts/e2e_console.py` / 两个 tests / `install.sh`。**未做**：未改生成器（生成期代表不了运行机器，运行器可解析性由消费者在起跑前判）。
+
 ## [v0.1.0-beta.22] - 2026-10-17
 
 ### ⚙️ E2E 生成链第三动能 `dispatch` + 台账收口三件（D98/D99/D100；v3 定形首跑全绿）
