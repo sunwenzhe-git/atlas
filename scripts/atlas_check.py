@@ -42,6 +42,12 @@ from _support.siblings import load_module  # noqa: E402
 # 本文件此前与 `scripts/e2e_console.py` 各存一份解析实现（含 `_is_node_playwright` 两份拷贝）。
 pw_runner = load_module("pw_runner")
 
+# 行内 `#` 注释剥除单源（`_support/stack_profile.strip_inline_comment`；D94 口径）。本门四处
+# 标量取值曾不过剥注释 ⇒ `reset: null   # 真跑前…` 整段被当成命令执行（2026-10-17 现场
+# 百炼/v2前端：`e2e.reset 失败（exit 127）：/bin/sh: null: command not found`——**假红，且在
+# 跑到用例之前**）。D94 ③ 把这批「其余文本期门」登记为残余，本处是其中一处的现场实证。
+strip_inline_comment = load_module("stack_profile").strip_inline_comment
+
 VALIDATORS = (
     "validate_stack_profile",
     "validate_structure",
@@ -404,29 +410,29 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     _ext = ".spec.ts"
     target = scripts if not page else scripts / f"{page}{_ext}"
     if page and not Path(target).is_file():
-        rows.add("E2E 真跑", "SKIP", f"无 {page}{_ext}（{m.group(1) if m else 'cases_dir'} 未建？）")
+        rows.add("E2E 真跑", "SKIP", f"无 {page}{_ext}（{strip_inline_comment(m.group(1)) if m else 'cases_dir'} 未建？）")
         return
     # E1 单段：真实栈由业务侧拉起，atlas_check 不再起原型静态服务。
     mbase = re.search(r"^[^\S\n]*app_base_url:[^\S\n]*(\S+)", text, re.M)
-    if not mbase or mbase.group(1) in ("null", "~", '""', "''"):
+    if not mbase or strip_inline_comment(mbase.group(1)) in ("null", "~", '""', "''"):
         rows.add("E2E 真跑", "SKIP",
                  "e2e.app_base_url 为空（单段执行：真实栈地址未声明；业务侧拉起后重跑）")
         return
     # 地址已声明但**靶场不可达** ⇒ 同为「未就绪」，不是失败（`gates.md` 2.2 本行的「不查什么」
     # = 真栈没起来时的任何结论，那时只报 SKIP）：少这一步就会把整批 `goto` 失败记成 FAIL
     # （2026-10-04 实测 79 failed 全因前端未起），真红与假红不可区分 ⇒ 狼来了效应（`3509 §B189-1`）。
-    _ok, _why = _url_reachable(mbase.group(1))
+    _ok, _why = _url_reachable(strip_inline_comment(mbase.group(1)))
     if not _ok:
         rows.add("E2E 真跑", "SKIP",
-                 f"ENV_ISSUE：e2e.app_base_url 不可达（{mbase.group(1)}；{_why}）"
+                 f"ENV_ISSUE：e2e.app_base_url 不可达（{strip_inline_comment(mbase.group(1))}；{_why}）"
                  "——真实栈未就绪，非用例失败")
         return
     # 靶场重置（2026-09-30，台账 P4）：零步基线与用例前提假设种子初始态，真栈持久化
     # 跨 run 残留 ⇒ 声明了 `e2e.reset`（shell 命令串）就在真跑前执行；非零 ⇒ FAIL
     # （重置失败时继续跑 = 带着脏状态跑，结论不可信）。
     mreset = re.search(r"^[^\S\n]*reset:[^\S\n]*(\S.*\S)[^\S\n]*$", text, re.M)
-    if mreset and mreset.group(1) not in ("null", "~"):
-        reset_cmd = mreset.group(1).strip("\"'")
+    if mreset and strip_inline_comment(mreset.group(1)) not in ("null", "~"):
+        reset_cmd = strip_inline_comment(mreset.group(1)).strip("\"'")
         code_r, out_r = run(reset_cmd, root, timeout=300, shell=True)
         if code_r != 0:
             rows.add("E2E 真跑" + (f"[{page}]" if page else "（六页）"), "FAIL",
@@ -439,7 +445,7 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     # 二进制存在只是必要条件（此前把它当充要条件 ⇒ ESM 项目上「找得到 bin、解析不到模块」半生效，
     # 错误落到运行期并被计成「跑失败 / 无结果」）。解析/探针/修复全走单源内核 `_support/pw_runner.py`。
     nm = re.search(r"^[^\S\n]*node_modules:[^\S\n]*(\S+)", text, re.M)
-    nm_rel = Path(nm.group(1)) if nm else None
+    nm_rel = Path(strip_inline_comment(nm.group(1))) if nm else None
     pw_bin, node_path, runner_source, why = pw_runner.resolve(root, str(nm_rel) if nm_rel else None)
     if pw_bin is None:
         disp_bin = (nm_rel / ".bin" / pw_runner.PW_BIN_NAME) if nm_rel else "未配置"

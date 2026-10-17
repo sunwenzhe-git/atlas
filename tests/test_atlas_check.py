@@ -482,6 +482,73 @@ def test_check_e2e_module_unresolvable_fails_loudly(monkeypatch) -> None:
         assert not (root / ".atlas" / "runs" / "e2e-summary.json").exists()
 
 
+def test_check_e2e_strips_inline_comments_from_profile_scalars() -> None:
+    """D94 口径（行内 `#` 注释剥除单源）落到本门四处取值 —— 2026-10-17 现场实证：
+
+    百炼/v2前端 的 `stack-profile.yaml` 写 `reset: null   # 真跑前靶场重置 shell 命令串`
+    （**合法 YAML**：`#` 前有空白 ⇒ 是行内注释），而本门四处取值不过剥注释 ⇒ 注释整段被当值
+    ⇒ `e2e.reset 失败（exit 127）：/bin/sh: null: command not found` —— **假红，且在跑到用例
+    之前**（那时根本还没轮到我写的用例去红）。D94 ③ 把这批「其余文本期门」登记为残余，本处是
+    其中一处的现场实证。
+
+    变异证明 **M92**：四处取值退回 `m.group(1)` 原样 ⇒ 本用例红（`reset` 被执行 ⇒ 行变 `FAIL`）。
+    """
+    mod = _load_check()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        scripts = root / "product" / "e2e" / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "login.spec.ts").write_text("// dummy\n", encoding="utf-8")
+        (scripts / "playwright.config.ts").write_text("// dummy config", encoding="utf-8")
+        nm_dir = root / "node_modules"
+        (nm_dir / ".bin").mkdir(parents=True)
+        pw = nm_dir / ".bin" / "playwright"
+        pw.write_text("#!/bin/sh\necho '1 passed'\n", encoding="utf-8")
+        pw.chmod(0o755)
+        _mk_pw_module(nm_dir)
+        (root / "product" / "stack-profile.yaml").write_text(
+            "e2e:\n"
+            "  runner: node-playwright\n"
+            "  node_modules: node_modules   # node 运行器的依赖目录（相对项目根）\n"
+            f"  app_base_url: {_live_base()}   # 真实应用地址（单段唯一靶场）\n"
+            "  reset: null   # 真跑前靶场重置 shell 命令串；null = 不重置\n",
+            encoding="utf-8")
+        rows = mod.Row()
+        mod.check_e2e(root, rows, "login")
+        row = [r for r in rows.rows if r["name"].startswith("E2E 真跑")][0]
+        assert "e2e.reset 失败" not in row["detail"], row
+        assert row["status"] == "ok", row
+
+
+def test_check_e2e_still_runs_a_real_reset_command() -> None:
+    """反侧钉：剥注释**不得把功能修掉** —— 真写的 `reset:` 发令必须照发（否则就是把门修哑）。"""
+    mod = _load_check()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        scripts = root / "product" / "e2e" / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "login.spec.ts").write_text("// dummy\n", encoding="utf-8")
+        (scripts / "playwright.config.ts").write_text("// dummy config", encoding="utf-8")
+        nm_dir = root / "node_modules"
+        (nm_dir / ".bin").mkdir(parents=True)
+        pw = nm_dir / ".bin" / "playwright"
+        pw.write_text("#!/bin/sh\necho '1 passed'\n", encoding="utf-8")
+        pw.chmod(0o755)
+        _mk_pw_module(nm_dir)
+        (root / "product" / "stack-profile.yaml").write_text(
+            "e2e:\n"
+            "  runner: node-playwright\n"
+            "  node_modules: node_modules\n"
+            f"  app_base_url: {_live_base()}\n"
+            "  reset: echo RAN > reset-ran.txt   # 真发令 + 行内注释\n",
+            encoding="utf-8")
+        rows = mod.Row()
+        mod.check_e2e(root, rows, "login")
+        assert (root / "reset-ran.txt").is_file(), "真写的 reset 发令必须照发（剥注释不得把功能修掉）"
+        row = [r for r in rows.rows if r["name"].startswith("E2E 真跑")][0]
+        assert row["status"] == "ok", row
+
+
 def test_check_e2e_ignores_python_playwright_without_node_module(monkeypatch) -> None:
     """F19 加固：当系统命中 Python Playwright CLI 时，若无 Node 全局模块，不得采信该 global_pw。"""
     mod = _load_check()
