@@ -61,6 +61,19 @@
 - **登记面**：`shared/gates.md` 2.5「变异证明」行（查什么 + 假绿测试列）与 2.2「E2E 真跑」行（复验注记）。
 - **取证**：`pytest tests -q` ⇒ **483 passed / 4 skipped**。
 
+### 🔧 E2E：宿主注入型 base query 由生成物转发（D104；issue #27；两轮独立评审后落刀）
+
+**病灶**：某类应用把宿主注入的前提（tenant）**只从 `window.location.search` 读**（无 sessionStorage 回落）⇒ `会话:` 通道（D89，sessionStorage）**送不到**；`goto` 又不得带 `?`（§5.7）；而 base 一旦带 query，**绝对路径会丢 query**（`new URL('/console/#/x', '…?switchAgent=7202')` ⇒ query 消失）。三条各自成立 ⇒ 无合法写法 ⇒ 真跑导航落到「请选择业务空间」，白屏假红。
+
+**两轮评审**：`proposals/REVIEW-2026-10-17-source-batch.md`（2 MUST / 5 SHOULD）+ `proposals/REVIEW-2026-10-17-Bprime.md`（10 MUST / 2 SHOULD / 3 OBSERVE）。
+
+- **第一案 A 被落刀实测推翻**：让路由列允许 `#/…` 相对形态（`new URL('#/x', base)` 能保住 base 的 path+query），但 `.atlas-case` 里 `goto #/…` 的 `#` 前有空格 ⇒ 按 D94 行内注释语义被截断成 `'goto'`（`守卫:` 标量同样）⇒ **物理不可写**；救它要改 D94 刚收敛的共享注释语义（`proposals/RFC-20261017-01` §9.1）。
+- **定案 B′（评审建议的生成期纯函数变换，不是运行期助手）**：路由列保持**路径形态**（`/console/#/app/agent/detail`，`#` 紧邻 `/` ⇒ 不被注释吞）⇒ 上一轮评审的四处消费者**无需改**；改由**生成期**把 base 的 query 并进**三处**导航发射面（step `goto` / 元素齐全守卫 / 零步基线 `data.url`），单源 = 新增 `_support/url_merge.py`；控制台手工「打开」（**第五消费者**）的 `base + path` 拼接同步修正为 `origin + 合并路径`。
+- **口径三条**：base 无 query ⇒ 生成物**逐字节零变化**；`ATLAS_BASE_URL` **只覆盖 host、不覆盖 base 的 query**；**边界明示**——base query 成为前提后，「它缺席时」的行为无法用同一份用例表达（`会话:`/`auth: none` 不同消费面，不构成逃逸口），要 opt-out 须另起决策行（触 D99）。
+- **钉与变异**：值保真 / 三处齐并 / 无 query 零变化 / 控制台绝对地址；变异 **MB1/MB2/MB3** 三枚咬合、还原逐字节一致（报告在 `/tmp/atlas-mutation-2026-10-17/`，含注入 diff）。
+- **取证**：`pytest tests -q` ⇒ **487 passed / 4 skipped**；`install.sh` 自检 46 → **47 条**（+`_support/url_merge.py`）。
+- **登记面**：`DESIGN.md` D104 / `rings/e2e/reference.md` §3.2 + §5.5 / `shared/stack-profile.md` §2 / `shared/gates.md`（`生成物最新` 零变化钉 + 2.2 真跑行）/ `duty-review/bugs.md` #27。
+
 ## [v0.1.0-beta.22] - 2026-10-17
 
 ### ⚙️ E2E 生成链第三动能 `dispatch` + 台账收口三件（D98/D99/D100；v3 定形首跑全绿）

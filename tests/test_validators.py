@@ -2276,6 +2276,38 @@ def test_prd_adopt_opening_min_set_passes() -> None:
 
 
 
+def test_console_style_path_with_hash_is_writable_and_navigable() -> None:
+    """issue #27 / `DESIGN.md` D104：**路径形态含 `#`** 的路由（`/console/#/app/agent/detail`）必须
+    ① 在 `.atlas-case` 里**写得出来**（`#` 紧邻 `/` ⇒ 不是行内注释起点）② 通过 `goto` 的两道门。
+
+    这条钉守住方案 A 的死因（§9.1 实测：`goto #/…` 的 `#` 前有空格 ⇒ 被 `strip_inline_comment`
+    截断成 `'goto'`），确保「宿主 query 由 base 承载 + 路由保持路径形态」这条路一直可写。
+
+    变异 **M-B1**：把 `strip_inline_comment` 的注释判据改成「任何 `#` 都截断」⇒ 本钉红。
+    """
+    # ① 值保真（注释语义）：`#` 紧邻 `/` 时保留，尾随的真注释仍要剥
+    assert gn.strip_inline_comment("goto /console/#/app/agent/detail/1   # 说明") == \
+        "goto /console/#/app/agent/detail/1"
+
+    index = INDEX_GOOD.replace(
+        "## 页面 ↔ 用例",
+        "## 页面表（页 ↔ 路由）\n\n| 页面 | 路由 | 域 |\n|---|---|---|\n"
+        "| home | / | demo |\n| app-agent-detail | /console/#/app/agent/detail | demo |\n\n"
+        "## 页面 ↔ 用例")
+    case = CASE_GOOD.replace(
+        "  - click home-cta-btn          # 点击主操作按钮",
+        "  - goto /console/#/app/agent/detail/1   # 带 hash 的路径形态\n"
+        "  - click home-cta-btn          # 点击主操作按钮")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, case)
+        mk_index(root, index)
+        checks = {c["check"]: (c["level"], c["detail"]) for c in ve.validate(root).checks}
+    assert checks["goto 不带查询参数"][0] == "PASS", checks["goto 不带查询参数"]   # ② `#` 不是 query
+    assert checks["goto 路径 ∈ 页面表"][0] == "PASS", checks["goto 路径 ∈ 页面表"]
+
+
 def test_goto_path_must_be_in_page_table() -> None:
     """契约 §5.5（2026-09-30）：`goto` 路径必须命中页面表路由列（唯一真相源）。
     匹配 = 精确或非根路由子路径前缀；根路由仅精确。

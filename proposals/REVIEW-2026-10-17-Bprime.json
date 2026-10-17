@@ -1,0 +1,17 @@
+[
+  {"item":"B′ 层次 = 生成物导航层","verdict":"agree","severity":"MUST","evidence":"scripts/gen_e2e_scripts.py:448/621/844; rings/e2e/reference.md:437,458","note":"地址唯一源本就是 e2e.app_base_url，宿主 tenant 住那里，生成物负责转发到每一跳；不改共享注释语义、不加字段、用例侧仍 ?-free。"},
+  {"item":"A 撤回成立（#/… 值形态写不出来）","verdict":"agree","severity":"MUST","evidence":"_support/stack_profile.py:45 `ch == \"#\" and (i == 0 or line[i-1] in \" \\t\")`","note":"`goto #/…` 的 `#` 前有空格 ⇒ 截断为 'goto'；作者 §9.1 的四行实测与代码一致。"},
+  {"item":"「一处发射」低报：实为三处导航发射","verdict":"disagree","severity":"MUST","evidence":"scripts/gen_e2e_scripts.py:448 (step goto); :621 (守卫 goto); :844 → :1446 (零步基线 data.url→page.goto)","note":"漏任一处 ⇒ 该跳无 tenant ⇒ 白屏假红。基线 `data.url` 用的是页级路由(:844 url=urls[page], :1329)，必须同受合并。"},
+  {"item":"ts_case/ts_zero_step_baseline 签名或常量需带 base query","verdict":"disagree","severity":"MUST","evidence":"scripts/gen_e2e_scripts.py:401 def ts_case(case,url); :784 def ts_zero_step_baseline(page,url,...)","note":"合并要进共享发射函数 ⇒ 任何括号/缩进漂移会漏到所有项目；零变化钉须覆盖整页字节。"},
+  {"item":"「四处消费者不需要改」成立","verdict":"agree","severity":"MUST","evidence":"validators/validate_e2e_index.py:411 `\\|\\s*/`; :319 `_route_hit`; scripts/gen_e2e_scripts.py:222 `(/\\S*)`; scripts/e2e_console.py:141 `startswith(\"/\")`","note":"path-form 路由 `/console/#/…` 以 `/` 开头 ⇒ 四处全命中，与上一轮 MUST-1/2/3 相反是因为形态换成了 path-form。"},
+  {"item":"mock 的 context.route 不被波及","verdict":"agree","severity":"MUST","evidence":"scripts/gen_e2e_scripts.py:694; rings/e2e/reference.md:363","note":"「pathname+method 命中、query 天然免疫」，加 query 不改变桩命中。"},
+  {"item":"`goto 禁带查询参数` 门不破","verdict":"agree","severity":"MUST","evidence":"rings/e2e/reference.md:506,338; validators/validate_e2e_index.py goto_param 段（读 step 文本）","note":"门打在用例 step 文本；生成物含 ? 不在判据内。"},
+  {"item":"第五消费者被漏：e2e_console 手工「打开」拼接","verdict":"disagree","severity":"SHOULD","evidence":"scripts/e2e_console.py:741 `url = (…get(\"base_url\") or \"\").rstrip(\"/\") + route`","note":"base 带 query 时产出畸形 URL（…?switchAgent=7202/console/#/…）。此缺陷先于 B′ 存在（项目 base 已带 tenant），但 B′ 把「base query = 前提」正式化 ⇒ 同属其前提，RFC §9.2 未列。"},
+  {"item":"逃逸口缺失：base query 缺席态无法表达","verdict":"disagree","severity":"SHOULD","evidence":"scripts/gen_e2e_scripts.py:614,1423（会话:→sessionStorage）; :1083（auth:none→storageState）; RFC §1 ①（应用读 searchParams.get('switchAgent')）","note":"会话:/auth:none 与本消费点不在同一存储面，不构成逃逸口。须显式声明超范围，或新增显式 opt-out（新键 ⇒ 触 D99，须独立决策行）。"},
+  {"item":"零变化承诺可保证","verdict":"agree","severity":"MUST","evidence":"shared/gates.md:64（生成物最新 三态门）; scripts/gen_e2e_scripts.py:1328-1486（确定性纯字符串拼装）","note":"条件化在「urlparse(base).query 非空」分支；须留 golden 快照钉覆盖整页字节。"},
+  {"item":"「同名键以目标为准」是死条款","verdict":"disagree","severity":"OBSERVE","evidence":"rings/e2e/reference.md:506（goto 禁 ?）; :78（路由列可含 # 不含 ?）","note":"目标永无同名键 ⇒ 该合并分支不可达、不可测。建议删除或改述为「为未来扩展保留」。"},
+  {"item":"ATLAS_BASE_URL 覆盖语义未钉","verdict":"disagree","severity":"OBSERVE","evidence":"scripts/gen_e2e_scripts.py:1540,1566 `process.env.ATLAS_BASE_URL ?? '{base}'`","note":"合并走生成期常量 vs 运行期 helper，决定运行期覆盖是否跟随；B′ 未钉死，须写明。"},
+  {"item":"与既有裁决不相抵","verdict":"agree","severity":"MUST","evidence":"reference.md:506,277-288,461-463; DESIGN.md:568(D99)","note":"§5.7 不破；D89/D90 不动；D99 不触（不加字段）；D103 正交。"},
+  {"item":"钉与变异方案（P1–P4 / M-B1–M-B4）","verdict":"agree","severity":"MUST","evidence":"本评审 §钉与变异 表","note":"最低集 = P2+P3+M-B2+M-B3（合并真发生 + 无 query 零变化）；建议加 P1/M-B1 守住注释语义。"},
+  {"item":"URL 合并语义（new URL 实测）","verdict":"agree","severity":"OBSERVE","evidence":"RFC §9.2；本会话无 shell 未复算","note":"Node/浏览器标准语义，非 atlas 自造；属落刀后真跑验证面，本次未取证。"}
+]

@@ -1201,6 +1201,63 @@ def test_setup_project_real_login_preset_shape() -> None:
         assert "throw new Error(`[atlas] 应用靶场登录失败" in setup_ts, setup_ts
 
 
+def test_base_query_reaches_all_three_navigation_sites() -> None:
+    """issue #27 / `DESIGN.md` D104：`e2e.app_base_url` 的 query（宿主注入型前提，如 tenant）
+    必须被带到**三处**导航发射面：
+
+    ① step 的 `goto`；② 元素齐全守卫（`守卫:` 缺省 = 页面表路由）；③ 零步基线的 `data.url`
+    （运行期 `atlasZeroStepBaseline` 内 `page.goto(data.url)`）。
+
+    评审 MUST（`proposals/REVIEW-2026-10-17-Bprime.md`）：作者原写「一处发射」是**低报**；
+    漏任一处 ⇒ 该跳 tenant 缺席 ⇒ 应用停在「请选择业务空间」⇒ **白屏假红**（不是用例真失败）。
+
+    变异 **M-B2**：`_support/url_merge.merge_base_query` 退回 identity ⇒ 本钉三处齐红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=PROFILE.replace("app_base_url: http://127.0.0.1:8000",
+                                           "app_base_url: http://127.0.0.1:8000/?switchAgent=7202"),
+             case=CASE.replace("  - click home-cta-btn          # 点击主操作按钮",
+                               "  - goto /home/42               # 带参页面\n"
+                               "  - click home-cta-btn          # 点击主操作按钮"))
+        assert run(root, "--apply").returncode == 0
+        spec = spec_of(root)
+        assert "await page.goto('/home/42?switchAgent=7202');" in spec, "① step goto 未带 base query"
+        assert "await page.goto('/home?switchAgent=7202');" in spec, "② 守卫导航未带 base query"
+        assert '"url":"/home?switchAgent=7202"' in spec, "③ 零步基线 data.url 未带 base query"
+
+
+def test_base_query_absent_leaves_generation_byte_identical() -> None:
+    """**零变化承诺**（`shared/gates.md`「生成物最新」门看守派生件）：base 不带 query 的项目，
+    三处发射面必须**逐字节**保持旧形态 —— 新能力只在「base 带 query」一个分支生效。
+
+    变异 **M-B3**：去掉 `merge_base_query` 的「base 无 query 短路」⇒ 本钉红（生成物多出 `?`）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=CASE.replace("  - click home-cta-btn          # 点击主操作按钮",
+                                     "  - goto /home/42               # 带参页面\n"
+                                     "  - click home-cta-btn          # 点击主操作按钮"))
+        assert run(root, "--apply").returncode == 0
+        spec = spec_of(root)
+        assert "await page.goto('/home/42');" in spec
+        assert "await page.goto('/home');" in spec
+        assert '"url":"/home"' in spec
+        assert "?switchAgent" not in spec
+        assert "page.goto('/home/42?" not in spec and "page.goto('/home?" not in spec
+    # 单元侧：无 query ⇒ 原样返回（不因「纯路径」被改动）
+    spec = importlib.util.spec_from_file_location("gen_e2e_urlmerge", GEN)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    merge = mod.url_merge.merge_base_query
+    assert merge("/a/b#/c", "http://h/x") == "/a/b#/c"
+    assert merge("/a/b#/c", "http://h/x?t=1") == "/a/b?t=1#/c"
+    # 非 `/` 开头（外部 URL / 相对 hash）与已带 `?` 的目标：一律不动
+    assert merge("https://e.com/p", "http://h/?t=1") == "https://e.com/p"
+    assert merge("#/x", "http://h/?t=1") == "#/x"
+    assert merge("/a?k=0#/c", "http://h/?t=1") == "/a?k=0#/c"
+
+
 def test_setup_without_app_login_degrades_loudly() -> None:
     """契约 §7.1（RFC-20261015-02，2026-10-16 改判）：stack-profile 未声明 e2e.app_login =
     **未声明**（不再是「合法降级」）——第一阶段仍生成成功 + 生成期 WARN（升档 = 下一次真跑

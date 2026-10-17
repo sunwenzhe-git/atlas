@@ -77,6 +77,8 @@ case_id = load_module("case_id")
 # node 运行器单源内核（二进制解析 / **可解析性判据** / 全局兜底修复；issue #24）：
 # `atlas_check` 真跑门与本月控制台共用同一实现 —— 此前两处各存一份拷贝。
 pw_runner = load_module("pw_runner")
+# 宿主注入型 base query（issue #27 / D104）：单源 `_support/url_merge.py`。
+url_merge = load_module("url_merge")
 
 
 # ---------------------------------------------------------------- 用例真相源（只读）
@@ -121,6 +123,17 @@ def read_manual(root: Path) -> list[dict]:
             items.append({"id": parts[0], "page": parts[1], "title": parts[2],
                           "note": " | ".join(parts[3:])})
     return items
+
+
+def manual_open_url(root: Path, route: str) -> str:
+    """手工项「打开」用的**绝对地址**（issue #27 / D104）。
+
+    旧实现是 `base.rstrip("/") + route` 字符串拼接 —— base 一旦带 query（宿主注入型前提，
+    如 `?switchAgent=7202`）必产畸形 URL（`…?switchAgent=7202/console/#/…`）；路径形态路由
+    （`/console/#/…`）也会被拼成 `<base>/console/#/…` 的双前缀。改为 origin + 合并后的路径。
+    """
+    base = (read_sources(root).get("app", {}) or {}).get("base_url") or ""
+    return url_merge.origin_of(base) + url_merge.merge_base_query(route, base)
 
 
 def page_routes(root: Path) -> dict:
@@ -738,7 +751,7 @@ class Handler(BaseHTTPRequestHandler):
         if not route:
             self._json({"ok": False, "error": f"{item['page']} 不在索引页面表里，无法跳转"}, 409)
             return
-        url = (read_sources(self.app.root).get("app", {}).get("base_url") or "").rstrip("/") + route
+        url = manual_open_url(self.app.root, route)
         opener_cmd = ["open"] if sys.platform == "darwin" else (["xdg-open"] if shutil.which("xdg-open") else None)
         if opener_cmd is None:
             self._json({"ok": True, "url": url, "opened": False,

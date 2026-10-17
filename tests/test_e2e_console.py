@@ -490,6 +490,31 @@ def test_resolve_pw_refuses_to_clobber_foreign_path(monkeypatch) -> None:
         assert os.path.realpath(str(foreign)) == os.path.realpath(str(root / "nowhere-else"))
 
 
+def test_manual_open_url_keeps_base_query_and_path_prefix() -> None:
+    """issue #27 / D104（评审 SHOULD：**第五消费者**）：控制台手工项「打开」的地址构造。
+
+    旧实现 `base.rstrip("/") + route` 在 base 带 query 时必产畸形 URL
+    （`…?switchAgent=7202/console/#/…`）；路径形态路由（`/console/#/…`）也会被拼成双前缀。
+    本钉两侧：① base 带 query ⇒ origin + 合并后的路径（query 在 path 与 hash 之间）；
+    ② base 不带 query ⇒ 行为与旧实现等价（`origin + route`）。
+    """
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product").mkdir(parents=True)
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: demo\napps: []\ne2e:\n  runner: node-playwright\n"
+            "  app_base_url: http://localhost:2000/console/?switchAgent=7202\n", encoding="utf-8")
+        url = cons.manual_open_url(root, "/console/#/app/agent/detail")
+        assert url == "http://localhost:2000/console/?switchAgent=7202#/app/agent/detail", url
+
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: demo\napps: []\ne2e:\n  runner: node-playwright\n"
+            "  app_base_url: http://localhost:2000/console/\n", encoding="utf-8")
+        url2 = cons.manual_open_url(root, "/console/#/app/agent/detail")
+        assert url2 == "http://localhost:2000/console/#/app/agent/detail", url2
+
+
 def test_node_ids_maps_multi_segment_case_id() -> None:
     """契约 §5.3：`PAGE` 段 = 页面 slug 的大写原文（多段 slug 连字符原样保留）。
 

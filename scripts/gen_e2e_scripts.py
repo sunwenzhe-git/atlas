@@ -73,6 +73,8 @@ _sp = load_module("stack_profile")
 parse_profile = _sp.parse_profile  # 单源别名（原实现已并入 `_support/stack_profile.py`）
 # 契约 §5.5（2026-10-16，issue #R1/#F5）：行内注释剥除口径与内核**同一函数对象**（I3）。
 strip_inline_comment = _sp.strip_inline_comment
+# 宿主注入型 base query 的转发（issue #27 / D104）：单源 `_support/url_merge.py`。
+url_merge = load_module("url_merge")
 
 CASE_BLOCK = re.compile(r"```atlas-case\s*\n(.*?)```", re.S)
 RUNNERS = {"node-playwright": ".spec.ts"}  # 单轨（3507 BO）：python-playwright 已退役
@@ -398,13 +400,14 @@ def session_env_name(key: str) -> str:
     return "ATLAS_SESSION_" + re.sub(r"[^0-9A-Za-z]+", "_", key).strip("_").upper()
 
 
-def ts_case(case: dict, url: str) -> str:
+def ts_case(case: dict, url: str, base: str = "") -> str:
     cid = case["id"]
     # 契约 §5.5 `守卫:`（2026-10-16，issue #23）：**元素齐全守卫导航用的具体路径**。
     # 页面表 `路由` 列按 §3.1 只承载**业务段**（带参页面形如 `/x` 而真实路由为 `/x/:id`）⇒
     # 直接拿它导航会落到路由匹配不上的地址，守卫在 goto 后即红。有 `守卫:` 时用它，
     # 缺省回落页面表路由 ⇒ **对无参页面逐字节零变化**。
-    guard_url = (case.get("守卫") or "").strip() or url
+    # 宿主注入型 base query（issue #27 / D104）：守卫导航同样要带（`url` 已在调用侧合并，幂等）。
+    guard_url = url_merge.merge_base_query((case.get("守卫") or "").strip() or url, base)
     # 契约 §5.5 / §7.1（"元素齐全守卫按自动等待判定"）：守卫 id 面 = **该用例 `testid:` 应然清单**
     # （实测：首步为 `goto`/`refresh` 的用例取 `step[0]` 会得到**空表** ⇒ 守卫静默消失）。
     # 2026-10-16（issue #R2）从 `first_step_tids`（猜）**回归**契约正文口径；空表本身是
@@ -445,7 +448,8 @@ def ts_case(case: dict, url: str) -> str:
         if verb == "refresh":
             actions.append("await page.reload();")
         elif verb == "goto":
-            actions.append(f"await page.goto('{value}');")
+            # 宿主注入型 base query（issue #27 / D104）：step 的 goto 是**第二处**发射面。
+            actions.append(f"await page.goto('{url_merge.merge_base_query(value, base)}');")
         elif verb == "click":
             actions.append(
                 f"await page.getByTestId('{tid}').first().click("
@@ -1326,7 +1330,9 @@ def main() -> int:
     idx_text = idx_path.read_text(encoding="utf-8") if idx_path.is_file() else ""
     case_states = index_case_states(idx_text)
     for page, items in cases.items():
-        url = urls[page]
+        # 宿主注入型 base query（issue #27 / D104）：页面级 URL 先合并 ⇒ 零步基线 `data.url`
+        # （**第三处**发射面：`atlasZeroStepBaseline` 内 `page.goto(data.url)`）与 `守卫:` 缺省值同享。
+        url = url_merge.merge_base_query(urls[page], base or "")
         for c in items:
             st = case_states.get(c.get("id", ""), ("", ""))
             c["_state"], c["_state_reason"] = st[0], st[1]
@@ -1481,7 +1487,7 @@ def main() -> int:
             "}\n\n"
             + (ts_mock_helpers(mock_prefix, mock_mode) if (page_has_mocks := any(c.get("_mock") for c in items)) else "")
             + ts_zero_step_baseline(page, url, items, mock_vacuous=page_has_mocks) + "\n"
-            + "\n".join(ts_case(c, url) for c in items)
+            + "\n".join(ts_case(c, url, base or "") for c in items)
         )
         write(scripts_dir / f"{page}{ext}", body, args.apply, results)
         # runner 切换后清理另一扩展名的旧页面脚本（否则双份同语义产物互斥漂移）
