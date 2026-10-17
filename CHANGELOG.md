@@ -93,6 +93,16 @@
 - **钉与变异**：`test_runner_config_declares_expect_timeout_floor` + 变异 **MB5**（摘发射 ⇒ 红，还原逐字节一致）。
 - **取证**：`pytest tests -q` ⇒ **488 passed / 4 skipped**。
 
+### 🧭 E2E 执行入口的 cwd 口径统一：真跑门改以 `<scripts_dir>` 为 cwd（D106；issue #29）
+
+**现场**：#27 / #28 落地后真跑仍 `3 failed 1 passed`，而**同一份产物** `cd scripts` 直跑 **8.2s 全绿**。差异 = **cwd**：生成物里的相对路径（`storageState: ".atlas-auth/state.json"`、`outputDir: ".atlas-run"`、mock fixture）**全是 cwd 相对**的，`atlas_check` 却用 `cwd=项目根` + `-c <相对路径>` 跑 ⇒ storageState 被解析到 `<root>/.atlas-auth/`（**并在那儿写下空 state**，实测 `{"cookies":[],"origins":[]}`）⇒ 读不到人工会话 ⇒ 未登录态跑用例 ⇒ 断言等满 20s **假红**。控制台本来就是 `cd scripts` 再跑。
+
+- **定案**：真跑门改 `cwd=<scripts_dir>` + `-c playwright.config.ts`（与执行器同一口径）；契约侧新增「**执行 cwd（硬）**」条。
+- **被否**：把生成物相对路径改成绝对路径（派生件带机器绝对路径 ⇒ 不可移植、破「生成物 = 确定性派生物」）；只修 setup 的 state 路径（其余相对路径仍漂）。
+- **教训（写进 D106 ④）**：**「同一产物在两个入口下跑出不同结论」先查 cwd / 环境**，否则会把执行器差异误判成用例或实现缺陷（本轮先误判为超时不足——由 D105 兜住超时面——再查出真因）。
+- **钉与变异**：`test_check_e2e_runs_with_scripts_dir_as_cwd`（截 `run()` 的 (cmd, cwd)）+ 变异 **MB6**（退回 root ⇒ 红，还原逐字节一致）。
+- **取证**：`pytest tests -q` ⇒ **489 passed / 4 skipped**。
+
 ## [v0.1.0-beta.22] - 2026-10-17
 
 ### ⚙️ E2E 生成链第三动能 `dispatch` + 台账收口三件（D98/D99/D100；v3 定形首跑全绿）

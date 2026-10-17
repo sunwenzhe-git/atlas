@@ -465,9 +465,13 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
         return
     spec_arg = f"{page}.spec.ts" if page else ""
     node_path_env = f"NODE_PATH={node_path} " if node_path else ""
-    cmd = (f"{node_path_env}{pw_bin} test -c "
-           f"{scripts.relative_to(root) / 'playwright.config.ts'} {spec_arg}".strip())
-    code, out = run(cmd, root, timeout=1800, shell=True)
+    # **执行 cwd = 生成物所在目录**（issue #29 / `DESIGN.md` D106）：生成物里的相对路径全是
+    # cwd 相对的（`storageState: ".atlas-auth/state.json"`、`outputDir: ".atlas-run"`、mock fixture）。
+    # 此前本门用 cwd=项目根 + `-c <相对路径>` 跑，Playwright 把 storageState 解析到 `<root>/.atlas-auth/`
+    # ⇒ **读不到人的会话**（并在那儿写一个空 state）⇒ 未登录态跑用例 ⇒ 20s 超时假红。
+    # 控制台（`e2e_console`）本来就是 `cd scripts` 再跑 —— 本门与它对齐，两个入口一个口径。
+    cmd = f"{node_path_env}{pw_bin} test -c playwright.config.ts {spec_arg}".strip()
+    code, out = run(cmd, scripts, timeout=1800, shell=True)
     m2 = re.findall(r"(\d+) (passed|failed|error)", out)
     summary = " ".join(f"{n} {k}" for n, k in m2) or "无结果"
 

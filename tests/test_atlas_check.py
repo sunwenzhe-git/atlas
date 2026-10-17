@@ -442,6 +442,47 @@ def test_check_e2e_global_playwright_detected(monkeypatch) -> None:
         assert os.path.realpath(link) == before, "幂等：软链不得被重建/改动"
 
 
+def test_check_e2e_runs_with_scripts_dir_as_cwd(monkeypatch) -> None:
+    """issue #29 / `DESIGN.md` D106：**真跑门的执行 cwd 必须是生成物目录**（`<scripts_dir>`）。
+
+    生成物里的相对路径全是 **cwd 相对**的：`storageState: ".atlas-auth/state.json"`、
+    `outputDir: ".atlas-run"`、mock fixture 路径。此前本门用 `cwd=项目根` + `-c <相对路径>` 跑 ⇒
+    Playwright 把 storageState 解析到 `<root>/.atlas-auth/` ⇒ **读不到人工会话**（并在那儿写一个空 state）
+    ⇒ 未登录态跑用例 ⇒ 断言 20s 超时**假红**（现场：3 failed 1 passed，而同一份产物在
+    `cd scripts` 下跑 8.2s 全绿）。控制台本来就是 `cd scripts` 再跑 —— 两个入口必须一个口径。
+
+    变异 **MB6**：把 cwd 退回 `root` 并改回 `-c <相对路径>` ⇒ 本钉红。
+    """
+    mod = _load_check()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        scripts = root / "product" / "e2e" / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "login.spec.ts").write_text("// dummy\n", encoding="utf-8")
+        (scripts / "playwright.config.ts").write_text("// dummy config", encoding="utf-8")
+        nm_dir = root / "node_modules"
+        (nm_dir / ".bin").mkdir(parents=True)
+        pw = nm_dir / ".bin" / "playwright"
+        pw.write_text("#!/bin/sh\necho '1 passed'\n", encoding="utf-8")
+        pw.chmod(0o755)
+        _mk_pw_module(nm_dir)
+        (root / "product" / "stack-profile.yaml").write_text(
+            f"e2e:\n  runner: node-playwright\n  node_modules: node_modules\n"
+            f"  app_base_url: {_live_base()}\n", encoding="utf-8")
+        captured: dict = {}
+
+        def fake_run(cmd, cwd, timeout=1800, shell=False):
+            captured["cmd"] = cmd
+            captured["cwd"] = Path(cwd)
+            return 1, "1 passed"
+
+        monkeypatch.setattr(mod, "run", fake_run)
+        mod.check_e2e(root, mod.Row(), "login")
+    assert captured["cwd"] == scripts, f"执行 cwd 必须是生成物目录，实际 {captured['cwd']}"
+    assert "playwright.config.ts" in captured["cmd"], captured["cmd"]
+    assert "product/e2e/scripts" not in captured["cmd"], f"不应带相对配置路径：{captured['cmd']}"
+
+
 def test_check_e2e_module_unresolvable_fails_loudly(monkeypatch) -> None:
     """issue #24：判据本体 = 「从 scripts 出发 `@playwright/test` 可解析」——
     即 `gates.md` 2.2 本行早写明的「按**依赖可导入性**，不按路径存在」。
