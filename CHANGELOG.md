@@ -4,6 +4,29 @@
 
 ---
 
+## [v0.1.0-beta.22] - 2026-10-17
+
+### ⚙️ E2E 生成链第三动能 `dispatch` + 台账收口三件（D98/D99/D100；v3 定形首跑全绿）
+
+**背景**：v3 platform-frontend 切片定形首跑四轮迭代（2026-10-16 首跑 7/11 → 四跑聚焦）。004「连发新增 → 点选 → 删除」复跑复现，暴露「常态遮罩 + 入场动画」表面下 **force/native 双模双灭**（force 点击在动画窗口被吞 5s 轮询不动；native 因可点性检查永不过而整用例挂死）；黑盒探针定界（动画窗内直发两删连中）后维护者拍板新增第三动能。同日**产品侧（spark-flow）修复便利贴编辑内容保存管道**（追路探针 A/B 双版复核：零停顿链贴纸+内容双落库），净场协议（清零 → 静置 >15s 节流窗 → 复清）复跑 **11/11 全绿**，留档采纳仓 `product/e2e/reviews/2026-10-17/`。
+
+**契约与生成器（D98 `dispatch` 动词）**：
+- `rings/e2e/reference.md` §5.5 新增 `dispatch <tid>`：React 合成事件直发——`dispatchEvent('click')`，**不经 hit-testing / 不做可点性检查**，不追加 force（绕行本义无此概念）；适用边界（硬）与 `native` 同家族——被测属性是「可操作性 / 不可交互 / 用户不可达」的用例**不得用**（可点性绕过 ⇒ 无法证伪）；**值域封闭**：无第三位，出现任何取值 ⇒ 校验器 FAIL + 生成器报错中止。
+- `scripts/gen_e2e_scripts.py`：`ACTION_VERBS` +1 词条（守恒样例表同步）、发射分支 + 值域报错；`validators/validate_e2e_index.py`：词表同步 + 值域邻位 FAIL（文本期双保险——兼治「旧安装副本对陌生第三词静默吸收」，v3 现场实证）。
+- 变异 **M87**：摘 dispatch 发射分支 ⇒ 发射钉红，还原逐字节一致（sha `348d8316…`）；钉子 `test_dispatch_verb_emits_synthetic_event_without_force` + `test_dispatch_verb_value_domain_in_index_gate`；`tests/test_validators.py` **112 条**（gates 行计数同步）。
+
+**台账收口**：
+- `DESIGN.md` §13①：协议定形首跑**已完成**（2026-10-17 v3 全片 11/11）；确知仍开 = E0 产物残留重生成（绑真跑准备日）。
+- **D99（原 §14 首行）**：`stack-profile.yaml` 字段集**定稿**——冻结现行实现实收面为 v1（读取面 `_support/stack_profile.py` ⇔ 声明面 `shared/stack-profile.md` §3 对账即清单），后续字段变更一律起独立决策行；两栏制不采（第二真相源，D86 同族）。
+- **D100（原 §14 第二行）**：git pre-commit 校验兜底**不启用**——校验靠显式跑（`pytest tests/` 全量 + `scripts/atlas_check.py` 前闸），启用留待 CI 一起落（D72 ④ 前置形态同步收口）；pytest 最小钩不采（维护者明示接受「跳过验证直接提交」窗口风险）。
+- `shared/gates.md` 2.2「E2E 真跑」行补**第 2 次咬合 + 定形全片证据**（2026-10-17 v3，逐格纪律：只升本行）。
+
+**被否 / 边界**：固定 sleep（「共享靶场必飘 ⇒ 假绿通道」原判据不变）；产品侧 settle/防抖（本条不约束 spark-flow，005 的内容缺陷由产品自修走）；005 用例降级只证贴纸本体（案 6 备选 B 留档未启用）。
+
+**内部运营**：`duty-review/` 三件（README 巡检协议 + QUEUE 决策队列 + bugs.md 按环分类存量 bug 库——未随包分发）与 `scripts/duty_signals.sh`（只读信号收集，随包）上线——每日 20:30 定时巡检，DR1–DR5 拍板判据切断「AI 提题 → AI 评审 → AI 拍板」无人在环闭环；bugs.md 全部「已修·待复验」条目当日真跑复验出库（007/#R2/004/006/005）。
+
+---
+
 ## [v0.1.0-beta.21] - 2026-10-16
 
 ### 🪲 E2E 生成链四处缺陷闭环：标量注释污染 · 元素守卫空转 · 守卫门不剥注释 · `force` 与被测属性相抵（Issue #R1–#R4 / D94–D97）

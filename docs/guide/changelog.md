@@ -4,6 +4,18 @@
 
 ---
 
+## [v0.1.0-beta.22] - 2026-10-17
+
+### ⚙️ E2E 生成链第三动能 `dispatch` + 台账收口三件（D98/D99/D100；v3 定形首跑全绿）
+
+- **合成事件直发动词（D98）**：`rings/e2e/reference.md` §5.5 新增 `dispatch <tid>`——React `dispatchEvent('click')` 创造第三动能，适配「常态遮罩 + 入场动画」表面（force 在动画窗口被吞、native 因可点性检查永不过而挂死）；适用边界与 `native` 同家族、值域封闭（无第三位，出现 ⇒ 校验器 FAIL + 生成器报错中止）；变异 M87 + 两枚钉 + `test_validators.py` 112 条。
+- **`stack-profile` 字段集定稿（D99）**：冻结现行实现实收面为 v1（`_support/stack_profile.py` ⇔ `shared/stack-profile.md` §3），后续字段变更一律起独立决策行，§14「草稿」语境退役。
+- **pre-commit 兜底不启用（D100）**：校验靠显式跑（`pytest tests/` 全量 + `atlas_check` 前闸），启用留待 CI 一起落（D72 ④ 前置形态收口）。
+- **协议定形首跑全绿（§13① 收口）**：v3 platform-frontend 切片 1 app × 1 页 **11/11**（净场协议 + D98 分片直发 + 产品同日修内容保存管道），留档采纳仓 `product/e2e/reviews/2026-10-17/`；gates 2.2「E2E 真跑」行补第 2 次咬合证据（逐格纪律只升本行）。
+
+---
+
+
 ## [v0.1.0-beta.21] - 2026-10-16
 
 ### 🪲 E2E 生成链四处缺陷闭环：标量注释污染 · 元素守卫空转 · 守卫门不剥注释 · `force` 与被测属性相抵（Issue #R1–#R4 / D94–D97）
