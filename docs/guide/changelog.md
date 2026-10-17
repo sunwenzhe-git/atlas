@@ -96,6 +96,16 @@
 - **钉与变异**：`test_check_e2e_runs_with_scripts_dir_as_cwd`（截 `run()` 的 (cmd, cwd)）+ 变异 **MB6**（退回 root ⇒ 红，还原逐字节一致）。
 - **取证**：`pytest tests -q` ⇒ **489 passed / 4 skipped**。
 
+### 🧪 零步基线的每个探针必须「缺席即判不成立」（D107；issue #30）
+
+**现场**：`atlas_check --page app-agent-detail` ⇒ 两条真用例全绿，唯零步基线 `Test timeout of 30000ms exceeded`。带参页面的页级路由本就不渲染详情（`D104` 允许的形态），而 `attr` 探针发射 `getByTestId(t).first().getAttribute(n)` —— **没有 `count()` 守卫**，Playwright 对**未挂载**元素的 `getAttribute` 会等到默认超时 ⇒ 4 探针 × 2 趟撑爆 test 预算。契约 §5.5 早已明写「基线探不到元素按 `null = 不成立` 处理」⇒ **等挂载 = 违约**。
+
+- **定案**：`attr` 探针加 `count() > 0 &&` 前置（缺席 ⇒ `false` = 不成立）；并升为**生成器通用不变式**：任何探针表达式都必须带缺席守卫（`count()) > 0` / `tsVis(` / `tsVisible(` / `atlasValueOf(`）。
+- **被否**：加大 test 超时（把等挂载合法化）；带参页面跳过基线（§5.5 已选择回 `null`）；只在项目侧声明 `守卫:`（那是资产选择题，不修 atlas 违约面）。
+- **钉与变异**：`test_zero_step_probes_never_wait_for_attachment`（对**全部**探针做通用守卫检查）+ 变异 **MB7**。
+- **出库**：探针行为属**运行面** ⇒ 待下一轮真跑复验后出库。
+- **取证**：`pytest tests -q` ⇒ **490 passed / 4 skipped**。
+
 ## [v0.1.0-beta.22] - 2026-10-17
 
 ### ⚙️ E2E 生成链第三动能 `dispatch` + 台账收口三件（D98/D99/D100；v3 定形首跑全绿）

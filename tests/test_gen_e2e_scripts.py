@@ -1201,6 +1201,44 @@ def test_setup_project_real_login_preset_shape() -> None:
         assert "throw new Error(`[atlas] 应用靶场登录失败" in setup_ts, setup_ts
 
 
+def test_zero_step_probes_never_wait_for_attachment() -> None:
+    """issue #30 / `DESIGN.md` D107：**零步基线的每个探针都必须「缺席即判不成立」，不得等挂载**。
+
+    现场（百炼/v2前端）：`atlas_check --page app-agent-detail` ⇒ 两条真用例全绿，唯零步基线
+    `Test timeout of 30000ms exceeded`。页面停在应用壳（带参页面的页级路由、无实例 id ⇒ 详情不渲染），
+    而 `attr` 探针发射的是 `getByTestId(t).first().getAttribute(n)` —— **没有 `count()` 守卫**，
+    Playwright 对**未挂载**元素的 `getAttribute` 会等到默认超时 ⇒ 4 探针 × 2 趟撑爆 test 预算。
+    契约 §5.5 明写「基线在带参页面上探不到元素时按 `null = 不成立` 处理」，**等挂载 = 违反契约**。
+
+    本钉对**全部**探针表达式做通用检查：每个 `expr` 必须带缺席守卫（`count()) > 0` 或 `tsVis(` /
+    `tsVisible(` / `atlasValueOf(`）——防未来新增动词再犯同一个错。
+
+    变异 **MB7**：摘掉 `attr` 探针的 `count() > 0` ⇒ 本钉红。
+    """
+    import json as _json, re as _re
+    case = CASE.replace(
+        "expected:\n  - text home-title 首页        # 页面标题文案为「首页」",
+        "expected:\n"
+        "  - disabled home-cta-btn       # 置灰\n"
+        "  - enabled home-title          # 可用\n"
+        "  - attr home-cta-btn aria-label 合规说明   # 属性\n"
+        "  - text home-title 首页        # 页面标题文案为「首页」")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=case)
+        assert run(root, "--apply").returncode == 0
+        spec = spec_of(root)
+    m = _re.search(r"const ATLAS_ZS_home = (\{.*?\});\n", spec, _re.S)
+    assert m, "未找到零步基线数据"
+    probes = _json.loads(m.group(1))["probes"]
+    assert probes, "夹具应产出探针"
+    exprs = [p["expr"] for p in probes]
+    assert any("getAttribute(" in e for e in exprs), "夹具应包含 attr 探针"
+    bad = [e for e in exprs
+           if not any(g in e for g in ("count()) > 0", "tsVis(", "tsVisible(", "atlasValueOf("))]
+    assert not bad, f"这些探针会在元素缺席时等挂载（违反 §5.5）：{bad}"
+
+
 def test_runner_config_declares_expect_timeout_floor() -> None:
     """issue #28 / `DESIGN.md` D105：生成的运行器配置必须声明 **`expect.timeout` 下限**。
 

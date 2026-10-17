@@ -1070,9 +1070,10 @@ def test_e2e_index_new_assert_verbs_render_and_validate() -> None:
         # B173-1：value 经 atlasValueOf 实现无关化（原生表单读值，combobox 读触发器文本）
         '- value home-cta-btn ""': '(async () => { const x = await atlasValueOf(page, "home-cta-btn"); return x === null ? null : x === ""; })()',
         # 3509 §B35：`attr <testid> <name> <value>`（**不要求可见** ⇒ 直取 first）
-        "- attr home-cta-btn data-theme dark": '(async () => (await page.getByTestId("home-cta-btn").first().getAttribute("data-theme")) === "dark")()',
+        "- attr home-cta-btn data-theme dark": '(async () => (await page.getByTestId("home-cta-btn").count()) > 0 && (await page.getByTestId("home-cta-btn").first().getAttribute("data-theme")) === "dark")()',
         # 值可含空格：`name` 取首个空白前的 token，其余全部为值
-        "- attr home-cta-btn aria-label 开始 按钮": '(async () => (await page.getByTestId("home-cta-btn").first().getAttribute("aria-label")) === "开始 按钮")()',
+        # issue #30 / D107：`attr` 探针必须带缺席守卫（缺席 ⇒ false = 不成立），不得等挂载
+        "- attr home-cta-btn aria-label 开始 按钮": '(async () => (await page.getByTestId("home-cta-btn").count()) > 0 && (await page.getByTestId("home-cta-btn").first().getAttribute("aria-label")) === "开始 按钮")()',
     }
     for line, want in exprs.items():
         with tempfile.TemporaryDirectory() as td:

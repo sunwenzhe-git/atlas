@@ -692,8 +692,12 @@ def ts_assert_expr(line: str) -> str:
         if not name or not val:
             raise ValueError(f"`attr` 需要 `<name> <value>` 两个参数: {line!r}（契约 §5.5）")
         n = json.dumps(name, ensure_ascii=False)
+        # **缺席即 `false`，不得等挂载**（issue #30 / `DESIGN.md` D107）：`getAttribute` 对**未挂载**
+        # 的 locator 会等到默认超时 ⇒ 零步基线在带参页面上（元素本就不该在）挂到 test 超时，
+        # 而契约 §5.5 明写「探不到元素按 `null = 不成立` 处理」。`count() > 0` 前置是对的行动性守卫。
         return (
-            f"(async () => (await page.getByTestId({t}).first().getAttribute({n})) "
+            f"(async () => (await page.getByTestId({t}).count()) > 0 "
+            f"&& (await page.getByTestId({t}).first().getAttribute({n})) "
             f"=== {json.dumps(val, ensure_ascii=False)})()"
         )
     raise ValueError(f"未知断言动词: {verb}（契约 §5.5）")
