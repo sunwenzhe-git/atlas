@@ -1218,11 +1218,11 @@ def test_base_query_reaches_all_three_navigation_sites() -> None:
         make(root, profile=PROFILE.replace("app_base_url: http://127.0.0.1:8000",
                                            "app_base_url: http://127.0.0.1:8000/?switchAgent=7202"),
              case=CASE.replace("  - click home-cta-btn          # 点击主操作按钮",
-                               "  - goto /home/42               # 带参页面\n"
+                               "  - goto /home/#/42             # 含 hash 的路径形态\n"
                                "  - click home-cta-btn          # 点击主操作按钮"))
         assert run(root, "--apply").returncode == 0
         spec = spec_of(root)
-        assert "await page.goto('/home/42?switchAgent=7202');" in spec, "① step goto 未带 base query"
+        assert "await page.goto('/home/?switchAgent=7202#/42');" in spec, "① step goto 未带 base query（含 hash 保真）"
         assert "await page.goto('/home?switchAgent=7202');" in spec, "② 守卫导航未带 base query"
         assert '"url":"/home?switchAgent=7202"' in spec, "③ 零步基线 data.url 未带 base query"
 
@@ -1236,15 +1236,15 @@ def test_base_query_absent_leaves_generation_byte_identical() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         make(root, case=CASE.replace("  - click home-cta-btn          # 点击主操作按钮",
-                                     "  - goto /home/42               # 带参页面\n"
+                                     "  - goto /home/#/42             # 含 hash 的路径形态\n"
                                      "  - click home-cta-btn          # 点击主操作按钮"))
         assert run(root, "--apply").returncode == 0
         spec = spec_of(root)
-        assert "await page.goto('/home/42');" in spec
+        assert "await page.goto('/home/#/42');" in spec
         assert "await page.goto('/home');" in spec
         assert '"url":"/home"' in spec
         assert "?switchAgent" not in spec
-        assert "page.goto('/home/42?" not in spec and "page.goto('/home?" not in spec
+        assert "page.goto('/home/?" not in spec
     # 单元侧：无 query ⇒ 原样返回（不因「纯路径」被改动）
     spec = importlib.util.spec_from_file_location("gen_e2e_urlmerge", GEN)
     mod = importlib.util.module_from_spec(spec)

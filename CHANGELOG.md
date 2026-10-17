@@ -77,7 +77,8 @@
 - **第一案 A 被落刀实测推翻**：让路由列允许 `#/…` 相对形态（`new URL('#/x', base)` 能保住 base 的 path+query），但 `.atlas-case` 里 `goto #/…` 的 `#` 前有空格 ⇒ 按 D94 行内注释语义被截断成 `'goto'`（`守卫:` 标量同样）⇒ **物理不可写**；救它要改 D94 刚收敛的共享注释语义（`proposals/RFC-20261017-01` §9.1）。
 - **定案 B′（评审建议的生成期纯函数变换，不是运行期助手）**：路由列保持**路径形态**（`/console/#/app/agent/detail`，`#` 紧邻 `/` ⇒ 不被注释吞）⇒ 上一轮评审的四处消费者**无需改**；改由**生成期**把 base 的 query 并进**三处**导航发射面（step `goto` / 元素齐全守卫 / 零步基线 `data.url`），单源 = 新增 `_support/url_merge.py`；控制台手工「打开」（**第五消费者**）的 `base + path` 拼接同步修正为 `origin + 合并路径`。
 - **口径三条**：base 无 query ⇒ 生成物**逐字节零变化**；`ATLAS_BASE_URL` **只覆盖 host、不覆盖 base 的 query**；**边界明示**——base query 成为前提后，「它缺席时」的行为无法用同一份用例表达（`会话:`/`auth: none` 不同消费面，不构成逃逸口），要 opt-out 须另起决策行（触 D99）。
-- **钉与变异**：值保真 / 三处齐并 / 无 query 零变化 / 控制台绝对地址；变异 **MB1/MB2/MB3** 三枚咬合、还原逐字节一致（报告在 `/tmp/atlas-mutation-2026-10-17/`，含注入 diff）。
+- **落刀现场补一处（D104 ⑦，D94 ③ 残余清偿）**：step 的 `goto` 曾丢 hash 段 —— `parse_line` 用 `line.partition("#")`（任何 `#` 都截断，D94 ② 的列表项例外），路径形态 `/console/#/…` 被砍成 `/console/`；改走内核 `strip_inline_comment` 后值保真、尾随说明照剥（改判 D94 ② 该例外，旧行号 + 新证据已登记）。余两处 `partition("#")` 无现场证据、未动。
+- **钉与变异**：值保真（含列表项）/ 三处齐并 / 无 query 零变化 / 控制台绝对地址；变异 **MB1/MB2/MB3/MB4** 四枚咬合、还原逐字节一致（报告在 `/tmp/atlas-mutation-2026-10-17/`，含注入 diff）。
 - **取证**：`pytest tests -q` ⇒ **487 passed / 4 skipped**；`install.sh` 自检 46 → **47 条**（+`_support/url_merge.py`）。
 - **登记面**：`DESIGN.md` D104 / `rings/e2e/reference.md` §3.2 + §5.5 / `shared/stack-profile.md` §2 / `shared/gates.md`（`生成物最新` 零变化钉 + 2.2 真跑行）/ `duty-review/bugs.md` #27。
 

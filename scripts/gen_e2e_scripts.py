@@ -168,9 +168,17 @@ def split_prefix(line: str) -> tuple[str | None, str]:
 def parse_line(line: str) -> tuple[str, str, str, str]:
     """把 `<动词> <testid> [<值>]  # 中文说明` 拆成 (verb, testid, value, note)。
 
-    机器只看 `#` 之前；`#` 之后是给人读的中文说明。
+    机器只看注释之前；注释之后是给人读的中文说明。
+
+    **剥注释口径 = 内核单源**（`_support/stack_profile.strip_inline_comment`，2026-10-17，issue #27 /
+    `DESIGN.md` D104 ⑦）：此前用 `line.partition("#")`（**任何** `#` 都截断，D94 ② 对列表项的旧例外），
+    而 `/console/#/app/agent/detail/1` 这类**路径形态含 hash** 的值会被砍成 `/console/`
+    —— 现场：百炼/v2前端重生成后 step 的 `goto` 丢了 hash 段（守卫/基线正常，只有列表项受害）。
+    改成内核口径后：`#` 前有空白/行首才算注释起点（且引号内不算），路径里的 `#` 原样保留。
     """
-    code, _, note = line.partition("#")
+    code = strip_inline_comment(line)                      # 单源（D94 口径）
+    note = (line[len(code):].lstrip(" \t#").strip()       # 注释正文（无注释 ⇒ 空）
+            if code != line.rstrip() else "")
     parts = code.strip().split(None, 2)
     verb = parts[0] if parts else ""
     if verb in NO_TESTID_VERBS:

@@ -2288,6 +2288,10 @@ def test_console_style_path_with_hash_is_writable_and_navigable() -> None:
     # ① 值保真（注释语义）：`#` 紧邻 `/` 时保留，尾随的真注释仍要剥
     assert gn.strip_inline_comment("goto /console/#/app/agent/detail/1   # 说明") == \
         "goto /console/#/app/agent/detail/1"
+    # ①b **列表项**（step）同口径 —— D94 ② 的旧例外（`partition("#")`，任何 `#` 都截断）已在 D104 ⑦ 移除：
+    #     现场：重生成后 step 的 `goto` 丢了 hash 段（守卫/基线正常，只有列表项受害）。
+    _verb, _tid, _val, _note = gn.parse_line("goto /console/#/app/agent/detail/1   # 打开详情")
+    assert (_verb, _val, _note) == ("goto", "/console/#/app/agent/detail/1", "打开详情"), (_verb, _val, _note)
 
     index = INDEX_GOOD.replace(
         "## 页面 ↔ 用例",
