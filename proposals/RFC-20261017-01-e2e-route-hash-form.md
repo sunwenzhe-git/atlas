@@ -1,6 +1,6 @@
 # RFC-20261017-01 · E2E 页面表 `路由` 列允许 **hash 相对形态**（`#/…`）
 
-- 状态：**待独立评审**（评审通过后落刀；未落刀）
+- 状态：**已独立评审（有条件通过）** —— `proposals/REVIEW-2026-10-17-source-batch.md` 判「方向同意 A、落刀清单须补 3 处消费者」；本文件 §2 已按评审修订（见 §8），**仍未落刀**
 - 关联：issue **#27**（`duty-review/bugs.md` E2E 段）；同族任务 `10-16-e2e-param-route-and-panel-steps`
 - 输出语言：中文
 - 作者：本会话（agent_learning）；评审者须**干净上下文**（`rings/e2e/reference.md` §12.6）
@@ -40,9 +40,10 @@ http://localhost:2000/console/?switchAgent=7202#/app/agent/detail/21106696420831
 
 | # | 文件:行 | 现状 | 改为 |
 |---|---|---|---|
-| 1 | `validators/validate_e2e_index.py:434` | 页面表 `路由` 校验收 `路由非/开头或重复=…` | 允许 `#/` 开头（与 `/` 并列），其余仍拒 |
-| 2 | `validators/validate_e2e_index.py:314-315`、`:660-663`（`_route_hit`） | 「非根路由的子路径前缀命中；根路由 `/` 仅精确」 | 同口径**照搬**到 hash 形态（`#/` 视为该形态的根：仅精确；`#/x` 前缀命中 `#/x/y`） |
-| 3 | `scripts/gen_e2e_scripts.py:1287`（`miss_route` 判定） | 只认 `/` 开头 | 同 #1 |
+| 1 | `validators/validate_e2e_index.py:**410-411**`（**评审 MUST-1**：真改点）＋ `:424`/`:434` | `page_rows` 的**行过滤正则**要求路由以 `/` 开头 | 放宽为 `(?:/\|#/)` 并同步 `:434` 的值校验 —— **只改 `:434` 无效**：`#/…` 行会被 `:411` 直接滤掉 ⇒ `page_rows` 空 ⇒ 「页面表合法」降 `WARN『索引无页面表』`（`:417-419`），且 `page_routes=[]` ⇒ `goto 路径 ∈ 页面表` 门因 `:672 if not page_routes: continue` **整体空转**（门不是变红而是**哑掉**） |
+| 2 | `validators/validate_e2e_index.py:**319**`（`_route_hit` 实码；`:314-315` 只是 docstring —— **评审指出改点写错**）+ `:662-663` 注释 | `any(r != "/" and p.startswith(r + "/"))` | 根判据扩为 `"/"` / `"#/"` 两者（`#/` 仅精确），并同步注释 |
+| 3 | `scripts/gen_e2e_scripts.py:**222**`（`page_urls()` 正则；**评审 MUST-2**：`miss_route`/`:1287` 只是报错打印行） | `^\|\s*([a-z0-9][a-z0-9-]*)\s*\|\s*(/\S*)\s*\|` | 改为 `(/\|#/)\S*` —— 否则 hash 页进不了 `urls` ⇒ `:1285 miss_route` 非空 ⇒ `exit 2` |
+| 3b | `scripts/e2e_console.py:**141**`（`page_routes()`，**评审 MUST-3：我原清单完全漏掉的第三方消费者**） | `cells[1].startswith("/")` | 同 #1（否则该页在控制台「打开」按钮上被**静默丢弃、无出声**） |
 | 4 | `rings/e2e/reference.md:78`（§3.2 表注） | 「`路由` 以 `/` 开头且全表唯一」 | 「`路由` 为**路径形态**（`/…`）或 **hash 相对形态**（`#/…`）——后者用于 hash 路由应用：base 的 query 由 `e2e.app_base_url` 承载，`#/…` 相对形态可保住它（见 §5.5 注）；全表唯一」 |
 | 5 | `rings/e2e/reference.md` §5.5 附近 | — | 增一条注：**为何是相对形态**（绝对路径会丢 base 的 path+query）+ 与「`goto` 不带查询参数」不冲突的说明（参数在 base，不在 step） |
 | 6 | v2 项目资产（**非源包**）：`product/e2e/e2e-index.md` 页面表路由、`product/e2e/cases/*.md` 的 `守卫:`/`goto`、`product/stack-profile.yaml` 的 `app_base_url`（已带 tenant） | 现状 `/app/agent/detail` / `#/…` 等 | 路由 = `#/app/agent/detail` 等；`守卫:`/`goto` = `#/app/agent/detail/<真 id>` |
@@ -74,7 +75,8 @@ http://localhost:2000/console/?switchAgent=7202#/app/agent/detail/21106696420831
 
 1. **零步基线仍可能红**：基线用页面表 `路由`（页级，`#/x` 无实例 id）⇒ 带参页面在基线上探不到元素 ⇒ 契约 §5.5 已规定「按 `null = 不成立` 处理，不产生假阳性」。本 RFC **不**声称把基线修绿；基线与「打开面板/选中节点」等步骤问题归同族任务 `10-16-e2e-param-route-and-panel-steps`。
 2. **前缀命中的既有弱点原样保留**：`/x` 与 `#/x` 都可能被「合法前缀 + 真垃圾尾」命中（§5.5 已登记的独立待办），本 RFC 不收紧。
-3. **本机实测的 URL 语义**（`new URL` 相对形态）是 Node/浏览器标准语义，非 atlas 自造；但仍**未在真跑链上端到端验证**（评审通过后落刀再验）。
+3. **A 只能表达「全局单 tenant」**（**评审 OBSERVE**）：tenant 固定在 `e2e.app_base_url`（全局单值），**逐用例不同 tenant 表达不了**——那类需求才应改走方案 B 方向。本条须在契约正文写明，否则日后会重演「无合法写法」。
+4. **本机实测的 URL 语义**（`new URL` 相对形态）是 Node/浏览器标准语义，非 atlas 自造；但仍**未在真跑链上端到端验证**（评审通过后落刀再验）。
 
 ## 6. 请求评审者判的点（逐条给结论 + 证据）
 
@@ -87,3 +89,19 @@ http://localhost:2000/console/?switchAgent=7202#/app/agent/detail/21106696420831
 
 源包：`validators/validate_e2e_index.py` / `scripts/gen_e2e_scripts.py` / `rings/e2e/reference.md` / `tests/test_validators.py` / `tests/test_gen_e2e_scripts.py` / `shared/gates.md`（计数与行）/ `DESIGN.md`（D104）/ `CHANGELOG.md` + `docs/guide/changelog.md` / `duty-review/bugs.md`（#27 状态）。
 项目侧：`product/stack-profile.yaml`（已改）/ `product/e2e/e2e-index.md` / `product/e2e/cases/*.md` → 重生成 → 真跑验证。
+
+## 8. 独立评审处置（2026-10-17）
+
+评审对象 = 本文件 + 同批 8 提交；成品见 `proposals/REVIEW-2026-10-17-source-batch.md` / `.json`（18 条：2 MUST / 5 SHOULD / 11 OBSERVE）。
+
+| 评审结论 | 本文件的处置 |
+|---|---|
+| **方向同意 A**（不加字段、不动运行时、不触 D99；B 触 D99 且需 reload 路径） | 保留方案 A；§3 的 B 保留为「逐用例 tenant 时的再议方向」 |
+| **MUST-1** `validate_e2e_index.py:410-411` 行过滤会旁路整张表 ⇒ `goto` 门**空转** | §2 #1 已改指 `:410-411`；并写明「只改 `:434` 无效」的机制 |
+| **MUST-2** `gen_e2e_scripts.py:222` `page_urls` 正则 | §2 #3 已改指 `:222` |
+| **MUST-3** `e2e_console.py:141` 控制台 `page_routes` 是**漏掉的第三方消费者** | §2 新增 #3b |
+| `_route_hit` 实码在 `:319`（非 `:314-315` docstring） | §2 #2 已改指 `:319` |
+| OBSERVE：A 无法表达逐用例 tenant | §5 新增第 3 条 |
+| SHOULD：#27 登记面的「现状处置」写的是 `/console/#/…` 绝对形态、且自述 tenant 仍丢 ⇒ 落刀 A 时须同步改写 | 已登记为落刀前置项（见 §7） |
+
+**评审同时判**：同批 M88 / M90 两枚变异证据**不足以支撑其自述机制**（M88 注入后的红因实为 fixture 假 `Proc` 缺 `stderr` 导致 `atlas_check.py:122` 崩，从未触到 status 断言；M90 报告无注入描述且与 M89 同用例），全批缺**注入 diff** ⇒ 独立复现性不足。该批处置（补 fixture / 补 diff / 重跑）**不计入本 RFC**，另立批次。
