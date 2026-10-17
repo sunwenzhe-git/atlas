@@ -1218,6 +1218,35 @@ def test_e2e_index_initial_requires_reason() -> None:
     assert _levels(without_reason)["initial 豁免带理由"] == "WARN"
 
 
+def test_initial_reason_not_fooled_by_hash_in_value() -> None:
+    """D94 ③ 残余清偿（2026-10-17，变异 MB8）：`initial:` 的「理由」必须来自**真注释**。
+
+    此前理由检测用 `partition("#")` —— 撞上断言值里的 `#`（路径形态含 hash，如 `/console/#/app/x`）
+    会把**路径尾巴**当成理由 ⇒ **无理由的 `initial:` 被误判为「有理由」= 假 PASS**（本仓最忌的假绿）。
+    改走内核口径后：「`#` 前有空白/行首」才算注释起点。
+
+    两侧：① 值里带 hash 且**无**真理由 ⇒ WARN（旧实现假 PASS）；
+         ② 值里带 hash 且**有**真理由 ⇒ PASS（不得因修 ① 而误伤）。
+    """
+    no_reason = CASE_GOOD.replace(
+        "- text home-title 首页        # 页面标题文案为「首页」",
+        "- initial: attr home-cta-btn href /console/#/app/agent/detail",
+    )
+    assert _levels(no_reason)["initial 豁免带理由"] == "WARN", _levels(no_reason)["initial 豁免带理由"]
+
+    with_reason = CASE_GOOD.replace(
+        "- text home-title 首页        # 页面标题文案为「首页」",
+        "- initial: attr home-cta-btn href /console/#/app/agent/detail   # 默认态即如此（本用例不改它）",
+    )
+    assert _levels(with_reason)["initial 豁免带理由"] == "PASS", _levels(with_reason)["initial 豁免带理由"]
+
+
+def test_code_stripping_preserves_hash_in_path() -> None:
+    """D94 ③ 残余清偿：`_code()` 与内核同口径 ⇒ 路径里的 `#` 不再被砍（此前 `split("#",1)[0]`）。"""
+    assert ve._code("attr x href /console/#/a") == "attr x href /console/#/a"
+    assert ve._code("text x 说明   # 真注释") == "text x 说明"
+
+
 def test_e2e_index_persist_requires_refresh() -> None:
     """契约 §5.6 R2 的适用面（2026-09-23 起**无条件**；同日二次收口到提交性控件）：
     - 步骤含**提交性控件**（`-save-` / `-submit-` / `-confirm-` / `-delete-` / `-remove-` / `-bind-`）

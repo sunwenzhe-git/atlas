@@ -58,7 +58,8 @@ parse_block = load_module("case_block").parse_block
 case_id = load_module("case_id")
 stack_profile = load_module("stack_profile")
 # 契约 §5.5（2026-10-16，issue #R1/#R3）：行内注释剥除口径与内核**同一函数对象**（I3）——
-# 本文件不再自持 `split("#", 1)[0].strip()` 的第二份口径（`goto` 门两处 + `会话` 门 + `守卫` 门共用）。
+# 剥注释口径**全域单源**（`_support/stack_profile.strip_inline_comment`，2026-10-17 D104 ⑦ 清偿）：
+# `_code()` 是该口径在本文件的唯一出口，本文件内**不得**再出现 `split("#", 1)[0]`（MB8 钉守着）。
 strip_inline_comment = stack_profile.strip_inline_comment
 
 MAIN_COLUMNS = ["用例ID", "页面", "中文标题", "类型", "关联AC", "需求", "状态", "状态原因", "分片"]
@@ -136,7 +137,9 @@ def _code(line: str) -> str:
     `EXPECTED_BLACK` 含「无」，而某条用例的**注释**里写了「无法区分」⇒ 被误报为
     「判定不了什么」。**同族第二例**，见 `3509 §B45`（那一条是「步骤非二选一」扫了 `#`）。
     """
-    return line.split("#", 1)[0].strip()
+    # 单源（D94 ③ 残余清偿，2026-10-17）：此前是 `line.split("#", 1)[0].strip()` = **第二份口径**
+    # （任何 `#` 都截断）；`/console/#/…` 这类路径形态含 hash 的值会被砍断。
+    return strip_inline_comment(line).strip()
 
 
 def _norm_title(s: str) -> str:
@@ -268,7 +271,7 @@ def upload_fixture_check(root: Path, blocks: dict[str, dict]) -> tuple[str, str]
     uploads: list[tuple[str, str]] = []
     for cid, b in blocks.items():
         for s in b.get("step") or []:
-            parts = s.split("#", 1)[0].strip().split(None, 2)
+            parts = _code(s).split(None, 2)
             if parts and parts[0] == "upload":
                 uploads.append((cid, parts[2].strip() if len(parts) > 2 else ""))
     if not uploads:
@@ -725,7 +728,7 @@ def validate(root: Path) -> Result:
         verbs_by_slice: dict[tuple, set[str]] = {}
         for raw in raw_exp:
             e = _strip_prefix(raw)
-            bits = e.split("#", 1)[0].strip().split(" ")
+            bits = _code(e).split(" ")
             if len(bits) >= 2 and bits[0] in ASSERT_VERBS:
                 verbs_by_slice.setdefault((_step_anchor(raw), bits[1]), set()).add(bits[0])
         for (slice_n, tid), verbs in verbs_by_slice.items():
@@ -735,7 +738,7 @@ def validate(root: Path) -> Result:
             elif "enabled" in verbs and "disabled" in verbs:
                 contradict.append(where)
         for e in exp:
-            first = e.split("#", 1)[0].strip().split(" ", 1)[0].strip()
+            first = _code(e).split(" ", 1)[0].strip()
             if first not in ASSERT_VERBS:
                 assert_bad.append(f"{g['用例ID']}:{first}")
             # 契约 §5.5 / §8.2：`waitFor` 是**动作**，不是终态断言 ——
@@ -766,7 +769,7 @@ def validate(root: Path) -> Result:
             # 最后一条 goto 的落点页（click 导航不算 —— R10 只管「steps 明确跳到别页后忘了回跳」）
             last_goto = None
             for s in step:
-                parts = s.split("#", 1)[0].strip().split(" ", 1)
+                parts = _code(s).split(" ", 1)
                 if parts[0] == "goto" and len(parts) > 1:
                     last_goto = parts[1].strip()
             landed = None
@@ -783,7 +786,7 @@ def validate(root: Path) -> Result:
                     if _step_anchor(raw) is not None or raw.lstrip().startswith(EXEMPT_PREFIX):
                         continue
                     cleaned = _strip_prefix(raw)
-                    toks = cleaned.split("#", 1)[0].strip().split()
+                    toks = _code(cleaned).split()
                     if len(toks) >= 2 and toks[0] == "hidden":
                         tid = toks[1]
                         owner = tid_owner(tid, list(known))
@@ -815,7 +818,7 @@ def validate(root: Path) -> Result:
         # 例外 ③（纯导航 / 会话内短暂态）语义判不了，不进本校验器（§8 末注）。
         wrote = False
         for s in step:
-            code = s.split("#", 1)[0].lower()
+            code = _code(s).lower()
             if any(w in code for w in AUTH_TID_WORDS):
                 continue  # 例外 ②：登录 / 登出不是持久化写
             if any(w in code for w in WRITE_TID_WORDS):
@@ -827,7 +830,7 @@ def validate(root: Path) -> Result:
         # 契约 §5.5：`#` 之后是**给人读的中文说明，机器忽略** ⇒ 本项只扫 `#` 之前的机器部分。
         # （2026-09-25 修：原实现把整行含注释一起扫 ⇒ 「等矫正建议产出」这类
         # 含「等」字的正常中文说明会把用例误报为二选一，WARN 一多就没人看了。）
-        if any(any(w in s.split("#", 1)[0] for w in ("或", "或者", "e.g.", "等")) for s in step):
+        if any(any(w in _code(s) for w in ("或", "或者", "e.g.", "等")) for s in step):
             or_step.append(g["用例ID"])
         if any(any(p.search(_code(e)) for p in I18N_HINTS) for e in exp):
             i18n.append(g["用例ID"])
@@ -836,7 +839,7 @@ def validate(root: Path) -> Result:
         # 写法不合规（`after:x` / 缺空格）也在本项报出 —— 否则会以「expected 动词合法」的
         # 形式报一个看不懂的 verb（`after:x`）。
         for raw in raw_exp:
-            body_code = raw.split("#", 1)[0].strip()
+            body_code = _code(raw)
             if not body_code.startswith("after:"):
                 continue
             m = AFTER_RE.match(body_code)
@@ -854,12 +857,15 @@ def validate(root: Path) -> Result:
         # 取证（2026-09-25）：全量 65 条 `initial:` 里 9 条无理由。
         for e in raw_exp:
             if e.lstrip().startswith(EXEMPT_PREFIX):
-                _code_part, _sep, _note_text = e.partition("#")
-                if not _sep or not _note_text.strip():
+                # 理由 = **真注释**（内核口径：「# 前有空白/行首」）之后的内容。
+                # 此前用 `partition("#")` 撞上路径里的 `#`（如 `/console/#/x`）⇒ 把路径尾巴当成理由 = 假「有理由」。
+                _raw_code = strip_inline_comment(e)
+                _note_text = e[len(_raw_code):].strip(" \t#")
+                if not _note_text:
                     initial_no_reason.append(f"{g['用例ID']}:{e.strip()}")
         if any(e.lstrip().startswith(UNCHANGED_PREFIX) for e in raw_exp):
             # 「动作不改变它」若无动作可验，该断言就退化为纯豁免（回落为假绿）⇒ FAIL
-            code = " ".join(s.split("#", 1)[0].lower() for s in step)
+            code = " ".join(_code(s).lower() for s in step)
             if not any(w in code for w in UNCHANGED_ACTION_WORDS):
                 unchanged_no_action.append(g["用例ID"])
 

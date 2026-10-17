@@ -262,7 +262,7 @@ def parse_mock_line(line: str, api_prefix: str | None = None) -> dict:
       `seq [N:]fixtures/…[, [N:]fixtures/…]`     按调用次序出队（队空运行期 fail-loud）
     `api_prefix` 非空时校验路径锚定（拦越界桩 / 误伤静态资源，契约锚定门）。
     """
-    code, _, _note = line.partition("#")
+    code = strip_inline_comment(line)   # 单源（D94 ③ 残余清偿，2026-10-17；任何 `#` 都截断是旧口径）
     left, arrow, rhs = code.partition("->")
     if not arrow:
         toks = code.strip().split(None, 2)
@@ -599,7 +599,7 @@ def ts_case(case: dict, url: str, base: str = "") -> str:
     # 未执行时的不可见元素误判成自相矛盾）；无提交性动作时退回第一个 step 之前
     # （校验器对此 FAIL，此处保持保守位置）。`actions` 与 `step` 一一对应，按序号对位。
     delta_pos = next((i for i, s in enumerate(case.get("step", []), start=1)
-                      if any(w in s.split("#", 1)[0] for w in SUBMITTING_WORDS)), 1)
+                      if any(w in strip_inline_comment(s) for w in SUBMITTING_WORDS)), 1)
     seq: list[str] = [] if actions else list(pre)
     for _i, _act in enumerate(actions, start=1):
         if _i == delta_pos:
@@ -830,7 +830,7 @@ def ts_zero_step_baseline(page: str, url: str, cases: list[dict], mock_vacuous: 
             anchor, unanchored = split_after(body)
             if kind == "initial":
                 continue  # 显式豁免：不参与零步基线
-            if body.split("#", 1)[0].strip().split(" ", 1)[0] == "delta":
+            if strip_inline_comment(body).strip().split(" ", 1)[0] == "delta":
                 continue  # 契约 §5.5（P5）：delta 是行动前后差值断言，没有「初始态成立/不成立」语义
 
             # F24 规则二（守卫型 visible 豁免）：
@@ -1321,7 +1321,7 @@ def main() -> int:
                     # 契约 §5.6 R9：`expected` 行可带 `initial:` / `unchanged:` 前缀（显式声明判据形状），
                     # 判动词前先剥离；`step` 行出现前缀则按普通动词校验 ⇒ 自然 FAIL。
                     raw = split_prefix(s)[1] if kind == "expected" else s
-                    first = raw.split("#", 1)[0].strip().split(" ", 1)[0].strip()
+                    first = strip_inline_comment(raw).strip().split(" ", 1)[0].strip()
                     if first not in allowed:
                         bad.append(f"{c['id']} {kind}: {s}")
     if bad:

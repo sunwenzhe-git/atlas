@@ -194,6 +194,27 @@ def test_strip_inline_comment_is_one_function_object() -> None:
     assert idx.strip_inline_comment is sp.strip_inline_comment
 
 
+def test_no_second_comment_stripping_implementation_in_line_parsers() -> None:
+    """D94 ③ 残余清偿（2026-10-17，变异 MB8）：**同一文件内不得再有第二份剥注释口径**。
+
+    对象同一性钉（上一条）只能证明「别名指向同一对象」，证明不了「没人另写一份」
+    —— `_code()` 曾是活样本：它有 `strip_inline_comment` 的别名在手，却仍写着
+    `line.split("#", 1)[0].strip()`（任何 `#` 都截断），把 `/console/#/…` 这类路径砍断。
+    本钉从**形态**面扣：行解析器（校验器 / 生成器）的**代码行**里不得出现 `split("#"`。
+
+    变异 **MB8**：把 `_code()` 退回 `split("#", 1)[0]` ⇒ 本钉红。
+    """
+    offenders = []
+    for rel in ("validators/validate_e2e_index.py", "scripts/gen_e2e_scripts.py"):
+        for i, line in enumerate((PKG_ROOT / rel).read_text(encoding="utf-8").splitlines(), 1):
+            s = line.strip()
+            if s.startswith("#") or 'split("#", 1)[0]' in s and s.startswith("#"):
+                continue          # 注释行不算实现
+            if 'split("#"' in line:
+                offenders.append(f"{rel}:{i}")
+    assert not offenders, f"发现第二份剥注释口径（应用 `_code()` / `strip_inline_comment`）：{offenders}"
+
+
 def test_definitions_are_single_sourced() -> None:
     """结构唯一性守卫（M46）：四个共享函数在全包只准各有一处定义（单源文件）。
 

@@ -121,6 +121,26 @@ class Row:
         return any(r["status"] == "FAIL" for r in self.rows)
 
 
+def _reset_command(raw: str) -> str:
+    """`e2e.reset` 的取值清洗：先剥行内注释，再只剥**成对**引号（D94 ③ 残余清偿 / MB9）。
+
+    **调用点与钉必须走同一函数**：否则把调用点改回 `.strip("\"\'")` 时钉照样绿（本轮实测踩到）。
+    """
+    return _strip_matching_quotes(strip_inline_comment(raw))
+
+
+def _strip_matching_quotes(v: str) -> str:
+    """去掉**成对**的包裹引号（YAML 标量的引号是语法，不是值的一部分）。
+
+    此前用 `.strip("\"\'")` —— 它从**两端**剥掉集合内任意字符：`sh -c 'echo x'` 这类
+    **结尾本身带引号**的合法发令会被吃掉最后一个字符（未报错、静默改义）。
+    """
+    s = v.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'":
+        return s[1:-1]
+    return s
+
+
 def run(cmd: list[str] | str, cwd: Path, timeout: int = 1800, shell: bool = False) -> tuple[int, str]:
     try:
         p = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True,
@@ -432,7 +452,7 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     # （重置失败时继续跑 = 带着脏状态跑，结论不可信）。
     mreset = re.search(r"^[^\S\n]*reset:[^\S\n]*(\S.*\S)[^\S\n]*$", text, re.M)
     if mreset and strip_inline_comment(mreset.group(1)) not in ("null", "~"):
-        reset_cmd = strip_inline_comment(mreset.group(1)).strip("\"'")
+        reset_cmd = _reset_command(mreset.group(1))
         code_r, out_r = run(reset_cmd, root, timeout=300, shell=True)
         if code_r != 0:
             rows.add("E2E 真跑" + (f"[{page}]" if page else "（六页）"), "FAIL",

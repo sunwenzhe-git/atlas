@@ -442,6 +442,25 @@ def test_check_e2e_global_playwright_detected(monkeypatch) -> None:
         assert os.path.realpath(link) == before, "幂等：软链不得被重建/改动"
 
 
+def test_strip_matching_quotes_only_eats_paired_quotes() -> None:
+    """D94 ③ 残余清偿（2026-10-17，变异 MB9）：`reset:` 的取值清洗只剥**成对**引号。
+
+    此前用 `.strip("\"\'")` —— 它从**两端**剥掉集合内任意字符：`sh -c 'echo RAN > f'` 这类
+    **结尾本身带引号**的合法发令会被吃掉最后一个字符（静默改义、不报错）。本机实测踩到过：
+    反侧钉的夹具 `reset: \"sh -c 'echo RAN > f'\"` 因此变成缺引号的命令而失败。
+    """
+    mod = _load_check()
+    # **钉的是门实际调用的那一个函数**（`_reset_command`），不是 helper 本体 ——
+    # 否则把调用点改回 `.strip("\"\'")` 时钉照样绿（本轮实测踩到）。
+    f = mod._reset_command
+    assert f('"echo hi"') == "echo hi"                       # 成对双引号 ⇒ 剥
+    assert f("'echo hi'") == "echo hi"                       # 成对单引号 ⇒ 剥
+    assert f("echo it's") == "echo it's"                     # 结尾单引号不成对 ⇒ **不动**（旧实现吃成 echo it）
+    assert f("sh -c 'echo RAN > f'") == "sh -c 'echo RAN > f'"
+    assert f('"echo hi"   # 行内注释') == "echo hi"           # 注释照剥（与引号清洗串联）
+    assert f("  echo hi  ") == "echo hi"
+
+
 def test_check_e2e_runs_with_scripts_dir_as_cwd(monkeypatch) -> None:
     """issue #29 / `DESIGN.md` D106：**真跑门的执行 cwd 必须是生成物目录**（`<scripts_dir>`）。
 
