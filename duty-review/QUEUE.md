@@ -7,15 +7,6 @@
 
 > 容量 0/5。首日六件（案 1–6）+ 案 7（2026-10-17 真跑准备日新入）均已结案。
 
-### 案 7 · `e2e.app_login` 缺第四形态：「cookie 会话 + 图形验证码」靶场无形态可声明（DR2 · issue #26 / bugs.md E2E 段）
-- **判定**：DR2（契约语义：要定 `e2e.app_login` 的形态集合，现有证据与惯例不足以自决）。
-- **现象与证据**（真实应用取证，2026-10-17，百炼/v2前端 `:2000/console/`）：未登录渲染登录表单（`login_username` / `login_password` / `login_captcha`，验证码端点 `GET /api/auth/captcha`）；`src/modules/login/api/index.ts` 打 `POST /api/auth/login`（`userName` / RSA 加密 `password` / `captchaCode`，`credentials: 'include'`），**响应体无令牌**（`data` 为 URL 字符串），会话载体 = cookie（`COOKIE_JSESSIONID`）。⇒ `real` 装不下（无令牌可写、且有验证码）/ `fabricated` 认证不过 / `none` 与事实相反。真跑门已能跑到用例（`3 failed 1 passed`），三条红**全在未登录态**；`validate_stack_profile` 的 WARN 只能喊「请声明」而**无可声明之形态**。
-- **关联存量**：`DESIGN.md` D80（三态定形：`real` / `fabricated` / `none`；升档锚 = 真跑准备日）；issue #11（登录预置无产出方 ⇒ 退化为人肉登录，当时判「两阶段」）；本仓 `product/e2e/scripts/.atlas-auth/state.json` 与 `atlas-auth.setup.ts` 的幂等守卫（无凭据 + 已有合法 state ⇒ 保留）——**人工会话事实上已在这么走**，只是没有契约位置。
-- **AI 建议**：**补第四形态**（名可议，如 `manual` / `session_import`）：值 = 「人一次性取出会话」的 state 文件路径 + 新鲜度校验（缺 / 过期 ⇒ 门 `SKIP` 带 `ENV_ISSUE`，不判红）；`fabricated` 保持桩项目专用；**不**放宽 `real`（把「无令牌 + 验证码」塞进 `real` = 让一个形态说两件事）。附带收益：把 v3 靶场已在进行的人工会话从**隐性惯例**升成**显式声明**（消灭「跑前记得别覆盖」这种口令型纪律）。
-- **反方声音**：① 第四形态 = 契约增量（`stack-profile` 字段 + 生成器 + 校验器 + gates 四处同改），当前只有一个项目撞到，可能不值得；② 「人一次性取出」本身不可复现（每次会话短命 ⇒ CI 上仍不可用），写进契约有把不可复现固化成标准姿势的风险——若走这条，新鲜度/失败语义必须写死（否则又是一个「看起来很在跑」的面）。
-- **你的选项**：**A** 补第四形态（AI 建议）/ **B** 维持现状 + 把「人肉会话」登记为显式盲区（`stack-profile` 不加字段，只在本项目侧走 codegen）/ **C** 只收紧文案（`validate_stack_profile` 的 WARN 点明「cookie+验证码类靶场当前无形态，请人工会话」）。**默认（不回也不动）= B**。
-- **生效会写到哪**：A ⇒ `shared/stack-profile.md` §2（`app_login` 形态枚举）+ `rings/e2e/reference.md` §7.1 + `gen_e2e_scripts.py`（形态分支）+ `validators/validate_stack_profile.py`（值域）+ `shared/gates.md` 2.2 行 + `DESIGN.md` §12 新决策行；B ⇒ 仅 `duty-review/bugs.md` 与本行归档；C ⇒ `validate_stack_profile` 的 WARN 文案。
-
 ## 观察室（够不上判据但值得盯；一行一条，带升室 / 出室条件）
 
 - **e2e_index WARN 基线漂移**：v3 首跑实测 WARN 5 条（001/002/003/004/006 的「持久化写复断言」只判形态）vs 仓内已知基线 1 条（004 refresh 建议）；当时仅报备未改。升室判据：下一次真跑同类 WARN 仍 ≥3 且形态重复 ⇒ 转 DR2（修校验器形态判据 / 接受漂移开销），入拍板面。
