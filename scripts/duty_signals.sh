@@ -26,6 +26,9 @@ git log --since="$SINCE" --oneline -- DESIGN.md shared/gates.md CHANGELOG.md
 echo; echo "== 30 天 fix 类提交触达文件 (DR4 聚类输入；按 fix/修/红/回归 过滤——建议③ 2026-10-17) =="
 git log --since='30 days ago' --name-only --grep='fix\|修\|红\|回归' -i --pretty='format:@%h %s'
 
+echo; echo "== bugs.md 同根段聚类 (DR4 口径 B：族规模 × 活跃窗；活跃且 >=3 案 ⇒ 升室候选) =="
+python3 "$(git rev-parse --show-toplevel)/duty-review/families.py"
+
 REPO=$(git remote get-url origin 2>/dev/null | sed -E 's#.*github\.com[:/]##; s#\.git$##')
 echo; echo "== GitHub issues (${REPO:-仓库不明, 跳过}; open 全列 + closed 近 14 天有动静 + closed 全索引) =="
 if [ -n "$REPO" ]; then
