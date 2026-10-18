@@ -24,7 +24,9 @@ _DEFAULTS: dict = {
 # 值 = 空映射的顶层段（解析时直接初始化 dict，供后续缩进行填充）
 _DICT_SECTIONS = ("graph", "backend_test")
 # `e2e` 下「缩进 2 且值为空」开子块的键（§2 e2e 表；`app_login` / `seed` / `mock` / `review`）
-_E2E_SUBBLOCK_KEYS = ("app_login", "seed", "mock", "review", "session_preset")
+# `query_preset`：宿主注入型 **URL 参数**白名单（2026-10-18，契约 §5.5 / `DESIGN.md` D109），
+# 与 `session_preset`（会话载体）对称：同为「前提面」而非「数据态面」。
+_E2E_SUBBLOCK_KEYS = ("app_login", "seed", "mock", "review", "session_preset", "query_preset")
 
 
 def strip_inline_comment(line: str) -> str:

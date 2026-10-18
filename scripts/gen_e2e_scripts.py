@@ -415,7 +415,16 @@ def ts_case(case: dict, url: str, base: str = "") -> str:
     # 直接拿它导航会落到路由匹配不上的地址，守卫在 goto 后即红。有 `守卫:` 时用它，
     # 缺省回落页面表路由 ⇒ **对无参页面逐字节零变化**。
     # 宿主注入型 base query（issue #27 / D104）：守卫导航同样要带（`url` 已在调用侧合并，幂等）。
-    guard_url = url_merge.merge_base_query((case.get("守卫") or "").strip() or url, base)
+    # 契约 §5.5 `参数:`（2026-10-18，`DESIGN.md` D109）：用例声明的宿主注入 **URL 参数**
+    # （值内联在首个带参 `goto` 里）——守卫导航取**同一来源**（`_inject_query`），否则守卫读的
+    # 是**无前提的 DOM**：参数决定「哪些元素在场」的页面上，守卫会在 goto 后即红。
+    _guard_target = (case.get("守卫") or "").strip() or url
+    _inject_q = case.get("_inject_query") or ""
+    if _inject_q:
+        # `url` 在调用侧已并入 base query（幂等）；`守卫:` 是未合并的具体路径 —— 两者都按
+        # 「追加到自身 query」处理（插在 hash 之前），随后的一次 merge 会把 base 去重并上来。
+        _guard_target = url_merge.append_query(_guard_target, _inject_q)
+    guard_url = url_merge.merge_base_query(_guard_target, base)
     # 契约 §5.5 / §7.1（"元素齐全守卫按自动等待判定"）：守卫 id 面 = **该用例 `testid:` 应然清单**
     # （实测：首步为 `goto`/`refresh` 的用例取 `step[0]` 会得到**空表** ⇒ 守卫静默消失）。
     # 2026-10-16（issue #R2）从 `first_step_tids`（猜）**回归**契约正文口径；空表本身是
@@ -1265,6 +1274,72 @@ def main() -> int:
         for b in bad_session[:40]:
             print(f"  - {b}", file=sys.stderr)
         print(f"  共 {len(bad_session)} 条", file=sys.stderr)
+        return 2
+    # 契约 §5.5 `参数:`（2026-10-18，`DESIGN.md` D109）：宿主注入型 **URL 参数**前提。
+    # 机器面双保险（与「文本期门」同源）：键必须在 `e2e.query_preset.keys` 白名单内，且值只能住在
+    # `step` 的 `goto` 查询串里（单一来源）；守卫导航取**首个带参 `goto` 的查询串**。
+    # 白名单缺失 / 键不在表内 / 带值 / 死声明 / 值形态越界 ⇒ 报错中止（不猜、不静默降级）。
+    qpreset_cfg = e2e.get("query_preset") if isinstance(e2e, dict) else None
+    qpreset_keys: set[str] = set()
+    if isinstance(qpreset_cfg, dict):
+        qpreset_keys = {str(k).strip() for k in (qpreset_cfg.get("keys") or []) if str(k).strip()}
+    bad_inject: list[str] = []
+    for items in cases.values():
+        for c in items:
+            c["_inject_keys"] = []
+            c["_inject_query"] = None
+            declared = [str(x).strip() for x in (c.get("参数") or []) if str(x).strip()]
+            if not declared:
+                continue
+            if not qpreset_keys:
+                bad_inject.append(
+                    f"{c['id']}: 出现 `参数:` 行，但 stack-profile 未声明 `e2e.query_preset.keys`"
+                    "（该靶场不允许任何 URL 参数前提；契约 §5.5）")
+                continue
+            ok_keys: list[str] = []
+            for k in declared:
+                if "=" in k or any(ch.isspace() for ch in k):
+                    bad_inject.append(f"{c['id']}: `参数:` 项须为纯键（值写在 goto 查询串里）：{k!r}")
+                elif k not in qpreset_keys:
+                    bad_inject.append(
+                        f"{c['id']}: 参数键 {k!r} 不在 `e2e.query_preset.keys` 白名单内（={sorted(qpreset_keys)}）")
+                elif k not in ok_keys:
+                    ok_keys.append(k)
+            first_q: str | None = None
+            used: set[str] = set()
+            for s in c.get("step") or []:
+                verb, _tid, value, _ = parse_line(s)
+                if verb != "goto":
+                    continue
+                keep: list[str] = []
+                for pair in url_merge.query_of(value.strip()).split("&"):
+                    if not pair:
+                        continue
+                    k, _, v = pair.partition("=")
+                    k, v = k.strip(), v.strip()
+                    if k not in ok_keys:
+                        # 未声明 / 白名单外：文本期门已报，本处中止（双保险，防半通态）。
+                        bad_inject.append(
+                            f"{c['id']}: `goto` 查询键 {k!r} 未在本用例 `参数:` 内声明或不在白名单内")
+                        continue
+                    if v and not url_merge.VALUE_RE.match(v):
+                        bad_inject.append(f"{c['id']}: 查询值含越形态字符：{k}={v}")
+                        continue
+                    keep.append(pair)
+                    used.add(k)
+                if keep and first_q is None:
+                    first_q = "&".join(keep)
+            for k in ok_keys:
+                if k not in used:
+                    bad_inject.append(
+                        f"{c['id']}: 参数键 {k!r} 已在 `参数:` 声明、但没有任何 `goto` 用到（死声明）")
+            c["_inject_keys"] = ok_keys
+            c["_inject_query"] = first_q
+    if bad_inject:
+        print("ERROR: `参数:` 行不合法（契约 rings/e2e/reference.md §5.5）：", file=sys.stderr)
+        for b in bad_inject[:40]:
+            print(f"  - {b}", file=sys.stderr)
+        print(f"  共 {len(bad_inject)} 条", file=sys.stderr)
         return 2
     # upload fixture 引用闭环（契约 §5.5，B201-1，2026-10-12）：值 = 相对
     # `product/e2e/fixtures/` 的文件路径（与 §5.8 mock 同基线、同一 fixtures 树）。

@@ -236,6 +236,108 @@ def test_zero_step_baseline_carries_no_session() -> None:
         assert "atlasSessionPreset" not in baseline_body, baseline_body
 
 
+# ── D109（2026-10-18）：`参数:` —— 宿主注入型 URL 参数（内联 + 门重靶）─────────────
+# base 带 query（模拟真项目：`?switchAgent=7202` 那类 tenant 前提）——**并集**与零变化的判别面。
+PROFILE_QUERY = PROFILE.replace("app_base_url: http://127.0.0.1:8000",
+                                "app_base_url: http://127.0.0.1:8000/?tenant=9"
+                                ) + "  query_preset:\n    keys:\n      - flag\n"
+QUERY_CASE = CASE.replace("step:", "参数:\n  - flag\nstep:", 1).replace(
+    "  - click home-cta-btn          # 点击主操作按钮",
+    "  - goto /home?flag=on          # 宿主以查询串注入前提后载入\n"
+    "  - click home-cta-btn          # 点击主操作按钮")
+
+
+def test_injected_param_carried_to_guard_and_goto() -> None:
+    """`参数:` 的值（内联在 `goto` 里）必须到达**两处导航面**：元素齐全守卫 + 用例自己的 `goto`。
+
+    为何守卫也要：参数决定「哪些元素在场」的页面上，守卫导航不带前提 ⇒ 守卫在 goto 后即红
+    （D104 的「三处不是一处」同族教训）。并集口径：base 的 `tenant` 不得被丢掉。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=QUERY_CASE, profile=PROFILE_QUERY)
+        assert run(root, "--apply").returncode == 0
+        text = spec_of(root)
+        seg = text[text.index("E2E-HOME-001"):]
+        # 守卫导航（用例体首条 goto）与用例自己的 goto：都带 base ⊕ 内联参数
+        assert seg.count("await page.goto('/home?tenant=9&flag=on');") >= 2, seg[:800]
+        # 守卫紧随其后就是存在守卫（而不是被 step 抢到前面）
+        i_guard = seg.index("await page.goto('/home?tenant=9&flag=on');")
+        assert "for (const id of" in seg[i_guard:i_guard + 200], seg[i_guard:i_guard + 200]
+
+
+def test_zero_step_baseline_carries_no_injected_param() -> None:
+    """零步基线**不施加** `参数:`（前提构造不计入基线）——护栏：基线测试体里不得出现该参数。
+
+    否则依赖该前提的断言会在基线（默认态）下成立 ⇒ 恒真门（§5.6 R9）误报。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=QUERY_CASE, profile=PROFILE_QUERY)
+        assert run(root, "--apply").returncode == 0
+        text = spec_of(root)
+        # 基线的导航参数在**数据对象**里（测试体只是调 helper，故不能断言测试体）
+        data_obj = text.split("const ATLAS_ZS_home = ", 1)[1].split("\n", 1)[0]
+        assert "flag=on" not in data_obj, data_obj      # 前提构造不计入基线
+        assert "tenant=9" in data_obj, data_obj        # base query 照旧（不是把基线整体关掉）
+
+
+def test_injected_param_without_whitelist_aborts() -> None:
+    """坏输入：项目未声明 `e2e.query_preset.keys` ⇒ 生成器 exit 2（不猜、不静默降级）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=QUERY_CASE, profile=PROFILE)
+        r = run(root, "--apply")
+        assert r.returncode == 2, (r.returncode, r.stdout + r.stderr)
+        assert "参数" in r.stderr, r.stderr
+
+
+def test_injected_param_key_outside_whitelist_aborts() -> None:
+    """坏输入：键在白名单外 ⇒ 生成器 exit 2。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=QUERY_CASE,
+             profile=PROFILE + "  query_preset:\n    keys:\n      - otherFlag\n")
+        r = run(root, "--apply")
+        assert r.returncode == 2, (r.returncode, r.stdout + r.stderr)
+        assert "白名单" in r.stderr, r.stderr
+
+
+def test_injected_param_dead_declaration_aborts() -> None:
+    """坏输入：`参数:` 声明了键、但没有任何 `goto` 用到 ⇒ 生成器 exit 2（死声明）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=CASE.replace("step:", "参数:\n  - flag\nstep:", 1), profile=PROFILE_QUERY)
+        r = run(root, "--apply")
+        assert r.returncode == 2, (r.returncode, r.stdout + r.stderr)
+        assert "死声明" in r.stderr, r.stderr
+
+
+def test_injected_param_bad_value_aborts() -> None:
+    """坏输入：越形态的查询值 ⇒ 生成器 exit 2（不静默转义）。
+
+    为何必须咬：生成物里 URL 嵌在 `page.goto('<url>')` 的**单引号内**。
+    取值范围 = 不被 `parse_line` 的分词吞掉的字符（**空白**会被用例文本期的另一道门咬住，
+    且 `parse_line` 会把它静默截断——两道门各管一段）。
+    """
+    for bad in ("flag=a'b", "flag=a\\\\b", "flag=a=b"):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            make(root, case=QUERY_CASE.replace("goto /home?flag=on", f"goto /home?{bad}"),
+                 profile=PROFILE_QUERY)
+            r = run(root, "--apply")
+            assert r.returncode == 2, (bad, r.returncode, r.stdout + r.stderr)
+            assert "越形态" in r.stderr, (bad, r.stderr)
+    # `&` 会被劈成第二个键（未声明）⇒ 同样是 exit 2（报的是键不在声明内）
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=QUERY_CASE.replace("goto /home?flag=on", "goto /home?flag=a&b"),
+             profile=PROFILE_QUERY)
+        r = run(root, "--apply")
+        assert r.returncode == 2, (r.returncode, r.stdout + r.stderr)
+        assert "未在本用例" in r.stderr, r.stderr
+
+
 def test_retired_python_runner_rejected() -> None:
     """单轨化（B201-4 / 3507 BO）：`python-playwright` 已退役——显式声明 ⇒ 生成器 exit 2
     响亮拒绝（不静默改行为）；校验器侧同判（`test_validators.py` 的 runner 枚举钉）。
@@ -1311,10 +1413,13 @@ def test_base_query_absent_leaves_generation_byte_identical() -> None:
     merge = mod.url_merge.merge_base_query
     assert merge("/a/b#/c", "http://h/x") == "/a/b#/c"
     assert merge("/a/b#/c", "http://h/x?t=1") == "/a/b?t=1#/c"
-    # 非 `/` 开头（外部 URL / 相对 hash）与已带 `?` 的目标：一律不动
+    # 非 `/` 开头（外部 URL / 相对 hash）：一律不动
     assert merge("https://e.com/p", "http://h/?t=1") == "https://e.com/p"
     assert merge("#/x", "http://h/?t=1") == "#/x"
-    assert merge("/a?k=0#/c", "http://h/?t=1") == "/a?k=0#/c"
+    # 已带 `?`（= 用例内联的 `参数:`）：与 base **求并集** —— base 在前、同键 ⇒ 目标胜
+    # （本分支 2026-10-17 落笔时记为「§5.7 下不可达，为未来扩展留位」；2026-10-18 随 `参数:` 转正）
+    assert merge("/a?k=0#/c", "http://h/?t=1") == "/a?t=1&k=0#/c"
+    assert merge("/a?t=9#/c", "http://h/?t=1") == "/a?t=9#/c"      # 同键：目标胜（逐用例比全局更具体）
 
 
 def test_setup_without_app_login_degrades_loudly() -> None:

@@ -20,13 +20,20 @@ new URL('#/app/x',         'http://h/console/?switchAgent=7202')  // → …?swi
 
 口径：
 - **base 无 query ⇒ 逐字节零变化**（`merge_base_query` 原样返回目标）—— `生成物最新` 门看守派生件。
-- **只处理以 `/` 开头的目标**（外部绝对 URL、`#/…` 等一律不动）；目标自带 `?` 时原样保留
-  （§5.7 下不可达，为未来扩展留位，不写进生效口径）。
+- **只处理以 `/` 开头的目标**（外部绝对 URL、`#/…` 等一律不动）；目标自带 `?` 时与 base 的 query
+  **求并集**（base 在前、目标在后，**同键 ⇒ 目标胜**）—— 2026-10-18（`DESIGN.md` D109）随
+  `参数:` 通道转正为生效口径。
 - 纯标准库。
 """
 from __future__ import annotations
 
+import re
 from urllib.parse import urlsplit
+
+# 查询值的**形态白名单**（生成物里 URL 嵌在 `page.goto('<url>')` 的单引号内、且本身是查询串片段）：
+# 禁空白 / 引号（含 `'`）/ 反斜杠 / `&` / `#` / `?`。越形态 ⇒ 两道（文本期门 + 生成期中止，不静默转义）。
+# 单源：校验器与生成器共用本常量。
+VALUE_RE = re.compile(r"^[A-Za-z0-9._~!$()*+,;:@%/-]+$")
 
 
 def base_query(base: str) -> str:
@@ -43,14 +50,69 @@ def merge_base_query(target: str, base: str) -> str:
     """把 `base` 的 query 并进 `target`（**生成期**用它，运行期语义见模块头注）。
 
     - `base` 无 query ⇒ 原样返回 `target`（**零变化承诺**）
-    - `target` 非 `/` 开头（外部 URL / 相对 hash）或已带 `?` ⇒ 原样返回（不擅自改写）
-    - 否则在 **path 与 hash 之间**插入 query：`/a/b#/c` → `/a/b?<base query>#/c`
+    - `target` 非 `/` 开头（外部 URL / 相对 hash）⇒ 原样返回（不擅自改写）
+    - `target` 无 `?` ⇒ 在 **path 与 hash 之间**插入 base query：`/a/b#/c` → `/a/b?<base query>#/c`
+    - `target` 自带 `?`（= 用例内联的宿主注入参数，契约 §5.5 `参数:`）⇒ **求并集**：
+      base 在前、target 在后，**同键 ⇒ target 胜**（逐用例比全局 base 更具体）。
+      本分支 2026-10-17 落笔时记为「§5.7 下不可达，为未来扩展留位」；2026-10-18（`DESIGN.md` D109）
+      随 `参数:` 通道**转正为生效口径**。
     """
     q = base_query(base)
-    if not q or not target.startswith("/") or "?" in target:
+    if not q or not target.startswith("/"):
         return target
     path, sep, frag = target.partition("#")
-    return f"{path}?{q}" + (f"#{frag}" if sep else "")
+    head, qsep, own = path.partition("?")
+    merged = q if not qsep else union_query(q, own)
+    return f"{head}?{merged}" + (f"#{frag}" if sep else "")
+
+
+def union_query(base_q: str, own_q: str) -> str:
+    """两个查询串求并集：base 在前、own 在后；**同键 ⇒ own 胜**（片段文本原样保留，不重编码）。"""
+    own = [p for p in own_q.split("&") if p]
+    own_keys = {p.partition("=")[0] for p in own}
+    base = [p for p in base_q.split("&") if p and p.partition("=")[0] not in own_keys]
+    return "&".join(base + own)
+
+
+def query_of(target: str) -> str:
+    """`target` 的查询串（`/a?k=v#/h` ⇒ `k=v`；无 ⇒ 空串）。**不含** hash 段内的内容。"""
+    if not target.startswith("/"):
+        return ""
+    return target.partition("#")[0].partition("?")[2]
+
+
+def query_keys(target: str) -> list[str]:
+    """`target` 查询串里的键（按出现顺序去重）——「键须已声明」门与生成器守卫取值**共用本单源**。"""
+    out: list[str] = []
+    for part in query_of(target).split("&"):
+        if not part:
+            continue
+        k = part.partition("=")[0].strip()
+        if k and k not in out:
+            out.append(k)
+    return out
+
+
+def append_query(target: str, q: str) -> str:
+    """把查询串 `q` 追加到 `target` 的 query 上（**插在 hash 之前**；已有 `?` ⇒ 用 `&` 接）。
+
+    供「守卫导航承载用例声明的注入参数」用：调用侧的 `url` 已并入 base query（幂等），而 `守卫:`
+    是未合并的具体路径 ⇒ 两种形态都按「追加到自身 query」处理，随后的一次 `merge_base_query`
+    会把 base 去重并上来（同键 ⇒ 目标胜，不会重复）。
+    """
+    if not q:
+        return target
+    head, sep, frag = target.partition("#")
+    joined = f"{head}{'&' if '?' in head else '?'}{q}"
+    return f"{joined}#{frag}" if sep else joined
+
+
+def strip_query(target: str) -> str:
+    """去掉查询串、保留 hash（`/a?k=v#/h` ⇒ `/a#/h`）——供路径门按**路径形态**匹配（`_route_hit`）。"""
+    if "?" not in target:
+        return target
+    head, _, rest = target.partition("?")
+    return head + "#" + rest.partition("#")[2] if "#" in rest else head
 
 
 def origin_of(base: str) -> str:

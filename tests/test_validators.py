@@ -617,6 +617,75 @@ def test_session_preset_malformed_line_fails() -> None:
     assert rows["会话 取值合法"]["level"] == "FAIL", rows["会话 取值合法"]
 
 
+# ── D109（2026-10-18）：`参数:` —— 宿主注入型 URL 参数（内联 + 门重靶）──────────────
+_QP = "e2e:\n  query_preset:\n    keys:\n      - flag\n"
+
+
+def _param_case(body: str = "参数:\n  - flag\n") -> str:
+    """CASE_GOOD + `参数:` 声明 + 一条带查询串的 `goto`（原 `click` 换掉）。"""
+    return CASE_GOOD.replace("step:", body + "step:", 1).replace(
+        "- click home-cta-btn", "- goto /home?flag=on")
+
+
+def test_param_declared_and_whitelisted_passes() -> None:
+    """正向（D109）：键既在 `e2e.query_preset.keys` 又在 `参数:` 声明内 ⇒ 三道相关门全 PASS。"""
+    rows = _ve_rows(_param_case(), _QP)
+    for g in ("goto 查询键须已声明", "参数 声明有效", "参数 值形态"):
+        assert rows[g]["level"] == "PASS", rows[g]
+
+
+def test_param_without_whitelist_fails() -> None:
+    """坏输入 1：项目未声明 `e2e.query_preset.keys` ⇒ 该靶场不允许 URL 参数前提 ⇒ FAIL。"""
+    rows = _ve_rows(_param_case())
+    assert rows["参数 声明有效"]["level"] == "FAIL", rows["参数 声明有效"]
+
+
+def test_param_key_outside_whitelist_fails() -> None:
+    """坏输入 2：键在白名单外 ⇒ FAIL（防把「数据态直达」走私成 URL 前提）。"""
+    rows = _ve_rows(_param_case(), "e2e:\n  query_preset:\n    keys: [otherFlag]\n")
+    assert rows["参数 声明有效"]["level"] == "FAIL", rows["参数 声明有效"]
+
+
+def test_param_declaration_with_value_fails() -> None:
+    """坏输入 3：`参数:` 项带值（`flag=on`）⇒ FAIL —— 值只住 `goto` 查询串（单一来源）。"""
+    rows = _ve_rows(_param_case("参数:\n  - flag=on\n"), _QP)
+    assert rows["参数 声明有效"]["level"] == "FAIL", rows["参数 声明有效"]
+
+
+def test_param_dead_declaration_fails() -> None:
+    """坏输入 4：声明了键、但没有任何 `goto` 用到（死声明）⇒ FAIL。"""
+    dead = CASE_GOOD.replace("step:", "参数:\n  - flag\nstep:", 1)
+    rows = _ve_rows(dead, _QP)
+    assert rows["参数 声明有效"]["level"] == "FAIL", rows["参数 声明有效"]
+
+
+def test_param_value_shape_fails() -> None:
+    """坏输入 5：“参数 值形态”与“goto 查询键须已声明”两门分别咬住不同类型的越形态值。
+
+    为何必须咬：生成物里 URL 嵌在 `page.goto('<url>')` 的**单引号内**，且本身是查询串片段。
+    - 空白 / 引号 / 反斜杠 / `=` ⇒ **值形态**门（值本身不可写成 URL 片段）
+    - `&` ⇒ 它会把值**劈成两个键**（后一个是未声明的空值键）⇒ 由**键门**咬住
+      （两门各管一段，不是同一道屎；`&` 也证明无法靠「写进去」造出第二个参数）
+    """
+    for bad in ("flag=a b", "flag=a'b", "flag=a\\b", "flag=a=b"):
+        rows = _ve_rows(_param_case().replace("goto /home?flag=on", f"goto /home?{bad}"), _QP)
+        assert rows["参数 值形态"]["level"] == "FAIL", (bad, rows["参数 值形态"])
+    rows_amp = _ve_rows(_param_case().replace("goto /home?flag=on", "goto /home?flag=a&b"), _QP)
+    assert rows_amp["goto 查询键须已声明"]["level"] == "FAIL", rows_amp["goto 查询键须已声明"]
+    assert _ve_rows(_param_case(), _QP)["参数 值形态"]["level"] == "PASS"
+
+
+def test_param_and_session_same_key_fails() -> None:
+    """坏输入 6：同一键同时由 `会话:` 与 `参数:` 承载 ⇒ FAIL（两个载体写同一键 = 前提不可解释）。"""
+    both = _param_case("会话:\n  - flag=on\n参数:\n  - flag\n")
+    rows = _ve_rows(both, _QP + "  session_preset:\n    keys:\n      - flag\n")
+    assert rows["会话·参数 同键不叠写"]["level"] == "FAIL", rows["会话·参数 同键不叠写"]
+    # 否定对照：两个载体各写**不同**键 ⇒ PASS
+    rows2 = _ve_rows(_param_case("会话:\n  - env=staging\n参数:\n  - flag\n"),
+                     _QP + "  session_preset:\n    keys:\n      - env\n")
+    assert rows2["会话·参数 同键不叠写"]["level"] == "PASS", rows2["会话·参数 同键不叠写"]
+
+
 def test_testids_mismatch_fail() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -1366,22 +1435,38 @@ def test_e2e_index_unchanged_requires_submitting_action() -> None:
     assert _index_levels(nested)["豁免前缀不嵌套"] == "FAIL"
 
 
-def test_e2e_index_goto_with_query_fails() -> None:
-    """契约 §5.7（2026-09-23 补）：用例**不得**依赖原型专有调试参数（`goto` 带 `?` ⇒ FAIL）。
+def test_e2e_index_undeclared_goto_query_fails() -> None:
+    """契约 §5.7 / §5.5 `参数:`（**2026-10-18 重靶**，`DESIGN.md` D109）。
 
-    原属性：原型专有的演示/调试开关（`?state=` 等）在真实应用上不存在 ⇒ 依赖它的用例
-    过不了第二段。事故取证：`E2E-LOGIN-003` 断言的就是 `?state=forbidden` 演示横幅自己的文案
-    （`3509 §B20`）。否定对照：普通 `goto` 不应被判。
+    **原属性（本次重靶要保住的东西）**：原型专有的演示/调试开关（`?state=` 等）不得成为合法用法——
+    事故取证 `E2E-LOGIN-003` 断言的就是 `?state=forbidden` 演示横幅自己的文案（`3509 §B20`）。
+    **重靶后的判据**：`goto` 的查询键须 ① ∈ `e2e.query_preset.keys` **∧** ② ∈ 本用例 `参数:` 声明。
+    本钉子钉的就是**原靶仍在 FAIL 面内**：未声明的 `?state=empty` 照样红（只是红在「未声明/未白名单」）。
+
+    另两条：白名单里没这个键 ⇒ 依旧 FAIL（不因「用例自称」放行）；声明 + 白名单齐 ⇒ PASS（新合法路径）。
     """
-    def fails(case: str) -> bool:
+    def rows(case: str, profile_extra: str = "") -> dict:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             mk_prototype(root)
+            if profile_extra:
+                p = root / "product" / "stack-profile.yaml"
+                p.write_text(p.read_text(encoding="utf-8") + profile_extra, encoding="utf-8")
             mk_cases(root, case)
             mk_index(root)
-            return any(c["check"] == "goto 不带查询参数" and c["level"] == "FAIL" for c in ve.validate(root).checks)
-    assert fails(CASE_GOOD.replace("- click home-cta-btn", "- goto /home?state=empty"))
-    assert not fails(CASE_GOOD.replace("- click home-cta-btn", "- goto /home"))
+            return {c["check"]: c for c in ve.validate(root).checks}
+
+    undeclared = CASE_GOOD.replace("- click home-cta-btn", "- goto /home?state=empty")
+    assert rows(undeclared)["goto 查询键须已声明"]["level"] == "FAIL"
+    assert rows(undeclared, "e2e:\n  query_preset:\n    keys: [otherFlag]\n")[
+        "goto 查询键须已声明"]["level"] == "FAIL"
+    assert rows(CASE_GOOD.replace("- click home-cta-btn", "- goto /home"))[
+        "goto 查询键须已声明"]["level"] == "PASS"
+    # 新合法路径：键既在白名单又在 `参数:` 声明内 ⇒ PASS（本单的目的）
+    ok_case = CASE_GOOD.replace("step:", "参数:\n  - flag\nstep:", 1).replace(
+        "- click home-cta-btn", "- goto /home?flag=on")
+    assert rows(ok_case, "e2e:\n  query_preset:\n    keys:\n      - flag\n")[
+        "goto 查询键须已声明"]["level"] == "PASS"
 
 
 def test_e2e_index_no_contradictory_assert() -> None:
@@ -2338,7 +2423,7 @@ def test_console_style_path_with_hash_is_writable_and_navigable() -> None:
         mk_cases(root, case)
         mk_index(root, index)
         checks = {c["check"]: (c["level"], c["detail"]) for c in ve.validate(root).checks}
-    assert checks["goto 不带查询参数"][0] == "PASS", checks["goto 不带查询参数"]   # ② `#` 不是 query
+    assert checks["goto 查询键须已声明"][0] == "PASS", checks["goto 查询键须已声明"]   # ② `#` 不是 query
     assert checks["goto 路径 ∈ 页面表"][0] == "PASS", checks["goto 路径 ∈ 页面表"]
 
 
