@@ -4,6 +4,21 @@
 
 ---
 
+## [v0.1.0-beta.25] - 2026-10-18
+
+### 🧩 E2E 执行面两案：用例前数据准备钩子（D110）+ refresh 落盘节拍参数化（D111）
+
+* **【用例执行前自动执行项目数据准备脚本】（`scripts/e2e_console.py`，ce7f181；v3 现场实证移植，bugs.md 005/006 链 companion；D110）**：
+  - 项目自带 `product/e2e/scripts/atlas-prepare.mjs` ⇒ 每条用例执行前先跑它（cwd = 项目根，**180s 上限、不计入用例超时窗**）。共享型靶场是有状态环境（SPA + 服务端态），用例 precondition 属文档性声明、运行器不自动归零 ⇒ 残留实体会让 count 类断言系统性偏移——本钩子把「清零 → 静置 → 复跑」的净场协议从人工纪律落成**执行器机制**。
+  - 失败 / 超时 ⇒ **拒绝执行该用例**并按 `done` 事件完整形状（带 `prep_failed: true` 标记 + tail）如实上报——不静默跑一条注定偏移的用例。
+* **【refresh 落盘节拍参数化】（`scripts/gen_e2e_scripts.py`，1dcff13；D111）**：
+  - `refresh` 动词发射**先等后刷**两行：`ATLAS_REFRESH_SETTLE`（默认 0）注入的 `waitForTimeout` 先于 `page.reload()`——节流型自动保存的项目（v3 现场 ≈15s 节流）运行时给落库等待窗，步骤编辑内容不丢。
+  - 三条口径：**默认 0 ⇒ 生成物行为与既有契约一致**（毫秒数属项目侧运行时前提，零业务常数进生成器，对齐 `ATLAS_SLOWMO` / `ATLAS_EXPECT_TIMEOUT` 注入先例）；它不是 §5.5「固定 sleep」禁令所指（该禁令禁**用例侧**把共享靶场节拍写死进用例，本行是执行环境配置面）；单一注入面 = 生成物字面内联，无覆盖口。
+* **两案正名入册（0ba3ec3）**：`DESIGN.md` D110 / D111 决策行；契约正文 = `rings/e2e/reference.md` §7.1（准备钩子）+ §5.5 动词表 `refresh` 行（先等后刷）；控制台 docstring 同步；钉 2 条 + 变异 **M94/M95**（四段协议，还原逐字节一致）。
+- **取证**：全量 `pytest tests -q` ⇒ **512 passed / 0 failed / 4 skipped**（beta.24 基线 510 ⇒ +2 钉，无红）。
+
+---
+
 ## [v0.1.0-beta.24] - 2026-10-18
 
 ### 🧭 逐用例宿主注入 URL 参数通道：`goto` 查询门重靶 + 项目级白名单 (D109, MB12/MB13)

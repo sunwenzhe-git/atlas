@@ -4,6 +4,16 @@
 
 ---
 
+## [v0.1.0-beta.25] - 2026-10-18
+
+### 🧩 E2E 执行面两案：用例前数据准备钩子（D110）+ refresh 落盘节拍参数化（D111）
+
+- **用例执行前自动执行项目数据准备脚本（D110，`scripts/e2e_console.py`）**：项目自带 `product/e2e/scripts/atlas-prepare.mjs` ⇒ 每条用例先跑它（cwd = 项目根，180s 上限、不计入用例超时窗）；失败 / 超时 ⇒ **拒绝执行该用例**并按 `done` 事件完整形状（`prep_failed: true` + tail）如实上报。把「清零 → 静置 → 复跑」净场协议从人工纪律落成执行器机制，杜绝有状态靶场残留实体造成的 count 类断言系统性偏移。
+- **refresh 落盘节拍参数化（D111，`scripts/gen_e2e_scripts.py`）**：`refresh` 发射**先等后刷**两行——`ATLAS_REFRESH_SETTLE`（默认 0）注入的 `waitForTimeout` 先于 `page.reload()`，节流型自动保存项目运行时给落库等待窗。默认 0 ⇒ 行为不变；毫秒数属项目侧运行时前提（对齐 `ATLAS_SLOWMO` 注入先例），非 §5.5「固定 sleep」禁令所指。
+- **登记**：`DESIGN.md` D110/D111；契约正文 §7.1 / §5.5；钉 2 条 + 变异 M94/M95（四段协议）；全量 **512 passed / 4 skipped**。
+
+---
+
 ## [v0.1.0-beta.24] - 2026-10-18
 
 ### 🧭 逐用例宿主注入 URL 参数通道：`goto` 查询门重靶 + 项目级白名单 (D109, MB12/MB13)
