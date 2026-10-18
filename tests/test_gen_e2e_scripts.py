@@ -2079,5 +2079,74 @@ def test_testid_item_inline_comment_keeps_guard_only_visible_exemption() -> None
         assert "test('test_home__zero_step_baseline'" not in text, text[:1200]
 
 
+# ── RFC-20261018-01（2026-10-18）：E2E 真跑失败自动留证 ────────────────────────
+# 契约条 = rings/e2e §7.1「失败留证（硬，失败才落盘）」；门行 = shared/gates.md 2.2。
+# 证据源：gen_e2e_scripts.py:1549/1580（发版雷达首跑实锤「两轨模板无 trace 键」）；
+# 悬空判据接线 = duty-review/bugs.md:17（hover 升判条件在等 trace / 连续截图）。
+
+NONE_PROFILE = PROFILE.split("  app_login:")[0] + "  app_login:\n    mode: none\n"
+
+
+def _cfg(root: Path) -> str:
+    return (root / "product" / "e2e" / "scripts" / "playwright.config.ts").read_text(encoding="utf-8")
+
+
+def test_failure_evidence_both_tracks_declare_trace() -> None:
+    """RFC-20261018-01 钉 1（双轨同构）：`mode: none` 与预置登录**两轨**的
+    `playwright.config.ts` 都必须声明 `trace` + `screenshot`——缺任一轨即红。
+
+    双份同构漂移普查家族：模板是实质双份（1549/1580 两分支），一侧加了键另一侧漏了
+    才是这类病灶的真形态（同 D82 ③ 文法单源普查的普查思路）。
+    变异 MB10：摘掉任一轨 trace 键 ⇒ 本钉红。
+    """
+    with tempfile.TemporaryDirectory() as td_none, tempfile.TemporaryDirectory() as td_login:
+        rn, rl = Path(td_none), Path(td_login)
+        make(rn, profile=NONE_PROFILE)
+        make(rl)                                   # 缺省 PROFILE 含 app_login 全字段 ⇒ 预置登录轨
+        assert run(rn, "--apply").returncode == 0
+        assert run(rl, "--apply").returncode == 0
+        for tag, root in (("none", rn), ("login", rl)):
+            cfg = _cfg(root)
+            assert "trace: 'retain-on-failure'" in cfg, f"[{tag}] {cfg[:400]}"
+            assert "screenshot: 'only-on-failure'" in cfg, f"[{tag}] {cfg[:400]}"
+
+
+def test_failure_evidence_values_are_closed() -> None:
+    """RFC-20261018-01 钉 2（值形态封闭）：两键值必须**恰为**
+    `retain-on-failure` / `only-on-failure`——`on`（全量常录）之类意识形态越界 ⇒ 红。
+
+    理由（RFC §2.2）：全量常录 = 磁盘成本 × 每用例且成功轮留证无消费方；
+    `video` 缓行（trace 已是逐帧回放器），多一键 = 同构面 +2 无收益。
+    变异 MB11：`retain-on-failure` 改 `on` ⇒ 本钉红；`video: on` 混入同理。
+    """
+    with tempfile.TemporaryDirectory() as td_none, tempfile.TemporaryDirectory() as td_login:
+        rn, rl = Path(td_none), Path(td_login)
+        make(rn, profile=NONE_PROFILE)
+        make(rl)
+        assert run(rn, "--apply").returncode == 0
+        assert run(rl, "--apply").returncode == 0
+        for tag, root in (("none", rn), ("login", rl)):
+            cfg = _cfg(root)
+            assert "trace: 'retain-on-failure'" in cfg, f"[{tag}] {cfg[:400]}"
+            assert "video" not in cfg, f"[{tag}] video 缓行中不得出现 {cfg[:400]}"
+            assert "trace: 'on'" not in cfg and "screenshot: 'on'" not in cfg, f"[{tag}] {cfg[:400]}"
+
+
+def test_failure_evidence_has_no_override_switch() -> None:
+    """RFC-20261018-01 钉 3（无覆盖口）：留证键随模板无条件发射，**不得**给环境开关
+    （如 `ATLAS_E2E_EVIDENCE`）——加开关等于给「成功轮也留证」开后门（成功轮留证
+    无消费方；留证对象 = 首跑失败现场，见 `duty-review/bugs.md` 节拍类判据）。
+    """
+    with tempfile.TemporaryDirectory() as td_none, tempfile.TemporaryDirectory() as td_login:
+        rn, rl = Path(td_none), Path(td_login)
+        make(rn, profile=NONE_PROFILE)
+        make(rl)
+        assert run(rn, "--apply").returncode == 0
+        assert run(rl, "--apply").returncode == 0
+        for tag, root in (("none", rn), ("login", rl)):
+            cfg = _cfg(root)
+            assert "EVIDENCE" not in cfg, f"[{tag}] {cfg[:400]}"
+
+
 
 

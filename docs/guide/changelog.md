@@ -4,7 +4,15 @@
 
 ---
 
-## [Unreleased]
+## [v0.1.0-beta.23] - 2026-10-18
+
+### 🎞️ E2E 真跑失败自动留证：trace / screenshot 只在失败落盘 (RFC-20261018-01, D108)
+
+- **两轨同构补两键**：生成物 `playwright.config.ts`（python 轨 / node 轨）的 `use:` 各补 `trace: 'retain-on-failure'` + `screenshot: 'only-on-failure'`——失败现场自动落 trace（DOM 快照 + 网络 + 操作日志，逐帧回放）与截图到 `test-results/`，**全绿轮零新增构件**；无覆盖口（防「成功轮也留证」开后门）。
+- **不溯及已装配副本**：咬合点 = 下一次 `install.sh --update` / 首装重装配；重装配前「契约已声明留证而现场无 trace」属如实态、非缺陷，巡检不得误报。
+- **留证含业务内容**，只落采纳仓本地、不进 atlas 上报通道（§15 出站面不破）；不解决 D103「人工会话取出 ⇒ CI 不可复现」盲区（真身是登录态）。
+- **被否**：`video` 缓行（trace 自带回放器）；全量常录 `on`；失败自动重试 N 次（防复读机裁决已落 `duty-review/QUEUE.md` 归档区）；托管云沙盒会话。
+- **接线与取证**：契约条 = `rings/e2e/reference.md` §7.1；门行 = `shared/gates.md` 2.2；决策行 = `DESIGN.md` D108；钉 3 条（双轨同构 / 值形态封闭 / 无覆盖口）+ 变异 **MB10/MB11** 四段协议双绿；全量 **497 passed / 4 skipped**。评审轮记（两轮）= `proposals/RFC-20261018-01`；观察室 +3（键盘三态原语 / 目录化扩展 / 上报机检增强）。
 
 ### 🔧 E2E 真跑：node 轨运行器判据换本体（D101；issue #24）
 

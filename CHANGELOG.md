@@ -4,7 +4,19 @@
 
 ---
 
-## [Unreleased]
+## [v0.1.0-beta.23] - 2026-10-18
+
+### 🎞️ E2E 真跑失败自动留证：trace / screenshot 只在失败落盘 (RFC-20261018-01, D108)
+
+**背景**：外部发版雷达首跑 5 条机制级情报（OpenHands v1.26 `browser record` 等）经独立评审裁定**唯一有仓库实锤缺口**的采纳项。此前真跑偶发红（节拍类）现场的取证上限 = 文本尾部 80 行（采集点 `scripts/e2e_console.py:520`、落账条件 `:591-592`、docstring `:582`），元素几何 / 命中点 / 时序类判据只能靠 `/tmp` 临时探针（跨会话不可复算，D98 动词批与案 6 两次付费先例）；`duty-review/bugs.md:17` 未解观察（hover 禁用按钮首跑偶发 `Element is not visible`、3 连跑全绿）的**升判条件**「复现 ≥2 次且有固定节拍证据（trace / 连续截图）⇒ 转 DR4」悬空在等一个不存在的证据源。
+
+**定案**：
+- **两轨同构补两键**：生成物 `playwright.config.ts`（python 轨 / node 轨两分支）的 `use:` 对象各补 `trace: 'retain-on-failure'` + `screenshot: 'only-on-failure'`——失败现场自动落 trace（DOM 快照 + 网络 + 操作日志，trace viewer 逐帧回放）与截图到 Playwright 缺省 `test-results/`；**全绿轮零新增构件**。**无覆盖口**（给留证键加环境开关 = 给「成功轮也留证」开后门）。
+- **不溯及已装配副本**：本能力的**咬合点 = 下一次 `install.sh --update` / 首装重装配**；重装配前「契约已声明留证而现场无 trace」属**如实态、非缺陷**，巡检不得误报（对齐 `shared/single-source.md` §3 迁移仪式「新源生效 ⇔ 旧源显式失效」）。
+- **留证含业务内容，只落采纳仓本地**（`test-results/`），不进 atlas 上报通道（§15 零业务上下文出站面不破）；**不解决 D103 盲区**（人工会话取出类的「CI 不可复现」真身是登录态，trace 只重放已发生的失败）。
+- **被否**：`video` 缓行（trace 自带逐帧回放器，video 是粗粒度投影，多一键 = 双轨同构面 +2 无收益）；全量常录 `on`（磁盘 × 每用例、成功轮留证无消费方）；**失败自动重试 N 次**（与「节拍类首跑不坐实、复跑复现才改判」方向相反，会把真缺陷静默吸收成绿——防复读机裁决已落 `duty-review/QUEUE.md` 归档区，外部情报再提 retry 引用可径行否决）；托管云沙盒会话（同归档区裁决）。
+
+**接线与取证**：契约条 = `rings/e2e/reference.md` §7.1「失败留证（硬，失败才落盘）」；门行 = `shared/gates.md` 2.2「E2E 真跑」补失败留证段；决策行 = `DESIGN.md` D108；`tests/test_gen_e2e_scripts.py` +3 钉（双轨同构 / 值形态封闭 / 无覆盖口）：**MB10**（摘 none 轨 trace 键）/ **MB11**（值改 `on`）四段协议双绿（注入 rc=1 → 还原逐字节一致 → 复绿），注入 diff 摘录于 `proposals/REVIEW-2026-10-18-e2e-failure-evidence.md`；全量 `pytest tests -q` ⇒ **497 passed / 4 skipped**（基线 494 ⇒ +3 钉，无红）。评审轮记（两轮，含五条情报全裁定 + 引用核验）= `proposals/RFC-20261018-01-e2e-failure-evidence.md` §6。**观察室 +3**（`duty-review/QUEUE.md`：键盘三态原语 / 目录化扩展 / 上报机检增强，各带升室条件）。
 
 ### 🔧 E2E 真跑：node 轨运行器判据换本体（D101；issue #24）
 
