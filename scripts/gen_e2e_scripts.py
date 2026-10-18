@@ -463,6 +463,11 @@ def ts_case(case: dict, url: str, base: str = "") -> str:
     for s in case.get("step", []):
         verb, tid, value, _ = parse_line(s)
         if verb == "refresh":
+            # refresh 落盘节拍参数化（先等后刷；对齐 F11 `ATLAS_SLOWMO` 注入先例）：启用**节流型
+            # 自动保存**的项目（现场：距上次成功保存 <15s 则延迟落库）refresh 前不等待 ⇒ 编辑
+            # 内容用例必然丢。具体毫秒数是项目侧运行时前提，不写死进生成器（业务常数出项目）；
+            # 默认 0 ⇒ 生成物行为与既有契约一致。
+            actions.append('await page.waitForTimeout(Number(process.env.ATLAS_REFRESH_SETTLE || "0"));')
             actions.append("await page.reload();")
         elif verb == "goto":
             # 宿主注入型 base query（issue #27 / D104）：step 的 goto 是**第二处**发射面。
