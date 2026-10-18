@@ -452,6 +452,41 @@ class Runner:
     def _run(self, case: dict, nodeid: str, slowmo: int, source: str, base_url: str,
              pw_bin: Path, nm_dir: Path) -> None:
         scripts = self.root / "product" / "e2e" / "scripts"
+        # 用例执行前的项目数据准备钩子（v3 现场实证移植，duty-review/bugs.md 005/006 链 companion）：
+        # 共享型靶场是有状态环境（SPA + 服务端态），用例 precondition 属文档性声明、运行器不自动
+        # 归零 ⇒ 残留实体会让 count 类断言系统性偏移。项目自带 product/e2e/scripts/atlas-prepare.mjs
+        # ⇒ 每条用例先跑它（cwd = 项目根，180s 上限，**不计入**用例超时窗——本块在计时起点之前）；
+        # 失败/超时 ⇒ 拒绝执行该用例并按 done 事件完整形状（带 prep_failed 标记）如实上报——
+        # 不静默跑一条注定偏移的用例。
+        prep = scripts / "atlas-prepare.mjs"
+        if prep.is_file():
+            self._emit("$ 前置数据准备 atlas-prepare.mjs …")
+            prep_exit = None
+            try:
+                pr = subprocess.run(["node", str(prep)], cwd=str(self.root),
+                                    capture_output=True, text=True, timeout=180)
+                self._emit((pr.stdout or "")[-1500:])
+                if pr.returncode != 0:
+                    self._emit(f"\n[前置] atlas-prepare 失败（exit={pr.returncode}）：未执行用例\n"
+                               + (pr.stderr or "")[-800:])
+                    prep_exit = pr.returncode
+            except Exception as exc:
+                self._emit(f"\n[前置] atlas-prepare 无法执行：{exc!r} —— 未执行用例")
+                prep_exit = -2
+            if prep_exit is not None:
+                with self.cond:
+                    raw = list(self.lines)
+                ev = {"kind": "done", "case": case["id"], "nodeid": nodeid, "ok": False,
+                      "exit": prep_exit, "duration_ms": 0, "timeout": False, "held": False,
+                      "slowmo": slowmo, "head": self.head, "source": source,
+                      "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+                      "tail": "\n".join(_clean(ln) for ln in raw[-80:]),
+                      "prep_failed": True}
+                with self.cond:
+                    self.running = False
+                    self.done = ev
+                    self.cond.notify_all()
+                return
         # node 单轨（3507 BO）：`file:line` 过滤 + 运行器原生 flag（--headed）；NODE_PATH 让生成物里的
         # @playwright/test 解析到项目声明的依赖目录（与 atlas_check 真跑门同一姿势）。
         cmd = [str(pw_bin), "test", "-c", "playwright.config.ts", nodeid]
