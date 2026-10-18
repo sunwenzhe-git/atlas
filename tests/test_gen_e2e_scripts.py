@@ -2144,6 +2144,29 @@ def test_click_switch_value_domain_closed() -> None:
         assert r.returncode != 0, (r.returncode, r.stdout, r.stderr)
 
 
+# ── 2026-10-18 v3 现场实证移植批（D111）：`refresh` 落盘节拍参数化 ─────────────────────
+def test_refresh_emits_settle_wait_before_reload() -> None:
+    """契约 §7.1 / §5.5 `refresh` 行（D111，v3 现场实证移植）：`refresh` 发射**先等后刷**——
+    `ATLAS_REFRESH_SETTLE`（默认 0）注入的 `waitForTimeout` 先于 `reload`；节流型自动保存
+    的项目运行时设置毫秒值 ⇒ 刷新前有落库等待窗。毫秒常数属项目侧**运行时**前提，生成器
+    不写死（对齐 F11 `ATLAS_SLOWMO` 注入先例；默认 0 ⇒ 生成物行为与既有契约一致）。
+
+    变异证明 **M95**：摘掉 waitForTimeout 发射行 ⇒ 本钉红（还原逐字节一致）。
+    """
+    gn = _load_gen()
+    case = {
+        "id": "E2E-REFRESH-001",
+        "_title": "刷新后复断言",
+        "step": ["refresh"],
+        "expected": ["visible home-h1"],
+        "testid": ["home-h1"],
+    }
+    spec = gn.ts_case(case, "/")
+    settle = 'await page.waitForTimeout(Number(process.env.ATLAS_REFRESH_SETTLE || "0"));'
+    assert settle in spec, spec
+    assert spec.index(settle) < spec.index("await page.reload();"), spec
+
+
 # ── issue #R1/S1（2026-10-16）：`testid:` 项带行内注释 ⇒ F24 规则二豁免仍生效 ────────
 COMMENTED_TID_CASE = """# home 页面用例
 

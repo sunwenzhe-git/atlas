@@ -28,6 +28,8 @@
   `launchOptions.slowMo`（Playwright `test` CLI 无 `--slowmo` 旗标，2026-10-14 F11）；
   「跑完留窗 + 结果哨兵」由生成物 `atlas-hold.ts` 承载——契约 `rings/e2e/reference.md` §10.1）；
 * **并发 = 1**（同时只跑一条，其余按钮禁用）；单条 wall-clock 超时到点 kill 并如实报「超时」；
+* **数据准备钩子**（2026-10-18，D110）：项目自带 `product/e2e/scripts/atlas-prepare.mjs`
+  ⇒ 每条用例执行前先跑它（失败/超时 ⇒ 拒绝执行并如实上报，见契约 §10「执行」）；
 * 「人工 review 通过」= 人工复核**执行结果**符合业务预期；只在**执行通过**后解锁按钮
   （不通过就是没通过，回对话改用例）。
 

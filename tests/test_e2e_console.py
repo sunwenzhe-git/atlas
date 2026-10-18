@@ -300,6 +300,87 @@ def test_runner_injects_slowmo_via_env_not_cli_flag() -> None:
     assert captured["env"].get("ATLAS_BASE_URL") == "http://127.0.0.1:8000"
 
 
+# ── 2026-10-18 v3 现场实证移植批（D110）：执行前的项目数据准备钩子 ──────────────────────
+def test_prepare_hook_runs_before_case_and_refuses_on_failure() -> None:
+    """契约 §10「执行」（D110，v3 现场实证移植）：项目自带 `product/e2e/scripts/atlas-prepare.mjs`
+    ⇒ 控制台**每条用例先跑它**（`node`，cwd = 项目根，180s 上限，且不占用例超时窗——在计时
+    起点之前）；失败（非零）/ 起不动 ⇒ **拒绝执行该用例**并按 `done` 完整形状如实上报（带
+    `prep_failed` 标记），真跑子进程**不得被启动**。共享状态型靶场的残留实体会让 count 类
+    断言系统性偏移，拒跑优于静默跑偏。
+
+    变异证明 **M94**：摘掉 prepare 钩子段（`if prep.is_file():` 恒假）⇒ 本钉红（真跑被起、
+    无 `prep_failed`），还原逐字节一致。
+    """
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    seen: dict = {"rc": 0}
+
+    def fake_run(cmd, cwd=None, timeout=None, **kw):
+        seen["calls"] = seen.get("calls", [])
+        seen["calls"].append(("prepare", cmd[0], cwd, timeout))
+        if seen.get("explode"):
+            raise subprocess.TimeoutExpired("node", 180)
+        return type("Proc", (), {"returncode": seen["rc"], "stdout": "prep ok\n", "stderr": "err"})()
+
+    class FakeProc:
+        stdout = iter(())
+        returncode = 0
+
+        def poll(self) -> int:
+            return 0
+
+        def kill(self) -> None:
+            pass
+
+    def fake_popen(cmd, cwd=None, **kw):
+        seen["calls"].append(("真跑", cmd[0]))
+        return FakeProc()
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        scripts = root / "product" / "e2e" / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "atlas-prepare.mjs").write_text("// prep\n", encoding="utf-8")
+        ledger = cons.Ledger(root, "tester")
+        runner = cons.Runner(root, ledger, timeout=60, head=True, keep_open=False)
+
+        seen["calls"] = []
+        seen["explode"], seen["rc"] = False, 0
+        orig_run, orig_popen = cons.subprocess.run, cons.subprocess.Popen
+        cons.subprocess.run, cons.subprocess.Popen = fake_run, fake_popen
+        try:
+            runner._run({"id": "E2E-PREP-001"}, "p.spec.ts:1", 500, "app",
+                        "http://127.0.0.1:8000", Path("/pw"), Path("/nm"))
+            # ① 钩子在真跑之前；参数形态钉死（node / cwd=项目根 / 180s）
+            assert seen["calls"] == [
+                ("prepare", "node", str(root), 180),
+                ("真跑", "/pw"),
+            ], seen["calls"]
+            assert runner.done["ok"] is True, runner.done
+            assert "prep_failed" not in runner.done, runner.done
+
+            # ② prepare 非零 ⇒ 拒绝执行：真跑不被起，done 完整形状 + prep_failed
+            seen["calls"], seen["rc"] = [], 3
+            runner._run({"id": "E2E-PREP-002"}, "p.spec.ts:1", 500, "app",
+                        "http://127.0.0.1:8000", Path("/pw"), Path("/nm"))
+            assert [c for c in seen["calls"] if c[0] == "prepare"] == [("prepare", "node", str(root), 180)]
+            assert not any(c[0] == "真跑" for c in seen["calls"]), seen["calls"]
+            ev = runner.done
+            assert ev["ok"] is False and ev["exit"] == 3 and ev["prep_failed"] is True, ev
+            assert ev["timeout"] is False and ev["held"] is False, ev
+            assert ev["case"] == "E2E-PREP-002" and ev["source"] == "app", ev
+            assert "atlas-prepare 失败" in ev["tail"], ev["tail"]
+
+            # ③ 起不动（node 缺失 / 超时抛出）⇒ 同样拒绝，exit 如实（−2）
+            seen["calls"], seen["explode"] = [], True
+            runner._run({"id": "E2E-PREP-003"}, "p.spec.ts:1", 500, "app",
+                        "http://127.0.0.1:8000", Path("/pw"), Path("/nm"))
+            assert runner.done["ok"] is False and runner.done["exit"] == -2, runner.done
+            assert runner.done["prep_failed"] is True, runner.done
+            assert not any(c[0] == "真跑" for c in seen["calls"]), seen["calls"]
+        finally:
+            cons.subprocess.run, cons.subprocess.Popen = orig_run, orig_popen
+
+
 def test_resolve_pw_global_playwright(monkeypatch) -> None:
     """F19: 支持全局 Playwright（npm i -g @playwright/test）执行与 PATH 探测。
 
