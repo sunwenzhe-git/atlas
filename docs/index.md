@@ -31,7 +31,7 @@ features:
     details: 基于 FalkorDB / cgc 全仓拓扑，跨文件 callers/callees 深度感知，精准推导需求影响面与架构漂移。
   - icon: 🔨
     title: 变异证明 (Mutation Proving)
-    details: 拒绝形同虚设的假门禁。每条机器规则都配一组注入脏数据的变异钉子（M 系列，编号已到 M49）：正常数据 PASS + 脏数据必红，双向核对通过才准入网。
+    details: 拒绝形同虚设的假门禁。每条机器规则都配一组注入脏数据的变异钉子（M 系列，编号已到 M93）：正常数据 PASS + 脏数据必红，双向核对通过才准入网。
   - icon: 🛡️
     title: 实例 ⑤ 只读独立审查
     details: 独立进程只读 diff 审查，按“应审 N / 实审 M”对账，防止大模型跳过文件、少审漏审。

@@ -1,7 +1,7 @@
 # Atlas — 践行 Project Harness 的全流程 AI 编程工作流
 
 <p align="left">
-  <img src="https://img.shields.io/badge/version-0.1.0--beta.21-blue.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.1.0--beta.22-blue.svg" alt="Version" />
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License" />
   <img src="https://img.shields.io/badge/tests-passing-success.svg" alt="Tests" />
   <a href="https://sunwenzhe-git.github.io/atlas/"><img src="https://img.shields.io/badge/docs-VitePress-green.svg" alt="Docs" /></a>
@@ -350,10 +350,10 @@ Atlas 引入了**图谱后端隔离层（`adapters/_graph.py`）**，接入基�
 很多 CI 门禁最大的隐患是：**代码写错了，校验器永远返回 PASS，人以为自己有防线，实际上形同虚设。**
 
 Atlas 坚持**变异证明（Mutation Proving / M 系列钉子测试）**原则：
-* **门禁自身必须证明会报红**：编写任何一条新校验规则，必须同步提交故意注入破坏性脏数据的“变异测试用例”（M 系列钉子，编号已到 M49——编号在各自测试文件内自成序列，同一号在不同门含义不同）；
+* **门禁自身必须证明会报红**：编写任何一条新校验规则，必须同步提交故意注入破坏性脏数据的“变异测试用例”（M 系列钉子，编号已到 M93——编号在各自测试文件内自成序列，同一号在不同门含义不同）；
 * **自洽门与双向红灯验证**：
   * 变异测试人工制造各种边界事故：字段缺失、双向差集、静默截断、假冒通过、未声明退役；
-  * 只有在变异数据下门禁**百分之百报红**，这条规则才被允许合入出厂检验套件（`python3 -m pytest atlas/tests/`）；
+  * 只有在变异数据下门禁**百分之百报红**，这条规则才被允许合入出厂检验套件（`python3 -m pytest tests/`）；
   * 杜绝任何“永远绿灯的摆设门禁”。
 
 ---

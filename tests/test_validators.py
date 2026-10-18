@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """atlas 三个校验器 + 原型静态服务器的回归测试。
 
-    python3 atlas/tests/test_validators.py     # 脚本式
-    pytest atlas/tests/test_validators.py      # pytest 式
+    python3 tests/test_validators.py     # 脚本式
+    pytest tests/test_validators.py      # pytest 式
 """
 from __future__ import annotations
 

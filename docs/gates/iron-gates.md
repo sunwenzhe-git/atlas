@@ -81,3 +81,6 @@
 ### 6. 装配版本完整性门 (`.atlas/VERSION`)
 * 目标项目中的装配态与 Atlas 源包内容摘要实时哈希比对；
 * 源包升级或本地改动脱节时，自动亮出 `WARN`，防止跨项目版本漂移。
+
+### 7. 架构决策记录对账门 (`validate_adr.py`)
+* 项目级长效架构决策唯一落 `product/adr/NNNN-<slug>.md`；校验编号唯一、状态枚举合法、演进链闭环（`superseded` 必指有效后继）、核心章节（Context / Decision / Consequences）完整，杜绝决策散落多处或私自改写。

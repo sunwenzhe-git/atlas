@@ -7,8 +7,8 @@
   * dry-run 不写。
 
 两种运行方式：
-    python3 atlas/tests/test_project_wiring.py      # 脚本式
-    pytest atlas/tests/test_project_wiring.py        # pytest 式
+    python3 tests/test_project_wiring.py      # 脚本式
+    pytest tests/test_project_wiring.py        # pytest 式
 """
 
 from __future__ import annotations

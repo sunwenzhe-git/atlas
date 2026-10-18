@@ -6,8 +6,8 @@
   ② 静态资源能**从包内模板目录**取出——这是「随包分发」最容易漏的一环；
   ③ `/api/cases` 在用例真相源缺失时**如实报 problem**，不得静默空表。
 
-    python3 atlas/tests/test_e2e_console.py
-    pytest atlas/tests/test_e2e_console.py
+    python3 tests/test_e2e_console.py
+    pytest tests/test_e2e_console.py
 """
 
 from __future__ import annotations

@@ -121,8 +121,8 @@ product/e2e/
 
 - 分片另有 `intent` 字段：**可证伪的一句话声明**（这条用例证明什么），不得是「页面显示正确」类模糊表述。
 - **`step` / `expected` 行式语法**：`<动词> <testid> [<值>]  # 中文说明`，词表封闭：
-  - **动作 9**：`click` `fill` `select` `check` `uncheck` `press` `hover` `refresh` `goto`
-  - **断言 11**：`text` `contains` `count` `visible` `hidden` `enabled` `disabled` `value` / `countOptions` / `attr` / `delta`（相对值增量断言，应对未读数 / 购物车类累加业务，无需硬编码初始基数）
+  - **动作（13 词，封闭）**：`click` `fill` `select` `check` `uncheck` `press` `hover` `dispatch` `refresh` `goto` `waitFor` `download` `upload`（`click` / `hover` 缺省追加 `force: true`，`dispatch` = 合成事件直发——力面三态、适用边界与值域封闭见契约 §5.5）
+  - **断言（13 词，封闭）**：`text` `contains` `count` `visible` `hidden` `enabled` `disabled` `checked` `unchecked` `value` `countOptions` `attr` `delta`（相对值增量断言，应对未读数 / 购物车类累加业务，无需硬编码初始基数）
   - `expected` 行可加 `initial:` / `unchanged:` 豁免前缀；中文降为 `#` 注释。
 
 ---
@@ -180,7 +180,7 @@ product/e2e/
 
 ## 十一、独立审查
 
-- **骨架同构**：`.atlas/shared/independent-review.md`（五实例同构，各实例只声明自己的四项）。
+- **骨架同构**：`.atlas/shared/independent-review.md`（四实例同构，各实例只声明自己的四项）。
 - **本环四项实例值**：fan-out = **页面分片**（复用 testid 双向校验的同一分区键）+ 阈值（**20 条或 500 行**）按用例 ID 区间再切 + **一个全局审查者**；回退环 = `prd` | `e2e`；权威输入 = 域级 PRD 的 AC + 该页用例分片 testid 清单（缺则**不得**给「通过」）；门禁 = **阻断脚本生成**（判据「报告存在 + 无 `Critical`」，缺失 = 未审）。
 - **落点** = `product/e2e/reviews/<日期>-<范围>/`（与人工评审账本 `console/` 分离，不得混用）。
 - 设计依据：子代理审查属**设计期语义门**（生成后、执行前），不能替代运行期门——零步基线仍独立必需，两者互补。

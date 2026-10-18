@@ -108,7 +108,7 @@ atlas/
 |---|---|---|
 | Claude Code | `.claude/skills/` | |
 | opencode | `.agents/skills/` | |
-| Codex | `.agents/skills/` | 另有 `.codex/agents/` 放子代理 |
+| Codex | `.codex/skills/` | 探测到 `.codex/` 目录时装；另有 `.codex/agents/` 放子代理 |
 | Pi | `.agents/skills/` | 走 extension + prompts |
 
 - skill frontmatter 只用 `name` + `description`（触发短语写进 description）。

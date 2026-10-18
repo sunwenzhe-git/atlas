@@ -6,8 +6,8 @@
 dry-run 不写；锚点缺失报错且不改文件。
 
 两种运行方式：
-    python3 atlas/tests/test_apply_patches.py      # 脚本式
-    pytest atlas/tests/test_apply_patches.py       # pytest 式
+    python3 tests/test_apply_patches.py      # 脚本式
+    pytest tests/test_apply_patches.py       # pytest 式
 """
 
 from __future__ import annotations
