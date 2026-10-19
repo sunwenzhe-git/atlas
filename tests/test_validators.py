@@ -825,6 +825,24 @@ def test_testids_test_files_and_fixtures_are_not_scanned() -> None:
         assert rows["testid 全站唯一"]["level"] == "PASS", rows["testid 全站唯一"]
 
 
+def test_testids_subscript_index_resolves_to_base_id() -> None:
+    """issue #31：step 与 expected 中的 tid[N] 下标自动归一为 base_tid 参与对账。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        case_with_index = CASE_GOOD.replace(
+            "  - click home-cta-btn          # 点击主操作按钮",
+            "  - click home-cta-btn[1]       # 点击第二个同名按钮"
+        ).replace(
+            "  - visible home-title          # 页面主标题可见",
+            "  - visible home-title[0]       # 首个标题可见"
+        )
+        mk_cases(root, case_with_index)
+        rows = {c["check"]: c for c in vt.validate(root).checks}
+        assert rows["分页双向集合相等"]["level"] == "PASS", rows["分页双向集合相等"]
+        assert rows["应然落点"]["level"] == "PASS", rows["应然落点"]
+
+
 def test_testids_const_reused_twice_flags_same_file_dup() -> None:
     """坏输入 3：同一常量在同文件被引用两次 ⇒ 同文件重复声明 WARN 且指名该 id。"""
     with tempfile.TemporaryDirectory() as td:

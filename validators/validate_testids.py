@@ -505,7 +505,9 @@ def case_testid_usage(md: Path) -> list[tuple[str, set[str], set[str]]]:
                     code = code.split(":", 1)[1].strip()
                 parts = code.split()
                 if len(parts) >= 2 and parts[0] not in _NO_TID_VERBS:
-                    used.add(parts[1])
+                    raw_tid = parts[1]
+                    base_tid = re.sub(r"\[\d+\]$", "", raw_tid)
+                    used.add(base_tid)
         listed = {i.strip() for i in (block_dict.get("testid") or [])}
         out.append((cid, used, listed))
     return out

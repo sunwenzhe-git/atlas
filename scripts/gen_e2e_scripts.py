@@ -186,6 +186,22 @@ def parse_line(line: str) -> tuple[str, str, str, str]:
     return verb, (parts[1] if len(parts) > 1 else ""), (parts[2] if len(parts) > 2 else ""), note.strip()
 
 
+def parse_tid_nth(raw_tid: str) -> tuple[str, int | None]:
+    """把 `<tid>[<N>]` 拆成 (base_tid, index)。无下标返回 (raw_tid, None)。（D120 / issue #31）"""
+    m = re.match(r"^([a-z0-9-]+)\[(\d+)\]$", raw_tid)
+    if m:
+        return m.group(1), int(m.group(2))
+    return raw_tid, None
+
+
+def tid_locator(raw_tid: str) -> str:
+    """返回定位器表达式：带下标发射 `.nth(N)`，不带下标发射 `.first()`（向后兼容）。"""
+    base, idx = parse_tid_nth(raw_tid)
+    if idx is not None:
+        return f"page.getByTestId('{base}').nth({idx})"
+    return f"page.getByTestId('{base}').first()"
+
+
 # `strip_inline_comment` / `yaml_scalar` / `parse_profile` 已并入随包内核
 # `_support/stack_profile.py`（2026-10-12 单源批）；别名 `parse_profile` 见文件头部。
 # 其余消费者（validators/*）经 `_support.siblings.load_module(...)` 取用。
@@ -487,23 +503,25 @@ def ts_case(case: dict, url: str, base: str = "") -> str:
             actions.append(f"await page.goto('{url_merge.merge_base_query(value, base)}');")
         elif verb == "click":
             actions.append(
-                f"await page.getByTestId('{tid}').first().click("
+                f"await {tid_locator(tid)}.click("
                 f"{step_force_arg(verb, value, s, cid).strip()});")
         elif verb == "fill":
-            actions.append(f"await page.getByTestId('{tid}').first().fill({json.dumps(value, ensure_ascii=False)});")
+            actions.append(f"await {tid_locator(tid)}.fill({json.dumps(value, ensure_ascii=False)});")
         elif verb == "select":
             # 契约 §5.5（B173-1）：发射实现无关 helper，不再钉死原生 `<select>` ——
             # 语义 = 「选中 label 的那一项」，DOM 机制由 helper 按元素自适应。
-            actions.append(f"await atlasSelect(page, '{tid}', {json.dumps(value, ensure_ascii=False)});")
+            base_tid, idx = parse_tid_nth(tid)
+            idx_arg = f", {idx}" if idx is not None else ""
+            actions.append(f"await atlasSelect(page, '{base_tid}', {json.dumps(value, ensure_ascii=False)}{idx_arg});")
         elif verb == "check":
-            actions.append(f"await page.getByTestId('{tid}').first().check();")
+            actions.append(f"await {tid_locator(tid)}.check();")
         elif verb == "uncheck":
-            actions.append(f"await page.getByTestId('{tid}').first().uncheck();")
+            actions.append(f"await {tid_locator(tid)}.uncheck();")
         elif verb == "press":
-            actions.append(f"await page.getByTestId('{tid}').first().press({json.dumps(value)});")
+            actions.append(f"await {tid_locator(tid)}.press({json.dumps(value)});")
         elif verb == "hover":
             actions.append(
-                f"await page.getByTestId('{tid}').first().hover("
+                f"await {tid_locator(tid)}.hover("
                 f"{step_force_arg(verb, value, s, cid).strip()});")
         elif verb == "dispatch":
             # 契约 §5.5（2026-10-17，v3 现场实证）：React 合成事件直发——`dispatchEvent('click')`
@@ -515,10 +533,10 @@ def ts_case(case: dict, url: str, base: str = "") -> str:
                 raise ValueError(
                     f"{cid}: `dispatch` 只接受 `<testid>` 一个参数，得 {value.strip()!r}"
                     f"：{s!r}（契约 §5.5 值域封闭）")
-            actions.append(f"await page.getByTestId('{tid}').first().dispatchEvent('click');")
+            actions.append(f"await {tid_locator(tid)}.dispatchEvent('click');")
         elif verb == "waitFor":
             # 契约 §7.1：带轮询的断言（不得退化为固定等待）
-            loc = f"page.getByTestId('{tid}').first()"
+            loc = tid_locator(tid)
             if value == "":
                 actions.append(f"await expect({loc}).toBeVisible({{ timeout: ATLAS_WAIT_TIMEOUT_MS }});")
             else:
@@ -530,8 +548,10 @@ def ts_case(case: dict, url: str, base: str = "") -> str:
             # 契约 §5.5（契约 §5.5）：先注册监听、再点击、再校验建议文件名（glob）。
             if not value.strip():
                 raise ValueError(f"`download` 需要文件名 glob 参数: {s!r}（契约 §5.5）")
+            base_tid, idx = parse_tid_nth(tid)
+            idx_arg = f", {idx}" if idx is not None else ""
             actions.append(
-                f"await atlasDownload(page, '{tid}', {json.dumps(value, ensure_ascii=False)});"
+                f"await atlasDownload(page, '{base_tid}', {json.dumps(value, ensure_ascii=False)}{idx_arg});"
             )
         elif verb == "upload":
             # 契约 §5.5（B201-1，2026-10-12）：`upload <testid> <值>`，值 = 相对
@@ -544,7 +564,7 @@ def ts_case(case: dict, url: str, base: str = "") -> str:
             if not rel:
                 raise ValueError(f"`upload` 需要 fixtures 相对路径参数: {s!r}（契约 §5.5）")
             actions.append(
-                f"await page.getByTestId('{tid}').first().setInputFiles("
+                f"await {tid_locator(tid)}.setInputFiles("
                 f"resolve(__dirname, '..', 'fixtures', {json.dumps(rel, ensure_ascii=False)}));"
             )
         else:
@@ -558,33 +578,38 @@ def ts_case(case: dict, url: str, base: str = "") -> str:
         verb, tid, value, _ = parse_line(e)
         v = json.dumps(value, ensure_ascii=False)
         if verb == "text":
-            line = f"await expect(page.getByTestId('{tid}').first()).toHaveText({v});"
+            line = f"await expect({tid_locator(tid)}).toHaveText({v});"
         elif verb == "contains":
-            line = f"await expect(page.getByTestId('{tid}').filter({{ hasText: {v} }}).first()).toBeVisible();"
+            base_tid, idx = parse_tid_nth(tid)
+            nth_str = f".nth({idx})" if idx is not None else ".first()"
+            line = f"await expect(page.getByTestId('{base_tid}').filter({{ hasText: {v} }}){nth_str}).toBeVisible();"
         elif verb == "count":
-            line = f"await expect(page.getByTestId('{tid}')).toHaveCount(Number({v}));"
+            base_tid, _ = parse_tid_nth(tid)
+            line = f"await expect(page.getByTestId('{base_tid}')).toHaveCount(Number({v}));"
         elif verb == "visible":
-            line = f"await expect(page.getByTestId('{tid}').first()).toBeVisible();"
+            line = f"await expect({tid_locator(tid)}).toBeVisible();"
         elif verb == "hidden":
-            line = f"await expect(page.getByTestId('{tid}').first()).toBeHidden();"
+            line = f"await expect({tid_locator(tid)}).toBeHidden();"
         elif verb == "enabled":
-            line = f"await expect(page.getByTestId('{tid}').first()).toBeEnabled();"
+            line = f"await expect({tid_locator(tid)}).toBeEnabled();"
         elif verb == "disabled":
-            line = f"await expect(page.getByTestId('{tid}').first()).toBeDisabled();"
+            line = f"await expect({tid_locator(tid)}).toBeDisabled();"
         elif verb == "value":
             # 契约 §5.5（契约 §5.5）：值写作 `""` / `(空)` 时是**空串**，
             # 必须渲染成空串实参 —— 直接 json.dumps 会得到两个字面引号字符，
             # 与真实空串永不相等。（B173-1：断言经 atlasExpectValue 实现无关化。）
             if value.strip() in ('""', "(空)"):
                 v = json.dumps("", ensure_ascii=False)
-            line = f"await atlasExpectValue(page, '{tid}', {v});"
+            base_tid, idx = parse_tid_nth(tid)
+            idx_arg = f", {idx}" if idx is not None else ""
+            line = f"await atlasExpectValue(page, '{base_tid}', {v}{idx_arg});"
         elif verb == "countOptions":
             # 契约 §5.5（契约 §5.5）：数该元素内的 `option` 子元素个数。
-            line = f"await expect(page.getByTestId('{tid}').locator('option')).toHaveCount(Number({v}));"
+            line = f"await expect({tid_locator(tid)}.locator('option')).toHaveCount(Number({v}));"
         elif verb == "checked":
-            line = f"await expect(page.getByTestId('{tid}').first()).toBeChecked();"
+            line = f"await expect({tid_locator(tid)}).toBeChecked();"
         elif verb == "unchecked":
-            line = f"await expect(page.getByTestId('{tid}').first()).not.toBeChecked();"
+            line = f"await expect({tid_locator(tid)}).not.toBeChecked();"
         elif verb == "attr":
             # 契约 §5.5（契约 §5.5）：`attr <testid> <name> <value>`。
             aname, _, aval = value.strip().partition(" ")
@@ -596,12 +621,12 @@ def ts_case(case: dict, url: str, base: str = "") -> str:
                 # 为何不用 `toHaveAttribute(name, "")`：**实测**缺席时 `getAttribute` 得 `null`，
                 # 该调用判 FAIL（半通状态）；`?? ''` 归一 + 轮询才是全档语义，且与探针表达式同形（单源）。
                 line = (
-                    f"await expect.poll(async () => (await page.getByTestId('{tid}').first()"
+                    f"await expect.poll(async () => (await {tid_locator(tid)}"
                     f".getAttribute({json.dumps(aname, ensure_ascii=False)})) ?? '').toBe('');"
                 )
             else:
                 line = (
-                    f"await expect(page.getByTestId('{tid}').first()).toHaveAttribute("
+                    f"await expect({tid_locator(tid)}).toHaveAttribute("
                     f"{json.dumps(aname, ensure_ascii=False)}, {json.dumps(aval, ensure_ascii=False)});"
                 )
         elif verb == "delta":
@@ -616,9 +641,9 @@ def ts_case(case: dict, url: str, base: str = "") -> str:
             if not case.get("step"):
                 raise ValueError(f"{cid}: delta 相对断言需要至少一条 step（行动前采样点不存在）")
             var = "__delta_" + re.sub(r"[^0-9a-zA-Z]", "_", tid)
-            delta_pre.append(f"const {var} = await atlasIntOf(page.getByTestId('{tid}').first());")
+            delta_pre.append(f"const {var} = await atlasIntOf({tid_locator(tid)});")
             line = (
-                f"await expect.poll(() => atlasIntOf(page.getByTestId('{tid}').first()), "
+                f"await expect.poll(() => atlasIntOf({tid_locator(tid)}), "
                 f"{{ timeout: ATLAS_WAIT_TIMEOUT_MS }}).toBe({var} + {int(value.strip())});"
             )
         else:
@@ -684,42 +709,47 @@ def ts_assert_expr(line: str) -> str:
     """
     _, line = split_prefix(line)
     verb, tid, value, _note = parse_line(line)
+    base_tid, idx = parse_tid_nth(tid)
+    nth_idx = idx if idx is not None else 0
+    nth_locator = f"page.getByTestId({json.dumps(base_tid, ensure_ascii=False)}).nth({idx})" if idx is not None else f"page.getByTestId({json.dumps(base_tid, ensure_ascii=False)}).first()"
     v = json.dumps(value, ensure_ascii=False)
-    t = json.dumps(tid, ensure_ascii=False)
+    t = json.dumps(base_tid, ensure_ascii=False)
+    tid_param = json.dumps(tid, ensure_ascii=False)
     if verb == "text":
         # 元素不可见 ⇒ **null**（基线 runner 跳过，不是 false）
         return (
-            f'(async () => {{ const l = await tsVis(page, {t}); '
+            f'(async () => {{ const l = await tsVis(page, {tid_param}); '
             f"return l === null ? null : (await l.innerText()).trim() === {v}; }})()"
         )
     if verb == "contains":
         return (
-            f'(async () => {{ const l = await tsVis(page, {t}); '
+            f'(async () => {{ const l = await tsVis(page, {tid_param}); '
             f"return l === null ? null : (await l.innerText()).includes({v}); }})()"
         )
     if verb == "count":
         return f"(async () => (await page.getByTestId({t}).count()) === Number({v}))()"
     if verb == "countOptions":
-        return f"(async () => (await page.getByTestId({t}).locator('option').count()) === Number({v}))()"
+        target = f"page.getByTestId({t}).nth({idx})" if idx is not None else f"page.getByTestId({t})"
+        return f"(async () => (await {target}.locator('option').count()) === Number({v}))()"
     if verb == "visible":
-        return f"(async () => await tsVisible(page, {t}))()"
+        return f"(async () => await tsVisible(page, {tid_param}))()"
     if verb == "hidden":
-        return f"(async () => !(await tsVisible(page, {t})))()"
+        return f"(async () => !(await tsVisible(page, {tid_param})))()"
     # is*() 对缺失元素会等挂载（30s 挂起）——先 count 守卫：缺失 ⇒ false（基线探针安全跳过）
     if verb == "enabled":
-        return f"(async () => (await page.getByTestId({t}).count()) > 0 && (await page.getByTestId({t}).first().isEnabled()))()"
+        return f"(async () => (await page.getByTestId({t}).count()) > {nth_idx} && (await {nth_locator}.isEnabled()))()"
     if verb == "disabled":
-        return f"(async () => (await page.getByTestId({t}).count()) > 0 && (await page.getByTestId({t}).first().isDisabled()))()"
+        return f"(async () => (await page.getByTestId({t}).count()) > {nth_idx} && (await {nth_locator}.isDisabled()))()"
     if verb == "checked":
-        return f"(async () => (await page.getByTestId({t}).count()) > 0 && (await page.getByTestId({t}).first().isChecked()))()"
+        return f"(async () => (await page.getByTestId({t}).count()) > {nth_idx} && (await {nth_locator}.isChecked()))()"
     if verb == "unchecked":
-        return f"(async () => !((await page.getByTestId({t}).count()) > 0 && (await page.getByTestId({t}).first().isChecked())))()"
+        return f"(async () => !((await page.getByTestId({t}).count()) > {nth_idx} && (await {nth_locator}.isChecked())))()"
     if verb == "value":
         if value.strip() in ('""', "(空)"):
             v = json.dumps("", ensure_ascii=False)
         # 契约 §5.5（B173-1）：经 atlasValueOf 实现无关化（三态语义不变：不可见 ⇒ null）。
         return (
-            f'(async () => {{ const x = await atlasValueOf(page, {t}); '
+            f'(async () => {{ const x = await atlasValueOf(page, {tid_param}); '
             f"return x === null ? null : x === {v}; }})()"
         )
     if verb == "attr":
@@ -737,12 +767,12 @@ def ts_assert_expr(line: str) -> str:
             # `getAttribute` 对缺席属性返回 `null`（**不是** `""`）⇒ 必须 `?? ''` 归一：
             # 直接写 `=== ""` 会让「缺席」这一档恒假，只留「空串」半档（半通状态）。
             return (
-                f"(async () => (await page.getByTestId({t}).count()) > 0 "
-                f"&& ((await page.getByTestId({t}).first().getAttribute({n})) ?? '') === '')()"
+                f"(async () => (await page.getByTestId({t}).count()) > {nth_idx} "
+                f"&& ((await {nth_locator}.getAttribute({n})) ?? '') === '')()"
             )
         return (
-            f"(async () => (await page.getByTestId({t}).count()) > 0 "
-            f"&& (await page.getByTestId({t}).first().getAttribute({n})) "
+            f"(async () => (await page.getByTestId({t}).count()) > {nth_idx} "
+            f"&& (await {nth_locator}.getAttribute({n})) "
             f"=== {json.dumps(val, ensure_ascii=False)})()"
         )
     raise ValueError(f"未知断言动词: {verb}（契约 §5.5）")
@@ -1477,11 +1507,15 @@ def main() -> int:
             "// `ATLAS_WAIT_TIMEOUT_MS` 为运维覆盖口（与 `ATLAS_EXPECT_TIMEOUT` / `ATLAS_SLOWMO` 同族）。\n"
             "const ATLAS_WAIT_TIMEOUT_MS = Number(process.env.ATLAS_WAIT_TIMEOUT_MS ?? 20_000);\n\n"
             "function tsLoc(page: any, tid: string) {\n"
-            "  return page.getByTestId(tid).first();\n"
+            "  const m = tid.match(/^([a-z0-9-]+)\\[(\\d+)\\]$/);\n"
+            "  return m ? page.getByTestId(m[1]).nth(Number(m[2])) : page.getByTestId(tid).first();\n"
             "}\n"
             "async function tsVisible(page: any, tid: string): Promise<boolean> {\n"
-            "  const loc = page.getByTestId(tid);\n"
-            "  return (await loc.count()) > 0 && (await loc.first().isVisible());\n"
+            "  const m = tid.match(/^([a-z0-9-]+)\\[(\\d+)\\]$/);\n"
+            "  const base = m ? m[1] : tid;\n"
+            "  const nth = m ? Number(m[2]) : 0;\n"
+            "  const loc = page.getByTestId(base);\n"
+            "  return (await loc.count()) > nth && (await loc.nth(nth).isVisible());\n"
             "}\n"
             "// 契约 §5.5 / §7.1（DESIGN D114）：元素齐全守卫第一段 = 页面就绪锚点。\n"
             "// 声明的 id 里任意一个在场 ⇒ 页面已渲染；一个都没出现 ⇒ 超时并点名整份清单。\n"
@@ -1498,7 +1532,12 @@ def main() -> int:
             "}\n"
             "async function tsVis(page: any, tid: string) {\n"
             "  // 契约 §7.1：读值断言须先可见；不可见 ⇒ null（= 不成立，不抛错）\n"
-            "  const l = page.getByTestId(tid).first();\n"
+            "  const m = tid.match(/^([a-z0-9-]+)\\[(\\d+)\\]$/);\n"
+            "  const base = m ? m[1] : tid;\n"
+            "  const nth = m ? Number(m[2]) : 0;\n"
+            "  const loc = page.getByTestId(base);\n"
+            "  if ((await loc.count()) <= nth) return null;\n"
+            "  const l = loc.nth(nth);\n"
             "  return (await l.isVisible()) ? l : null;\n"
             "}\n"
             "async function atlasValueOf(page: any, tid: string): Promise<string | null> {\n"
@@ -1512,7 +1551,7 @@ def main() -> int:
             "    ? l.inputValue()\n"
             "    : (await l.innerText()).trim();\n"
             "}\n"
-            "async function atlasSelect(page: any, tid: string, label: string) {\n"
+            "async function atlasSelect(page: any, tid: string, label: string, nth: number = 0) {\n"
             "  // 契约 §5.5（B173-1，2026-10-04；**2026-10-19 D112** 选项定位放宽）：`select` 的语义 =\n"
             "  // 「在该控件上选中 label 的那一项」。原生 <select> 走 selectOption；否则视作 trigger+listbox：\n"
             "  // 点开触发器后按**选项自身的标签**点选 —— 组件常把描述文案塞进选项内，其可访问名因此\n"
@@ -1523,7 +1562,7 @@ def main() -> int:
             "  // （顶部导航等）会让它秒满足 ⇒ 采样落在下拉尚未定位（零盒）的窗口内。改为**按命中态轮询采样**\n"
             "  // （轮询原语 = `expect.poll`，与页面就绪锚点同一机制，**不引入固定等待**）：\n"
             "  // 0 命中（未就绪）⇒ 轮询到上限；>1 命中（歧义）⇒ 立即拒绝；唯一 ⇒ 定。\n"
-            "  const el = page.getByTestId(tid).first();\n"
+            "  const el = page.getByTestId(tid).nth(nth);\n"
             "  const tag = await el.evaluate((e) => e.tagName.toLowerCase());\n"
             "  if (tag === 'select') {\n"
             "    await el.selectOption({ label });\n"
@@ -1557,10 +1596,10 @@ def main() -> int:
             "  if (!m) throw new Error('delta 采样：元素文本不含数值: ' + text);\n"
             "  return Number(m[0]);\n"
             "}\n"
-            "async function atlasExpectValue(page: any, tid: string, v: string) {\n"
+            "async function atlasExpectValue(page: any, tid: string, v: string, nth: number = 0) {\n"
             "  // 契约 §5.5（B173-1，2026-10-04）：`value` 断言的实现无关入口\n"
             "  // （与 atlasValueOf 同判；两分支都保留 expect 的自动轮询语义）。\n"
-            "  const el = page.getByTestId(tid).first();\n"
+            "  const el = page.getByTestId(tid).nth(nth);\n"
             "  const tag = await el.evaluate((e) => e.tagName.toLowerCase());\n"
             "  if (tag === 'select' || tag === 'input' || tag === 'textarea') {\n"
             "    await expect(el).toHaveValue(v);\n"
@@ -1639,10 +1678,10 @@ def main() -> int:
             r"  return new RegExp('^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&')"
             ".replace(/\\*/g, '.*').replace(/\\?/g, '.') + '$');\n"
             "}\n"
-            "async function atlasDownload(page, tid, pattern) {\n"
+            "async function atlasDownload(page, tid, pattern, nth = 0) {\n"
             "  const [download] = await Promise.all([\n"
             "    page.waitForEvent('download', { timeout: ATLAS_WAIT_TIMEOUT_MS }),\n"
-            "    page.getByTestId(tid).first().click(),\n"
+            "    page.getByTestId(tid).nth(nth).click(),\n"
             "  ]);\n"
             "  const name = download.suggestedFilename();\n"
             "  expect(name, `下载文件名 ${name} 不匹配 ${pattern}`).toMatch(atlasGlob(pattern));\n"

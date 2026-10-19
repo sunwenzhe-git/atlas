@@ -2339,6 +2339,41 @@ def test_click_switch_value_domain_closed() -> None:
         assert r.returncode != 0, (r.returncode, r.stdout, r.stderr)
 
 
+def test_subscript_nth_index_emits_nth_locator() -> None:
+    """契约 §5.5（D120 / issue #31）：同名多实例支持 [N] 序号索引，发射 .nth(N)。"""
+    gn = _load_gen()
+    case = {
+        "id": "E2E-INDEX-001",
+        "_title": "同名多实例索引",
+        "step": [
+            "click list-move-up-btn[1]",
+            "fill list-name-input[2] 文本",
+            "hover list-action-btn[0] native",
+            "select list-category-select[1] 科技",
+            "check list-checkbox[3]",
+            "dispatch list-submit-btn[1]",
+        ],
+        "expected": [
+            "visible list-item[1]",
+            "text list-title[2] 标题二",
+            "value list-name-input[2] 文本",
+            "enabled list-move-up-btn[1]",
+        ],
+        "testid": ["list-move-up-btn", "list-name-input", "list-action-btn", "list-category-select", "list-checkbox", "list-submit-btn", "list-item", "list-title"],
+    }
+    spec = gn.ts_case(case, "/list")
+    assert "page.getByTestId('list-move-up-btn').nth(1).click(" in spec, spec
+    assert "page.getByTestId('list-name-input').nth(2).fill(\"文本\")" in spec, spec
+    assert "page.getByTestId('list-action-btn').nth(0).hover()" in spec, spec
+    assert "atlasSelect(page, 'list-category-select', \"科技\", 1)" in spec, spec
+    assert "page.getByTestId('list-checkbox').nth(3).check()" in spec, spec
+    assert "page.getByTestId('list-submit-btn').nth(1).dispatchEvent('click')" in spec, spec
+    assert "page.getByTestId('list-item').nth(1)).toBeVisible()" in spec, spec
+    assert "page.getByTestId('list-title').nth(2)).toHaveText(\"标题二\")" in spec, spec
+    assert "atlasExpectValue(page, 'list-name-input', \"文本\", 2)" in spec, spec
+    assert "page.getByTestId('list-move-up-btn').nth(1)).toBeEnabled()" in spec, spec
+
+
 # ── 2026-10-18 v3 现场实证移植批（D111）：`refresh` 落盘节拍参数化 ─────────────────────
 def test_refresh_emits_settle_wait_before_reload() -> None:
     """契约 §7.1 / §5.5 `refresh` 行（D111，v3 现场实证移植）：`refresh` 发射**先等后刷**——
