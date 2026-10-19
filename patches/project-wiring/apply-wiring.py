@@ -6,7 +6,8 @@
 
 做五件事（各自独立幂等）：
 
-  1. `<项目根>/AGENTS.md`：在 Trellis 区块 `<!-- TRELLIS:END -->` **之后**追加
+  1. `<项目根>/AGENTS.local.md`：在 Trellis 区块 `<!-- TRELLIS:END -->` **之后**追加
+     （指针段落本地档而非入库的 AGENTS.md —— 项目约定：AGENTS.md 只留团队共享规范，本机接线归 local）
      `<!-- ATLAS:START -->…<!-- ATLAS:END -->` 段。该段位于 Trellis 区块**之外**，
      因此不被 `trellis update` 覆盖。已存在则整段按源更新（不新建重复段）。
      文件不存在时创建。
@@ -53,7 +54,7 @@ POINTER_SNIPPET = PKG_ROOT / "agent-pointer.md"
 ATLAS_START = "<!-- ATLAS:START -->"
 ATLAS_END = "<!-- ATLAS:END -->"
 TRELLIS_END = "<!-- TRELLIS:END -->"
-AGENTS_REL = "AGENTS.md"
+AGENTS_REL = "AGENTS.local.md"
 
 HOOK_CMD = "python3 .atlas/scripts/refresh_structure.py --root . --chain"
 # C1（R7，2026-10-15）：存量钩子的**前缀**（幂等判据必须冗余于一字符）——

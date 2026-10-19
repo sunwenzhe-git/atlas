@@ -13,7 +13,7 @@
 #   4. 建 product/ 骨架（已有内容永不覆盖）。
 #   5. 应用 .trellis/workflow.md 的 Plan 挂载补丁（atlas apply；锚点幂等，
 #      用 --no-patch 跳过）。
-#   6. 项目接线：AGENTS.md 的 atlas 指针段 + .trellis/config.yaml 的 after_finish
+#   6. 项目接线：AGENTS.local.md 的 atlas 指针段 + .trellis/config.yaml 的 after_finish
 #      hook（幂等，用 --no-wiring 跳过）。
 #      第 5、6 步属 global-rules §7 确认门动作，由本次显式安装触发。
 #
@@ -24,7 +24,7 @@
 #
 # 幂等：.atlas/ 与 skill 瘦桩默认刷新（属包下发物，用 --no-skill 跳过 skill）；
 #       product/ 下的既有内容永不覆盖；workflow.md 补丁只做锚点插入、重跑即恢复；
-#       AGENTS.md 指针段与 config.yaml hook 就地更新、重跑即恢复。
+#       AGENTS.local.md 指针段与 config.yaml hook 就地更新、重跑即恢复。
 #
 set -euo pipefail
 
@@ -344,13 +344,13 @@ if [ ! -f "$WIRING_DIR/apply-wiring.py" ] && [ -f "$SCRIPT_DIR/patches/project-w
   WIRING_DIR="$SCRIPT_DIR/patches/project-wiring"
 fi
 if [ "$INSTALL_WIRING" -eq 1 ]; then
-  say "[6/6] 项目接线（AGENTS.md 指针 + after_finish hook）"
+  say "[6/6] 项目接线（AGENTS.local.md 指针 + after_finish hook）"
   if [ -f "$WIRING_DIR/apply-wiring.py" ]; then
     if [ "$DRY_RUN" -eq 1 ]; then
       run python3 "$WIRING_DIR/apply-wiring.py" --target "$TARGET"
     else
       if python3 "$WIRING_DIR/apply-wiring.py" --target "$TARGET" --apply; then
-        say "      -> AGENTS.md（atlas 指针段）+ .trellis/config.yaml（after_finish hook）"
+        say "      -> AGENTS.local.md（atlas 指针段）+ .trellis/config.yaml（after_finish hook）"
       else
         say "      ⚠ 接线存在 error——不阻断装配（见上）。"
       fi
@@ -465,10 +465,10 @@ if [ "$INSTALL_PATCH" -eq 1 ] && [ "$DRY_RUN" -ne 1 ] && [ -f "$TARGET/.trellis/
 fi
 
 if [ "$INSTALL_WIRING" -eq 1 ] && [ "$DRY_RUN" -ne 1 ]; then
-  if [ -f "$TARGET/AGENTS.md" ] && grep -q "<!-- ATLAS:START -->" "$TARGET/AGENTS.md"; then
-    say "  [OK]   AGENTS.md atlas 指针段"
+  if [ -f "$TARGET/AGENTS.local.md" ] && grep -q "<!-- ATLAS:START -->" "$TARGET/AGENTS.local.md"; then
+    say "  [OK]   AGENTS.local.md atlas 指针段"
   else
-    say "  [WARN] AGENTS.md atlas 指针段未生效（见 patches/project-wiring/README.md）"
+    say "  [WARN] AGENTS.local.md atlas 指针段未生效（见 patches/project-wiring/README.md）"
   fi
   if [ -f "$TARGET/.trellis/config.yaml" ] && grep -q "refresh_structure.py" "$TARGET/.trellis/config.yaml"; then
     say "  [OK]   after_finish hook（refresh_structure）"
@@ -535,7 +535,7 @@ fi
 #   **终稿（用户定稿）**：只留「首次开户（二选一）」这一段 —— 编号、"下一步"导语、
 #     「装配 ≠ 开户」状态注、以及「接需求走 Trellis Plan」那条，全部砍掉。
 #     状态注没丢，只是**换了归属**：它的读者是 Agent 与人（读文档时），不是刚装完盯着终端的人 ——
-#     现由 AGENTS.md 指针段 / `/atlas status` / README / 存量接入指南 / `atlas apply` 帮助承载。
+#     现由 AGENTS.local.md 指针段 / `/atlas status` / README / 存量接入指南 / `atlas apply` 帮助承载。
 #   两条入口都列，并按目标是否已有源码痕迹把更可能的那条排在前面（只是提示，真形态由
 #   Agent 与用户核对的 origin 落定）。
 if [ "$IS_UPDATE" -eq 1 ]; then

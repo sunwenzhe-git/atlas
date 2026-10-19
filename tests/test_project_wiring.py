@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """atlas 项目接线的回归测试。
 
-守护「install.sh 把 AGENTS.md 指针 + after_finish hook 幂等写进目标项目」：
-  * AGENTS.md：插在 `<!-- TRELLIS:END -->` 之后；重跑幂等；缺文件创建；区块更新；标记不成对报错且不改。
+守护「install.sh 把 AGENTS.local.md 指针 + after_finish hook 幂等写进目标项目」：
+  * AGENTS.local.md：插在 `<!-- TRELLIS:END -->` 之后；重跑幂等；缺文件创建；区块更新；标记不成对报错且不改。
   * config.yaml：无 hooks 时新增；有 hooks 时并入；有 after_finish 时追加；重跑幂等。
   * dry-run 不写。
 
@@ -87,7 +87,7 @@ def test_snippet_exists() -> None:
 def test_agents_insert_after_trellis_and_idempotent() -> None:
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        f = write(tmp, "AGENTS.md", AGENTS_FIXTURE)
+        f = write(tmp, "AGENTS.local.md", AGENTS_FIXTURE)
 
         r1 = run(tmp, "--apply")
         assert r1.returncode == 0, r1.stdout + r1.stderr
@@ -110,7 +110,7 @@ def test_agents_missing_file_creates() -> None:
         tmp = Path(td)
         r = run(tmp, "--apply")
         assert r.returncode == 0, r.stdout
-        f = tmp / "AGENTS.md"
+        f = tmp / "AGENTS.local.md"
         assert f.is_file()
         text = f.read_text(encoding="utf-8")
         assert A_START in text and A_END in text
@@ -120,7 +120,7 @@ def test_agents_updates_existing_block() -> None:
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         stale = f"{T_END}\n\n{A_START}\nOLD STALE CONTENT\n{A_END}\n"
-        f = write(tmp, "AGENTS.md", stale)
+        f = write(tmp, "AGENTS.local.md", stale)
         r = run(tmp, "--apply")
         assert r.returncode == 0, r.stdout
         text = f.read_text(encoding="utf-8")
@@ -131,7 +131,7 @@ def test_agents_updates_existing_block() -> None:
 def test_agents_unbalanced_markers_error_without_writing() -> None:
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        f = write(tmp, "AGENTS.md", f"hello\n{A_START}\nno end\n")
+        f = write(tmp, "AGENTS.local.md", f"hello\n{A_START}\nno end\n")
         before = f.read_text(encoding="utf-8")
         r = run(tmp, "--apply")
         assert r.returncode == 1, r.stdout
@@ -194,7 +194,7 @@ def test_config_idempotent() -> None:
 def test_dry_run_does_not_write() -> None:
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        a = write(tmp, "AGENTS.md", AGENTS_FIXTURE)
+        a = write(tmp, "AGENTS.local.md", AGENTS_FIXTURE)
         c = write(tmp, ".trellis/config.yaml", CONFIG_NO_HOOKS)
         a_before, c_before = a.read_text(encoding="utf-8"), c.read_text(encoding="utf-8")
         r = run(tmp)  # 缺省 dry-run
