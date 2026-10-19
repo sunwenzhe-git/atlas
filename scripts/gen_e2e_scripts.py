@@ -435,26 +435,19 @@ def ts_case(case: dict, url: str, base: str = "") -> str:
     # 不剥则守卫面发射带注释的 id（如 `["foo   # 行内说明"]`）⇒ `toHaveCount(1)` 恒不命中 ⇒ 假红。
     declared = [strip_inline_comment(t).strip() for t in (case.get("testid") or [])]
     ids = json.dumps(declared, ensure_ascii=False)
-    # 契约 §5.5 / §7.1（DESIGN D114，2026-10-19，issue #26）：元素齐全守卫拆两段——
-    #   ① **页面就绪锚点**：声明的 id 里「任意一个」在场 ⇒ 页面已渲染（`expect.poll` 原生轮询；
-    #      一个都没出现 ⇒ 超时并点名整份清单，不静默）；
-    #   ② **纯在场声明**（声明了但没有任何 step 触碰过的 id）：仍逐个 `toHaveCount(1)` 严判。
-    #   ③ **已被 step 或 expected 触达的 id 不预先要求在场**：前者由该 step 的原生自动等待保证，
-    #      后者由断言的自动轮询保证（§5.5 §B99 语义不变）；动作产物元素初始态必然为 0，
-    #      预先要求在场只能靠实现侧 hidden 占位槽满足——那是把测试义务搬进产品 DOM（D114 被否项）。
-    # 该拆分**确定性派生**自分片自身声明（无猜测）：守卫面不会退化成空表——锚点始终发射且带全量清单。
-    def _expected_tid(line: str) -> str:
-        _kind, body = split_prefix(line)
-        _anchor, unanchored = split_after(body)
-        return parse_line(unanchored)[1]
-
-    used_tids = {parse_line(s)[1] for s in (case.get("step") or [])}
-    used_tids |= {_expected_tid(e) for e in (case.get("expected") or [])}
-    guard_only = [t for t in declared if t not in used_tids]
+    # 契约 §5.5 / §7.1（DESIGN D114，2026-10-19，issue #26；同日**修正**）：元素齐全守卫 = **单段页面就绪锚点** ——
+    #   ① 声明的 id 里「任意一个」在场 ⇒ 页面已渲染（`expect.poll` 原生轮询；一个都没出现 ⇒ 超时并点名
+    #      整份清单，不静默）；守卫面**不会退化成空表**（锚点始终发射且带全量清单，回应 #R2 对空表的裁决）。
+    #   ② 声明的其余 id **不在 goto 时刻要求运行时在场**：被 step 触达的由该 step 的原生自动等待承接，
+    #      被 expected 触达的由断言的自动轮询承接（§5.5 §B99 语义不变）；**声明了却未被触达**的 id 只参与
+    #      **静态双向集合校验**（它们往往正是为了满足该静态门而被声明的，见下修正理由）。
+    #   ③ 动作产物元素初始态必然为 0：任何「用例开始时 count=1」都只能靠实现侧 hidden 占位槽凑，
+    #      那是把测试义务搬进产品 DOM（D114 被否项）——故占位槽不再是必需形态。
+    # **为何删掉「纯在场声明」段**（同日修正，现场证据）：静态双向集合门要求「源码里的每个实然 testid
+    # 必须被某条用例的 `testid:` 声明」，于是「声明但不操作/不断言」是**唯一合法形态**；若又在 goto 时刻
+    # 要求它运行时在场，就把「静态门的补全需求」误当成了「初始态断言」——现场两条合法用例因此死锁
+    # （面板未打开时该元素必然为 0，Expected 1 / Received 0）。
     guard_block = f"  await atlasAwaitAnyDeclared(page, {ids}, ATLAS_WAIT_TIMEOUT_MS);\n"
-    if guard_only:
-        guard_block += (f"  for (const id of {json.dumps(guard_only, ensure_ascii=False)}) {{\n"
-                        f"    await expect(page.getByTestId(id)).toHaveCount(1);\n  }}\n")
     step_note = "\\n".join("//   - " + s for s in case.get("step", []))
     assert_note = "\\n".join("//   - " + s for s in case.get("expected", []))    # 契约 §5.7（2026-09-30）：blocked/skipped ⇒ test.skip（状态真相源 = 索引）。
     state = case.get("_state", "")

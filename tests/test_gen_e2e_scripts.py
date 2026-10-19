@@ -2077,31 +2077,31 @@ def test_guard_id_face_strips_inline_comment() -> None:
     assert "# 行内说明" not in spec.split("atlasAwaitAnyDeclared")[1].split(")")[0], spec
 
 
-def test_guard_splits_anchor_from_presence_only_ids() -> None:
-    """D114（issue #26）：守卫拆两段 —— 锚点带全量清单，presence 循环只收「纯声明」id。
+def test_guard_is_anchor_only_and_never_backfills_presence() -> None:
+    """D114（issue #26，**同日修正**）：守卫 = **单段页面就绪锚点**，不对任何 id 在 goto 时刻做 presence 要求。
 
-    口径：`guard_only = testid: − (step 目标 ∪ expected 目标)`。被 step 触碰的 id 由该 step
-    的原生自动等待承接、被 expected 触碰的由断言的自动轮询承接；两者都**不**预先要求在场。
-    只有「声明了却从不被操作/断言」的 id 才需要在场（那正是「守卫型声明」的本义）。
-    回退到旧形态（全量清单一律 `toHaveCount(1)`）⇒ 本钉子红（`shell-anchor` 以外的 id 会回到循环里）。
+    为何删掉「纯在场声明」段（现场证据）：静态双向集合门要求「源码里的每个实然 testid 必须被某条用例的
+    `testid:` 声明」，于是「声明但不操作 / 不断言」是**唯一合法形态**（正是补全该静态门的手段）；
+    若又在 goto 时刻要求它运行时在场，就是把「静态门的补全需求」误当成了「初始态断言」——
+    面板 / 弹层未打开时该元素必然为 0，合法用例死锁（Expected 1 / Received 0）。
+    回退（恢复任一段 presence 循环：全量或子集）⇒ 本钉子红。
     """
     gn = _load_gen()
     case = {
         "id": "E2E-SPLIT-001",
-        "_title": "混合：纯声明 + 被触达",
+        "_title": "声明完整性 + 被触达混合",
         "step": ["click a-btn"],
         "expected": ["after:1 count b-item 2"],
+        # shell-anchor 仅声明（从不被操作 / 断言）= 静态双向集合门的补全形态
         "testid": ["a-btn", "b-item", "shell-anchor"],
     }
     spec = gn.ts_case(case, "/p")
-    # 锚点：全量清单
+    # 锚点：带**全量**声明清单（守卫面不为空、也不被裁剪）
     assert ('await atlasAwaitAnyDeclared(page, ["a-btn", "b-item", "shell-anchor"], '
             'ATLAS_WAIT_TIMEOUT_MS);' in spec), spec
-    # presence 循环：只含纯声明 id，且仍用原生轮询断言（不是即时 count）
-    loop = spec.split("for (const id of")[1].split("}")[0]
-    assert '["shell-anchor"]' in spec, spec
-    assert "a-btn" not in loop and "b-item" not in loop, loop
-    assert "toHaveCount(1)" in spec, spec
+    # 任何 presence 循环都不得出现（全量、子集、空表皆不例外）
+    assert "getByTestId(id)).toHaveCount(1)" not in spec, spec
+    assert "for (const id of [" not in spec, spec
 
 
 def test_strict_mode_actions_and_asserts_use_first() -> None:
