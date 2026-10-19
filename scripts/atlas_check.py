@@ -228,6 +228,31 @@ def check_factory(root: Path, rows: Row, py: str) -> None:
              command=f"{py} -m pytest .atlas/tests -q --no-header", full_output=out, code=code)
 
 
+def check_serial_execution(root: Path, rows: Row) -> None:
+    """「执行串行」门（契约 §7.1，`DESIGN.md` D115，2026-10-19）。
+
+    生成的运行器配置**必须** `workers: 1` + `fullyParallel: false`：靶场是共享有状态环境，
+    同域用例必须按序串行（零步基线先于改态用例）；并行调度会打乱定义序 ⇒ 恒真误报 / 前提被前序污染。
+    手改配置或封装运行方式注入并行 ⇒ **FAIL**（正确性纪律，不是「过期」的新鲜度问题 ⇒ 不降 WARN）。
+    """
+    cfg = root / "product" / "e2e" / "scripts" / "playwright.config.ts"
+    if not cfg.is_file():
+        rows.add("执行串行", "SKIP", "无 product/e2e/scripts/playwright.config.ts（E2E 资产未建）")
+        return
+    text = cfg.read_text(encoding="utf-8", errors="ignore")
+    missing = []
+    if not re.search(r"\bworkers\s*:\s*1\b", text):
+        missing.append("workers: 1")
+    if not re.search(r"\bfullyParallel\s*:\s*false\b", text):
+        missing.append("fullyParallel: false")
+    if missing:
+        rows.add("执行串行", "FAIL",
+                 "运行器配置未串行：缺 " + " / ".join(missing) +
+                 "（契约 §7.1：同域用例必须按序串行；共享有状态靶场并行会污染前提）")
+    else:
+        rows.add("执行串行", "ok", "workers: 1 + fullyParallel: false")
+
+
 def check_generated(root: Path, rows: Row, py: str) -> None:
     gen = root / ".atlas" / "scripts" / "gen_e2e_scripts.py"
     if not gen.is_file():
@@ -587,6 +612,7 @@ def main() -> int:
         check_factory(root, rows, sys.executable)
     check_generated(root, rows, sys.executable)
     check_review_report(root, rows)
+    check_serial_execution(root, rows)
     check_drift(root, rows)
     check_version(root, rows)
     if not args.fast:

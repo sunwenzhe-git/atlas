@@ -2104,6 +2104,26 @@ def test_guard_is_anchor_only_and_never_backfills_presence() -> None:
     assert "for (const id of [" not in spec, spec
 
 
+def test_config_declares_serial_execution() -> None:
+    """契约 §7.1（`DESIGN` D115，2026-10-19）：生成的运行器配置**必须**声明串行执行。
+
+    理由：靶场是共享有状态环境，同域用例互相污染前序状态；零步基线必须先于改态用例
+    （并行调度会打乱定义序 ⇒ 恒真误报 / 前提被前序污染）。
+    本钉同时钉**注释出处**：该纪律的正文在 §7.1；曾经漂到 §8（§8 实为校验清单
+    8.1 validate_testids / 8.2 validate_e2e_index / 8.3 validate_e2e_mocks）⇒ 读注释的人找不到依据。
+    变异 MD115：摘掉 config 的 `workers: 1` 发射 ⇒ 本钉红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        cfg = (root / "product" / "e2e" / "scripts" / "playwright.config.ts").read_text(encoding="utf-8")
+        assert "workers: 1" in cfg, cfg[:900]
+        assert "fullyParallel: false" in cfg, cfg[:900]
+        assert "§7.1" in cfg, cfg[:900]
+        assert "rings/e2e §8" not in cfg, cfg[:900]
+
+
 def test_strict_mode_actions_and_asserts_use_first() -> None:
     """Strict Mode 兼容：单体动作与单体状态断言统一发射 .first() / .filter().first()，
     避免多实例同名元素抛出 strict mode violation；count 保持原样不加 .first()。

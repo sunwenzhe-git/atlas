@@ -908,3 +908,31 @@ def test_check_review_report_exposes_fake_stub_and_warns_baseline() -> None:
         assert row2["status"] == "WARN", row2
 
 
+
+
+def test_serial_execution_gate_bites_on_parallel_config() -> None:
+    """契约 §7.1（`DESIGN` D115）：手改运行器配置成并行 ⇒「执行串行」门 **FAIL**（不是 WARN）。
+
+    直接测门函数（不起子进程）：合规配置 ⇒ `ok`；改成 `workers: 4 / fullyParallel: true` ⇒ `FAIL`。
+    变异 MD115：把门里的 `workers` 判据摘掉 ⇒ 本钉后半变红；还原逐字节一致。
+    """
+    spec = importlib.util.spec_from_file_location("atlas_check_under_test", CK)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        scripts = root / "product" / "e2e" / "scripts"
+        scripts.mkdir(parents=True)
+        cfg = scripts / "playwright.config.ts"
+        def gate(text: str) -> str:
+            cfg.write_text(text, encoding="utf-8")
+            rr = mod.Row()
+            mod.check_serial_execution(root, rr)
+            return rr.rows[-1]["status"]
+
+        # 合规 ⇒ ok
+        assert gate("export default defineConfig({ workers: 1, fullyParallel: false });\n") == "ok"
+        # **逐判据隔离**（只破 workers / 只破 fullyParallel 都必须 FAIL）——
+        # 否则「两判据同破」的夹具会让任意一条判据被摘掉时仍绿（门钉失效）。
+        assert gate("export default defineConfig({ workers: 4, fullyParallel: false });\n") == "FAIL"
+        assert gate("export default defineConfig({ workers: 1, fullyParallel: true });\n") == "FAIL"
