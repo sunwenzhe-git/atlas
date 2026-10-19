@@ -433,8 +433,28 @@ def ts_case(case: dict, url: str, base: str = "") -> str:
     # 契约 §5.5（2026-10-16，R1 同类的守卫面侧）：`testid:` **项**与 `step:` 项同形，同样可带
     # 行内 `#` 说明 —— 逐项经同一 `strip_inline_comment`（与零步基线侧 `case_testids` 同口径）。
     # 不剥则守卫面发射带注释的 id（如 `["foo   # 行内说明"]`）⇒ `toHaveCount(1)` 恒不命中 ⇒ 假红。
-    ids = json.dumps([strip_inline_comment(t).strip() for t in (case.get("testid") or [])],
-                     ensure_ascii=False)
+    declared = [strip_inline_comment(t).strip() for t in (case.get("testid") or [])]
+    ids = json.dumps(declared, ensure_ascii=False)
+    # 契约 §5.5 / §7.1（DESIGN D114，2026-10-19，issue #26）：元素齐全守卫拆两段——
+    #   ① **页面就绪锚点**：声明的 id 里「任意一个」在场 ⇒ 页面已渲染（`expect.poll` 原生轮询；
+    #      一个都没出现 ⇒ 超时并点名整份清单，不静默）；
+    #   ② **纯在场声明**（声明了但没有任何 step 触碰过的 id）：仍逐个 `toHaveCount(1)` 严判。
+    #   ③ **已被 step 或 expected 触达的 id 不预先要求在场**：前者由该 step 的原生自动等待保证，
+    #      后者由断言的自动轮询保证（§5.5 §B99 语义不变）；动作产物元素初始态必然为 0，
+    #      预先要求在场只能靠实现侧 hidden 占位槽满足——那是把测试义务搬进产品 DOM（D114 被否项）。
+    # 该拆分**确定性派生**自分片自身声明（无猜测）：守卫面不会退化成空表——锚点始终发射且带全量清单。
+    def _expected_tid(line: str) -> str:
+        _kind, body = split_prefix(line)
+        _anchor, unanchored = split_after(body)
+        return parse_line(unanchored)[1]
+
+    used_tids = {parse_line(s)[1] for s in (case.get("step") or [])}
+    used_tids |= {_expected_tid(e) for e in (case.get("expected") or [])}
+    guard_only = [t for t in declared if t not in used_tids]
+    guard_block = f"  await atlasAwaitAnyDeclared(page, {ids}, ATLAS_WAIT_TIMEOUT_MS);\n"
+    if guard_only:
+        guard_block += (f"  for (const id of {json.dumps(guard_only, ensure_ascii=False)}) {{\n"
+                        f"    await expect(page.getByTestId(id)).toHaveCount(1);\n  }}\n")
     step_note = "\\n".join("//   - " + s for s in case.get("step", []))
     assert_note = "\\n".join("//   - " + s for s in case.get("expected", []))    # 契约 §5.7（2026-09-30）：blocked/skipped ⇒ test.skip（状态真相源 = 索引）。
     state = case.get("_state", "")
@@ -645,7 +665,7 @@ def ts_case(case: dict, url: str, base: str = "") -> str:
         f"{mock_open}"
         f"{session_open}"
         f"  await page.goto('{guard_url}');\n"
-        f"  for (const id of {ids}) {{\n    await expect(page.getByTestId(id)).toHaveCount(1);\n  }}\n"
+        f"{guard_block}"
         f"{indented}\n}});\n"
     )
     if wrap_open:
@@ -1449,6 +1469,19 @@ def main() -> int:
             "async function tsVisible(page: any, tid: string): Promise<boolean> {\n"
             "  const loc = page.getByTestId(tid);\n"
             "  return (await loc.count()) > 0 && (await loc.first().isVisible());\n"
+            "}\n"
+            "// 契约 §5.5 / §7.1（DESIGN D114）：元素齐全守卫第一段 = 页面就绪锚点。\n"
+            "// 声明的 id 里任意一个在场 ⇒ 页面已渲染；一个都没出现 ⇒ 超时并点名整份清单。\n"
+            "// 动作产物元素不参与本段（初始态必然为 0），其在场性由触碰它的 step 自动等待保证。\n"
+            "async function atlasAwaitAnyDeclared(page: any, ids: string[], timeout: number) {\n"
+            "  const hit = async () => {\n"
+            "    for (const id of ids) { if ((await page.getByTestId(id).count()) > 0) return true; }\n"
+            "    return false;\n"
+            "  };\n"
+            "  await expect.poll(hit, {\n"
+            "    timeout,\n"
+            "    message: `元素齐全守卫：声明的 testid 无一在场（页面未渲染 / 路由或鉴权不对）: ${JSON.stringify(ids)}`,\n"
+            "  }).toBe(true);\n"
             "}\n"
             "async function tsVis(page: any, tid: string) {\n"
             "  // 契约 §7.1：读值断言须先可见；不可见 ⇒ null（= 不成立，不抛错）\n"

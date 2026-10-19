@@ -162,8 +162,9 @@ def test_guard_route_used_for_element_guard_navigation() -> None:
         text = spec_of(root)
         seg = text[text.index("E2E-HOME-001"):]
         i_guard = seg.index("await page.goto('/home/42')")
-        # 紧跟其后必须是存在守卫（而用例自身的 goto 在它之后）
-        assert "for (const id of" in seg[i_guard:i_guard + 200], seg[i_guard:i_guard + 200]
+        # 紧跟其后必须是**元素齐全守卫的页面就绪锚点**（D114 拆两段后的第一段；
+        # 用例自身的 goto 在它之后）
+        assert "atlasAwaitAnyDeclared(page," in seg[i_guard:i_guard + 200], seg[i_guard:i_guard + 200]
 
 
 def test_guard_absent_keeps_output_byte_identical() -> None:
@@ -261,9 +262,9 @@ def test_injected_param_carried_to_guard_and_goto() -> None:
         seg = text[text.index("E2E-HOME-001"):]
         # 守卫导航（用例体首条 goto）与用例自己的 goto：都带 base ⊕ 内联参数
         assert seg.count("await page.goto('/home?tenant=9&flag=on');") >= 2, seg[:800]
-        # 守卫紧随其后就是存在守卫（而不是被 step 抢到前面）
+        # 守卫紧随其后就是页面就绪锚点（而不是被 step 抢到前面）
         i_guard = seg.index("await page.goto('/home?tenant=9&flag=on');")
-        assert "for (const id of" in seg[i_guard:i_guard + 200], seg[i_guard:i_guard + 200]
+        assert "atlasAwaitAnyDeclared(page," in seg[i_guard:i_guard + 200], seg[i_guard:i_guard + 200]
 
 
 def test_zero_step_baseline_carries_no_injected_param() -> None:
@@ -1262,21 +1263,30 @@ def test_mock_case_exempt_from_zero_step_baseline() -> None:
 
 
 def test_testid_guard_uses_auto_wait_not_immediate_count() -> None:
-    """契约 §7.1（`3509 §B99`②）：元素齐全守卫必须**自动等待**判定——
+    """契约 §7.1（`3509 §B99`②）：元素齐全守卫必须**自动等待**判定。
 
-    `expect(...).toHaveCount(1)` 是运行器原生轮询断言（SPA 异步渲染下即时 `count()`
-    判存在性必红）；守卫缺失 testid 时由 expect 超时失败并点名（不静默）。
+    2026-10-19（DESIGN D114，issue #26）起守卫拆两段：① **页面就绪锚点**
+    `atlasAwaitAnyDeclared(...)`（内部 `expect.poll` 原生轮询；一个都不在场 ⇒ 超时并点名整份清单）；
+    ② **纯在场声明**（声明了但 step/expected 都没触达过的 id）仍逐个 `toHaveCount(1)`。
+    CASE 夹具两项都被 step/expected 触达 ⇒ **只发锚点**、不得再发 presence 循环（否则即把
+    测试义务推回实现侧）；锚点带**全量**清单，任何一段都不得退化为「即时 `count()` 判存在性」。
     """
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         make(root)
         assert run(root, "--apply").returncode == 0
         text = spec_of(root)
-        guard = ("for (const id of [\"home-cta-btn\", \"home-title\"]) {\n"
-                 "    await expect(page.getByTestId(id)).toHaveCount(1);\n"
-                 "  }")
         # 守卫面 = 该用例 `testid:` **应然清单**（2026-10-16，issue #R2；CASE 夹具两项）
-        assert guard in text, text[:1200]
+        anchor = ('await atlasAwaitAnyDeclared(page, ["home-cta-btn", "home-title"], '
+                  'ATLAS_WAIT_TIMEOUT_MS);')
+        assert anchor in text, text[:1200]
+        # 两项均被触达 ⇒ 不得再出现「全量清单的 presence 循环」（D114；
+        # helper 内部的 for 循环不在此列）
+        assert 'for (const id of ["home-cta-btn", "home-title"])' not in text, text[:1200]
+        # 自动等待而非即时判定：锚点内部走 expect.poll，且在失败消息里点名整份清单
+        helper = text.split("async function atlasAwaitAnyDeclared")[1].split("\n}")[0]
+        assert "expect.poll(" in helper, helper
+        assert "无一在场" in helper, helper
         assert ".count() > 0 && (await" not in text.split("test(")[0].split("tsVisible")[0], text[:600]
 
 
@@ -2008,11 +2018,10 @@ def test_guard_watches_case_testid_list_not_first_step() -> None:
         "testid": ["static-create-btn", "dynamic-item", "dynamic-item-delete-btn"],
     }
     spec1 = gn.ts_case(case1, "/dynamic")
-    assert ('for (const id of ["static-create-btn", "dynamic-item", "dynamic-item-delete-btn"]) {'
-            in spec1), spec1
-    # 应然清单里的动态项**必须**在守卫面内（契约要求的红：未打占位槽的项目在此真红，是正确反馈）
-    guard1 = spec1.split("for (const id of")[1].split("}")[0]
-    assert "dynamic-item" in guard1, guard1
+    # D114：锚点带**全量**应然清单（含动态项）；三项均被 step/expected 触达 ⇒ 无 presence 循环
+    assert ('await atlasAwaitAnyDeclared(page, ["static-create-btn", "dynamic-item", '
+            '"dynamic-item-delete-btn"], ATLAS_WAIT_TIMEOUT_MS);' in spec1), spec1
+    assert "for (const id of" not in spec1, spec1
 
     # 场景 2：step[0] 是无 testid 的 goto/refresh ⇒ 守卫面仍 = 该用例 `testid:` 清单（非空）
     case2 = {
@@ -2023,8 +2032,8 @@ def test_guard_watches_case_testid_list_not_first_step() -> None:
         "testid": ["static-btn"],
     }
     spec2 = gn.ts_case(case2, "/dynamic")
-    assert 'for (const id of ["static-btn"]) {' in spec2, spec2
-    assert "for (const id of []) {" not in spec2, spec2
+    assert 'await atlasAwaitAnyDeclared(page, ["static-btn"], ATLAS_WAIT_TIMEOUT_MS);' in spec2, spec2
+    assert '["static-btn"]' in spec2.split("atlasAwaitAnyDeclared")[1].split(")")[0], spec2
 
 
 def test_goto_first_step_keeps_guard_non_empty() -> None:
@@ -2042,8 +2051,9 @@ def test_goto_first_step_keeps_guard_non_empty() -> None:
         "testid": ["detail-save-btn"],
     }
     spec = gn.ts_case(case, "/detail")
-    assert 'for (const id of ["detail-save-btn"]) {' in spec, spec
-    assert "for (const id of []) {" not in spec, spec
+    # D114：锚点带该用例 `testid:` 清单且不得为空表（step[0] 是 goto 也不退化）
+    assert 'await atlasAwaitAnyDeclared(page, ["detail-save-btn"], ATLAS_WAIT_TIMEOUT_MS);' in spec, spec
+    assert '[]' != spec.split("atlasAwaitAnyDeclared")[1].split(")")[0].strip(), spec
 
 
 def test_guard_id_face_strips_inline_comment() -> None:
@@ -2062,8 +2072,36 @@ def test_guard_id_face_strips_inline_comment() -> None:
         "testid": ["item-save-btn   # 行内说明"],
     }
     spec = gn.ts_case(case, "/item")
-    assert 'for (const id of ["item-save-btn"]) {' in spec, spec
-    assert "# 行内说明" not in spec.split("for (const id of")[1].split("}")[0], spec
+    # D114：注释剥离落在**锚点面**（原守卫面，现已拆两段的前一段）
+    assert 'await atlasAwaitAnyDeclared(page, ["item-save-btn"], ATLAS_WAIT_TIMEOUT_MS);' in spec, spec
+    assert "# 行内说明" not in spec.split("atlasAwaitAnyDeclared")[1].split(")")[0], spec
+
+
+def test_guard_splits_anchor_from_presence_only_ids() -> None:
+    """D114（issue #26）：守卫拆两段 —— 锚点带全量清单，presence 循环只收「纯声明」id。
+
+    口径：`guard_only = testid: − (step 目标 ∪ expected 目标)`。被 step 触碰的 id 由该 step
+    的原生自动等待承接、被 expected 触碰的由断言的自动轮询承接；两者都**不**预先要求在场。
+    只有「声明了却从不被操作/断言」的 id 才需要在场（那正是「守卫型声明」的本义）。
+    回退到旧形态（全量清单一律 `toHaveCount(1)`）⇒ 本钉子红（`shell-anchor` 以外的 id 会回到循环里）。
+    """
+    gn = _load_gen()
+    case = {
+        "id": "E2E-SPLIT-001",
+        "_title": "混合：纯声明 + 被触达",
+        "step": ["click a-btn"],
+        "expected": ["after:1 count b-item 2"],
+        "testid": ["a-btn", "b-item", "shell-anchor"],
+    }
+    spec = gn.ts_case(case, "/p")
+    # 锚点：全量清单
+    assert ('await atlasAwaitAnyDeclared(page, ["a-btn", "b-item", "shell-anchor"], '
+            'ATLAS_WAIT_TIMEOUT_MS);' in spec), spec
+    # presence 循环：只含纯声明 id，且仍用原生轮询断言（不是即时 count）
+    loop = spec.split("for (const id of")[1].split("}")[0]
+    assert '["shell-anchor"]' in spec, spec
+    assert "a-btn" not in loop and "b-item" not in loop, loop
+    assert "toHaveCount(1)" in spec, spec
 
 
 def test_strict_mode_actions_and_asserts_use_first() -> None:
