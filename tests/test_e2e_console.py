@@ -210,6 +210,28 @@ def test_snapshot_carries_mock_lines_for_badge() -> None:
         assert case["mock"] == ["GET /api/v1/users -> fixtures/users/empty.json"], case["mock"]
 
 
+def test_snapshot_missing_index_fails_loud_not_empty_list() -> None:
+    """`e2e-index.md` 不存在 ⇒ 抛 SnapshotError 并带「怎么补建」指引，**不得**返回空用例列表。
+
+    取证：控制台取用例报裸 FileNotFoundError 且穿透到 HTTP handler 线程打出 traceback；
+    同文件 `page_routes()` 早有 `is_file()` 守卫 ⇒ 缺守卫是遗漏而非设计。空列表会让读者
+    误判成「索引里没有这条用例」而非「索引不存在」，属静默降级（SnapshotError docstring 明令禁止）。
+    变异证明：摘掉本守卫 ⇒ 本用例红（回落裸 FileNotFoundError）。
+    """
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_project(Path(tmp))
+        (root / "product" / "e2e" / "e2e-index.md").unlink()   # 夹具前提：用例资产未产出
+        try:
+            snap = cons.snapshot(root)
+        except cons.SnapshotError as exc:
+            msg = str(exc)
+            assert "e2e-index.md" in msg, msg
+            assert "reference.md" in msg, msg          # 指向补建流程，不只说「读不出来」
+        else:
+            raise AssertionError(f"缺索引未报错，返回了 {snap!r}")
+
+
 def test_node_ids_extracts_ts_lines_and_skips_blocked() -> None:
     """契约 §10.1（2026-10-12 迁移批）：node_ids() 解析 .spec.ts 中的行号，
     作为 Playwright 原生单用例过滤标记（file:line）；且 test.skip（blocked 用例）

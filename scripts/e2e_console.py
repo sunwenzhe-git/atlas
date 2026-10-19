@@ -190,6 +190,14 @@ def snapshot(root: Path) -> dict:
     mod = load_validator(root)
     e2e = root / "product" / "e2e"
     index = e2e / "e2e-index.md"
+    if not index.is_file():
+        # 缺真相源与「列头对不上」同属读不出来，都走 SnapshotError 大声报错通道——
+        # 静默返回空列表会让读者误判成「索引里没有这些用例」而非「索引不存在」。
+        # 取证：同文件 page_routes() 早于本处就有 is_file() 守卫，本处是遗漏而非设计。
+        raise SnapshotError(
+            f"用例真相源不存在：{index.relative_to(root) if index.is_relative_to(root) else index}。"
+            "E2E 用例资产尚未产出，控制台读不出任何用例（不是「索引里没有这条用例」）。"
+            "按 rings/e2e/reference.md §3 先产出总索引与页面分片，再重启本控制台。")
     blocks, _pages = mod.gather_shards(e2e / "cases")
 
     rows: list[dict] = []
