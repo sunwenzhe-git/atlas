@@ -1472,13 +1472,54 @@ def test_select_option_locating_is_label_based_and_rejects_ambiguity() -> None:
         assert "startsWith(want)" in body, body
         assert "includes(want)" in body, body
         # ③ 唯一性判据 + 响亮失败（列出可见选项，让下一次失败可诊断）
-        #    必须锚定**整条拒绝语句**：`hit.length !== 1` 这个子串在降级两行里也出现，
-        #    只查子串 ⇒ 摘掉拒绝行钉子照样绿（MB14 实测：第一版判据就是废的）。
-        assert "if (hit.length !== 1) return { ok: false, visible: shown.map(nameOf) }" in body, body
+        #    必须锚定**整条判据语句**：`hit.length` 这个子串在降级两行里也出现，
+        #    只查子串 ⇒ 摘掉判据行钉子照样绿（MB14 实测：第一版判据就是废的）。
+        #    （D117 起形态由 `ok:false` 改为三值 `status`；「歧义即拒 + 列出可见选项」意图不变）
+        assert "if (hit.length === 1) return { status: 'unique', idx: all.indexOf(hit[0]), visible: shown.map(nameOf) }" in body, body
+        assert "status: hit.length > 1 ? 'ambiguous' : 'none'" in body, body
         assert "可见选项=" in body, body
         # ④ 候选只取**几何可见**元素（避免 hidden 选项参与匹配）
         assert "getBoundingClientRect()" in body, body
         # ⑤ 原生分支仍在（实现无关：<select> 走 selectOption）
+        assert "selectOption({ label })" in body, body
+
+
+def test_select_polls_until_options_are_positioned_and_refuses_ambiguity() -> None:
+    """契约 §5.5（2026-10-19，`DESIGN.md` D117）：`select` 的就绪门**不得**依赖全局候选集的 attached。
+
+    现场（v2 真跑，整份 ×3 遍中 2 次红）：页面上常驻 9~10 个 `[role=menuitem]` 顶部导航 ⇒ 旧就绪门
+    （`[role=option],[role=menuitem]` 的 `attached`）被环境项秒满足 ⇒ 采样落在 rc-select 尚未定位
+    （`getBoundingClientRect` 零盒）的窗口内 ⇒ 候选只剩导航项，报「可见选项=[应用市场,…]」。
+    失败快照反证：触发器已 `[expanded]`、listbox 内两个选项都在 —— 采样比「可见」早了一步。
+    定案 = **按命中态轮询采样**：0 命中（未就绪）⇒ 轮询到上限；>1 命中（歧义）⇒ 立即拒绝（D112 语义不变）；
+    轮询原语 = `expect.poll`（与页面就绪锚点同一机制，**不引入固定等待** —— 首版用 `waitForTimeout` 做轮询间隔，
+    被本文件既有门「生成物不得含固定等待」当场吹红，改回轮询原语）。
+    """
+    case_text = CASE.replace(
+        "  - click home-cta-btn          # 点击主操作按钮",
+        "  - select home-cta-btn 首页    # 选项定位口径",
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=case_text)
+        assert run(root, "--apply").returncode == 0
+        ts = spec_of(root)
+        start = ts.index("async function atlasSelect(")
+        body = ts[start:ts.index("\nasync function ", start + 1)]
+        # ① 旧就绪门（全局候选集的 attached 等待）必须消失
+        assert "waitFor({ state: 'attached'" not in body, body
+        # ② 轮询原语 = expect.poll（**不得**用固定等待作轮询间隔）
+        assert "await expect.poll(async () => { pick = await atlasPick(); return pick.status; }," in body, body
+        assert ".not.toBe('none')" in body, body
+        assert "waitForTimeout" not in body, body
+        # ③ 命中态三值齐
+        assert "status: 'unique'" in body, body
+        assert "status: hit.length > 1 ? 'ambiguous' : 'none'" in body, body
+        # ④ 歧义**立即**拒绝：轮询只为「未就绪」而设（只对 `none` 继续等）
+        assert "return pick.status; }," in body, body
+        # ⑤ 响亮失败文案不变（仍列出可见选项）
+        assert "可见选项=" in body, body
+        # ⑥ 原生分支仍在（实现无关）
         assert "selectOption({ label })" in body, body
 
 
