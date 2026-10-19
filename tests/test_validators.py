@@ -789,6 +789,42 @@ def test_testids_landing_correct_passes() -> None:
         assert rows["应然落点"]["level"] == "PASS", rows["应然落点"]
 
 
+def test_testids_landing_in_progress_page_is_warn_not_fail() -> None:
+    """issue #34：实现状态非「已实现」的页，落点待落地降为 WARN，不阻断正向前置设计。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD.replace(
+            "- home-title web/src/home.html", "- home-title web/src/not-yet.html"))
+        # 页面表中 home 状态为 实现中
+        index_text = (
+            INDEX_GOOD + "\n## 页面表\n\n| 页面 | 路由 | 描述 | 实现状态 |\n"
+            "|---|---|---|---|\n| home | / | 首页 | 实现中 |\n"
+        )
+        mk_index(root, index_text)
+        rows = {c["check"]: c for c in vt.validate(root).checks}
+        assert rows["应然落点"]["level"] == "WARN", rows["应然落点"]
+        assert "未实现页落点先行待落地" in rows["应然落点"]["detail"]
+
+
+def test_testids_test_files_and_fixtures_are_not_scanned() -> None:
+    """issue #27/#33：测试目录与测试文件中的 data-testid 不计入实然声明面，避免回声产生假重复。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root)
+        # 在 __tests__ 和 *.test.tsx 中引用相同 testid
+        test_dir = root / "web" / "src" / "__tests__"
+        test_dir.mkdir(parents=True, exist_ok=True)
+        (test_dir / "home.test.tsx").write_text(
+            'expect(screen.getByTestId("home-title")).toBeInTheDocument();', encoding="utf-8")
+        (root / "web" / "src" / "home.spec.ts").write_text(
+            'const el = page.locator(\'[data-testid="home-title"]\');', encoding="utf-8")
+        rows = {c["check"]: c for c in vt.validate(root).checks}
+        # 全站唯一不应报重复
+        assert rows["testid 全站唯一"]["level"] == "PASS", rows["testid 全站唯一"]
+
+
 def test_testids_const_reused_twice_flags_same_file_dup() -> None:
     """坏输入 3：同一常量在同文件被引用两次 ⇒ 同文件重复声明 WARN 且指名该 id。"""
     with tempfile.TemporaryDirectory() as td:
@@ -1707,6 +1743,19 @@ def test_prd_struct_ac_list_must_reference_existing_ac() -> None:
         (root / "product" / "prd" / "demo-prd.md").write_text(
             FM_DOMAIN + PRD_DEMO.format(ac="AC-HOME-001", rows="| `AC-HOME-777` | 幽灵 AC |"),
             encoding="utf-8")
+        bad = {c["check"]: c["status"] for c in vpr.validate(root).checks}
+        assert bad["参数4 追溯完整"] == "FAIL", bad
+
+
+def test_prd_domain_missing_core_sections_fails() -> None:
+    """issue #29：域级 PRD 缺核心必填章节或缺结构类清单小节 ⇒ FAIL。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_prd(root)
+        # 破坏二、功能清单
+        bad_text = (FM_DOMAIN + PRD_DEMO.format(ac="AC-HOME-001", rows="")).replace("## 二、功能清单", "## 功能草案")
+        (root / "product" / "prd" / "demo-prd.md").write_text(bad_text, encoding="utf-8")
         bad = {c["check"]: c["status"] for c in vpr.validate(root).checks}
         assert bad["参数4 追溯完整"] == "FAIL", bad
 
@@ -3129,6 +3178,42 @@ e2e:
     rows, res = _gate(base + "  app_base_url: http://127.0.0.1:8000\n  app_login:\n    mode: none\n")
     assert res.status == "PASS", rows
     assert "e2e 登录形态未声明" not in rows, rows
+
+
+def test_stack_profile_app_login_body_format() -> None:
+    """issue #35：body_format 枚举检验（form | json，非法值 FAIL）。"""
+    def _gate(profile_text: str):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "product").mkdir(parents=True)
+            (root / "app").mkdir(parents=True)
+            (root / "product" / "stack-profile.yaml").write_text(profile_text, encoding="utf-8")
+            res = vsp.validate(root)
+            return {c["check"]: c for c in res.checks}, res
+
+    base = """product: demo
+apps:
+  - name: app
+    path: app
+    kind: frontend
+    role: landing
+    stack: demo
+origin: greenfield
+e2e:
+  runner: node-playwright
+  app_login:
+    mode: real
+    endpoint: /login
+    username_field: u
+    password_field: p
+    token_key: token
+    storage_key: jwt
+"""
+    rows, res = _gate(base + "    body_format: json\n")
+    assert rows["e2e.app_login.body_format 枚举"]["level"] == "PASS"
+
+    rows, res = _gate(base + "    body_format: invalid\n")
+    assert rows["e2e.app_login.body_format 枚举"]["level"] == "FAIL"
 
 
 def test_stack_profile_mock_auto_and_fixtures_dir() -> None:

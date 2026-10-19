@@ -4,6 +4,30 @@
 
 ---
 
+## [Unreleased]
+
+### 🩹 自感知缺陷与工件健壮性一揽子修复（#25 / #27 / #28 / #29 / #30 / #34 / #35，D119）
+
+* **【#35 登录预置深度取值与 JSON 支持】**：
+  - `scripts/gen_e2e_scripts.py` 生成的 `atlas-auth.setup.ts` 中，令牌键取值改用 `tokenKey.split('.').reduce(...)` 点号路径解构，彻底解决嵌套响应体（如 `data.token`）取到 `undefined` 击崩浏览器 context 的缺陷；非字符串或空值大声抛出带状态码与截断响应体的 Error 并阻断损坏的 `state.json`；
+  - `stack-profile.yaml` 的 `app_login` 支持可选声明 `body_format: form | json`（缺省 `form` 严格保持向下兼容），`validate_stack_profile.py` 补充枚举校验；
+  - 登录异常与非合法 JSON 响应统一 try-catch 拦截，且启动时优先保留本地合法存量 `stateFile`（保护人工 `codegen` 录制产物不被覆写）。
+* **【#27/#33 测试目录与文件过滤】**：
+  - `validators/validate_testids.py` 扫描过滤 `__tests__`、`test`、`tests`、`__mocks__`、`__snapshots__`、`e2e`、`fixtures` 目录及 `*.test.*`、`*.spec.*`、`*.cy.*`、`*.stories.*` 文件；契约 `rings/e2e/reference.md` 明确「测试断言是页面元素的回声，不是页面声明处」，消除测试代码带来的全站重复假红。
+* **【#34 应然先行落点门分档】**：
+  - `validators/validate_testids.py` 应然落点门与双向集合门对齐，联动 `product/e2e/e2e-index.md` 页面表 `实现状态`；未实现/实现中页面的未落地落点降级为 `WARN`（未实现页落点先行待落地），正向前置设计不再被误判为 `FAIL（虚假陈述）`；翻档为已实现后严格保持 FAIL 严判。
+* **【#29 域级 PRD 核心资产门】**：
+  - `validators/validate_prd.py` 增加对域级 PRD 核心资产（二、四、五章及 `#### 结构类 AC 清单` 小节）的机器存在性严判，杜绝空壳域 PRD 假绿通道，同时兼容存量接管开户最小集。
+* **【#25 结构环事实载体解绑根 README】**：
+  - `_meta.json` 引入可选字段 `truth_carriers`，支持语义别名（如 `quickstart` / `test_status`）与自解释注释；契约散文与生成器提示文解绑根 README，适配 Agent-first 与不写根 README 的存量项目。
+* **【#28 存量零 testid 三步推进链】**：
+  - 契约 `rings/e2e/reference.md` 明确推进责任方与三步链，利用现成索引中的 `blocked` 状态与 Playwright 原生 `test.skip(reason)` 隔离待埋点状态与业务真失败。
+* **【#30 独立审查 executed 标记与控制台守卫】**：
+  - `review.json` 引入 `executed: boolean`（缺省 true 向后兼容），自愈基线写入口注入 false（状态下限为 WARN）；
+  - `scripts/e2e_console.py` 的 `snapshot()` 在读索引前增加存在性守卫，抛 `SnapshotError` 防线程崩溃。
+
+---
+
 ## [v0.1.0-beta.30] - 2026-10-19
 
 ### 🧷 执行串行落门（D115）+ `attr` 空值形态（D116）+ `select` 就绪门按命中态轮询（D117）

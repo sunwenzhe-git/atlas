@@ -101,6 +101,11 @@ DEFAULT_ORIGIN = "greenfield"
 FRONTEND_KINDS = ("frontend", "fullstack")
 SKIP_DIRS = {"node_modules", ".git", "dist", "build", ".next", "coverage", "__pycache__",
              ".venv", "venv", "vendor", ".cache", "out", "target"}
+# 测试文件/目录**不入实然集合**（issue #27/#33，2026-10-19）：单元测试与夹具里的
+# `querySelector('[data-testid=x]')` 是页面元素的**回声**，不是声明处 —— 计进「声明处计数」
+# 会把「真实元素 + 自身测试文件里的同名字符串」判成全站重复假红（同文件重复 WARN 同理）。
+TEST_SKIP_DIRS = {"__tests__", "test", "tests", "__mocks__", "__snapshots__", "e2e", "fixtures"}
+TEST_FILE_MARKS = (".test.", ".spec.", ".cy.", ".stories.")
 MAX_SCAN_BYTES = 2 * 1024 * 1024
 CASE_BLOCK = re.compile(r"```atlas-case\s*\n(.*?)```", re.S)
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)+$")
@@ -218,6 +223,8 @@ def _scan_files(roots: list) -> list:
         for p in cands:
             if not p.is_file() or any(part in SKIP_DIRS for part in p.parts):
                 continue
+            if any(part in TEST_SKIP_DIRS for part in p.parent.parts) or any(m in p.name for m in TEST_FILE_MARKS):
+                continue  # 测试面与夹具不是页面声明处（issue #27/#33）
             try:
                 if p.stat().st_size > MAX_SCAN_BYTES:
                     continue
@@ -702,11 +709,15 @@ def validate(root: Path) -> Result:
     # 就能把门凑绿，而用例仍红（现场实证：两条应然 id 所描述的控件在该产品里根本不存在）。
     # 本门把「落点」变成可校验声明：每个应然 id 至少登记一个 `落点: - <tid> <路径>`，
     # 且该文件必须存在、其内必须**可解析**到该 id（口径与全量抽取同源 = `file_testid_decls`）。
-    # 分档：**声明了但不对**（文件不存在 / 文件里解析不到该 id）= 假陈述 ⇒ FAIL；
-    # **未登记落点** = 纪律缺口（存量清零过渡）⇒ WARN（升 FAIL 触发见 shared/gates.md）。
+    # 分档（D88 / issue #34 联动页面实现状态）：
+    #  * 已实现页：**声明了但不对**（文件不存在 / 文件内无可解析声明）= 假陈述 ⇒ FAIL；
+    #  * 未实现/进行中页：正向应然先行（落点已登记但代码尚未埋点/文件未建）⇒ WARN（未实现页落点待落地）；
+    #  * 未登记落点 = 纪律缺口（存量清零过渡）⇒ WARN（升 FAIL 触发见 shared/gates.md）。
     landings = shard_landings(cases, attr_pages)
-    bad_land, no_land = [], []
+    bad_land_hard, bad_land_soft, no_land = [], [], []
     for page, ids in sorted(shard_ids.items()):
+        page_state = (states or {}).get(page, DEFAULT_PAGE_STATE)
+        is_implemented = (page_state == "已实现")
         for tid in sorted(ids):
             paths = (landings.get(page) or {}).get(tid) or []
             if not paths:
@@ -715,18 +726,31 @@ def validate(root: Path) -> Result:
             for relp in paths:
                 cand = root / relp
                 if not cand.is_file():
-                    bad_land.append(f"{page}:{tid} → {relp}（文件不存在）")
+                    err = f"{page}:{tid} → {relp}（文件不存在）"
+                    if is_implemented:
+                        bad_land_hard.append(err)
+                    else:
+                        bad_land_soft.append(f"{err}[{page_state}]")
                     continue
                 try:
                     decls, _occ, tpl = file_testid_decls(
                         strip_comments(cand.read_text(encoding="utf-8", errors="ignore")), attr_pages)
                 except OSError:
-                    bad_land.append(f"{page}:{tid} → {relp}（不可读）")
+                    bad_land_hard.append(f"{page}:{tid} → {relp}（不可读）")
                     continue
                 if tid not in decls and tid not in tpl:
-                    bad_land.append(f"{page}:{tid} → {relp}（该文件内无可解析声明）")
-    if bad_land:
-        res.add("应然落点", "FAIL", f"声明与实然不符={_format_list(bad_land)}")
+                    err = f"{page}:{tid} → {relp}（该文件内无可解析声明）"
+                    if is_implemented:
+                        bad_land_hard.append(err)
+                    else:
+                        bad_land_soft.append(f"{err}[{page_state}]")
+    if bad_land_hard:
+        res.add("应然落点", "FAIL", f"声明与实然不符={_format_list(bad_land_hard)}")
+    elif bad_land_soft:
+        warn_msg = f"未实现页落点先行待落地={_format_list(bad_land_soft)}"
+        if no_land:
+            warn_msg += f"；另未登记落点={_format_list(no_land)}"
+        res.add("应然落点", "WARN", warn_msg)
     elif no_land:
         res.add("应然落点", "WARN",
                 f"未登记落点={_format_list(no_land)} (💡 分片 `落点:` 行登记 `<tid> <相对项目根的路径>`；“落点”是应然 id 承载元素的声明式证据，见契约 §5.5)")

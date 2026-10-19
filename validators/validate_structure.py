@@ -347,6 +347,29 @@ def validate(root: Path) -> Result:
             f"H ∈ {'covered|added|skipped（greenfield）' if greenfield else 'covered|added'}；"
             f"散文/取证只准接在 `：` 或 `（` 之后）")
 
+    # 事实载体 truth_carriers（issue #25，2026-10-19）：允许无根 README 的项目声明 A/H 事实落点
+    carriers = meta.get("truth_carriers")
+    if carriers is not None:
+        if not isinstance(carriers, dict):
+            res.add("类别覆盖 · 事实载体", False, f"truth_carriers 应为映射对象，实得 {type(carriers).__name__}")
+        else:
+            carrier_issues = []
+            for raw_k, rel_path in carriers.items():
+                if not isinstance(rel_path, str) or not rel_path.strip():
+                    carrier_issues.append(f"{raw_k}: 路径为空")
+                    continue
+                p = root / rel_path.strip()
+                if not p.is_file():
+                    carrier_issues.append(f"{raw_k} 载体文件不存在: {rel_path}")
+                else:
+                    try:
+                        if p.stat().st_size == 0:
+                            carrier_issues.append(f"{raw_k} 载体文件为空: {rel_path}")
+                    except OSError:
+                        carrier_issues.append(f"{raw_k} 载体文件不可读: {rel_path}")
+            res.add("类别覆盖 · 事实载体", not carrier_issues,
+                    "；".join(carrier_issues) if carrier_issues else "载体文件均存在且非空")
+
     # 适配器缺口登记（F42，2026-10-15，issue #3 ④）
     # 接线前置未满足时（适配器 0 命中 / 产出不自洽），契约要求「不接线 + 把缺口登记下来」。
     # 不登记的话两种处境在产物里**同形**（都是 `maintained_by: agent`）：

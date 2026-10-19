@@ -158,7 +158,7 @@ def render_tour(root: Path, meta: dict) -> tuple[str, str]:
             "## 维护约定", "",
             "- **事实区**：标记内由 `refresh_structure.py`（`after_finish` hook）刷新。",
             "- **语义区**：标记外内容由 AI / `trellis-update-spec` 维护。",
-            "- 技术栈 / 启动、测试 / 运行见项目根 `README.md`。"]
+            "- 技术栈 / 启动、测试 / 运行见 `_meta.json` 的 `truth_carriers`（缺省为项目根 `README.md`）。"]
     return fm, "".join(l + "\n" for l in out)
 
 

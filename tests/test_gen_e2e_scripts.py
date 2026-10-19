@@ -2266,6 +2266,29 @@ def test_auth_setup_idempotent_preserves_existing_state() -> None:
         assert "跳过覆写" in setup
 
 
+def test_setup_real_login_supports_dot_path_token_and_json_body_format() -> None:
+    """issue #35：真实登录支持点号深路径取 token、json body_format 声明，并优先保留合法 stateFile。"""
+    prof = PROFILE.split("  app_login:")[0] + (
+        "  app_login:\n"
+        "    mode: real\n"
+        "    endpoint: /api/v1/auth/login\n"
+        "    username_field: email\n"
+        "    password_field: pass\n"
+        "    token_key: data.token.access_token\n"
+        "    storage_key: auth_jwt\n"
+        "    body_format: json\n"
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=prof)
+        assert run(root, "--apply").returncode == 0
+        setup = (root / "product" / "e2e" / "scripts" / "atlas-auth.setup.ts").read_text(encoding="utf-8")
+        assert "application/json" in setup
+        assert "JSON.stringify" in setup
+        assert "tokenKey.split('.').reduce" in setup
+        assert "保留已有登录态文件（如 codegen 产物），跳过覆写" in setup
+
+
 # ── issue #R4（2026-10-16）：`click` / `hover` 的 `force` 默认 + `native` 步级开关 ──────
 def test_click_hover_force_default_and_native_switch() -> None:
     """契约 §5.5（2026-10-16，issue #R4）：`click` / `hover` **缺省**发 `{ force: true }`

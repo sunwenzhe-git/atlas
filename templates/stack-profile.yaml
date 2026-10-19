@@ -61,8 +61,9 @@ e2e:
   #   endpoint: <OAuth2 表单端点，相对 app_base_url>
   #   username_field: <表单用户名字段名>
   #   password_field: <表单密码字段名>
-  #   token_key: <登录响应 JSON 里的令牌键>
+  #   token_key: <登录响应 JSON 里的令牌键，支持点号路径如 data.token>
   #   storage_key: <前端读取的 localStorage 键>
+  #   body_format: form     # form（缺省 = 表单格式）| json（JSON 载荷格式）
   # 数据播种通道（可选段；**段缺失 = 合法降级**：跳过播种 + 明确警告）。
   # 接口语义 = 「输入实体清单 ⇒ 保证存在」（幂等）；用例侧 `seed:` 块见 rings/e2e/reference.md §5.7。
   # mode（2026-10-07 补，B197-1）：enforce（缺省 = 每用例运行期播种）| declare（seed: 行只参与

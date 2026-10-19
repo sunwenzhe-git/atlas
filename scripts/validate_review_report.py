@@ -92,6 +92,9 @@ def validate_report(d: Path) -> Result:
     r = data.get("round")
     if _is_int(r) and r < 1:
         bad.append("`round` 必须 ≥ 1")
+    exec_val = data.get("executed")
+    if exec_val is not None and not isinstance(exec_val, bool):
+        bad.append("`executed` 若存在必须为 bool")
     res.add("契约形态（§3 必备键）", "FAIL" if bad else "PASS",
             "；".join(bad) if bad else f"{len(REQUIRED_KEYS)} 键齐且类型对")
 
@@ -113,8 +116,9 @@ def validate_report(d: Path) -> Result:
     # 应审/实审先解析（映射复算要把 §6 第 8 条的 WARN 下限算进去 —— cli_review_convert 同规则：
     # Critical ⇒ FAIL；否则 Major 或 M<N 或预算击穿 ⇒ WARN；否则 PASS）
     exp, rev = data.get("expected"), data.get("reviewed")
+    exec_val = data.get("executed")
     warn_floor = (data.get("budget_exceeded") is True) or (
-        _is_int(exp) and _is_int(rev) and rev < exp)
+        _is_int(exp) and _is_int(rev) and rev < exp) or (exec_val is False)
     expect = "FAIL" if "Critical" in lv_set else ("WARN" if ("Major" in lv_set or warn_floor) else "PASS")
     st, ok = data.get("status"), data.get("ok")
     map_bad: list[str] = []

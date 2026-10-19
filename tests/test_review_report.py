@@ -152,3 +152,20 @@ def test_budget_exceeded_warns() -> None:
     with tempfile.TemporaryDirectory() as td:
         p = run(mk_report(Path(td), {**GOOD, "status": "WARN", "budget_exceeded": True}))
         assert p.returncode == 0 and "击穿" in p.stdout, p.stdout
+
+
+def test_executed_field_handling() -> None:
+    """issue #30：executed: False 时状态下限为 WARN，executed 非 bool 时 FAIL，executed: True 时 PASS。"""
+    with tempfile.TemporaryDirectory() as td:
+        # executed: False ⇒ 必须为 WARN
+        p1 = run(mk_report(Path(td) / "r1", {**GOOD, "status": "WARN", "executed": False}))
+        assert p1.returncode == 0, p1.stdout
+
+        # executed: False 但声明 PASS ⇒ 映射复算失败
+        p2 = run(mk_report(Path(td) / "r2", {**GOOD, "status": "PASS", "executed": False}))
+        assert p2.returncode == 1, p2.stdout
+
+        # executed 不是 bool ⇒ FAIL
+        p3 = run(mk_report(Path(td) / "r3", {**GOOD, "status": "WARN", "executed": "no"}))
+        assert p3.returncode == 1 and "executed" in p3.stdout, p3.stdout
+

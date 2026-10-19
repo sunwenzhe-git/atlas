@@ -59,9 +59,10 @@ MOCK_MODES = ("off", "on", "auto")
 # 与 e2e.mock.mode off / e2e.review.mode off 同构——在 X 段里用 mode 值声明「靶场没有 X」）。
 # mode：real（缺省 = 真实登录语义）/ fabricated（纯前端桩：setup 不发请求直写假令牌，必填收窄
 # 为 storage_key）/ none（靶场无访问门——声明形态，非降级；段内取证字段一律不得残留）。
-APP_LOGIN_KEYS = ("mode", "endpoint", "username_field", "password_field", "token_key", "storage_key")
-APP_LOGIN_FIELDS = ("endpoint", "username_field", "password_field", "token_key", "storage_key")
+APP_LOGIN_KEYS = ("mode", "endpoint", "username_field", "password_field", "token_key", "storage_key", "body_format")
+APP_LOGIN_FIELDS = ("endpoint", "username_field", "password_field", "token_key", "storage_key", "body_format")
 APP_LOGIN_MODES = ("real", "fabricated", "none")
+APP_LOGIN_BODY_FORMATS = ("form", "json")
 
 # 独立审查调度通道词表（shared/stack-profile.md §2，rings/e2e §12.6；v0.1.0-beta.14）
 # mode: gate（缺省 = 严格独立审查门）/ auto-baseline（无报告时自动兜底生成基线，免阻断）/ off（免审）
@@ -216,12 +217,15 @@ def validate(root: Path) -> Result:
                 f"值={m!r} 允许={list(APP_LOGIN_MODES)}（缺省 real；fabricated = 纯前端桩项目直写假令牌；"
                 "none = 靶场无访问门的显式声明——rings/e2e §5.8/§7.1，RFC-20261015-02）")
         if m == "none":
-            # none ⇒ 五个取证字段一律不得残留（含 storage_key——无门项目的存储键没有消费方）。
+            # none ⇒ 取证与形态字段一律不得残留（含 storage_key 与 body_format）。
             # 与 fabricated 的「收窄」相反是「全弃」，两条判据同构成镜像（RFC-20261015-02）。
             leftover = [k for k in APP_LOGIN_FIELDS if (app_login.get(k) or "").strip()]
             res.add("e2e.app_login.mode=none 字段互斥", "PASS" if not leftover else "FAIL",
                     (f"残留={leftover}（无门 ⇒ 全弃 —— fabricated 是收窄，none 是全弃）"
                      if leftover else "无取证值残留（none = 全弃，正确形态）"))
+        bf = app_login.get("body_format")
+        res.add("e2e.app_login.body_format 枚举", "PASS" if bf is None or bf in APP_LOGIN_BODY_FORMATS else "FAIL",
+                f"值={bf!r} 允许={list(APP_LOGIN_BODY_FORMATS)}（缺省 form；json = 发送 application/json 载荷）")
 
     # RFC-20261015-02（issue #11）：登录形态未声明 ⇒ WARN 指名（第一阶段；第二阶段 = 下一次
     # 真跑准备日推生成器 `not_ready`，升档记录见 shared/gates.md「E2E 真跑」行）。

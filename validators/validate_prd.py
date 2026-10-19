@@ -385,6 +385,11 @@ def validate(root: Path) -> Result:
         issues = list(shape_issues)
         for d in domains:
             t = d.read_text(encoding="utf-8")
+            missing_core = [sec for sec in ("二", "四", "五") if section_of(t, sec) is None]
+            if missing_core:
+                issues.append(f"{d.name} 缺必填核心章节：{'/'.join(missing_core)}")
+            if STRUCT_LIST_HEAD not in t:
+                issues.append(f"{d.name} 缺「{STRUCT_LIST_HEAD}」小节（契约 §4 五，必填可为空表）")
             fns, rs, acs = set(FN_RE.findall(t)), set(R_RE.findall(t)), set(AC_RE.findall(t))
             if not fns or not rs or not acs:
                 issues.append(f"{d.name} 缺 FN/R/AC 编号")

@@ -614,3 +614,19 @@ def test_node_ids_maps_multi_segment_case_id() -> None:
         )
         mapping = cons.node_ids(scripts)
     assert mapping == {"E2E-APP-AGENT-DETAIL-001": "app-agent-detail.spec.ts:2"}, mapping
+
+
+def test_snapshot_missing_index_fails_loud_not_empty_list() -> None:
+    """契约 §10：索引不存在时大声报错 SnapshotError，不得静默穿透为裸 FileNotFoundError。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = build_project(Path(td))
+        index = root / "product" / "e2e" / "e2e-index.md"
+        if index.exists():
+            index.unlink()
+        try:
+            cons.snapshot(root)
+            raise AssertionError("应抛 SnapshotError")
+        except cons.SnapshotError as err:
+            assert "索引文件缺失" in str(err), str(err)
+

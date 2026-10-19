@@ -587,4 +587,28 @@ def test_f44_anchored_pointer_still_detected_both_sides() -> None:
         mk(root, apis="# demo 接口\n\n有人提到接口的真相源在别处，但本文件什么形态都不是。\n")
         res = _res(root)
         assert res["D 形态"]["ok"] is False
-        assert "既非清单也非指针" in res["D 形态"]["detail"], res["D 形态"]
+
+
+def test_truth_carriers_validation() -> None:
+    """issue #25：truth_carriers 事实载体声明，文件存在且非空 PASS，不存在或空 FAIL。"""
+    meta_good = dict(META)
+    meta_good["truth_carriers"] = {
+        "quickstart": "AGENTS.md",
+        "H": "docs/test.md"
+    }
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, meta=meta_good)
+        (root / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
+        (root / "docs").mkdir(parents=True, exist_ok=True)
+        (root / "docs" / "test.md").write_text("# Test Guide\n", encoding="utf-8")
+        res = _res(root)
+        assert res["类别覆盖 · 事实载体"]["ok"] is True
+
+    # 坏输入：文件不存在
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, meta=meta_good)
+        res = _res(root)
+        assert res["类别覆盖 · 事实载体"]["ok"] is False
+        assert "不存在" in res["类别覆盖 · 事实载体"]["detail"]

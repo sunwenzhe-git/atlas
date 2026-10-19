@@ -190,6 +190,9 @@ def snapshot(root: Path) -> dict:
     mod = load_validator(root)
     e2e = root / "product" / "e2e"
     index = e2e / "e2e-index.md"
+    if not index.is_file():
+        raise SnapshotError(
+            f"索引文件缺失: {index} 不存在。请先准备 product/e2e/e2e-index.md 再启动控制台。")
     blocks, _pages = mod.gather_shards(e2e / "cases")
 
     rows: list[dict] = []
