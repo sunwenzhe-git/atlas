@@ -265,6 +265,47 @@ def expand_template_testid(body: str, src: str, pages: list[str]) -> list[str] |
     return sorted({s for s in out if s})
 
 
+def template_static_patterns(clean_text: str) -> list[re.Pattern]:
+    """模板 testid 的**结构模式**（诊断用，D113，2026-10-19）。
+
+    与 `expand_template_testid` 的分工：后者求**展开值**——占位符词表不可枚举时返回 `None`、
+    整条丢弃；本函数求**结构**：`${…}` 段换成 `.+?`、字面段转义 ⇒ **不依赖词表**，不可枚举的模板也有模式。
+    用途 = 诊断：某个「缺失名」命中某模板结构 ⇒ 该名来自**模板派生**，而非「实现真漏了」。
+
+    **为何不用「静态前缀」**：模板以占位符开头时前缀为空（如 `` `${slug}-row-${idx}` `` 的首个
+    占位符前没有字面量）—— 而这恰是最常见的形态，前缀判据对它完全失效。
+    **只保留字面总长 ≥ 3 的模板**：全占位符的模板退化成 `^.+?$`（匹配一切名字），
+    留下来会把「真漏实现」误判成「模板派生」。
+    """
+    out: list[re.Pattern] = []
+    for body in (
+        TEMPLATE_TESTID_ATTR.findall(clean_text)
+        + DATASET_TESTID_TPL.findall(clean_text)
+        + SETATTR_TESTID_TPL.findall(clean_text)
+    ):
+        parts: list[str] = []
+        literals = 0
+        pos = 0
+        for m in PLACEHOLDER.finditer(body):
+            lit = body[pos:m.start()]
+            parts.append(re.escape(lit))
+            literals += len(lit)
+            parts.append(".+?")
+            pos = m.end()
+        tail = body[pos:]
+        parts.append(re.escape(tail))
+        literals += len(tail)
+        if literals < 3:
+            continue
+        out.append(re.compile("^" + "".join(parts) + "$"))
+    return out
+
+
+def template_pattern_hit(name: str, patterns: list[re.Pattern]) -> bool:
+    """`name` 是否命中某个模板结构模式（D113 诊断判据）。"""
+    return any(p.match(name) for p in patterns)
+
+
 def collect_testids(root: Path,
                     globs: list | None = None) -> tuple[dict[str, set[str]], dict[str, int], list[str]]:
     """兼容入口（3 元组）：模板展开值集合见 `collect_testids_expanded`。"""
@@ -326,10 +367,14 @@ def shard_landings(cases: Path, proto_pages: list[str] | None = None) -> dict[st
 
 
 def collect_testids_expanded(
-    root: Path, globs: list | None = None,
+    root: Path, globs: list | None = None, tpl_patterns_out: list[re.Pattern] | None = None,
 ) -> tuple[dict[str, set[str]], dict[str, int], list[str], set[str], dict[str, list[str]]]:
     """扫**前端源码**取 testid 实然集合（E1 统一，不再按 origin 分流）：
     `(按页归集, 全站声明文件数计数, 扫到的源文件, 模板展开值全集, 同文件字面量重复清单)`。
+
+    `tpl_patterns_out`（D113，2026-10-19）：**可选出参**，给定时同时收集各源文件模板 testid 的
+    **结构模式**（见 `template_static_patterns`），供诊断的结构判定使用。默认 `None` ⇒ 行为与
+    返回元数不变（调用方零改动）；放在出参而非返回元组，是因为后者已被 4 处调用方按 5 元解包。
 
     前端源文件的**文件名不是页 slug**（如页面组件 / 路由文件），按 **testid 自身的页前缀**归属；
     **页清单 = 索引页面表（契约 §3.2，唯一真相源）∪ 分片名**——无页面表时才退化为
@@ -367,6 +412,11 @@ def collect_testids_expanded(
         for tid in file_unique:
             counts[tid] = counts.get(tid, 0) + 1
             per_page.setdefault(tid_owner(tid, pages) or "", set()).add(tid)
+
+        # 模板结构模式（诊断用，D113）：与展开值**同点位**收集（同一批已剥注释文本，零额外 IO）。
+        # 不可枚举的模板不产生展开值（见 file_testid_decls），但它的结构模式在这里收得到。
+        if tpl_patterns_out is not None:
+            tpl_patterns_out.extend(template_static_patterns(clean_text))
 
         # 同文件重复声明（R6.3 收窄）：只对**静态属性同形态重复**报警——
         # 同名静态 testid 在同文件出现 ≥2 次 = 运行期 strict-mode 歧义真信号；
@@ -492,7 +542,9 @@ def validate(root: Path) -> Result:
                     "`python3 .atlas/scripts/gen_testid_stub.py --root .` 生成"
                     "（rings/e2e/reference.md §4.1）")
 
-    src_ids, counts, sources, expanded, same_file_dups = collect_testids_expanded(root, globs)
+    tpl_patterns: list[re.Pattern] = []
+    src_ids, counts, sources, expanded, same_file_dups = collect_testids_expanded(
+        root, globs, tpl_patterns)
     states = index_page_states(root)
     # 归属页词表：有页面表则以它为准（唯一真相源）；否则沿用「前端前缀 ∪ 分片名」（`3509 §B106`）
     attr_pages = (sorted(set(states) | {p.stem for p in cases.glob("*.md")}) if states
@@ -620,7 +672,19 @@ def validate(root: Path) -> Result:
                 else:
                     unequal_soft.append({**det, "实现状态": page_state})
     if unequal:
-        hint = " (💡 提示: 动态列表项如 *-item 切勿列入用例 testid: 块，仅在 step/expected 中引用即可)" if any("item" in str(d.get("缺失(抽取源无)", [])) for d in unequal) else ""
+        # 诊断（D113，2026-10-19）：把触发判据从**词形启发式**改为**结构判定**。
+        # 判据 = 缺失名命中源里某模板 testid 的**结构模式** ⇒ 该名由运行期值拼出、
+        # **无法静态枚举**（占位符词表不可枚举的模板不产生展开值，故 expanded 里没有它）。
+        # 口径提醒（与 shard_testids 一致）：用例侧应然集合 = testid: 声明 ∪ step/expected 派生
+        # ⇒ **两侧都进本门**，「只写在 step/expected」不构成任何豁免。
+        missing_all = [n for d in unequal for n in d.get("缺失(抽取源无)", [])]
+        hint = (
+            " (💡 提示: 缺失名命中某模板 testid 的结构模式 ⇒ 它由运行期值拼出、无法静态枚举；"
+            "「只写在 step/expected」不构成豁免（用例侧应然集合 = `testid:` 声明 ∪ step/expected 派生，"
+            "两侧都进本门）。正规形态见契约 §4：容器 + 计数（对容器断 `count`）/ 稳定样例行 / 类型级静态名)"
+            if any(template_pattern_hit(n, tpl_patterns) for n in missing_all)
+            else ""
+        )
         res.add("分页双向集合相等", "FAIL", json.dumps(unequal, ensure_ascii=False) + hint)
     elif unequal_soft:
         hint_msg = (

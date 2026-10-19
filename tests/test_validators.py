@@ -1065,6 +1065,94 @@ def test_testids_template_expansion_not_orphan_judged() -> None:
         assert res.status != "FAIL", [c for c in res.checks if c["level"] == "FAIL"]
 
 
+# ---- 动态名诊断（D113，2026-10-19）----
+
+# 不可枚举的模板：`${slug}-row-${idx}` 的 `idx` 在同文件里没有静态属性字面量（`idx: "…"`）
+# ⇒ `expand_template_testid` 返回 None、**不进 expanded**；但它确有结构 `${slug}-row-${…}`。
+# 注意 `idx` 作为函数形参出现，不会被 `_prop_vocab` 的字面量正则命中。
+DYNAMIC_ROW_TSX = """import { pageSlug } from "./lib/page-slug"
+
+const ROWS = ["a", "b"]
+
+export function Rows({ pathname }: { pathname: string }) {
+  const slug = pageSlug(pathname)
+  return (
+    <ul data-testid={`${slug}-list`}>
+      {ROWS.map((row, idx) => (
+        <li key={row} data-testid={`${slug}-row-${idx}`} />
+      ))}
+    </ul>
+  )
+}
+"""
+
+# 用例侧：动态名 **只写在 step/expected**，`testid:` 清单里不列——正是旧提示建议的形态。
+CASE_DYNAMIC_IN_STEP_ONLY = CASE_GOOD.replace(
+    "  - click home-cta-btn          # 点击主操作按钮\n",
+    "  - click home-cta-btn          # 点击主操作按钮\n  - click home-row-0            # 运行期拼出的行元素（只写在 step）\n"
+).replace(
+    "expected:\n  - text home-title 首页        # 页面标题文案为「首页」\n",
+    "expected:\n  - text home-title 首页        # 页面标题文案为「首页」\n  - visible home-row-1          # 同为运行期拼出（只写在 expected）\n"
+)
+
+
+def _dynamic_hint_case(extra_src: str = "") -> str:
+    """跑一次夹具，返回（状态, 「分页双向集合相等」门的 detail）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        (root / "web" / "src" / "Rows.tsx").write_text(DYNAMIC_ROW_TSX + extra_src,
+                                                        encoding="utf-8")
+        mk_cases(root, CASE_DYNAMIC_IN_STEP_ONLY)
+        mk_index(root, _with_page_table("已实现"))
+        res = vt.validate(root)
+        detail = "".join(c["detail"] for c in res.checks
+                         if c["check"] == "分页双向集合相等")
+        return res.status, detail
+
+
+def test_testids_dynamic_name_hint_matches_actual_scope() -> None:
+    """D113：动态名导致 FAIL 时，诊断必须（①）指向契约 §4 的正规形态，且（②）不再宣称
+    存在「只写在 step/expected 即可」的豁免——该豁免自 2026-09-25（§B40/§B64）起已不存在
+    （`shard_testids`：用例侧集合 = `testid:` 声明 ∪ step/expected 派生）。
+
+    ③ 顺带钉住词形启发式的消除：本条夹具的缺失名 `home-row-0` / `home-row-1` **不含 `item`**，
+    旧判据（`"item" in 名称`）对它们不触发 ⇒ 本用例在旧判据下必红。
+    变异证明：把 `:623` 文案改回旧句 ⇒ 本用例红（断言②）；把判据退回 `"item"` 子串 ⇒ 本用例红（断言③）。
+    """
+    status, detail = _dynamic_hint_case()
+    assert status == "FAIL", detail
+    # 判定强度未变：缺失仍被点名
+    assert "home-row-0" in detail and "缺失(抽取源无)" in detail, detail
+    # ① 指向正规形态
+    assert "容器 + 计数" in detail or "稳定样例行" in detail, detail
+    assert "§4" in detail, detail
+    # ② 旧建议必须消失
+    assert "仅在 step/expected 中引用即可" not in detail, detail
+    # ③ 夹具自检：缺失名不含 `item`（也不在提示正文里）⇒ 旧词形判据必然不触发，
+    #   即将答案「① 通过」本身已证明判据不再是词形子串匹配。
+    assert "item" not in detail, detail
+
+
+def test_testids_plain_missing_gets_no_dynamic_hint() -> None:
+    """反向：真「实现漏了」的缺失（不命中任何模板结构）**不得**被附上动态名指引——
+    否则诊断变成噪声，且会把「实现没写」误导成「这是运行期生成的名字」。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD.replace(
+            "  - text home-title 首页        # 页面标题文案为「首页」\n",
+            "  - text home-title 首页        # 页面标题文案为「首页」\n  - visible home-missing-btn\n"
+        ))
+        mk_index(root, _with_page_table("已实现"))
+        res = vt.validate(root)
+        assert res.status == "FAIL"
+        detail = "".join(c["detail"] for c in res.checks
+                         if c["check"] == "分页双向集合相等")
+        assert "home-missing-btn" in detail, detail
+        assert "容器 + 计数" not in detail and "稳定样例行" not in detail, detail
+
+
 def test_e2e_index_gate_na() -> None:
     with tempfile.TemporaryDirectory() as td:
         assert ve.validate(Path(td)).status == "N/A"
