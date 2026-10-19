@@ -4,6 +4,21 @@
 
 ---
 
+## [v0.1.0-beta.31] - 2026-10-19
+
+### 🩹 自感知缺陷与工件健壮性一揽子修复（#25 / #27 / #28 / #29 / #30 / #34 / #35，D119）+ 等待超时上限口径统一（D118）
+
+- **等待超时上限口径统一（D118）**：页面就绪锚点（含 `waitFor`/`download`/`select` 就绪轮询）等待上限与断言侧统一抬升为 20s（`ATLAS_WAIT_TIMEOUT_MS` 缺省 20,000ms），支持环境变量覆盖；消除慢页面首屏就绪超时被误报的假红。
+- **登录预置深度取值与 JSON 支持（#35）**：`atlas-auth.setup.ts` 令牌键取值改用点号路径解构，彻底解决嵌套响应体（如 `data.token`）取到 `undefined` 击崩浏览器 context 的缺陷；`app_login` 支持可选声明 `body_format: form | json`；登录异常与非法响应统一拦截并保护存量 `state.json`。
+- **测试目录与文件过滤（#27/#33）**：`validate_testids.py` 扫描过滤 `__tests__`、`test`、`tests`、`fixtures` 等目录及 `*.test.*`、`*.spec.*` 文件，明确测试代码不是页面声明处，消除全站重复假红。
+- **应然先行落点门分档（#34）**：未实现页面的未落地落点降级为 `WARN`（先行设计待落地），正向前置设计不再被误判为 `FAIL（虚假陈述）`；翻档为已实现后严格保持 FAIL 严判。
+- **域级 PRD 核心资产门（#29）**：`validate_prd.py` 增加对域级 PRD 核心资产（二、四、五章及结构类 AC 清单）的机器存在性严判，杜绝空壳域 PRD 假绿通道。
+- **结构环事实载体解绑根 README（#25）**：`_meta.json` 引入 `truth_carriers`，支持语义别名与自解释注释，解绑根 README，适配 Agent-first 存量项目。
+- **存量零 testid 三步推进链（#28）**：契约明确责任方与推进链，利用现成索引中的 `blocked` 状态与 Playwright 原生 `test.skip(reason)` 隔离待埋点状态与业务真失败。
+- **独立审查 executed 标记与控制台守卫（#30）**：`review.json` 引入 `executed: boolean`；`e2e_console.py` 的 `snapshot()` 在读索引前增加存在性守卫，抛 `SnapshotError` 防线程崩溃。
+
+---
+
 ## [v0.1.0-beta.30] - 2026-10-19
 
 ### 🧷 执行串行落门（D115）+ `attr` 空值形态（D116）+ `select` 就绪门按命中态轮询（D117）

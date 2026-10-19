@@ -4,10 +4,12 @@
 
 ---
 
-## [Unreleased]
+## [v0.1.0-beta.31] - 2026-10-19
 
-### 🩹 自感知缺陷与工件健壮性一揽子修复（#25 / #27 / #28 / #29 / #30 / #34 / #35，D119）
+### 🩹 自感知缺陷与工件健壮性一揽子修复（#25 / #27 / #28 / #29 / #30 / #34 / #35，D119）+ 等待超时上限口径统一（D118）
 
+* **【等待超时上限口径统一】（`scripts/gen_e2e_scripts.py`, 7e9316c；D118, MD118）**：
+  - 生成物中页面就绪锚点（连带 `waitFor` / `download` / `select` 就绪轮询）使用的等待上限与断言侧统一抬升为 20s（`ATLAS_WAIT_TIMEOUT_MS` 缺省 20,000ms），并提供环境变量覆盖口；消除慢页面首屏就绪超时被误报的假红。
 * **【#35 登录预置深度取值与 JSON 支持】**：
   - `scripts/gen_e2e_scripts.py` 生成的 `atlas-auth.setup.ts` 中，令牌键取值改用 `tokenKey.split('.').reduce(...)` 点号路径解构，彻底解决嵌套响应体（如 `data.token`）取到 `undefined` 击崩浏览器 context 的缺陷；非字符串或空值大声抛出带状态码与截断响应体的 Error 并阻断损坏的 `state.json`；
   - `stack-profile.yaml` 的 `app_login` 支持可选声明 `body_format: form | json`（缺省 `form` 严格保持向下兼容），`validate_stack_profile.py` 补充枚举校验；
