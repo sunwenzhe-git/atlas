@@ -863,6 +863,19 @@ def test_value_and_attr_keep_same_semantics() -> None:
     out = ts("attr home-cta-btn data-theme dark")
     assert 'toHaveAttribute("data-theme", "dark")' in out, out
 
+    # 契约 §5.5（2026-10-19 补，`DESIGN.md` D116）：`""` / `(空)` ⇒「该属性**缺席或为空串**」。
+    # 发射侧必须 `?? ''` 归一（缺席时 `getAttribute` 得 `null`，直接写 `== ""` 是半通状态）；
+    # `toHaveAttribute(name, "")` 实测在缺席时 FAIL ⇒ 不得回退到它。
+    for line in ('attr home-cta-btn aria-label ""', "attr home-cta-btn aria-label (空)"):
+        out = ts(line)
+        assert "?? '').toBe('')" in out, out
+        assert 'toHaveAttribute("aria-label"' not in out, out
+
+    # 非空期望逐字节不变（零回归承诺）：仍走 `toHaveAttribute` 原路径
+    out = ts("attr home-cta-btn aria-label 说明")
+    assert 'toHaveAttribute("aria-label", "说明")' in out, out
+    assert "?? ''" not in out, out
+
 
 def test_select_and_value_are_implementation_agnostic() -> None:
     """契约 §5.5（B173-1）：select 动词与 value 断言/探针**不得绑定原生 DOM**——

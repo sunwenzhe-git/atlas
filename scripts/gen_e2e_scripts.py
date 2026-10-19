@@ -591,10 +591,19 @@ def ts_case(case: dict, url: str, base: str = "") -> str:
             aval = aval.strip()
             if not aname or not aval:
                 raise ValueError(f"`attr` 需要 `<name> <value>` 两个参数: {raw!r}（契约 §5.5）")
-            line = (
-                f"await expect(page.getByTestId('{tid}').first()).toHaveAttribute("
-                f"{json.dumps(aname, ensure_ascii=False)}, {json.dumps(aval, ensure_ascii=False)});"
-            )
+            if aval in ('""', "(空)"):
+                # 契约 §5.5（2026-10-19 补，`DESIGN.md` D116）：`""` / `(空)` ⇒「该属性**缺席或为空串**」。
+                # 为何不用 `toHaveAttribute(name, "")`：**实测**缺席时 `getAttribute` 得 `null`，
+                # 该调用判 FAIL（半通状态）；`?? ''` 归一 + 轮询才是全档语义，且与探针表达式同形（单源）。
+                line = (
+                    f"await expect.poll(async () => (await page.getByTestId('{tid}').first()"
+                    f".getAttribute({json.dumps(aname, ensure_ascii=False)})) ?? '').toBe('');"
+                )
+            else:
+                line = (
+                    f"await expect(page.getByTestId('{tid}').first()).toHaveAttribute("
+                    f"{json.dumps(aname, ensure_ascii=False)}, {json.dumps(aval, ensure_ascii=False)});"
+                )
         elif verb == "delta":
             # 契约 §5.5（P5，2026-10-07）：`delta <tid> <±N>` 相对断言 —— 行动前采样
             # （贴第一个提交性动作）、行动后 `expect.poll` 轮询复读
@@ -722,6 +731,15 @@ def ts_assert_expr(line: str) -> str:
         # **缺席即 `false`，不得等挂载**（issue #30 / `DESIGN.md` D107）：`getAttribute` 对**未挂载**
         # 的 locator 会等到默认超时 ⇒ 零步基线在带参页面上（元素本就不该在）挂到 test 超时，
         # 而契约 §5.5 明写「探不到元素按 `null = 不成立` 处理」。`count() > 0` 前置是对的行动性守卫。
+        if val in ('""', "(空)"):
+            # 契约 §5.5（2026-10-19 补，`DESIGN.md` D116）：`""` / `(空)` ⇒ 断言「该属性**缺席或为空串**」，
+            # 即**否定属性**的表达面（「该入口**不带**某标记」类 AC 的机器判据）。
+            # `getAttribute` 对缺席属性返回 `null`（**不是** `""`）⇒ 必须 `?? ''` 归一：
+            # 直接写 `=== ""` 会让「缺席」这一档恒假，只留「空串」半档（半通状态）。
+            return (
+                f"(async () => (await page.getByTestId({t}).count()) > 0 "
+                f"&& ((await page.getByTestId({t}).first().getAttribute({n})) ?? '') === '')()"
+            )
         return (
             f"(async () => (await page.getByTestId({t}).count()) > 0 "
             f"&& (await page.getByTestId({t}).first().getAttribute({n})) "
