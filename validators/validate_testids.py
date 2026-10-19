@@ -12,7 +12,8 @@
   * **未实现的页**（前端无该页任何 testid）→ **SKIP**（不算失败；检查点搭便车于必然存在的工件，
     `3508 §94` 推论③）；前端扫到 0 个 testid ⇒ 全部 SKIP + WARN；
   * 命名规范 `^[a-z0-9]+(-[a-z0-9]+)+$` 且首段 == 该页 slug；
-  * 全站唯一（跨页重复 / 同页多次出现均 FAIL）；
+  * 全站唯一（跨页重复 / 同页多次出现均 FAIL；**测试目录与 `*.test.*`/`*.spec.*`/`*.cy.*`
+    文件不入扫描面**——测试里的选择器字符串是页面元素的回声、不是声明处，issue #27）；
   * 归不到任何用例页的前端 testid → WARN（命名违规或缺分片）；
   * 门控态（无前端 app 路径或无用例目录）记 `N/A`。
 
@@ -56,6 +57,8 @@ def _load_stub_generator():
     for cand in (here.parents[1] / "scripts" / "gen_testid_stub.py",):
         if cand.is_file():
             spec = importlib.util.spec_from_file_location("atlas_gen_testid_stub", cand)
+            if spec is None or spec.loader is None:
+                return None
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
             return mod
@@ -101,6 +104,11 @@ DEFAULT_ORIGIN = "greenfield"
 FRONTEND_KINDS = ("frontend", "fullstack")
 SKIP_DIRS = {"node_modules", ".git", "dist", "build", ".next", "coverage", "__pycache__",
              ".venv", "venv", "vendor", ".cache", "out", "target"}
+# 测试文件/目录**不入实然集合**（issue #27，2026-10-19）：单元测试里的
+# `querySelector('[data-testid=x]')` 是页面元素的**回声**，不是声明处 —— 计进「声明处计数」
+# 会把「真实元素 + 自身测试文件里的同名字符串」判成全站重复假红（同文件重复 WARN 同理）。
+TEST_SKIP_DIRS = {"__tests__", "__mocks__", "test", "tests"}
+TEST_FILE_MARKS = (".test.", ".spec.", ".cy.")
 MAX_SCAN_BYTES = 2 * 1024 * 1024
 CASE_BLOCK = re.compile(r"```atlas-case\s*\n(.*?)```", re.S)
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)+$")
@@ -218,6 +226,9 @@ def _scan_files(roots: list) -> list:
         for p in cands:
             if not p.is_file() or any(part in SKIP_DIRS for part in p.parts):
                 continue
+            if (any(part in TEST_SKIP_DIRS for part in p.parts)
+                    or any(m in p.name for m in TEST_FILE_MARKS)):
+                continue  # 测试面不是页面声明处（issue #27）
             try:
                 if p.stat().st_size > MAX_SCAN_BYTES:
                     continue

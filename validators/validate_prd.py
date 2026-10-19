@@ -103,6 +103,11 @@ COVERS = ("全量", "增量起步")
 # 全局 prd 的章节号：全量形态要求全在；增量起步只要「有下游消费者」的三节（契约 §3）。
 ALL_SECTIONS = ("一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一")
 MIN_SECTIONS = ("五", "六", "七")
+# 域级 PRD 的章节号（契约 §4 模板 = 一~八）。issue #29：章节存在性此前**只**对全局 PRD 判，
+# 域级侧缺三/六/七/八 全绿 ⇒ 假绿通道。need 集合按形态分级（增量起步 / adopt 开户走「开户最小集」）。
+DOMAIN_ALL_SECTIONS = ("一", "二", "三", "四", "五", "六", "七", "八")
+DOMAIN_MIN_SECTIONS = ("一", "二", "四", "五")   # 契约 §4「开户最小集」四节
+DOMAIN_DEFERRED = ("三", "六", "七", "八")          # 开户轮允许整节不出现（不得写占位符）
 DOMAIN_SLUG = re.compile(r"`([a-z0-9][a-z0-9-]+)`")
 RULE_ROW = re.compile(r"^\|\s*`?([A-Z][A-Z0-9]+-R-\d+)`?\s*\|", re.M)
 # 规则 → 所属功能（契约 §4「所属功能」列；2026-09-28 补，`3509 §B109`）：功能 → 规则 → AC 链路的前一环。
@@ -368,26 +373,37 @@ def validate(root: Path) -> Result:
     res.add("参数2 零占位符", "PASS" if not hits else "FAIL", "；".join(hits))
 
     # ---- 参数 3：链接可解析
-    unresolved = []
+    dead_links: list[str] = []
     for f in [prd, readme] + domains:
         if not f.is_file():
             continue
         for tok in path_candidates(f.read_text(encoding="utf-8")):
             base = f.parent if tok.startswith(("./", "../")) else root
             if not resolves(root, base, tok):
-                unresolved.append(f"{f.name} -> {tok}")
-    res.add("参数3 链接可解析", "PASS" if not unresolved else "FAIL", "；".join(sorted(set(unresolved))))
+                dead_links.append(f"{f.name} -> {tok}")
+    res.add("参数3 链接可解析", "PASS" if not dead_links else "FAIL", "；".join(sorted(set(dead_links))))
 
     # ---- 参数 4：追溯完整（门控态 N/A）
     if gate:
         res.add("参数4 追溯完整", "NA", "门控态：待决策非空，域级 PRD 按契约未产出")
     else:
         issues = list(shape_issues)
+        # 域级 PRD 章节判据的 need 集合（issue #29）：增量起步 / adopt 开户按开户最小集四节严判，
+        # 其余节缺省合法（契约 §4「开户最小集」）⇒ 只记 WARN，不开局即红。
+        origin = read_origin(root)
+        tier_min = cover == "增量起步" or origin == "adopt"
+        need_d = DOMAIN_MIN_SECTIONS if tier_min else DOMAIN_ALL_SECTIONS
+        d_sec: list[tuple[str, list[str], list[str]]] = []
         for d in domains:
             t = d.read_text(encoding="utf-8")
             fns, rs, acs = set(FN_RE.findall(t)), set(R_RE.findall(t)), set(AC_RE.findall(t))
             if not fns or not rs or not acs:
                 issues.append(f"{d.name} 缺 FN/R/AC 编号")
+            # 必填章节存在性（issue #29）：与全局同源判据（section_of），按形态算 need。
+            miss_d = [n for n in need_d if section_of(t, n) is None]
+            defer_d = ([n for n in DOMAIN_DEFERRED if section_of(t, n) is None]
+                       if tier_min and not miss_d else [])
+            d_sec.append((d.name, miss_d, defer_d))
             ref_rules = set(R_RE.findall(t))
             if rs and not ref_rules:
                 issues.append(f"{d.name} AC 未回指规则")
@@ -460,7 +476,7 @@ def validate(root: Path) -> Result:
                 # 契约 rings/prd/reference.md §四：所属功能必须在第 3 列（规则 ID ｜ 规则内容 ｜ 所属功能 ｜ …）
                 sec4 = section_of(t, "四") or t
                 header_match = re.search(r"^\|\s*([^|\n]+\|)+", sec4, re.M)
-                wrong_col_order = False
+                wrong_col_order = False  # 表头未匹配到时保持「无列序问题」，避免未绑定即用
                 if header_match:
                     cols = [c.strip().strip("`") for c in header_match.group(0).split("|")[1:-1]]
                     if RULE_FUNC_COL in cols:
@@ -539,6 +555,22 @@ def validate(root: Path) -> Result:
                               "（每个未覆盖域都要有登记行）")
 
         res.add("参数4 追溯完整", "PASS" if not issues else "FAIL", "；".join(issues))
+
+        # 域级 PRD 章节存在性单列一行（issue #29）：FAIL = 缺最小必填集；WARN = 只缺开户可省节。
+        sec_bad = [f"{n} 缺{'/'.join(m)}" for n, m, _d in d_sec if m]
+        sec_defer = [f"{n} 缺{'/'.join(dd)}" for n, _m, dd in d_sec if dd]
+        if sec_bad:
+            res.add("参数4 域级 PRD 章节", "FAIL",
+                    "；".join(sec_bad)
+                    + f"（need={'/'.join(need_d)}；模板八节见 rings/prd/reference.md §4）")
+        elif sec_defer:
+            res.add("参数4 域级 PRD 章节", "WARN",
+                    "缺省节（开户最小集允许，补齐时机见契约 §4「开户最小集」）："
+                    + "；".join(sec_defer))
+        elif not d_sec:
+            res.add("参数4 域级 PRD 章节", "PASS", "无域级 PRD")
+        else:
+            res.add("参数4 域级 PRD 章节", "PASS", f"need={'/'.join(need_d)} 齐")
 
         # 追溯总表计数对账（契约 §7 参数 4 ⑤；2026-09-28 补，`3509 §B109`）：表里的数字是人
         # 维护的，没有判据就会静默过期（实测七域全过期）。口径 = 按该域 `domain_code` 去重。

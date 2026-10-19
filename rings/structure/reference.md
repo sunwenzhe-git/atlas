@@ -99,6 +99,8 @@
 
 ### A. 技术栈 + 快速启动（**可选类**，根 `README.md`）
 
+**落点例外（issue #25，2026-10-19）**：项目**不写 README**（以 `AGENTS.md` / 本机环境文件为唯一载体的存量项目）时，登记 `off-site`：内容已写、落在指定落点之外，取证须给**落点路径 + 不可复现说明**（如 `off-site：AGENTS.local.md｜本机环境不入仓`）。该态**按缺口记账**：校验器判 `WARN`，不按覆盖记账。
+
 纳入时，「技术栈 / 启动」两节至少含：语言 / 运行时 + 版本 · 框架与关键库 + 版本 · 包管理器 · 端口 · 依赖安装命令 · 启动 / 停止命令 · 环境变量**名称**（**绝不写值/密钥**）· 已知坑（可选）。多 app 分小节；目标选型与实测分列须注明。**改写根 README 属确认门动作**（`global-rules.md` §7），只动这两节。
 
 ### B. global/directory-map.md
@@ -140,6 +142,8 @@
 - 枚举单独一小节列取值与含义；跨域共享表落 `global/data-models-shared.md` 并在域内引用。
 
 ### H. 测试现状与运行方式（**条件类**，根 `README.md`）
+
+**落点例外（issue #25，2026-10-19）**：同 A 的 `off-site` 第三态（adopt 下 H 的合法取值 = `covered|added|off-site`）——旧词表只给「写 README」或「恒 FAIL」两条路。
 
 **不入 spec**：先看根 `README.md`；已有「测试 / 运行」说明 → 不动；无 → 经确认门补一节（测试类型 / 位置 / 覆盖范围 / 运行命令 / 现状）。
 
@@ -258,7 +262,7 @@
 | 项 | 判定 |
 |---|---|
 | 域模型 | `_meta.json.domains` 存在；域 id 全产品唯一；域目录与 `domains[]` 一致；`global/routes.md` 的「域」列均在 `domains[]` 内；每个域 `globs` 非空 |
-| 类别覆盖 | `global/`：directory-map / routes 齐；**每个存在的 role 目录下**每个域子目录含 apis + data-models 各 1 份（域可只在部分 role 有内容）。**A / H 不入 spec**：须在 `_meta.json.categories` 注明 —— `A: covered\|skipped`；`H: covered\|added`（**`greenfield` 下亦可用 `skipped`，`adopt` 下不可** —— 既有项目必须把「怎么跑」记下来，所以只能是 `covered`（README 本就有）或 `added`（本轮补写）。2026-09-27 补，`3509 §B82`）。**写法（2026-10-15 补）**：处置是**枚举声明**，须写在字段**首位**——可选一个 `<标签>:` 前缀（`A: covered` / `H：covered`），token 之后接 `：` / `（` 再写取证文本，或就此结束；如 `covered：根 README「技术栈」「快速开始」两节齐备`。**只是「提到了」该词不算声明**（`待核准：…核准后补写为 added`、`covered 与否未定` 一律 FAIL）——判据读的是状态，不是措辞 |
+| 类别覆盖 | `global/`：directory-map / routes 齐；**每个存在的 role 目录下**每个域子目录含 apis + data-models 各 1 份（域可只在部分 role 有内容）。**A / H 不入 spec**：须在 `_meta.json.categories` 注明 —— `A: covered\|skipped\|off-site`；`H: covered\|added\|off-site`（**`greenfield` 下亦可用 `skipped`，`adopt` 下不可**；`off-site` = 内容已写在指定落点之外，取证带落点路径 + 不可复现说明，**判 WARN 不判覆盖**，issue #25） —— 既有项目必须把「怎么跑」记下来，所以只能是 `covered`（README 本就有）或 `added`（本轮补写）。2026-09-27 补，`3509 §B82`）。**写法（2026-10-15 补）**：处置是**枚举声明**，须写在字段**首位**——可选一个 `<标签>:` 前缀（`A: covered` / `H：covered`），token 之后接 `：` / `（` 再写取证文本，或就此结束；如 `covered：根 README「技术栈」「快速开始」两节齐备`。**只是「提到了」该词不算声明**（`待核准：…核准后补写为 added`、`covered 与否未定` 一律 FAIL）——判据读的是状态，不是措辞 |
 | 适配器缺口 | `_meta.json.adapter_gaps` 缺失或为**空对象** ⇒ 无缺口（不产行）；**非空对象** ⇒ `WARN` 逐条指名（不是 FAIL——「未接」本身不是缺陷，但**必须可见**，否则「设计结论不接」与「工具覆盖不足」在产物里同形）；形态非法（非对象）⇒ `FAIL`。2026-10-15 补，issue #3 ④ |
 | D 类接线态 | `adapters.api` **已接线**但 `categories.D` 锚定声明为**指针 / 未取证**形态、或 `adapter_gaps` 登记了 `api` ⇒ `WARN` 指名（接线态与形态声明跨产物混写——`shared/stack-profile.md` §3.5：该形态**不得接**源码枚举适配器，`adapters.api` 应置 null）。锚定声明口径（F38 同族）：token 在首位 + 显式分隔符，散文提及不算声明；profile 不存在 / `adapters.api` 未声明 ⇒ 不产行（profile 合法性归 `validate_stack_profile`）。2026-10-15 补 |
 | D 形态 | `apis.md` 要么清单、要么「真相源入口 + 访问方式」；不得混写 |

@@ -10,8 +10,8 @@
 | 结构事实（全局层 + 域级层） | `.trellis/spec/structure/`（Trellis 路径注入层） | PRD / E2E 环按需 Read |
 | 域清单（候选 / 已定稿） | `.trellis/spec/structure/_meta.json`（机器）+ `tour.md` 域速查（人读）；structure 提议 → PRD 定稿回写 | PRD / E2E |
 | **域间依赖**（实现前置依赖） | **域级 PRD frontmatter `depends_on`**（语义 = 实现前置依赖，**只含**全局 `product/prd/prd.md` §五 mermaid 的**实线**；虚线 = 增强链路 / 数据回流，不入本字段） | 全局 §五 mermaid 域间关系图（实线边集）+ 域级正文「依赖域 / 上游 / 下游」——两者均为**派生视图**；`validate_prd.py` 参数 4「域间依赖」按实线边集对账（悬空引用 / 实线成环 / 不一致 ⇒ FAIL） |
-| 技术栈 + 快速启动（A 类，可选） | 项目根 `README.md` 的「技术栈 / 启动」两节 | 不入 spec；`_meta.json.categories` 记状态 |
-| 测试现状与运行方式（H 类，条件） | 项目根 `README.md` 的「测试 / 运行」节 | 不入 spec；无则由确认门补 |
+| 技术栈 + 快速启动（A 类，可选） | 项目根 `README.md` 的「技术栈 / 启动」两节 | 不入 spec；`_meta.json.categories` 记状态。**项目不写 README 时**登记 `off-site`（内容已写在项目自有的 agent 规范 / 本机环境文件里，取证带落点路径 + 不可复现说明），该态**按缺口记账（WARN）不算覆盖**（issue #25） |
+| 测试现状与运行方式（H 类，条件） | 项目根 `README.md` 的「测试 / 运行」节 | 不入 spec；无则由确认门补。**项目不写 README 时**登记 `off-site`（adopt 下 H 不再只有「写 README」或「恒 FAIL」两条路，issue #25）；该态按缺口记账（WARN） |
 | 接口技术契约（D 类的机器可读部分） | 项目自带的机器可读接口描述（OpenAPI / Swagger / …） | `.trellis/spec/structure/*/<domain>/apis.md` 只记真相源入口，不复制端点 |
 | testid / selector 约定 | `rings/e2e/reference.md` §4（E2E 环契约；**不在 structure 环**） | 实现期薄桩 `.trellis/spec/conventions/testid.md`（派生视图，由 `scripts/gen_testid_stub.py` 生成）；**实际落点见下一行**；E2E 分片引用它 |
 | 项目 PRD | `product/prd/prd.md`（全局）+ `product/prd/<domain>-prd.md`（域级） | `product/prd/README.md` 追溯总表 |

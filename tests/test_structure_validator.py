@@ -28,6 +28,7 @@ PKG_ROOT = Path(__file__).resolve().parents[1]
 def _load():
     spec = importlib.util.spec_from_file_location("validate_structure_under_test",
                                                   PKG_ROOT / "validators" / "validate_structure.py")
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -328,6 +329,36 @@ def test_f42_adapter_gaps_are_warned_not_failed() -> None:
         got = [w for w in res.warns if w["check"] == "适配器缺口"]
         assert got, res.warns                            # 但必须可见
         assert "routes" in got[0]["detail"] and "0 命中" in got[0]["detail"], got[0]
+
+
+def test_issue25_off_site_is_accepted_and_warned_not_silently_covered() -> None:
+    """issue #25（2026-10-19）：A/H 的真相源被写死为项目根 `README.md` ⇒ 无 README、以 agent
+    规范文件为唯一载体的项目**没有合法落点**（写 README 违项目约定，不写则恒 FAIL）。
+    `off-site` = 第三态「内容已写、落在指定落点之外」，且按**缺口**记账（WARN），不混进 PASS。
+
+    反面钉：`off-site` 只在**声明位**才算数——散文里提到它仍 FAIL（同 F38 锚定口径）。
+    """
+    meta = dict(META)
+    meta["categories"] = {"A": "skipped",
+                          "H": "off-site：AGENTS.local.md｜本机环境不入仓、不可复现"}
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, meta=meta)
+        res = vst.validate(root)
+        assert res.ok, res.rows
+        assert _res(root)["类别覆盖 · categories A/H"]["ok"] is True, res.rows
+        got = [w for w in res.warns if w["check"] == "类别覆盖 · off-site 落点"]
+        assert got, "off-site 必须可见（缺口不许伪装成覆盖）"
+        assert "AGENTS.local.md" in got[0]["detail"], got[0]
+
+    prose = dict(META)
+    prose["categories"] = {"A": "skipped", "H": "off-site 登记待补"}
+    with _tmp() as td:
+        root = Path(td)
+        mk(root, meta=prose)
+        res = vst.validate(root)
+        assert not res.ok, "散文提及 off-site 不是声明"
+        assert not [w for w in res.warns if w["check"] == "类别覆盖 · off-site 落点"]
 
 
 def test_f42_absent_or_empty_gaps_produce_no_noise() -> None:

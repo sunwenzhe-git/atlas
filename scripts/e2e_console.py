@@ -326,7 +326,7 @@ class Ledger:
 
     # ---- 派生视图：人读用（正文唯一在 events.jsonl）
     def _render(self) -> None:
-        evs = self.read()
+        evs: list = self.read()
         runs: dict[str, dict] = {}
         reviews: dict[str, dict] = {}
         for e in evs:
@@ -522,6 +522,7 @@ class Runner:
         if self.keep_open:
             env["ATLAS_KEEP_OPEN"] = "1"
             env["ATLAS_RESULT_FILE"] = str(sentinel)
+        proc: subprocess.Popen | None = None
         try:
             proc = subprocess.Popen(cmd, cwd=str(scripts), stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
@@ -569,7 +570,7 @@ class Runner:
             if held:
                 self.held_case = case["id"]
             self.cond.notify_all()
-        if held:
+        if held and proc is not None:   # 起进程失败（已走 except 分支）⇒ 无可观察的持窗进程
             threading.Thread(target=self._watch_held, args=(proc,), daemon=True).start()
 
     def _watch_held(self, proc: subprocess.Popen) -> None:
@@ -721,7 +722,7 @@ class App:
 class Handler(BaseHTTPRequestHandler):
     app: App
 
-    def log_message(self, fmt, *args):  # 安静点
+    def log_message(self, format, *args):  # noqa: A002 - 安静点
         pass
 
     # ---- helpers
@@ -846,7 +847,7 @@ class Handler(BaseHTTPRequestHandler):
             snap = {cid: _compact(v) for cid, v in draft.items()}
             self.app.ledger.append({"kind": "submit", "source": source,
                                     "changed": res["changed"], "cases": snap})
-            res["committed_ts"] = self.app.ledger.last_submit(source).get("ts")
+            res["committed_ts"] = (self.app.ledger.last_submit(source) or {}).get("ts")
         self._json(res)
 
     def _stream(self) -> None:

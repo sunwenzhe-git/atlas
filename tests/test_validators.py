@@ -278,11 +278,29 @@ Web。
 
 PRD_DEMO = """# demo 域 PRD
 
+## 一、域概述
+
+| 项 | 内容 |
+|---|---|
+| 定位 | 夹具 |
+| 边界 | 夹具 |
+
 ## 二、功能清单
 
 | 功能编号 | 名称 | 说明 | 优先级 | 需求类别 |
 |---|---|---|---|---|
 | `FN-DEMO-001` | 演示功能 | 用于夹具 | P0 | 新增 |
+
+## 三、功能详细说明
+
+### 功能 1：演示功能
+
+1. 功能描述：夹具功能。
+2. 用户流程：打开页面。
+3. 状态机：不适用（无状态流转）。
+4. 字段规范：不适用（无业务字段）。
+5. 文案规范：六类文案齐备（夹具）。
+6. 异常处理：夹具。
 
 ## 四、业务规则（Rule Set）
 
@@ -316,6 +334,12 @@ PRD_DEMO = """# demo 域 PRD
 ## 六、Assumptions & Defaults
 
 ## 七、变更记录
+
+- 1.0 初版。
+
+## 八、用户旅程走查
+
+已确认：2026-01-01
 """
 
 
@@ -325,6 +349,63 @@ def mk_prd_raw(root: Path, global_text: str, domain_text: str | None = None) -> 
     (d / "prd.md").write_text(global_text, encoding="utf-8")
     if domain_text is not None:
         (d / "demo-prd.md").write_text(domain_text, encoding="utf-8")
+
+
+def test_testids_test_files_are_not_page_declarations() -> None:
+    """issue #27（2026-10-19）：单元测试里的 `data-testid` 字符串是**页面元素的回声**、不是声明处——
+    计进「声明处计数」会把「真实元素 + 自身测试文件里的同名字符串」判成全站重复假红。
+    测试目录与 `*.test.*`/`*.spec.*`/`*.cy.*` 一律不入扫描面。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root)
+        tdir = root / "web" / "src" / "__tests__"
+        tdir.mkdir(parents=True, exist_ok=True)
+        (tdir / "home.test.ts").write_text(
+            "test('renders title', () => {"
+            + chr(10)
+            + "  document.querySelector('[data-testid=\"home-title\"]');"
+            + chr(10)
+            + "  getByTestId('home-cta-btn').click();"
+            + chr(10)
+            + "});"
+            + chr(10), encoding="utf-8")
+        checks = {c["check"]: c["level"] for c in vt.validate(root).checks}
+        assert checks["testid 全站唯一"] == "PASS", checks
+        assert checks["同文件 testid 重复声明"] == "PASS", checks
+        assert vt.validate(root).status == "PASS", checks
+
+
+def test_prd_domain_required_sections_are_machine_checked() -> None:
+    """issue #29（2026-10-19）：域级 PRD 的必填章节此前**无机器判据**（只对全局 PRD 查）——
+    缺三/六/七/八 全绿 = 假绿通道。本门按形态分级：全量/首建要齐八节；
+    adopt 开户 / 增量起步按契约 §4「开户最小集」四节严判，其余节缺省合法 ⇒ WARN（不开局即红）。
+    """
+    def row(root: Path) -> dict:
+        return {c["check"]: c for c in vpr.validate(root).checks}["参数4 域级 PRD 章节"]
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_profile(root, PROFILE_BASE.format(origin="greenfield"))
+        mk_prd(root)
+        assert row(root)["status"] == "PASS", row(root)
+
+        d = root / "product" / "prd" / "demo-prd.md"
+        t = d.read_text(encoding="utf-8")
+        d.write_text(re.sub(r"## 一、域概述.*?(?=## 二、)", "", t, flags=re.S), encoding="utf-8")
+        got = row(root)
+        assert got["status"] == "FAIL", got
+        assert "demo-prd.md" in got["detail"] and "一" in got["detail"], got
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_profile(root, PROFILE_BASE.format(origin="adopt").replace(
+            "prototype:\n  dir: product/prototype\n", "prototype: null\n"))
+        mk_adopt_opening(root)
+        got = row(root)
+        assert got["status"] == "WARN", got
+        assert "三/六/七/八" in got["detail"], got
 
 
 def _p4(root: Path) -> dict:
@@ -527,7 +608,7 @@ def test_guard_gate_strips_inline_comment_without_parse_block() -> None:
             d["守卫"] = d["守卫"] + "   # 行内说明"
         return d
 
-    ve.parse_block = polluted
+    setattr(ve, "parse_block", polluted)  # 门内解析器打桩（模块属性赋值走 setattr 以过类型检查）
     try:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -542,7 +623,7 @@ def test_guard_gate_strips_inline_comment_without_parse_block() -> None:
             rows = {c["check"]: c for c in ve.validate(root).checks}
         assert rows["守卫 路径 ∈ 页面表"]["level"] == "PASS", rows["守卫 路径 ∈ 页面表"]
     finally:
-        ve.parse_block = real
+        setattr(ve, "parse_block", real)
 
 
 def test_empty_testid_list_fails_block_field_gate() -> None:
@@ -1096,7 +1177,7 @@ CASE_DYNAMIC_IN_STEP_ONLY = CASE_GOOD.replace(
 )
 
 
-def _dynamic_hint_case(extra_src: str = "") -> str:
+def _dynamic_hint_case(extra_src: str = "") -> tuple[str, str]:
     """跑一次夹具，返回（状态, 「分页双向集合相等」门的 detail）。"""
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -1888,6 +1969,7 @@ def test_stack_profile_runner_single_track_gate() -> None:
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "gen_under_test", PKG_ROOT / "scripts" / "gen_e2e_scripts.py")
+    assert spec is not None and spec.loader is not None
     gen = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gen)
     assert set(gen.RUNNERS) == {"node-playwright"}, gen.RUNNERS  # 生成器与校验器同词表
@@ -3095,7 +3177,7 @@ def test_stack_profile_login_shape_undeclared_warns_neutrally() -> None:
     未声明 `app_base_url`（= 还没到真跑）⇒ 不吹（不提前打扰未到期的项目）。
     变异证明 M70：WARN 前提挂错（缺省就吹）⇒ 「未声明 base_url」夹具变吹（钉失效）。
     """
-    def _gate(profile_text: str) -> dict:
+    def _gate(profile_text: str):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             (root / "product").mkdir(parents=True)

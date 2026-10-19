@@ -972,14 +972,18 @@ def review_report_status(reports_dir: Path) -> tuple[str, str]:
             and not data.get("checks")
             and data.get("reviewed") == 0
             and (data.get("expected") or 0) >= 1
+            and isinstance(data.get("executed"), bool)
         ):
-            return "baseline", f"{d.name}（基线报告兜底中）"
-        return "invalid", f"{d.name}/review.json 声明 basis 但未满足基线报告形状锁（须 WARN 且 reviewed=0 且 expected>=1 且 checks为空）"
+            return "baseline", f"{d.name}（基线报告兜底中，executed={data['executed']}）"
+        return "invalid", (f"{d.name}/review.json 声明 basis 但未满足基线报告形状锁（须 WARN 且 reviewed=0 "
+                           f"且 expected>=1 且 checks为空 且 executed 为布尔——缺 executed 锚时"
+                           f"「未审」与「产物不合格」不可区分，issue #30）")
 
     return "ok", f"{d.name} status={status}"
 
 
-def auto_heal_review_report(root: Path, scope: str = "auto-baseline", expected_count: int = 1) -> Path:
+def auto_heal_review_report(root: Path, scope: str = "auto-baseline", expected_count: int = 1,
+                           executed: bool = False) -> Path:
     """自愈生成符合 `shared/independent-review.md` §3 规范的基线审查报告三件套（v0.1.0-beta.14）。"""
     today = time.strftime("%Y-%m-%d")
     dirname = f"{today}-{scope}"
@@ -991,6 +995,7 @@ def auto_heal_review_report(root: Path, scope: str = "auto-baseline", expected_c
             "ok": True,
             "status": "WARN",
             "basis": "auto-baseline",
+            "executed": executed,
             "root": str(root),
             "scope": scope,
             "unit": "e2e",
@@ -999,7 +1004,9 @@ def auto_heal_review_report(root: Path, scope: str = "auto-baseline", expected_c
             "reviewed": 0,
             "budget_exceeded": False,
             "checks": [],
-            "other": ["本报告为接入基线报告，机器兜底生成，独立审查未执行（rings/e2e §12.6）"],
+            "other": ["本报告为接入基线报告，机器兜底生成，独立审查"
+                       + ("**未执行**" if not executed else "**跑过但产物不合格**")
+                       + "（rings/e2e §12.6）"],
         }
         rj.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     readme = d / "README.md"
@@ -1065,7 +1072,10 @@ def review_gate(root: Path, prof: dict | None = None) -> tuple[bool, list[str], 
         # adopt 模式（存量接管首日）或显式 auto-baseline 声明 ⇒ 自愈放行；
         # null / 未声明不在此列（语义 = 缺省严格门，见 docstring）。
         if origin == "adopt" or mode == "auto-baseline":
-            reasons.append(f"NOTICE: 审查报告处于 {level} 态，处于 adopt 模式或显式 auto-baseline 免阻断通道，已启用自动自愈基线（rings/e2e §12.6）")
+            why = ("审查未执行（无报告）：先按 rings/e2e §12.6 的连通性探针判执行侧可达性，确认可达再 --bootstrap-review"
+                   if level == "missing" else
+                   f"审查跑过但产物不合格（{detail}）")
+            reasons.append(f"NOTICE: {why}；处于 adopt 模式或显式 auto-baseline 免阻断通道，已启用自动自愈基线（rings/e2e §12.6）")
             return True, reasons, True
 
     if level != "ok":
@@ -1427,7 +1437,10 @@ def main() -> int:
     # 审查报告自愈（AI-Native 模式，v0.1.0-beta.14）：动词等校验全部通过后再写盘自愈基线
     if gate_ok and will_auto_heal and args.apply:
         scope = "adopt-baseline" if (prof.get("origin") == "adopt") else "auto-baseline"
-        auto_heal_review_report(root, scope=scope, expected_count=len(cases))
+        # 「未审」vs「产物不合格」的判据 = 报告是否存在过（issue #30）：invalid ⇒ 跑过。
+        _lvl, _det = review_report_status(root / "product" / "e2e" / REVIEW_DIRNAME)
+        auto_heal_review_report(root, scope=scope, expected_count=len(cases),
+                                executed=(_lvl == "invalid"))
         print("NOTICE: 审查报告缺失或损坏，处于 adopt 模式或 review 免阻断通道，已自动自愈生成基线审查报告并放行写盘。", file=sys.stderr)
 
     results: list[dict] = []
@@ -1620,7 +1633,7 @@ def main() -> int:
             "  const name = download.suggestedFilename();\n"
             "  expect(name, `下载文件名 ${name} 不匹配 ${pattern}`).toMatch(atlasGlob(pattern));\n"
             "}\n\n"
-            + (ts_mock_helpers(mock_prefix, mock_mode) if (page_has_mocks := any(c.get("_mock") for c in items)) else "")
+            + (ts_mock_helpers(mock_prefix or "", mock_mode) if (page_has_mocks := any(c.get("_mock") for c in items)) else "")
             + ts_zero_step_baseline(page, url, items, mock_vacuous=page_has_mocks) + "\n"
             + "\n".join(ts_case(c, url, base or "") for c in items)
         )
@@ -1874,7 +1887,7 @@ def main() -> int:
         )
     if login_mode != "none":
         # none ⇒ 无登录预置设施，atlas-auth.setup.ts 不生成（configured 分支见上）。
-        write(scripts_dir / "atlas-auth.setup.ts", setup_ts, args.apply, results)
+        write(scripts_dir / "atlas-auth.setup.ts", setup_ts or "", args.apply, results)
     gitignore = scripts_dir / ".gitignore"
     if not gitignore.is_file():
         write(gitignore, ".atlas-auth/\n.atlas-run/\n", args.apply, results)

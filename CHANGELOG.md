@@ -4,6 +4,24 @@
 
 ---
 
+## [Unreleased]
+
+### 🩹 五个自感知 issue 的修复（#25 / #27 / #28 / #29 / #30）
+
+**#27 `tool-semantic`（测试文件被当 testid 声明处）**：`validate_testids` 的实然扫描此前包含 `__tests__` / `*.test.*` / `*.spec.*` / `*.cy.*` ⇒ 单元测试里的 `querySelector('[data-testid=x]')` 被计进「声明处计数」，把「真实元素 + 自身测试」判成全站重复假红。修：测试目录与测试命名**不入扫描面**（契约 `rings/e2e/reference.md` §4 + 门册 2.1）。钉 `test_testids_test_files_are_not_page_declarations`。
+
+**#29 `design-conflict`（域级 PRD 章节存在性无机器判据）**：模板要求八节，校验器只对**全局** PRD 查 ⇒ 域级缺三/六/七/八 全绿（假绿通道）。修：新增 `参数4 域级 PRD 章节` 一行——判据与全局同源（复用 `section_of`），need 按形态分级：`增量起步` / adopt 开户按契约 §4「开户最小集」四节严判、其余节缺省记 `WARN`（不开局即红）；其余形态要齐八节。钉 `test_prd_domain_required_sections_are_machine_checked`。
+
+**#25 `design-conflict`（A/H 真相源写死 `README.md`）**：无 README、以 agent 规范文件为唯一载体的项目**没有合法落点**（写 README 违项目约定，不写则恒 FAIL）。修：`categories.A/H` 增第三态 **`off-site`**（内容已写在指定落点之外，取证带落点路径 + 不可复现说明），adopt 下 H 的合法取值随之扩为 `covered|added|off-site`；渲染面判 **`WARN`**（缺口按缺口记账，不伪装成覆盖）。契约同步落 `rings/structure/reference.md` §4/§7、`shared/single-source.md` §1、`shared/layout.md` §4、`templates/structure/_meta.json`。钉 `test_issue25_off_site_is_accepted_and_warned_not_silently_covered`（正反两侧：散文提及 `off-site` 仍 FAIL）。
+
+**#28 `design-conflict`（E2E 环两处规则互锁）**：① 走查单确认门只管「改变应然 UI」，存量接入的「**实现纠回既有应然**」形态被恒判不得落笔 ⇒ 增「应然未变」旁路，判据 = **可机检的 AC 回指**（指不到覆盖该行为的既有 AC 则本门照旧）；② 该页零 testid 时门按未实现页 SKIP 放行、真跑必然定位不到 ⇒ 补 **三步推进链**（分片落笔 → 派生薄桩 + 实现侧补齐 → 复跑真跑）与机读完成锚（**该页双向差集为空**），并规定依赖未就绪时真跑按「**推进未完成**」措辞报出、不与用例真失败同面。
+
+**#30 `tool-semantic`（独立审查在受限宿主下无法执行）**：① 契约补 **连通性探针 = 派发后准入判据**（探针失败即判 lane 基础设施阻塞、停止同根因重试——原契约无此判据，重试配额会被同一根因耗尽）；② 补 **输入注入通道**（被审对象与契约源可作为上下文文本投喂；fresh context 要求的是「会话干净」，与输入来源无关）——让该环在「子代理无读取手段」的宿主下仍可执行；③ 机读分离 **「未审」与「审了但产物不合格」**：自愈基线报告新增 **`executed` 布尔**（`missing` ⇒ 未执行 / `invalid` ⇒ 跑过但产物不合格），纳入基线形状锁，两态门文案分报、不再共用一个降级出口。钉 `test_review_baseline_separates_not_reviewed_from_invalid_product`。
+
+**取证**：`pytest tests -q` ⇒ **521 passed / 0 failed / 4 skipped**；门册 `shared/gates.md` 2.1 四行同步登记判据与钉。
+
+---
+
 ## [v0.1.0-beta.29] - 2026-10-19
 
 ### 🧲 守卫单段化修正：删去「纯在场声明」运行期段，退回单段页面就绪锚点 (D114 v2 修正 / issue #26)

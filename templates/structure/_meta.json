@@ -7,14 +7,14 @@
     { "name": "[必填：app 标识]", "path": "[必填：相对项目根的路径]", "kind": "[必填：frontend|backend|fullstack|mobile]", "role": "[必填：landing|legacy]", "stack": "[必填：自由文本，仅供展示]" }
   ],
   "categories": {
-    "A": "<covered|skipped>：<取证>",
+    "A": "<covered|skipped|off-site>：<取证>",
     "B": "[ok|maintained_by: agent]",
     "C": "[ok|maintained_by: agent]",
     "D": "[清单（用户确认无描述）| 指针（有机器可读描述：<地址，可在仓外>）| 未取证：<取证>]",
     "E": "[ok|maintained_by: agent]",
-    "H": "<covered|added>：<取证>（greenfield 下亦可用 skipped）"
+    "H": "<covered|added|off-site>：<取证>（greenfield 下亦可用 skipped；off-site = 内容已写在 README 之外的落点，取证须带落点路径 + 不可复现说明，校验器判 WARN）"
   },
-  "categories_note": "A / H 是**枚举声明**：处置 token 写在字段首位（可带 `<标签>:` 前缀），取证文本接在 `：` 或 `（` 之后。占位值本身**不应通过**校验——把 `<covered|skipped>` 换成实际取值再写取证。",
+  "categories_note": "A / H 是**枚举声明**：处置 token 写在字段首位（可带 `<标签>:` 前缀），取证文本接在 `：` 或 `（` 之后；token 只在**声明位**才算数（散文提及不算）。占位值本身**不应通过**校验——把 `<covered|skipped>` 换成实际取值再写取证。`off-site`（issue #25）= 内容已写在指定落点之外（项目不写 README 时用），按缺口记账。",
   "adapter_gaps": {},
   "adapter_gaps_note": "接线前置未满足时登记缺口（类别 → 为什么没接）。空对象 = 无缺口。为什么要登记：不登记的话「设计结论：源即真相，不接」与「工具覆盖不足：判定表判『接』但本栈 0 命中」在产物里同形（都是 maintained_by: agent），采用者会把后者读成前者，而那道对账平面是永久缺口且没人知道它不是预期的。",
   "note": "候选域由结构环从代码聚类；status ∈ 候选 | 已定稿 | 信号冲突（后两个分别由 PRD 回写与人工裁定）。globs 为 L2 spec 的 paths 来源（至少 1 条）。",

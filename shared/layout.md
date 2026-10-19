@@ -69,4 +69,4 @@
 
 - 编码规范（原 I 类）与 testid 约定（原 G 类）**不在 structure 环**；testid 约定**正文归 E2E 环契约**（`.atlas/rings/e2e/reference.md` §4），编码规范不由 atlas 收口。
 - testid 在 `<项目根>/.trellis/spec/conventions/testid.md` 落一份**派生薄桩**（祈使句 + 指针 + 由**用例分片应然清单**派生的 testid 清单），供 Trellis 原生注入到实现任务；它是派生视图，不复制命名规则词表。
-- A（技术栈 + 启动，可选）与 H（测试 / 运行，条件）的真相源均为**项目根 `README.md`**，**不入 spec**（受控例外，见 §1；仅对应两节，过确认门）。
+- A（技术栈 + 启动，可选）与 H（测试 / 运行，条件）的真相源均为**项目根 `README.md`**，**不入 spec**（受控例外，见 §1；仅对应两节，过确认门）。**项目不写 README 时**（agent 规范文件为唯一载体的存量项目）：`_meta.json.categories` 记 `off-site` + 落点路径 + 不可复现说明，校验器判 **WARN**（缺口可见，不伪装成覆盖，issue #25）。

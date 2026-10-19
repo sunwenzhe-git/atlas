@@ -239,7 +239,7 @@ def check_generated(root: Path, rows: Row, py: str) -> None:
         # 三态语义（`3509 §B110`）：未就绪(SKIP) ≠ 生成物过期(WARN) ≠ 生成失败(FAIL)。
         # `run()` 把 stdout+stderr 拼在一起 ⇒ 先直解 JSON，不成再从拼接文本里抽 JSON 块（stderr 无花括号）。
         why = ""
-        for blob in (out, (re.search(r"\{.*\}", out, re.S).group(0) if re.search(r"\{.*\}", out, re.S) else "")):
+        for blob in (out, (m.group(0) if (m := re.search(r"\{.*\}", out, re.S)) else "")): 
             if not blob:
                 continue
             try:
@@ -256,7 +256,7 @@ def check_generated(root: Path, rows: Row, py: str) -> None:
                  command=f"{py} {gen} --root . --json", full_output=out, code=code)
         return
     info = None
-    for blob in (out, (re.search(r"\{.*\}", out, re.S).group(0) if re.search(r"\{.*\}", out, re.S) else "")):
+    for blob in (out, (m.group(0) if (m := re.search(r"\{.*\}", out, re.S)) else "")): 
         if not blob:
             continue
         try:

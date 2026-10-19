@@ -156,7 +156,7 @@ def _path_candidates(text: str):
 
 
 # categories.A/H 的合法处置 token（**枚举判定**，契约 `rings/structure/reference.md` §7）
-_CAT_TOKENS = ("covered", "skipped", "added")
+_CAT_TOKENS = ("covered", "skipped", "added", "off-site")
 # token 之后必须是**显式分隔符**或串尾：散文（取证文本）只准接在分隔符之后
 _CAT_EVIDENCE_SEP = "：:（(，,。；;、）)"
 # 可选标签前缀（F17 容错：`A: covered` / `H：covered`）。字符集排除分隔符与换行，
@@ -267,7 +267,7 @@ def validate(root: Path) -> Result:
         res.add("域模型", False, "缺少 _meta.json")
         return res
     try:
-        meta = json.loads(read(meta_path))
+        meta: dict = json.loads(read(meta_path))
     except (OSError, json.JSONDecodeError) as e:
         res.add("域模型", False, f"_meta.json 无法解析: {e}")
         return res
@@ -294,8 +294,10 @@ def validate(root: Path) -> Result:
     globals_missing = [n for n in ("directory-map.md", "routes.md")
                        if not (spec / "global" / n).is_file()]
     cat = meta.get("categories") or {}
-    a_ok = isinstance(cat.get("A"), str) and _cat_token(cat["A"]) in ("covered", "skipped")
-    h_ok_vals = ("covered", "added", "skipped") if greenfield else ("covered", "added")
+    # `off-site`（issue #25，2026-10-19）：内容已写但落在指定落点之外（无 README、以 agent
+    # 规范文件为唯一载体的项目）—— 缺这一态就只能写 README（违项目约定）或不写（恒 FAIL）。
+    a_ok = isinstance(cat.get("A"), str) and _cat_token(cat["A"]) in ("covered", "skipped", "off-site")
+    h_ok_vals = ("covered", "added", "skipped", "off-site") if greenfield else ("covered", "added", "off-site")
     h_ok = isinstance(cat.get("H"), str) and _cat_token(cat["H"]) in h_ok_vals
     role_issues = []
     # F33（R8 收束，2026-10-15）：D 类**指针形态豁免**——AP 已经有机器可读描述
@@ -343,9 +345,16 @@ def validate(root: Path) -> Result:
     res.add("类别覆盖 · 域级 apis/data-models", not role_issues, "；".join(role_issues))
     res.add("类别覆盖 · categories A/H", a_ok and h_ok,
             f"A={cat.get('A')!r} H={cat.get('H')!r}"
-            f"（处置须**声明在字段首位**：A ∈ covered|skipped；"
-            f"H ∈ {'covered|added|skipped（greenfield）' if greenfield else 'covered|added'}；"
+            f"（处置须**声明在字段首位**：A ∈ covered|skipped|off-site；"
+            f"H ∈ {'covered|added|skipped|off-site（greenfield）' if greenfield else 'covered|added|off-site'}；"
             f"散文/取证只准接在 `：` 或 `（` 之后）")
+    # off-site 是**缺口态不是覆盖态**：判 WARN，不让它混在 PASS 里（issue #25 ③）。
+    off = [f"{k}={cat.get(k)!r}" for k in ("A", "H")
+           if _cat_token(cat.get(k) or "") == "off-site"]
+    if off:
+        res.add_warn("类别覆盖 · off-site 落点",
+                     "；".join(off) + "（内容已写但落在指定落点之外：取证须带**落点路径 + 不可复现说明**；"
+                     "该态按缺口记账，不按覆盖记账）")
 
     # 适配器缺口登记（F42，2026-10-15，issue #3 ④）
     # 接线前置未满足时（适配器 0 命中 / 产出不自洽），契约要求「不接线 + 把缺口登记下来」。
@@ -393,7 +402,7 @@ def validate(root: Path) -> Result:
                          "或把 categories.D 改为「清单（用户确认无描述）」并给取证")
 
     # 元数据一致 · apps / product
-    res.add("元数据 · product/apps", bool(meta.get("product")) and isinstance(meta.get("apps"), list) and meta.get("apps"),
+    res.add("元数据 · product/apps", bool(meta.get("product")) and bool(meta.get("apps")),
             "缺 product 或 apps[]")
 
     # global/routes.md 域列

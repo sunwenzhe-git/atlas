@@ -29,6 +29,8 @@
 """
 from __future__ import annotations
 
+from typing import NoReturn
+
 import argparse
 import fnmatch
 import json
@@ -70,7 +72,7 @@ def log(m: str) -> None:
     print(m)
 
 
-def die(m: str) -> None:
+def die(m: str) -> NoReturn:
     print(f"ERROR: {m}", file=sys.stderr)
     sys.exit(1)
 
@@ -79,6 +81,7 @@ def load_meta(root: Path) -> dict | None:
     p = root / ".trellis" / "spec" / "structure" / "_meta.json"
     if not p.is_file():
         return None
+    meta: dict = {}
     try:
         meta = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
@@ -785,9 +788,15 @@ def refresh_facts(root: Path, meta: dict, apply: bool) -> list[dict]:
         out_dir.mkdir(parents=True, exist_ok=True)
         if drifts:
             payload = {"generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "drifts": drifts}
-            marker.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            with open(out_dir / "_drift-history.jsonl", "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            try:
+                marker.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            except OSError as e:
+                die(f"无法写 {marker}: {e}")
+            try:
+                with open(out_dir / "_drift-history.jsonl", "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            except OSError as e:
+                die(f"无法写 {out_dir / '_drift-history.jsonl'}: {e}")
         elif marker.exists():
             marker.unlink()
     return results

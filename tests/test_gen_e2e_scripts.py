@@ -114,6 +114,7 @@ def write_review(root: Path, ring: str, dirname: str, status: str,
 
 def load_generator():
     spec = importlib.util.spec_from_file_location("gen_e2e_scripts_under_test", GEN)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -812,6 +813,7 @@ ASSERT_SAMPLES = {
 
 def _load_gen():
     spec = importlib.util.spec_from_file_location("atlas_gen_under_test", GEN)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -1203,6 +1205,35 @@ def test_review_gate_auto_heals_on_adopt() -> None:
         assert report_data["expected"] >= 1
 
 
+def test_review_baseline_separates_not_reviewed_from_invalid_product() -> None:
+    """issue #30（2026-10-19）：`missing`（独立审查压根没跑起来）与 `invalid`（跑过了但产物不合格）
+    此前折叠成同一份基线报告、同一个门结论 ⇒ 最强的一道人工兜底失效时反而显示为「ok 带警告」。
+    机读锚 = 基线报告的 `executed`，门措辞两态分报。
+    """
+    adopt = PROFILE.replace("product: demo", "product: demo\norigin: adopt")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=adopt, review=False)
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stderr + r.stdout
+        rep = json.loads(next((root / "product" / "e2e" / "reviews")
+                              .glob("*-adopt-baseline/review.json")).read_text(encoding="utf-8"))
+        assert rep["executed"] is False, "无报告 ⇒ 审查未执行"
+        assert "未执行" in rep["other"][0], rep["other"]
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=adopt, review=False)
+        d = root / "product" / "e2e" / "reviews" / "2020-01-01-broken"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "review.json").write_text("{ not json", encoding="utf-8")
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stderr + r.stdout
+        rep = json.loads(next((root / "product" / "e2e" / "reviews")
+                              .glob("*-adopt-baseline/review.json")).read_text(encoding="utf-8"))
+        assert rep["executed"] is True, "有报告但不合格 ⇒ 审查跑过（处置路径不同，不得与未执行同形）"
+
+
 def test_review_gate_modes_triple_key_semantics() -> None:
     """R6.1 对账定稿（2026-10-15）：三个语义三把钥匙，不得隐式互化——
     ① `review: null`（= 执行器取会话默认，契约 shared/stack-profile.md §2）⇒ **缺省严格门**：
@@ -1418,6 +1449,7 @@ def test_base_query_absent_leaves_generation_byte_identical() -> None:
         assert "page.goto('/home/?" not in spec
     # 单元侧：无 query ⇒ 原样返回（不因「纯路径」被改动）
     spec = importlib.util.spec_from_file_location("gen_e2e_urlmerge", GEN)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     merge = mod.url_merge.merge_base_query
@@ -1863,6 +1895,7 @@ def test_f24_zero_step_probe_exemptions() -> None:
     2. 普通非 mock 用例断言保持进入探针集（契约 §5.6 R9 守卫）；
     3. 纯 mock 页面在基线不挂桩环境下依然生成带空转守卫的基线测试。"""
     spec = importlib.util.spec_from_file_location("gen_e2e", GEN)
+    assert spec is not None and spec.loader is not None
     gen = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gen)
 
@@ -1920,6 +1953,7 @@ def test_f21_baseline_shape_lock_and_sort_precedence() -> None:
     2. Critical 先行：即使声明 basis 键，若 status=FAIL 且含 Critical，照旧被拒；
     3. 同日排序消歧：同一天内真审报告优于基线报告。"""
     spec = importlib.util.spec_from_file_location("gen_e2e", GEN)
+    assert spec is not None and spec.loader is not None
     gen = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gen)
 
