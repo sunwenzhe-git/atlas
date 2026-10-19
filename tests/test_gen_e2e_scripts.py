@@ -1422,6 +1422,43 @@ def test_base_query_absent_leaves_generation_byte_identical() -> None:
     assert merge("/a?t=9#/c", "http://h/?t=1") == "/a?t=9#/c"      # 同键：目标胜（逐用例比全局更具体）
 
 
+def test_select_option_locating_is_label_based_and_rejects_ambiguity() -> None:
+    """契约 §5.5（2026-10-19，`DESIGN.md` D112）：`select` 的选项定位**不得**取「可访问名全等」。
+
+    现场：ant Select 的选项把描述文案塞进选项内 ⇒ 可访问名 = 标签 + 描述
+    （实测 `文本对话基于LLM的对话型交互，适合进行复杂的多轮对话`）⇒ `{ name: label, exact: true }`
+    恒不命中，用例卡在 30s 超时（不是断言失败，是定位失败）。
+    定案 = 三级降级（title 全等 → 可见文本前缀 → 名称包含）+ **命中不唯一即拒绝**
+    （宁可响亮失败，也不 `.first()` 静默选错项）。
+    """
+    case_text = CASE.replace(
+        "  - click home-cta-btn          # 点击主操作按钮",
+        "  - select home-cta-btn 首页    # 选项定位口径",
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=case_text)
+        assert run(root, "--apply").returncode == 0
+        ts = spec_of(root)
+        start = ts.index("async function atlasSelect(")
+        body = ts[start:ts.index("\nasync function ", start + 1)]
+        # ① 禁用形态：可访问名全等（= 本行治的那个病灶）
+        assert "exact: true" not in body, body
+        # ② 三级降级三枚标记齐（title 全等 / 前缀 / 包含）
+        assert "e.getAttribute('title') === want" in body, body
+        assert "startsWith(want)" in body, body
+        assert "includes(want)" in body, body
+        # ③ 唯一性判据 + 响亮失败（列出可见选项，让下一次失败可诊断）
+        #    必须锚定**整条拒绝语句**：`hit.length !== 1` 这个子串在降级两行里也出现，
+        #    只查子串 ⇒ 摘掉拒绝行钉子照样绿（MB14 实测：第一版判据就是废的）。
+        assert "if (hit.length !== 1) return { ok: false, visible: shown.map(nameOf) }" in body, body
+        assert "可见选项=" in body, body
+        # ④ 候选只取**几何可见**元素（避免 hidden 选项参与匹配）
+        assert "getBoundingClientRect()" in body, body
+        # ⑤ 原生分支仍在（实现无关：<select> 走 selectOption）
+        assert "selectOption({ label })" in body, body
+
+
 def test_setup_without_app_login_degrades_loudly() -> None:
     """契约 §7.1（RFC-20261015-02，2026-10-16 改判）：stack-profile 未声明 e2e.app_login =
     **未声明**（不再是「合法降级」）——第一阶段仍生成成功 + 生成期 WARN（升档 = 下一次真跑
