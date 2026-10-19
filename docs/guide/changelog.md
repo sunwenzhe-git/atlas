@@ -4,6 +4,16 @@
 
 ---
 
+## [v0.1.0-beta.32] - 2026-10-19
+
+### 🎯 同名多实例元素序位下标支持（#31，D120）
+
+- **步骤动词与断言动词多实例序位 `[N]` 支持（#31）**：`scripts/gen_e2e_scripts.py` 全面支持目标 testid 带 `[N]` 下标语法（0 起始，如 `click list-btn[1]`、`fill input[2] val`、`visible item[1]`），发射为 Playwright 原生 `.nth(N)` 定位器；省略下标时保持缺省 `.first()` 语义（100% 向后兼容）；
+- **生成物 helper 同步适配**：`atlasSelect`、`atlasExpectValue`、`atlasDownload`、`tsLoc`、`tsVis`、`tsVisible` 等生成物 helper 同步适配 `nth` 参数；
+- **校验门无缝对接**：`validators/validate_testids.py` 的 `case_testid_usage` 自动剥离 `[N]` 下标，双向集合门与应然落点门无缝对接基准 testid。
+
+---
+
 ## [v0.1.0-beta.31] - 2026-10-19
 
 ### 🩹 自感知缺陷与工件健壮性一揽子修复（#25 / #27 / #28 / #29 / #30 / #34 / #35，D119）+ 等待超时上限口径统一（D118）
