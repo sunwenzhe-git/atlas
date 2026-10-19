@@ -1472,8 +1472,9 @@ def main() -> int:
             "import { test, expect } from './atlas-hold';\n"
             "import { readFileSync } from 'node:fs';\n"
             + ("import { resolve } from 'node:path';\n" if page_uses_upload else "")
-            + "// 契约 §7.1：`waitFor` 的超时默认值（与 python 侧同值）\n"
-            "const ATLAS_WAIT_TIMEOUT_MS = 10_000;\n\n"
+            + "// 契约 §7.1（DESIGN D118）：等待超时缺省 **20s** —— 与 `expect` 下限（D105）同口径；\n"
+            "// `ATLAS_WAIT_TIMEOUT_MS` 为运维覆盖口（与 `ATLAS_EXPECT_TIMEOUT` / `ATLAS_SLOWMO` 同族）。\n"
+            "const ATLAS_WAIT_TIMEOUT_MS = Number(process.env.ATLAS_WAIT_TIMEOUT_MS ?? 20_000);\n\n"
             "function tsLoc(page: any, tid: string) {\n"
             "  return page.getByTestId(tid).first();\n"
             "}\n"

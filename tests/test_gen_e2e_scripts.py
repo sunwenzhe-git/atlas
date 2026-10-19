@@ -1385,6 +1385,29 @@ def test_runner_config_declares_expect_timeout_floor() -> None:
         assert "20_000" in cfg and "ATLAS_EXPECT_TIMEOUT" in cfg, cfg[:400]
 
 
+def test_wait_timeout_cap_is_20s_and_overridable() -> None:
+    """`DESIGN.md` D118：生成物的等待超时上限 = **缺省 20s + `ATLAS_WAIT_TIMEOUT_MS` 覆盖口**。
+
+    现场（2026-10-19，百炼/v2前端真跑）：整份首跑 `9 passed / 1 failed`，红的那条倒在**页面就绪锚点**
+    的 10s 超时（`元素齐全守卫：声明的 testid 无一在场`）；同口径探针实测该元素 **2.2~2.5s** 出现，
+    且 `disabled=true` + 合规 `aria-label` 全对 ⇒ 10s 比该应用**已知最坏首屏**（D105 实测
+    **14,184ms**）还短 ⇒ 间歇性假红。同一个「等界面」不得有两个上限：本常量与 D105 的
+    `expect` 下限取同值。
+
+    变异 **MD118**：退回写死的 `const ATLAS_WAIT_TIMEOUT_MS = 10_000;` ⇒ 本钉红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        spec = spec_of(root)
+        assert "process.env.ATLAS_WAIT_TIMEOUT_MS" in spec, spec[:600]
+        assert "?? 20_000" in spec, spec[:600]
+        assert "const ATLAS_WAIT_TIMEOUT_MS = 10_000;" not in spec, spec[:600]
+        # 上限仍然是「上限」：锚点走轮询原语，不得因本改而变成固定等待。
+        assert "await expect.poll(hit, {" in spec, spec[:1200]
+
+
 def test_base_query_reaches_all_three_navigation_sites() -> None:
     """issue #27 / `DESIGN.md` D104：`e2e.app_base_url` 的 query（宿主注入型前提，如 tenant）
     必须被带到**三处**导航发射面：
