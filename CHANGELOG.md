@@ -4,6 +4,22 @@
 
 ---
 
+## [v0.1.0-beta.28] - 2026-10-19
+
+### 🧲 元素齐全守卫拆两段：「页面就绪锚点 + 纯在场声明」，动作产物元素改由自动等待承接 (D114 / issue #26)
+
+**背景**：守卫面 = 用例 `testid:` 全量清单（#R2）后，**动作产物元素**（初始态必然 0）在未执行任何 step 前即死锁；契约把解法指向实现侧 `hidden` 占位槽 ⇒ 把测试义务搬进产品 DOM，并衍生三条无机器判据的隐式约定（占位须排在动作目标之后 / 字面按声明文件唯一 / 可交互态取断言反面）。次生：`count` 断言被迫写「真实数 + 1」、前一用例残留被折叠成「页面未加载」（`Expected 1 / Received 2`）。
+
+**定案（`scripts/gen_e2e_scripts.py`，a76c33f）**：守卫拆两段——
+- ① **`atlasAwaitAnyDeclared` 页面就绪锚点**：任意一个声明 id 在场即视为页面已渲染（`expect.poll` 原生轮询、超时点名整份清单）；
+- ② **`guard_only` = `testid:` − (`step` 目标 ∪ `expected` 目标)** 仍逐个 `toHaveCount(1)` 严判。已被 step/expected 触达的 id 不预先要求在场（分别由该 step 的原生自动等待、该断言的自动轮询承接，§5.5 §B99 语义不变）。守卫面不会退化成空表（锚点恒发射且带全量清单）⇒ **实现侧不再需要 `hidden` 占位槽、count 断言回到纯业务数**。
+
+**兼容面**：存量占位槽不强制回退（保留即继续满足第 ② 段，count 的 +1 亦不变）⇒ 对存量生成物为增量可用。
+
+**钉与取证**：`tests/test_gen_e2e_scripts.py` 85 → **86**（新增 `test_guard_splits_anchor_from_presence_only_ids`；#R2 三枚旧钉按新形态重构而非删除）；变异 **MD114**（`guard_only` 回退全量 presence）⇒ 3 枚钉红、还原逐字节一致；全量 `pytest tests -q` ⇒ **516 passed / 0 failed / 4 skipped**。登记面：`rings/e2e/reference.md` §7.1 守卫条重写、`DESIGN.md` D114。
+
+---
+
 ## [v0.1.0-beta.27] - 2026-10-19
 
 ### 🔧 testid 双向集合门的「动态名」诊断：文案与应然集合口径对齐 + 判据由词形改结构 (D113, M96/M97)
