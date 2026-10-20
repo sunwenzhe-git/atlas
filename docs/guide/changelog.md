@@ -4,6 +4,17 @@
 
 ---
 
+## [v0.1.0-beta.33] - 2026-10-20
+
+### 🔧 prepare 用例上下文 / select 候选集 / ESM upload 路径 / 就绪门浏览器判据（D121–D124 / #37 / #38）
+
+- **数据准备钩子传入用例上下文（D121）**：`scripts/e2e_console.py` 调用项目 `atlas-prepare.mjs` 时在子进程环境变量中注入 `ATLAS_CASE_ID`（当前用例 ID），用例级前置不再被迫全局化；
+- **`select` 选项候选集扩充（D122）**：`atlasSelect` 候选集追加 `[class*="select-item-option"]`，解决 Antd Select 可见项无 `role=option` 导致的定位超时假红；
+- **ESM 项目 upload fixture 路径修复（D123）**：`type: "module"` 项目的 `upload` 发射 `import.meta.url` 路径解析，消除 `__dirname` 未定义异常；
+- **E2E 就绪门补浏览器判据（D124 / #38）**：增加 `_support/pw_runner.py::probe_browser` 探测 Chromium 浏览器在场；`atlas_check` 真跑门缺浏览器时明确 FAIL 并指名安装命令 `npx playwright install chromium`，`e2e_console` 起跑前诚实拒绝。
+
+---
+
 ## [v0.1.0-beta.32] - 2026-10-19
 
 ### 🎯 同名多实例元素序位下标支持（#31，D120）

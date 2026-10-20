@@ -4,9 +4,9 @@
 
 ---
 
-## [Unreleased]
+## [v0.1.0-beta.33] - 2026-10-20
 
-### 🔧 数据准备钩子传入用例上下文（D121）
+### 🔧 prepare 用例上下文 / select 候选集 / ESM upload 路径 / 就绪门浏览器判据（D121–D124 / #37 / #38）
 
 * **【D121 用例级 prepare】**：
   - `scripts/e2e_console.py` 调用项目 `product/e2e/scripts/atlas-prepare.mjs` 时在子进程 env 注入 `ATLAS_CASE_ID`（当前用例 ID），项目脚本可据此只准备该用例依赖的数据，避免一组用例的前置缺失把无关用例挡在 prepare 阶段；
