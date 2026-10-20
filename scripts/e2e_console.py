@@ -28,10 +28,15 @@
   `launchOptions.slowMo`（Playwright `test` CLI 无 `--slowmo` 旗标，2026-10-14 F11）；
   「跑完留窗 + 结果哨兵」由生成物 `atlas-hold.ts` 承载——契约 `rings/e2e/reference.md` §10.1）；
 * **并发 = 1**（同时只跑一条，其余按钮禁用）；单条 wall-clock 超时到点 kill 并如实报「超时」；
-* **数据准备钩子**（2026-10-18，D110）：项目自带 `product/e2e/scripts/atlas-prepare.mjs`
-  ⇒ 每条用例执行前先跑它（失败/超时 ⇒ 拒绝执行并如实上报，见契约 §10「执行」）；
+* **数据准备钩子**（2026-10-18，D110；2026-10-20，D121 补用例上下文）：项目自带
+  `product/e2e/scripts/atlas-prepare.mjs` ⇒ 每条用例执行前先跑它（失败/超时 ⇒ 拒绝执行并
+  如实上报，见契约 §10「执行」）；运行时经 `ATLAS_CASE_ID` 传入当前用例 ID，项目脚本可据此
+  只准备该用例依赖的数据（不读该变量的存量脚本行为不变）；
 * 「人工 review 通过」= 人工复核**执行结果**符合业务预期；只在**执行通过**后解锁按钮
   （不通过就是没通过，回对话改用例）。
+* **起跑前置判据**（2026-10-20，D124）：运行器可解析之外还须**浏览器就绪**——playwright 自算的
+  chromium 可执行路径存在，或 `ATLAS_PLAYWRIGHT_CHANNEL` 已设（走系统通道浏览器）；npm 装包不自动
+  下载浏览器，缺 ⇒ 起跑前诚实拒绝（与 `atlas_check`「E2E 真跑」门同一内核 `_support/pw_runner.py`）。
 
 用法：
 
@@ -410,6 +415,12 @@ class Runner:
             self._emit("ℹ " + note)
         if pw_bin is None:
             return False, f"node-playwright 不可用：{why}——解析规则与 atlas_check「E2E 真跑」门一致"
+        # 浏览器就绪判据（issue #38，`DESIGN.md` D124）：与「E2E 真跑」门同一内核（`probe_browser`），
+        # 不造第二份——模块可解析 ≠ launch 可成（npm 装包不自动下载浏览器）；缺 ⇒ 起跑前诚实拒绝，
+        # 不起注定 launch 失败的子进程；`ATLAS_PLAYWRIGHT_CHANNEL` 已设 ⇒ 旁路（系统通道浏览器）。
+        br_ok, br_detail = pw_runner.probe_browser(self.root / "product" / "e2e" / "scripts")
+        if not br_ok:
+            return False, f"浏览器未就绪：{br_detail}——判据与 atlas_check「E2E 真跑」门一致"
         with self.cond:
             if self.running:
                 return False, f"已有用例在跑（{self.case}）——本控制台并发=1"
@@ -463,13 +474,16 @@ class Runner:
         # ⇒ 每条用例先跑它（cwd = 项目根，180s 上限，**不计入**用例超时窗——本块在计时起点之前）；
         # 失败/超时 ⇒ 拒绝执行该用例并按 done 事件完整形状（带 prep_failed 标记）如实上报——
         # 不静默跑一条注定偏移的用例。
+        # D121（2026-10-20）：用例 ID 经 ATLAS_CASE_ID 传入，项目脚本可按用例分段准备。此前钩子
+        # 无任何用例上下文 ⇒ 一组用例的前置缺失会把无关用例一并挡在 prepare 阶段（全局前置）。
         prep = scripts / "atlas-prepare.mjs"
         if prep.is_file():
             self._emit("$ 前置数据准备 atlas-prepare.mjs …")
             prep_exit = None
             try:
                 pr = subprocess.run(["node", str(prep)], cwd=str(self.root),
-                                    capture_output=True, text=True, timeout=180)
+                                    capture_output=True, text=True, timeout=180,
+                                    env={**os.environ, "ATLAS_CASE_ID": case["id"]})
                 self._emit((pr.stdout or "")[-1500:])
                 if pr.returncode != 0:
                     self._emit(f"\n[前置] atlas-prepare 失败（exit={pr.returncode}）：未执行用例\n"

@@ -424,7 +424,7 @@ def session_env_name(key: str) -> str:
     return "ATLAS_SESSION_" + re.sub(r"[^0-9A-Za-z]+", "_", key).strip("_").upper()
 
 
-def ts_case(case: dict, url: str, base: str = "") -> str:
+def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
     cid = case["id"]
     # 契约 §5.5 `守卫:`（2026-10-16，issue #23）：**元素齐全守卫导航用的具体路径**。
     # 页面表 `路由` 列按 §3.1 只承载**业务段**（带参页面形如 `/x` 而真实路由为 `/x/:id`）⇒
@@ -563,9 +563,14 @@ def ts_case(case: dict, url: str, base: str = "") -> str:
             rel = value.strip()
             if not rel:
                 raise ValueError(f"`upload` 需要 fixtures 相对路径参数: {s!r}（契约 §5.5）")
+            # D123（2026-10-20）：package.json `type: module` 的项目里生成物按 ESM 执行，
+            # `__dirname` 不存在 ⇒ 按脚本文件位置解析需改用 import.meta.url；CJS 项目保持原形态。
+            path_expr = (
+                f"fileURLToPath(new URL('../fixtures/{rel}', import.meta.url))" if esm
+                else f"resolve(__dirname, '..', 'fixtures', {json.dumps(rel, ensure_ascii=False)})"
+            )
             actions.append(
-                f"await {tid_locator(tid)}.setInputFiles("
-                f"resolve(__dirname, '..', 'fixtures', {json.dumps(rel, ensure_ascii=False)}));"
+                f"await {tid_locator(tid)}.setInputFiles({path_expr});"
             )
         else:
             raise ValueError(f"未知动作动词: {verb}（契约 §5.5）")
@@ -1123,6 +1128,14 @@ def review_gate(root: Path, prof: dict | None = None) -> tuple[bool, list[str], 
     return (not reasons), reasons, False
 
 
+def project_is_esm(root: Path) -> bool:
+    """package.json `type: module` ⇒ 生成物按 ESM 执行（`__dirname` 不存在，D123）。"""
+    try:
+        return json.loads((root / "package.json").read_text(encoding="utf-8")).get("type") == "module"
+    except Exception:
+        return False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", default=".")
@@ -1132,6 +1145,7 @@ def main() -> int:
                     help="输出机器可读的独立审查任务包 JSON（rings/e2e §12.6）并退出")
     args = ap.parse_args()
     root = Path(args.root).resolve()
+    esm_project = project_is_esm(root)
 
     prof_path = root / "product" / "stack-profile.yaml"
     if not prof_path.is_file():
@@ -1502,7 +1516,8 @@ def main() -> int:
             "的 node 载体；环境变量未设时行为与 @playwright/test 原生一致）\n"
             "import { test, expect } from './atlas-hold';\n"
             "import { readFileSync } from 'node:fs';\n"
-            + ("import { resolve } from 'node:path';\n" if page_uses_upload else "")
+            + ("import { fileURLToPath } from 'node:url';\n" if page_uses_upload and esm_project
+               else "import { resolve } from 'node:path';\n" if page_uses_upload else "")
             + "// 契约 §7.1（DESIGN D118）：等待超时缺省 **20s** —— 与 `expect` 下限（D105）同口径；\n"
             "// `ATLAS_WAIT_TIMEOUT_MS` 为运维覆盖口（与 `ATLAS_EXPECT_TIMEOUT` / `ATLAS_SLOWMO` 同族）。\n"
             "const ATLAS_WAIT_TIMEOUT_MS = Number(process.env.ATLAS_WAIT_TIMEOUT_MS ?? 20_000);\n\n"
@@ -1562,6 +1577,10 @@ def main() -> int:
             "  // （顶部导航等）会让它秒满足 ⇒ 采样落在下拉尚未定位（零盒）的窗口内。改为**按命中态轮询采样**\n"
             "  // （轮询原语 = `expect.poll`，与页面就绪锚点同一机制，**不引入固定等待**）：\n"
             "  // 0 命中（未就绪）⇒ 轮询到上限；>1 命中（歧义）⇒ 立即拒绝；唯一 ⇒ 定。\n"
+            "  // 候选集（**2026-10-20 D122**）：除 ARIA 的 role=option / role=menuitem，还须含组件库\n"
+            "  // 自身的可见选项类名 —— Ant Design Select 的可见项是 `.ant-select-item-option`（只有\n"
+            "  // title，无 role=option），role=option 仅是零宽的 a11y 镜像 ⇒ 只按 role 取样时下拉\n"
+            "  // 已打开也采不到，实测报「可见选项=[导航项…]」。`[class*=]` 兼容自定义前缀（如 msc-ant）。\n"
             "  const el = page.getByTestId(tid).nth(nth);\n"
             "  const tag = await el.evaluate((e) => e.tagName.toLowerCase());\n"
             "  if (tag === 'select') {\n"
@@ -1570,7 +1589,7 @@ def main() -> int:
             "  }\n"
             "  await el.click();\n"
             "  const atlasPick = () => page.evaluate((want: string) => {\n"
-            "    const all = Array.from(document.querySelectorAll('[role=option],[role=menuitem]'));\n"
+            "    const all = Array.from(document.querySelectorAll('[role=option],[role=menuitem],[class*=\"select-item-option\"]'));\n"
             "    const shape = (e: Element) => { const r = (e as HTMLElement).getBoundingClientRect(); return r.width > 0 && r.height > 0; };\n"
             "    const nameOf = (e: Element) => (e.getAttribute('title') || (e.textContent || '').trim());\n"
             "    const shown = all.filter(shape);\n"
@@ -1586,7 +1605,7 @@ def main() -> int:
             "      { timeout: ATLAS_WAIT_TIMEOUT_MS }).not.toBe('none');\n"
             "  } catch { /* 未就绪超时 ⇒ 落到下面统一抛出（带可见选项） */ }\n"
             "  if (pick.status !== 'unique') throw new Error(`select：${tid} 的选项里找不到唯一「${label}」；可见选项=${JSON.stringify(pick.visible)}`);\n"
-            "  await page.locator('[role=option],[role=menuitem]').nth(pick.idx).click();\n"
+            "  await page.locator('[role=option],[role=menuitem],[class*=\"select-item-option\"]').nth(pick.idx).click();\n"
             "}\n"
             "async function atlasIntOf(loc: any): Promise<number> {\n"
             "  // 契约 §5.5（P5，2026-10-07）：`delta` 相对断言的取数 —— 元素文本中的首个整数。\n"
@@ -1688,7 +1707,7 @@ def main() -> int:
             "}\n\n"
             + (ts_mock_helpers(mock_prefix, mock_mode) if (page_has_mocks := any(c.get("_mock") for c in items)) else "")
             + ts_zero_step_baseline(page, url, items, mock_vacuous=page_has_mocks) + "\n"
-            + "\n".join(ts_case(c, url, base or "") for c in items)
+            + "\n".join(ts_case(c, url, base or "", esm_project) for c in items)
         )
         write(scripts_dir / f"{page}{ext}", body, args.apply, results)
         # runner 切换后清理另一扩展名的旧页面脚本（否则双份同语义产物互斥漂移）

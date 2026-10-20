@@ -309,12 +309,14 @@ def test_check_e2e_skips_when_target_unreachable() -> None:
         assert "ENV_ISSUE" in row["detail"] and "不可达" in row["detail"], row
 
 
-def test_check_e2e_reachable_target_is_not_skipped() -> None:
+def test_check_e2e_reachable_target_is_not_skipped(monkeypatch) -> None:
     """可达靶场不得被探针误 SKIP（门不是恒跳过）：探针放行后照跑并如实报结果。
 
     变异证明：把探针改成恒不可达 ⇒ 本用例红（报 SKIP 而不是 ok）。
     """
     mod = _load_check()
+    # D124：本钉主题不是浏览器判据 —— 给 probe_browser 旁路假件（浏览器就绪另钉）
+    monkeypatch.setattr(mod.pw_runner, "probe_browser", lambda *a, **k: (True, ""))
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         scripts = root / "product" / "e2e" / "scripts"
@@ -361,9 +363,47 @@ def test_check_e2e_fails_loudly_when_node_playwright_missing(monkeypatch) -> Non
         assert "node-playwright" in row["detail"] and "node_modules" in row["detail"], row
 
 
-def test_check_e2e_node_modules_anchored_to_root() -> None:
+def test_check_e2e_fails_loud_when_browser_missing(monkeypatch) -> None:
+    """issue #38 / `DESIGN.md` D124：模块可解析 ≠ launch 可成——npm 装包不自动下载浏览器。
+
+    运行器判据（D101）已过、浏览器未装 ⇒ `E2E 真跑` **FAIL** 且出路文案点名
+    `npx playwright install chromium`；真跑**不得被起**（failures[0].command 为空 = 未执行
+    `playwright test`，旧行为会照跑并在 launch 阶段炸成「N failed」，门谎报过就绪）。
+    变异 **M124**：门内浏览器判据分支退回恒真 ⇒ 本钉红（照跑假 .bin ⇒ 报 ok）。
+    """
+    mod = _load_check()
+    monkeypatch.setattr(mod.pw_runner, "probe_browser",
+                        lambda *a, **k: (False, "chromium 浏览器未安装：/no/such/Chrome"
+                                               "（npx playwright install chromium）"))
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        scripts = root / "product" / "e2e" / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "login.spec.ts").write_text("test('ok', async () => {});\n", encoding="utf-8")
+        nm_dir = root / "node_modules"
+        (nm_dir / ".bin").mkdir(parents=True)
+        pw = nm_dir / ".bin" / "playwright"
+        pw.write_text("#!/bin/sh\necho '1 passed'\nexit 0\n", encoding="utf-8")
+        pw.chmod(0o755)
+        _mk_pw_module(nm_dir)
+        (root / "product" / "stack-profile.yaml").write_text(
+            "e2e:\n  runner: node-playwright\n  node_modules: node_modules\n"
+            f"  app_base_url: {_live_base()}\n", encoding="utf-8")
+        rows = mod.Row()
+        mod.check_e2e(root, rows, "login")
+        row = [r for r in rows.rows if r["name"] == "E2E 真跑"][0]
+        assert row["status"] == "FAIL", rows.rows
+        assert "浏览器判据不成立" in row["detail"] and "install chromium" in row["detail"], row
+        assert rows.failures and rows.failures[0]["command"] == "", rows.failures
+        # FAIL 不得留下真跑凭据（未跑就不该有 e2e-summary）
+        assert not (root / ".atlas" / "runs" / "e2e-summary.json").exists()
+
+
+def test_check_e2e_node_modules_anchored_to_root(monkeypatch) -> None:
     """验证 node_modules 相对路径能够正确以 root 为基准锚定并寻找 playwright。"""
     mod = _load_check()
+    # D124：本钉主题不是浏览器判据 —— 给 probe_browser 旁路假件（浏览器就绪另钉）
+    monkeypatch.setattr(mod.pw_runner, "probe_browser", lambda *a, **k: (True, ""))
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         scripts = root / "product" / "e2e" / "scripts"
@@ -395,6 +435,8 @@ def test_check_e2e_node_modules_anchored_to_root() -> None:
 def test_check_e2e_global_playwright_detected(monkeypatch) -> None:
     """F19: stack-profile 未声明 node_modules 时，通过全局 playwright 探测执行真跑。"""
     mod = _load_check()
+    # D124：本钉主题不是浏览器判据 —— 给 probe_browser 旁路假件（浏览器就绪另钉）
+    monkeypatch.setattr(mod.pw_runner, "probe_browser", lambda *a, **k: (True, ""))
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         scripts = root / "product" / "e2e" / "scripts"
@@ -473,6 +515,8 @@ def test_check_e2e_runs_with_scripts_dir_as_cwd(monkeypatch) -> None:
     变异 **MB6**：把 cwd 退回 `root` 并改回 `-c <相对路径>` ⇒ 本钉红。
     """
     mod = _load_check()
+    # D124：本钉主题不是浏览器判据 —— 给 probe_browser 旁路假件（浏览器就绪另钉）
+    monkeypatch.setattr(mod.pw_runner, "probe_browser", lambda *a, **k: (True, ""))
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         scripts = root / "product" / "e2e" / "scripts"
@@ -542,7 +586,7 @@ def test_check_e2e_module_unresolvable_fails_loudly(monkeypatch) -> None:
         assert not (root / ".atlas" / "runs" / "e2e-summary.json").exists()
 
 
-def test_check_e2e_strips_inline_comments_from_profile_scalars() -> None:
+def test_check_e2e_strips_inline_comments_from_profile_scalars(monkeypatch) -> None:
     """D94 口径（行内 `#` 注释剥除单源）落到本门四处取值 —— 2026-10-17 现场实证：
 
     百炼/v2前端 的 `stack-profile.yaml` 写 `reset: null   # 真跑前靶场重置 shell 命令串`
@@ -554,6 +598,8 @@ def test_check_e2e_strips_inline_comments_from_profile_scalars() -> None:
     变异证明 **M92**：四处取值退回 `m.group(1)` 原样 ⇒ 本用例红（`reset` 被执行 ⇒ 行变 `FAIL`）。
     """
     mod = _load_check()
+    # D124：本钉主题不是浏览器判据 —— 给 probe_browser 旁路假件（浏览器就绪另钉）
+    monkeypatch.setattr(mod.pw_runner, "probe_browser", lambda *a, **k: (True, ""))
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         scripts = root / "product" / "e2e" / "scripts"
@@ -580,9 +626,11 @@ def test_check_e2e_strips_inline_comments_from_profile_scalars() -> None:
         assert row["status"] == "ok", row
 
 
-def test_check_e2e_still_runs_a_real_reset_command() -> None:
+def test_check_e2e_still_runs_a_real_reset_command(monkeypatch) -> None:
     """反侧钉：剥注释**不得把功能修掉** —— 真写的 `reset:` 发令必须照发（否则就是把门修哑）。"""
     mod = _load_check()
+    # D124：本钉主题不是浏览器判据 —— 给 probe_browser 旁路假件（浏览器就绪另钉）
+    monkeypatch.setattr(mod.pw_runner, "probe_browser", lambda *a, **k: (True, ""))
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         scripts = root / "product" / "e2e" / "scripts"

@@ -508,6 +508,18 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
                  f"node 运行器判据不成立：{runner_detail}（判据 = 依赖可导入性，不按路径存在；gates.md 2.2）",
                  command="", full_output=f"probe failed at {scripts}\n{runner_detail}")
         return
+    # 浏览器就绪判据（issue #38，`DESIGN.md` D124）：模块可解析 ≠ launch 可成——npm 装包不自动
+    # 下载浏览器，缺 ⇒ launch 阶段才炸，门此前已判「就绪」= 谎报（错误落到 Playwright 内部报错、
+    # 非门的显式输出）。判据 = playwright 自算的 chromium 可执行路径存在（吃 `PLAYWRIGHT_BROWSERS_PATH`），
+    # 或 `ATLAS_PLAYWRIGHT_CHANNEL` 已设（launch 走系统通道浏览器，缓存判据不适用）。
+    # 不成立 ⇒ FAIL 指名安装命令——与上分支「运行器可执行不存在 ⇒ FAIL + npm i 提示」同族：
+    # E2E 意图已声明、依赖装了一半，不是「前置未声明」的 SKIP。
+    br_ok, br_detail = pw_runner.probe_browser(scripts)
+    if not br_ok:
+        rows.add("E2E 真跑", "FAIL",
+                 f"node 浏览器判据不成立：{br_detail}",
+                 command="", full_output=f"browser probe at {scripts}\n{br_detail}")
+        return
     spec_arg = f"{page}.spec.ts" if page else ""
     node_path_env = f"NODE_PATH={node_path} " if node_path else ""
     # **执行 cwd = 生成物所在目录**（issue #29 / `DESIGN.md` D106）：生成物里的相对路径全是

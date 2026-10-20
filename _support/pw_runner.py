@@ -19,6 +19,9 @@
 - **`resolve()`** —— binary 在哪（项目声明优先，全局兜底）。`source` 出口告知来自哪一侧。
 - **`probe()`** —— **判据本体**：可解析性。两道消费者共用同一实现：
   `atlas_check` 真跑门用它判红绿，`e2e_console` 用它复检修复结果（不造第二份）。
+- **`probe_browser()`** —— 真跑依赖的**第二件事**（issue #38，`DESIGN.md` D124，2026-10-20）：
+  浏览器可执行存在（npm 装包不自动下载浏览器；`ATLAS_PLAYWRIGHT_CHANNEL` 已设 ⇒ 旁路）。
+  同样两道消费者共用：真跑门不成立 ⇒ `FAIL` 指名安装命令；控制台 ⇒ 起跑前诚实拒绝。
 - **`ensure_resolvable()`** —— 判据不成立时**怎么办**由调用方定：执行器要「让这轮能跑」⇒ 修复；
   门要「这个结论可信吗」⇒ 修复后照样在行里写明（依赖机器全局状态 = 不是项目自足）。
 
@@ -49,6 +52,23 @@ PROBE_SNIPPET = (
 )
 
 PW_BIN_NAME = "playwright.cmd" if sys.platform == "win32" else "playwright"
+
+#: 浏览器就绪探针：让 playwright **自己算** chromium 可执行路径（走它自带的 registry——
+#: 自动吃 `PLAYWRIGHT_BROWSERS_PATH` 与所装版本的 revision，Python 侧不猜路径），存在性
+#: 由本侧判（2026-10-20 实证：未下载的浏览器 `executablePath()` **返回计算路径而不抛错**，
+#: 本机 firefox/webkit 未下载也各得一路径 ⇒ 「算得出」≠「装了」）。
+BROWSER_SNIPPET = (
+    "import('" + MODULE_SPEC + "').then(m=>{"
+    "if(!(m.chromium&&typeof m.chromium.executablePath==='function'))"
+    "{console.error('ERR chromium 不可用：@playwright/test 未导出 chromium');process.exit(1)}"
+    "try{console.log(m.chromium.executablePath())}"
+    "catch(e){console.error('ERR '+((e&&e.message)||e));process.exit(1)}}"
+    ",e=>{console.error('ERR '+((e&&e.code)||e));process.exit(1)})"
+)
+
+#: channel 旁路环境变量（与生成物 `launchOptions.channel` 同源：`gen_e2e_scripts.py` 读它发
+#: channel）——已设 ⇒ launch 走系统通道浏览器，ms-playwright 缓存判据**不适用**。
+CHANNEL_ENV = "ATLAS_PLAYWRIGHT_CHANNEL"
 
 
 # ---------------------------------------------------------------- 全局侧探测
@@ -166,6 +186,46 @@ def probe(scripts_dir: Path, node: str | None = None) -> tuple[bool, str]:
     # 探针不得因此抛错（抛错 = 把「判据不成立」变成「工具坏了」）。
     tail = [ln for ln in str(getattr(p, "stderr", "") or "").strip().splitlines() if ln.strip()]
     return False, (tail[-1] if tail else f"exit {p.returncode}")
+
+
+def probe_browser(scripts_dir: Path, node: str | None = None) -> tuple[bool, str]:
+    """**浏览器就绪判据**（issue #38，`DESIGN.md` D124）：真跑依赖的**第二件事**。
+
+    模块可解析（`probe`）≠ launch 可成：npm 装包**不自动下载浏览器**，缺 ⇒ launch 阶段才失败，
+    而就绪门已判过「就绪」= 谎报（错误落到 Playwright 内部报错，不是门的显式输出——与 D101
+    「判据必须 = 真跑真正依赖的性质」同族：真跑依赖「模块可解析 **加** 浏览器可执行」两件事）。
+
+    判据 = playwright 自算的 chromium 可执行路径**存在**（`BROWSER_SNIPPET`）；
+    `ATLAS_PLAYWRIGHT_CHANNEL` 已设 ⇒ launch 走系统通道浏览器，缓存判据不适用 ⇒ 直接通过。
+
+    两道消费者共用：`atlas_check` 真跑门用它判红绿（不成立 ⇒ `FAIL` 指名安装命令），
+    `e2e_console` 起跑前置用它诚实拒绝（不起注定 launch 失败的子进程）——不造第二份。
+    → `(ok, detail)`；`detail` 非空 ⇔ 不成立（带安装出路）。
+    """
+    if os.environ.get(CHANNEL_ENV):
+        return True, ""
+    if not scripts_dir.is_dir():
+        return False, f"脚本目录不存在：{scripts_dir}"
+    exe = node or shutil.which("node")
+    if not exe:
+        return False, "未找到 node 可执行文件（浏览器探针无法运行）"
+    try:
+        p = subprocess.run([exe, "--input-type=module", "-e", BROWSER_SNIPPET],
+                           cwd=str(scripts_dir), capture_output=True, text=True, timeout=120)
+    except Exception as e:  # 超时 / OSError：与 probe() 同判——如实给原因，不把「判据不成立」变「工具坏了」
+        return False, f"浏览器探针无法运行：{e}"
+    if p.returncode != 0:
+        tail = [ln for ln in str(getattr(p, "stderr", "") or "").strip().splitlines() if ln.strip()]
+        return False, (tail[-1] if tail else f"exit {p.returncode}")
+    out = str(getattr(p, "stdout", "") or "").strip()
+    exe_path = out.splitlines()[-1].strip() if out else ""
+    if not exe_path:
+        return False, "playwright 未给出浏览器可执行路径（版本过旧或发行形态异常）"
+    if not Path(exe_path).exists():
+        return False, (f"chromium 浏览器未安装：{exe_path}"
+                       "（npm 装包不自动下载浏览器；请执行 npx playwright install chromium，"
+                       f"或设 {CHANNEL_ENV} 走系统通道浏览器）")
+    return True, ""
 
 
 def resolution_root(scripts_dir: Path, root: Path) -> Path:

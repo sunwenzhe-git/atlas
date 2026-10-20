@@ -4,6 +4,31 @@
 
 ---
 
+## [Unreleased]
+
+### 🔧 数据准备钩子传入用例上下文（D121）
+
+* **【D121 用例级 prepare】**：
+  - `scripts/e2e_console.py` 调用项目 `product/e2e/scripts/atlas-prepare.mjs` 时在子进程 env 注入 `ATLAS_CASE_ID`（当前用例 ID），项目脚本可据此只准备该用例依赖的数据，避免一组用例的前置缺失把无关用例挡在 prepare 阶段；
+  - 不读取该变量的存量脚本行为逐字节不变（纯增量、向后兼容）；
+  - 契约 `rings/e2e/reference.md` §10「执行」与 `e2e_console` docstring 同步；钉 = `tests/test_e2e_console.py` prepare 四元组含 case id，变异 **M121**（摘 env 注入 ⇒ 钉红）。
+
+* **【D122 `select` 选项候选集】**：
+  - `scripts/gen_e2e_scripts.py` 的 `atlasSelect` 候选集在 `[role=option],[role=menuitem]` 之外追加 `[class*="select-item-option"]`：Antd Select 的可见项无 `role=option`（role 项是零宽 a11y 镜像），此前下拉已打开也采不到，报「可见选项=[导航项…]」；
+  - `atlasPick` 与最终点击使用同一选择器；几何可见门、三级降级与歧义拒绝语义不变；
+  - 契约 `rings/e2e/reference.md` §5.5 同步；钉 = gen 套件候选集断言（两处），变异 **M122**（摘类名 ⇒ 钉红）。
+
+* **【D123 ESM 项目的 upload fixture 路径】**：
+  - `scripts/gen_e2e_scripts.py` 生成期读取 `package.json` 的 `type`：`module` 项目发射 `fileURLToPath(new URL('../fixtures/<rel>', import.meta.url))` 并导入 `node:url`，避免 ESM 下 `__dirname` 未定义导致 upload 用例必红；CJS 项目保持 `resolve(__dirname, …)` 逐字节不变；
+  - 契约 `rings/e2e/reference.md` §5.5/§7.1 同步；钉 = 新增 `test_upload_renders_esm_safe_path_for_module_projects`（gen 91 → 92），变异 **M123**（去掉 esm 分支 ⇒ ESM 钉红）。
+
+* **【D124 E2E 就绪门浏览器判据（issue #38）】**：
+  - 就绪判据分层：① 模块可解析（D101 已有）+ ② **浏览器可执行存在**（新内核函数 `_support/pw_runner.py::probe_browser`：node 侧 `chromium.executablePath()` 自算路径、Python 只判存在——自动吃 `PLAYWRIGHT_BROWSERS_PATH` 与版本 revision；`ATLAS_PLAYWRIGHT_CHANNEL` 已设 ⇒ 旁路走系统通道浏览器）。npm 装包不自动下载浏览器，此前缺浏览器会在 launch 阶段才炸而门谎报就绪；
+  - `atlas_check`「E2E 真跑」门不成立 ⇒ **FAIL 指名 `npx playwright install chromium`**（不用 issue 原案的 SKIP：依赖装了一半 ≠ 前置未声明，与「运行器可执行不存在 ⇒ FAIL + 提示」同族）；`e2e_console` 起跑前置同一内核 ⇒ 起跑前诚实拒绝；
+  - 契约 `rings/e2e/reference.md` §10「执行」、gates.md 2.2 行同步；钉 = 门侧 `test_check_e2e_fails_loud_when_browser_missing` + 控制台探针三态（含 channel 旁路不 spawn）/ `test_start_refuses_when_browser_missing`（既有 6 条真跑钉补旁路假件；`tests/test_atlas_check.py` 30 → 31），变异 **M124 / M125**（各摘一侧判据退回恒真 ⇒ 钉红），四段协议、还原逐字节一致。
+
+---
+
 ## [v0.1.0-beta.32] - 2026-10-19
 
 ### 🎯 同名多实例元素序位下标支持（#31，D120）

@@ -310,13 +310,18 @@ def test_prepare_hook_runs_before_case_and_refuses_on_failure() -> None:
 
     变异证明 **M94**：摘掉 prepare 钩子段（`if prep.is_file():` 恒假）⇒ 本钉红（真跑被起、
     无 `prep_failed`），还原逐字节一致。
+
+    D121（2026-10-20）：prepare 子进程 env 必带 `ATLAS_CASE_ID` = 当前用例 ID——项目脚本据此
+    只准备该用例依赖的数据，避免一组用例的前置缺失把无关用例挡在 prepare 阶段。变异 **M121**：
+    摘掉 env 传参 ⇒ 本钉红（case 上下文丢失），还原逐字节一致。
     """
     cons = load("e2e_console", "scripts/e2e_console.py")
     seen: dict = {"rc": 0}
 
     def fake_run(cmd, cwd=None, timeout=None, **kw):
         seen["calls"] = seen.get("calls", [])
-        seen["calls"].append(("prepare", cmd[0], cwd, timeout))
+        seen["calls"].append(("prepare", cmd[0], cwd, timeout,
+                              (kw.get("env") or {}).get("ATLAS_CASE_ID")))
         if seen.get("explode"):
             raise subprocess.TimeoutExpired("node", 180)
         return type("Proc", (), {"returncode": seen["rc"], "stdout": "prep ok\n", "stderr": "err"})()
@@ -350,9 +355,9 @@ def test_prepare_hook_runs_before_case_and_refuses_on_failure() -> None:
         try:
             runner._run({"id": "E2E-PREP-001"}, "p.spec.ts:1", 500, "app",
                         "http://127.0.0.1:8000", Path("/pw"), Path("/nm"))
-            # ① 钩子在真跑之前；参数形态钉死（node / cwd=项目根 / 180s）
+            # ① 钩子在真跑之前；参数形态钉死（node / cwd=项目根 / 180s / 用例 ID 经 env 传入）
             assert seen["calls"] == [
-                ("prepare", "node", str(root), 180),
+                ("prepare", "node", str(root), 180, "E2E-PREP-001"),
                 ("真跑", "/pw"),
             ], seen["calls"]
             assert runner.done["ok"] is True, runner.done
@@ -362,7 +367,8 @@ def test_prepare_hook_runs_before_case_and_refuses_on_failure() -> None:
             seen["calls"], seen["rc"] = [], 3
             runner._run({"id": "E2E-PREP-002"}, "p.spec.ts:1", 500, "app",
                         "http://127.0.0.1:8000", Path("/pw"), Path("/nm"))
-            assert [c for c in seen["calls"] if c[0] == "prepare"] == [("prepare", "node", str(root), 180)]
+            assert [c for c in seen["calls"] if c[0] == "prepare"] == [
+                ("prepare", "node", str(root), 180, "E2E-PREP-002")]
             assert not any(c[0] == "真跑" for c in seen["calls"]), seen["calls"]
             ev = runner.done
             assert ev["ok"] is False and ev["exit"] == 3 and ev["prep_failed"] is True, ev
@@ -569,6 +575,74 @@ def test_resolve_pw_refuses_to_clobber_foreign_path(monkeypatch) -> None:
         assert "占用" in why, why
         assert note == "", note
         assert os.path.realpath(str(foreign)) == os.path.realpath(str(root / "nowhere-else"))
+
+
+# ── 2026-10-20 issue #38（D124）：浏览器就绪判据（真跑依赖的第二件事）───────────────────
+def test_probe_browser_three_states(monkeypatch) -> None:
+    """`_support/pw_runner.py::probe_browser` 三态 + 旁路不 spawn：
+
+    ① playwright 自算路径**存在** ⇒ ok；② 给出不存在的路径 ⇒ 不成立且出路文案点名
+    `npx playwright install chromium`；③ 探针自身报错（如模块未导出 chromium）⇒ 如实给尾行原因；
+    ④ `ATLAS_PLAYWRIGHT_CHANNEL` 已设 ⇒ 旁路（launch 走系统通道浏览器，缓存判据不适用）——
+    **不得起探针子进程**。路径由 playwright 自算（吃 `PLAYWRIGHT_BROWSERS_PATH`），Python 只判存在。
+    """
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    kr = cons.pw_runner
+    with tempfile.TemporaryDirectory() as td:
+        scripts = Path(td)
+        marker = scripts / "chromium-marker"
+        marker.write_text("x", encoding="utf-8")
+
+        # ① 路径存在 ⇒ ok
+        monkeypatch.setattr(kr.subprocess, "run",
+                            lambda *a, **k: type("Proc", (), {
+                                "returncode": 0, "stdout": f"{marker}\n", "stderr": ""})())
+        ok, detail = kr.probe_browser(scripts, node="/fake/node")
+        assert ok is True and detail == "", (ok, detail)
+
+        # ② 路径不存在 ⇒ 拒 + 指名安装命令
+        monkeypatch.setattr(kr.subprocess, "run",
+                            lambda *a, **k: type("Proc", (), {
+                                "returncode": 0, "stdout": "/no/such/Chrome for Testing\n", "stderr": ""})())
+        ok, detail = kr.probe_browser(scripts, node="/fake/node")
+        assert ok is False, (ok, detail)
+        assert "install chromium" in detail and "/no/such/Chrome for Testing" in detail, detail
+
+        # ③ 探针自身报错 ⇒ 尾行原因（不把「判据不成立」变成「工具坏了」）
+        monkeypatch.setattr(kr.subprocess, "run",
+                            lambda *a, **k: type("Proc", (), {
+                                "returncode": 1, "stdout": "", "stderr": "ERR no chromium export\n"})())
+        ok, detail = kr.probe_browser(scripts, node="/fake/node")
+        assert ok is False and "no chromium export" in detail, (ok, detail)
+
+        # ④ channel 旁路：不起子进程
+        monkeypatch.setenv(kr.CHANNEL_ENV, "chrome")
+
+        def _no_spawn(*a, **k):
+            raise AssertionError("channel 已设 ⇒ 缓存判据旁路，不得起探针子进程")
+        monkeypatch.setattr(kr.subprocess, "run", _no_spawn)
+        ok, detail = kr.probe_browser(scripts, node="/fake/node")
+        assert ok is True and detail == "", (ok, detail)
+
+
+def test_start_refuses_when_browser_missing(monkeypatch) -> None:
+    """issue #38（D124）：模块可解析但浏览器未装 ⇒ `Runner.start` 起跑前诚实拒绝，真跑线程
+    不被起；拒绝文案点名安装出路。变异 **M125**：摘 start 的浏览器判据段 ⇒ 本钉红（照常起跑）。
+    """
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        ledger = cons.Ledger(root, "tester")
+        runner = cons.Runner(root, ledger, timeout=60, head=True, keep_open=False)
+        monkeypatch.setattr(cons, "resolve_pw",
+                            lambda r, repair=False: (Path("/pw"), Path("/nm"), "", ""))
+        monkeypatch.setattr(cons.pw_runner, "probe_browser",
+                            lambda *a, **k: (False, "chromium 浏览器未安装：/no/such"
+                                                   "（npx playwright install chromium）"))
+        ok, msg = runner.start({"id": "E2E-BR-001"}, "p.spec.ts:1", 0, "app",
+                               "http://127.0.0.1:8000")
+        assert ok is False, (ok, msg)
+        assert "浏览器未就绪" in msg and "install chromium" in msg, msg
 
 
 def test_manual_open_url_keeps_base_query_and_path_prefix() -> None:

@@ -1033,6 +1033,41 @@ def test_upload_renders_set_input_files_with_cwd_free_path() -> None:
         assert "node:path" not in spec_of(root), "未用 upload 的页必须零变化"
 
 
+def test_upload_renders_esm_safe_path_for_module_projects() -> None:
+    """D123（2026-10-20）：`package.json` 声明 `type: module` 时生成物按 ESM 执行，
+    `__dirname` 不存在（实测 ReferenceError）⇒ 路径须改用 `import.meta.url` 解析；
+    CJS 项目保持 `resolve(__dirname, …)` 原形态（零变化承诺）。
+    """
+    gn = _load_gen()
+    case = {
+        "id": "E2E-HOME-001",
+        "_title": "投放音频样本",
+        "step": ["goto /", "upload home-cta-btn uploads/sample.wav"],
+        "expected": ["visible home-cta-btn"],
+        "testid": ["home-cta-btn"],
+    }
+    spec = gn.ts_case(case, "/", "", True)
+    assert ("setInputFiles(fileURLToPath(new URL('../fixtures/uploads/sample.wav', import.meta.url)));"
+            in spec), spec
+    assert "__dirname" not in spec, spec
+
+    # 端到端：type=module 的项目 ⇒ 头部导入 node:url，产物无 __dirname
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=UPLOAD_CASE)
+        (root / "package.json").write_text('{"type": "module"}', encoding="utf-8")
+        fx = root / "product" / "e2e" / "fixtures" / "uploads"
+        fx.mkdir(parents=True)
+        (fx / "sample.wav").write_text("RIFF", encoding="utf-8")
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stdout + r.stderr
+        ts = spec_of(root)
+    assert "import { fileURLToPath } from 'node:url';" in ts, ts
+    assert "__dirname" not in ts, ts
+    assert ("setInputFiles(fileURLToPath(new URL('../fixtures/uploads/sample.wav', import.meta.url)));"
+            in ts), ts
+
+
 # 契约 §7.1：§5.5 的**每一个**动作动词也必须有渲染分支并配样例（与断言动词同一道守恒门）。
 ACTION_SAMPLES = {
     "click": "home-cta-btn",
@@ -1505,6 +1540,8 @@ def test_select_option_locating_is_label_based_and_rejects_ambiguity() -> None:
         assert "getBoundingClientRect()" in body, body
         # ⑤ 原生分支仍在（实现无关：<select> 走 selectOption）
         assert "selectOption({ label })" in body, body
+        # ⑥ 候选集含组件库可见选项类名（D122：Antd Select 的可见项无 role=option，仅 title）
+        assert body.count('[class*="select-item-option"]') == 2, body
 
 
 def test_select_polls_until_options_are_positioned_and_refuses_ambiguity() -> None:
