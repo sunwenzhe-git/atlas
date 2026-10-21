@@ -171,11 +171,17 @@ function rowHTML(c) {
   let excerpt = '';
   if (e && typeof e.ok === 'boolean') {
     pill = e.timeout ? '<span class="pill warn">超时</span>'
-      : e.ok ? '<span class="pill ok">通过</span>' : '<span class="pill bad">失败</span>';
+      : e.ok ? '<span class="pill ok">通过</span>'
+      : e.prep_failed ? '<span class="pill warn">前置失败</span>'
+      : '<span class="pill bad">失败</span>';
     if (!e.ok) {
-      const tail = String(out).split('\n')
-        .filter((l) => /Error|assert|E  {2,}|FAILED|passed|failed|不可见|Timeout/i.test(l)).slice(-3).join('\n');
-      excerpt = `<div class="excerpt">${esc(tail || '（点「输出」看失败原文）')}</div>`;
+      if (e.prep_failed) {
+        excerpt = `<div class="excerpt">${esc('（前置数据准备 atlas-prepare 失败，点「输出」看日志）')}</div>`;
+      } else {
+        const tail = String(out).split('\n')
+          .filter((l) => /Error|assert|E  {2,}|FAILED|passed|failed|不可见|Timeout/i.test(l)).slice(-3).join('\n');
+        excerpt = `<div class="excerpt">${esc(tail || '（点「输出」看失败原文）')}</div>`;
+      }
     }
   }
   if (busy) pill = '<span class="pill run">执行中…</span>';
@@ -281,10 +287,17 @@ function run(id) {
         S.busy = null;
         S.heldCase = d.held ? id : null;
         patch(id, { ok: d.ok, exit: d.exit, duration_ms: d.duration_ms, timeout: d.timeout,
-                    tail: S.outputs[id] || d.tail || '', ts: d.ts, slowmo: d.slowmo });
+                    tail: S.outputs[id] || d.tail || '', ts: d.ts, slowmo: d.slowmo,
+                    prep_failed: Boolean(d.prep_failed) });
         render();
         // 跑完不关窗的状态已在右上角「关闭浏览器窗口（E2E-XXX）」按钮上可见，不再多弹一条提示。
-        if (!d.ok) notify(`${id} 执行${d.timeout ? '超时' : '失败'}——点「输出」看回溯；问题在用例本身的话回对话改用例后重生成脚本。`, true);
+        if (!d.ok) {
+          if (d.prep_failed) {
+            notify(`${id} 前置数据准备 atlas-prepare 失败——点「输出」看准备脚本日志；与用例脚本本身无关。`, true);
+          } else {
+            notify(`${id} 执行${d.timeout ? '超时' : '失败'}——点「输出」看回溯；问题在用例本身的话回对话改用例后重生成脚本。`, true);
+          }
+        }
       }
     };
     es.onerror = () => { es.close(); S.busy = null; render(); };

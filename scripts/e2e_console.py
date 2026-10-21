@@ -476,14 +476,19 @@ class Runner:
         # 不静默跑一条注定偏移的用例。
         # D121（2026-10-20）：用例 ID 经 ATLAS_CASE_ID 传入，项目脚本可按用例分段准备。此前钩子
         # 无任何用例上下文 ⇒ 一组用例的前置缺失会把无关用例一并挡在 prepare 阶段（全局前置）。
+        # D125（2026-10-20）：NODE_PATH 同步注入（若 nm_dir 存在），与真跑子进程依赖解析环境一致
+        # ⇒ 避免 scripts/ 目录下未独立建 node_modules 时脚本顶层 import 报 ERR_MODULE_NOT_FOUND。
         prep = scripts / "atlas-prepare.mjs"
         if prep.is_file():
             self._emit("$ 前置数据准备 atlas-prepare.mjs …")
             prep_exit = None
+            prep_env = {**os.environ, "ATLAS_CASE_ID": case["id"]}
+            if nm_dir:
+                prep_env["NODE_PATH"] = str(nm_dir)
             try:
                 pr = subprocess.run(["node", str(prep)], cwd=str(self.root),
                                     capture_output=True, text=True, timeout=180,
-                                    env={**os.environ, "ATLAS_CASE_ID": case["id"]})
+                                    env=prep_env)
                 self._emit((pr.stdout or "")[-1500:])
                 if pr.returncode != 0:
                     self._emit(f"\n[前置] atlas-prepare 失败（exit={pr.returncode}）：未执行用例\n"

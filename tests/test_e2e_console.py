@@ -321,7 +321,8 @@ def test_prepare_hook_runs_before_case_and_refuses_on_failure() -> None:
     def fake_run(cmd, cwd=None, timeout=None, **kw):
         seen["calls"] = seen.get("calls", [])
         seen["calls"].append(("prepare", cmd[0], cwd, timeout,
-                              (kw.get("env") or {}).get("ATLAS_CASE_ID")))
+                              (kw.get("env") or {}).get("ATLAS_CASE_ID"),
+                              (kw.get("env") or {}).get("NODE_PATH")))
         if seen.get("explode"):
             raise subprocess.TimeoutExpired("node", 180)
         return type("Proc", (), {"returncode": seen["rc"], "stdout": "prep ok\n", "stderr": "err"})()
@@ -355,9 +356,9 @@ def test_prepare_hook_runs_before_case_and_refuses_on_failure() -> None:
         try:
             runner._run({"id": "E2E-PREP-001"}, "p.spec.ts:1", 500, "app",
                         "http://127.0.0.1:8000", Path("/pw"), Path("/nm"))
-            # ① 钩子在真跑之前；参数形态钉死（node / cwd=项目根 / 180s / 用例 ID 经 env 传入）
+            # ① 钩子在真跑之前；参数形态钉死（node / cwd=项目根 / 180s / 用例 ID 经 env 传入 / NODE_PATH 注入）
             assert seen["calls"] == [
-                ("prepare", "node", str(root), 180, "E2E-PREP-001"),
+                ("prepare", "node", str(root), 180, "E2E-PREP-001", str(Path("/nm"))),
                 ("真跑", "/pw"),
             ], seen["calls"]
             assert runner.done["ok"] is True, runner.done
@@ -368,7 +369,7 @@ def test_prepare_hook_runs_before_case_and_refuses_on_failure() -> None:
             runner._run({"id": "E2E-PREP-002"}, "p.spec.ts:1", 500, "app",
                         "http://127.0.0.1:8000", Path("/pw"), Path("/nm"))
             assert [c for c in seen["calls"] if c[0] == "prepare"] == [
-                ("prepare", "node", str(root), 180, "E2E-PREP-002")]
+                ("prepare", "node", str(root), 180, "E2E-PREP-002", str(Path("/nm")))]
             assert not any(c[0] == "真跑" for c in seen["calls"]), seen["calls"]
             ev = runner.done
             assert ev["ok"] is False and ev["exit"] == 3 and ev["prep_failed"] is True, ev
@@ -703,4 +704,14 @@ def test_snapshot_missing_index_fails_loud_not_empty_list() -> None:
             raise AssertionError("应抛 SnapshotError")
         except cons.SnapshotError as err:
             assert "索引文件缺失" in str(err), str(err)
+
+
+def test_console_app_js_handles_prep_failed_distinctly() -> None:
+    """前端 UI（D125）：`prep_failed` 显式分流，badge 为「前置失败」（warn 级），
+    通告指明「与用例脚本本身无关」，消除「改用例」误导。
+    """
+    app_js = (Path(__file__).parent.parent / "templates" / "e2e" / "console" / "app.js").read_text(encoding="utf-8")
+    assert "prep_failed ? '<span class=\"pill warn\">前置失败</span>'" in app_js
+    assert "与用例脚本本身无关" in app_js
+    assert "prep_failed: Boolean(d.prep_failed)" in app_js
 
