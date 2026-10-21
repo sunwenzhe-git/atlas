@@ -4,6 +4,15 @@
 
 ---
 
+## [v0.1.0-beta.35] - 2026-10-21
+
+### 🔧 控制台持窗模式关闭 Playwright 自身 test timeout (D126 / issue #39)
+
+- **控制台持窗模式 `--timeout=0`（D126）**：`scripts/e2e_console.py` 在 `self.keep_open`（持窗模式）下向 Playwright CLI 传递 `--timeout=0`，消除留窗时由于 Playwright 原生 30s test timeout 在 fixture teardown 中超时导致浏览器被强制关闭的问题；控制台的 wall-clock `--timeout` 是唯一超时真相源，自动关窗模式保持原生 30s 兜底防孤儿进程。
+- **契约与验证**：契约 `rings/e2e/reference.md` §10.1 与 `DESIGN.md` D126 同步；钉 = `tests/test_e2e_console.py::test_runner_disables_playwright_test_timeout_only_in_hold_mode`，变异 **M127**。
+
+---
+
 ## [v0.1.0-beta.34] - 2026-10-20
 
 ### 🔧 控制台前置准备钩子环境与前端诊断补齐 (D125)
