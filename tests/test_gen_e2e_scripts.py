@@ -1542,6 +1542,9 @@ def test_select_option_locating_is_label_based_and_rejects_ambiguity() -> None:
         assert "selectOption({ label })" in body, body
         # ⑥ 候选集含组件库可见选项类名（D122：Antd Select 的可见项无 role=option，仅 title）
         assert body.count('[class*="select-item-option"]') == 2, body
+        # ⑦ 排除选项内部 -content / -state 子节点（否则无 title 时同一选项命中两次 ⇒ 假歧义）
+        assert body.count(':not([class*="select-item-option-content"])') == 2, body
+        assert body.count(':not([class*="select-item-option-state"])') == 2, body
 
 
 def test_select_polls_until_options_are_positioned_and_refuses_ambiguity() -> None:
