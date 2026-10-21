@@ -4,6 +4,14 @@
 
 ---
 
+## [v0.1.0-beta.36] - 2026-10-21
+
+### 🔧 `select` 选项候选集排除内部子节点防假歧义 (D122 补漏)
+
+- **`select` 选项候选集排除内部子节点（D122 补漏）**：`scripts/gen_e2e_scripts.py` 的 `atlasSelect` 候选集追加 `:not([class*="select-item-option-content"]):not([class*="select-item-option-state"])`，排除选项内部子节点，避免无 `title` 属性的 Ant Design 自定义选项内部子元素重复命中相同类名，消除多重命中导致的假歧义（`ambiguous`）报错。
+
+---
+
 ## [v0.1.0-beta.35] - 2026-10-21
 
 ### 🔧 控制台持窗模式关闭 Playwright 自身 test timeout (D126 / issue #39)

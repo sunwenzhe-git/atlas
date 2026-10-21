@@ -4,6 +4,17 @@
 
 ---
 
+## [v0.1.0-beta.36] - 2026-10-21
+
+### 🔧 `select` 选项候选集排除内部子节点防假歧义 (D122 补漏)
+
+* **【D122 子节点排除】**：
+  - `scripts/gen_e2e_scripts.py` 的 `atlasSelect` 候选集追加 `:not([class*="select-item-option-content"]):not([class*="select-item-option-state"])`，排除选项内部子节点；
+  - 避免无 `title` 属性的 Ant Design 自定义选项内部子元素重复命中 `select-item-option` 类名前缀，消除多重命中导致的假歧义（`ambiguous`）报错；
+  - 钉 = `tests/test_gen_e2e_scripts.py` 候选集排除规则断言。
+
+---
+
 ## [v0.1.0-beta.35] - 2026-10-21
 
 ### 🔧 控制台持窗模式关闭 Playwright 自身 test timeout (D126 / issue #39)
@@ -36,7 +47,7 @@
   - 契约 `rings/e2e/reference.md` §10「执行」与 `e2e_console` docstring 同步；钉 = `tests/test_e2e_console.py` prepare 四元组含 case id，变异 **M121**（摘 env 注入 ⇒ 钉红）。
 
 * **【D122 `select` 选项候选集】**：
-  - `scripts/gen_e2e_scripts.py` 的 `atlasSelect` 候选集在 `[role=option],[role=menuitem]` 之外追加 `[class*="select-item-option"]`：Antd Select 的可见项无 `role=option`（role 项是零宽 a11y 镜像），此前下拉已打开也采不到，报「可见选项=[导航项…]」；
+  - `scripts/gen_e2e_scripts.py` 的 `atlasSelect` 候选集在 `[role=option],[role=menuitem]` 之外追加 `[class*="select-item-option"]:not([class*="select-item-option-content"]):not([class*="select-item-option-state"])`：Antd Select 的可见项无 `role=option`（role 项是零宽 a11y 镜像），此前下拉已打开也采不到；同时排除选项内部 `-content`/`-state` 子节点，避免无 title 时同一选项重复命中造成假歧义；
   - `atlasPick` 与最终点击使用同一选择器；几何可见门、三级降级与歧义拒绝语义不变；
   - 契约 `rings/e2e/reference.md` §5.5 同步；钉 = gen 套件候选集断言（两处），变异 **M122**（摘类名 ⇒ 钉红）。
 
