@@ -48,6 +48,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -89,6 +90,115 @@ case_id = load_module("case_id")
 pw_runner = load_module("pw_runner")
 # 宿主注入型 base query（issue #27 / D104）：单源 `_support/url_merge.py`。
 url_merge = load_module("url_merge")
+
+
+# ---------------------------------------------------------------- 代码提交与生成脚本指纹（D128）
+
+def _git_output(root: Path, *args: str) -> str | None:
+    try:
+        res = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, check=True)
+        return res.stdout.strip()
+    except Exception:
+        return None
+
+
+def repo_head(root: Path) -> str | None:
+    return _git_output(root, "rev-parse", "HEAD")
+
+
+def repo_git_dirty(root: Path) -> bool | None:
+    out = _git_output(root, "status", "--porcelain")
+    return None if out is None else bool(out.strip())
+
+
+def scripts_hash(root: Path) -> str | None:
+    """计算当前 E2E 生成脚本与前置准备钩子的内容散列（16 字符前缀）。
+
+    白名单：`product/e2e/scripts/` 下源码脚本（ts/js/mjs/json/yaml/yml），
+    以及可选的项目级数据准备钩子 `atlas-prepare.mjs`。
+    严格排除运行时产物（test-results/、playwright-report/、.atlas-auth/、node_modules/、trace、png 等），
+    确保执行产物不导致指纹假漂移。
+    """
+    s_dir = root / "product" / "e2e" / "scripts"
+    if not s_dir.is_dir():
+        return None
+    h = hashlib.sha256()
+    files: list[tuple[str, Path]] = []
+    for p in sorted(s_dir.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(s_dir).as_posix()
+        if any(part in rel for part in ("test-results", "playwright-report", ".atlas-auth", "node_modules")):
+            continue
+        if rel.endswith((".trace", ".png", ".webm", ".last-run.json")):
+            continue
+        if rel.endswith((".ts", ".js", ".mjs", ".json", ".yaml", ".yml")):
+            files.append((f"scripts/{rel}", p))
+    for prep in (s_dir / "atlas-prepare.mjs", root / "atlas-prepare.mjs"):
+        if prep.is_file():
+            files.append(("atlas-prepare.mjs", prep))
+            break
+    if not files:
+        return None
+    for rel, p in files:
+        h.update(rel.encode("utf-8"))
+        try:
+            h.update(p.read_bytes())
+        except Exception:
+            pass
+    return h.hexdigest()[:16]
+
+
+def repo_provenance(root: Path) -> dict:
+    """提取当前工作区的代码提交与测试脚本指纹，供评审账本留痕与陈旧度（stale）判定。"""
+    head = repo_head(root)
+    dirty = repo_git_dirty(root)
+    shash = scripts_hash(root)
+    actor_type = os.environ.get("ATLAS_ACTOR_TYPE", "human")
+    if actor_type not in ("human", "agent"):
+        actor_type = "unknown"
+    return {
+        "head_sha": head,
+        "head_short": head[:7] if head else None,
+        "git_dirty": dirty,
+        "scripts_hash": shash,
+        "actor_type": actor_type,
+    }
+
+
+def case_review_state(snap: dict, current: dict | None) -> dict:
+    """计算单个用例在当前代码/脚本下的评审新鲜度。
+
+    状态闭集：
+      - unreviewed: 尚未标记评审通过
+      - fresh: 评审指纹与当前 HEAD 及生成脚本一致（有效评审）
+      - stale: 评审后 HEAD 或生成脚本已变化（需重跑/重审）
+      - legacy: 历史账本条目无提交指纹（来源无法验证）
+    """
+    reviewed = snap.get("reviewed") or {}
+    if not reviewed.get("pass"):
+        return {"state": "unreviewed", "reason": "未评审"}
+    prov = snap.get("prov")
+    if not prov or not isinstance(prov, dict) or (not prov.get("head_sha") and not prov.get("scripts_hash")):
+        return {"state": "legacy", "reason": "历史快照无提交指纹，需重审"}
+    if current is None:
+        return {"state": "legacy", "reason": "未提供当前工作区指纹，新鲜度无法核验"}
+    mismatches = []
+    cur_head = current.get("head_sha")
+    old_head = prov.get("head_sha")
+    if cur_head and old_head and cur_head != old_head:
+        mismatches.append(f"HEAD变动({old_head[:7]}→{cur_head[:7]})")
+    cur_shash = current.get("scripts_hash")
+    old_shash = prov.get("scripts_hash")
+    if cur_shash and old_shash and cur_shash != old_shash:
+        mismatches.append(f"脚本变动({old_shash[:6]}→{cur_shash[:6]})")
+    if mismatches:
+        return {"state": "stale", "reason": "；".join(mismatches), "prov": prov}
+    warning = "提交时工作区有未提交改动（dirty），提交后请先落库" if prov.get("git_dirty") else None
+    res = {"state": "fresh", "prov": prov}
+    if warning:
+        res["warning"] = warning
+    return res
 
 
 # ---------------------------------------------------------------- 用例真相源（只读）
@@ -240,6 +350,8 @@ def snapshot(root: Path) -> dict:
             "testid": blk.get("testid", []),
             # 契约 §5.8（2026-10-12）：mock 行随分片带给前端渲染 MOCKED 徽标（桩披露，静态事实）
             "mock": blk.get("mock", []),
+            # 契约 §5.5（2026-10-21，D130）：前端覆盖维度（C01-C14）
+            "dimensions": blk.get("覆盖维度", []),
         })
     return {"cases": cases, "nodeids": node_ids(e2e / "scripts")}
 
@@ -350,11 +462,15 @@ class Ledger:
         if submits:
             last = submits[-1]
             snap = _snap_cases(last)
+            scope = last.get("reviewed_scope")
             lines += [
                 f"- 最近提交：**{last.get('ts', '')}** · {last.get('actor', '')}"
                 f"（快照 {len(snap)} 条 · 执行通过 {sum(1 for v in snap.values() if v.get('ok'))}"
                 f" · 已评审 {sum(1 for v in snap.values() if (v.get('reviewed') or {}).get('pass'))}）",
             ]
+            if isinstance(scope, list) and scope:
+                shown = "、".join(str(x) for x in scope[:8]) + ("…" if len(scope) > 8 else "")
+                lines.append(f"- 本次评审范围：**{len(scope)} 条** · {shown}")
         lines += [
             "",
             "## 逐条留痕（最新一条在前）",
@@ -389,23 +505,32 @@ class Ledger:
                 return e
         return None
 
-    def committed_snapshot(self, source: str) -> dict:
+    def committed_snapshot(self, source: str, current: dict | None = None) -> dict:
         """某个来源的**累计**已提交快照：按事件流顺序合并，后提交覆盖同名用例。
 
         单次提交只携带页面草稿（通常是本次执行/勾选的那几条），不是全量快照；
         若「已提交」只取最后一条事件，之前提交过的用例会在下一次部分提交后消失
         （表现为控制台里已执行/已评审的用例变回「未跑」）。这里按 append-only 的
         事件顺序逐条合并，保持「提交即留痕、后写覆盖先写」的语义。
+        D128：若传入当前工作区指纹，自动为每条用例计算 review_state（新鲜/陈旧/旧版）。
         """
         merged: dict = {}
         ts = actor = None
+        scope: list = []
         for e in self.read():
             if e.get("kind") != "submit" or e.get("source", "prototype") != source:
                 continue
             merged.update(_snap_cases(e))
             ts = e.get("ts") or ts
             actor = e.get("actor") or actor
-        return {"ts": ts, "actor": actor, "cases": merged}
+            s = e.get("reviewed_scope")
+            if isinstance(s, list):
+                scope = [str(x) for x in s]
+        for snap in merged.values():
+            if isinstance(snap, dict):
+                snap["review_state"] = case_review_state(snap, current)
+        return {"ts": ts, "actor": actor, "cases": merged,
+                "reviewed_scope": scope, "reviewed_count": len(scope)}
 
 
 # ---------------------------------------------------------------- 执行器（并发=1）
@@ -665,7 +790,7 @@ def _snap_cases(entry: dict) -> dict:
     return cases if isinstance(cases, dict) else {}
 
 
-def _compact(entry: dict) -> dict:
+def _compact(entry: dict, prov: dict | None = None) -> dict:
     """落账本的快照条目：失败才带输出尾部（80 行，与运行期同长），避免账本被 traceback 撑爆。"""
     out = {"ok": bool(entry.get("ok")), "exit": entry.get("exit"),
            "duration_ms": entry.get("duration_ms"), "timeout": bool(entry.get("timeout")),
@@ -675,6 +800,14 @@ def _compact(entry: dict) -> dict:
         out["reviewed"] = {"pass": bool(reviewed.get("pass")),
                            "checked_at": reviewed.get("checked_at"),
                            "unchecked_at": reviewed.get("unchecked_at")}
+    p = entry.get("prov") or prov
+    if p and isinstance(p, dict):
+        out["prov"] = {
+            "head_sha": p.get("head_sha"),
+            "scripts_hash": p.get("scripts_hash"),
+            "git_dirty": p.get("git_dirty"),
+            "actor_type": p.get("actor_type", "human"),
+        }
     if not out["ok"] and entry.get("tail"):
         out["tail"] = "\n".join(str(entry["tail"]).splitlines()[-80:])
     return out
@@ -728,14 +861,16 @@ class App:
         self.runner = Runner(root, self.ledger, timeout, head, keep_open)
 
     def cases_payload(self, source: str) -> dict:
+        current_prov = repo_provenance(self.root)
         try:
             snap = snapshot(self.root)
         except SnapshotError as exc:
             return {"source": source, "sources": read_sources(self.root), "problem": str(exc),
                     "slowmo": self.slowmo, "timeout": self.runner.timeout, "head": self.runner.head,
                     "ledger": "product/e2e/reviews/console/events.jsonl", "cases": [], "nodeids": {},
-                    "committed": {"ts": None, "actor": None, "cases": {}}}
-        committed = self.ledger.committed_snapshot(source)
+                    "committed": {"ts": None, "actor": None, "cases": {}},
+                    "provenance": current_prov}
+        committed = self.ledger.committed_snapshot(source, current_prov)
         return {
             "source": source,
             "sources": read_sources(self.root),
@@ -757,6 +892,7 @@ class App:
             "nodeids": snap["nodeids"],
             # 已提交的快照（页面草稿覆盖它；草稿在浏览器本地，见 docstring 的「乙」）
             "committed": committed,
+            "provenance": current_prov,
         }
 
 
@@ -883,12 +1019,18 @@ class Handler(BaseHTTPRequestHandler):
         draft = body.get("draft") or {}
         source = "app"
         apply = bool(body.get("apply"))
+        # 指纹在 writeback 前获取，避免 writeback 自身修改索引使 git_dirty 假阳性（D128）
+        prov = repo_provenance(self.app.root)
         res = writeback(self.app.root, draft, apply, source)
         if apply:
-            snap = {cid: _compact(v) for cid, v in draft.items()}
+            snap = {cid: _compact(v, prov) for cid, v in draft.items()}
+            reviewed_scope = [cid for cid, v in draft.items() if (v.get("reviewed") or {}).get("pass")]
             self.app.ledger.append({"kind": "submit", "source": source,
-                                    "changed": res["changed"], "cases": snap})
-            res["committed_ts"] = self.app.ledger.committed_snapshot(source).get("ts")
+                                    "changed": res["changed"], "cases": snap,
+                                    "prov": prov, "actor_type": prov.get("actor_type", "human"),
+                                    "reviewed_scope": reviewed_scope})
+            res["committed_ts"] = self.app.ledger.committed_snapshot(source, prov).get("ts")
+            res["provenance"] = prov
         self._json(res)
 
     def _stream(self) -> None:

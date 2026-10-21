@@ -29,6 +29,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+HERE = Path(__file__).resolve().parent
+if str(HERE.parent) not in sys.path:
+    sys.path.insert(0, str(HERE.parent))
+from _support.siblings import load_module  # noqa: E402
+
+review_policy = load_module("review_policy")
+
 # 严重度四档 → 三档，写死（骨架 §3 映射锁死；未知档位 = 输入侧契约违约，显式失败不猜）
 SEVERITY_MAP = {"critical": "Critical", "high": "Major", "medium": "Major", "low": "Minor"}
 
@@ -83,7 +90,9 @@ def convert(payload: dict) -> tuple[list[dict], list[dict], int, bool, list[dict
         if item["check"] == "other":
             other.append(item)
         else:
+            fp = review_policy.compute_fingerprint(target, cat, detail)
             checks.append({"id": f"D{len(checks) + 1}", "level": SEVERITY_MAP[sev], **item,
+                           "fingerprint": fp, "pre_existing": False, "disposition": "open",
                            "rollback": "implement"})  # 默认回退环；triage 可改判 prd/e2e 入 backfill
     warnings = [w for w in (payload.get("warnings") or []) if isinstance(w, dict)]
     return checks, other, summary["files_reviewed"], bool(summary.get("budget_exceeded")), warnings
@@ -100,11 +109,21 @@ def main() -> int:
     ap.add_argument("--from", dest="ref_from", help="git 起 ref（与 --to 同用，自算应审 N）")
     ap.add_argument("--to", dest="ref_to", help="git 止 ref")
     ap.add_argument("--expected-files", type=int, help="应审 N 显式传入（无 git ref 时）")
+    ap.add_argument("--schema-version", type=int, default=2, help="报告契约版本（默认 2）")
+    ap.add_argument("--escalate-to", help="round >= 4 轮次上限升级复议人/团队")
+    ap.add_argument("--escalate-reason", help="round >= 4 轮次上限升级复议理由")
+    ap.add_argument("--delta-only", action="store_true", help="是否为差量评审（首轮之后）")
+    ap.add_argument("--base-sha", help="差量评审对比基线 HEAD SHA")
     args = ap.parse_args()
     root = Path(args.root).resolve()
 
     if args.round < 1:
         return die("round 必须 ≥ 1")
+    # 轮次上限属**过程收敛纪律**（D129），与报告形态版本无关 ⇒ 不因 --schema-version 1 而放行
+    # （校验器侧仍只对新落盘的 v2 报告判 escalation，避免回扫历史 v1 报告造成永久红门）。
+    if args.round >= 4:
+        if not (args.escalate_to and args.escalate_reason):
+            return die(f"round={args.round} 达到 4 轮收敛上限：必须提供 --escalate-to 与 --escalate-reason 登记升级复议")
     if not UNIT_RE.fullmatch(args.unit):
         return die(f"unit「{args.unit}」含文件名不安全字符")
     if bool(args.ref_from) != bool(args.ref_to):
@@ -123,14 +142,9 @@ def main() -> int:
         return die(f"读输入 {src} 失败：{e}")
     checks, other, reviewed, budget, warnings = convert(payload)
 
-    # 状态（写死）：Critical ⇒ FAIL；Major / M<N / 预算击穿 ⇒ WARN；否则 PASS
-    levels = {c["level"] for c in checks}
-    if "Critical" in levels:
-        status = "FAIL"
-    elif "Major" in levels or reviewed < expected or budget:
-        status = "WARN"
-    else:
-        status = "PASS"
+    # 状态映射（D129 统一策略内核）
+    status = review_policy.calculate_status(checks, warn_floor=(reviewed < expected or budget),
+                                            schema_version=args.schema_version)
 
     outdir = root / args.out
     findings = outdir / "findings"
@@ -139,10 +153,18 @@ def main() -> int:
     if unit_file.is_file():
         return die(f"{unit_file} 已存在 —— 同 (unit, round) 不得覆盖，round 必须递增（骨架 §4）")
 
-    review = {"ok": status != "FAIL", "status": status, "root": str(root),
-              "scope": args.scope, "unit": args.unit, "round": args.round,
+    review = {"schema_version": args.schema_version, "ok": status != "FAIL", "status": status,
+              "root": str(root), "scope": args.scope, "unit": args.unit, "round": args.round,
               "expected": expected, "reviewed": reviewed, "budget_exceeded": budget,
               "checks": checks, "other": other}
+    if args.escalate_to:
+        review["escalation"] = {"to": args.escalate_to, "reason": args.escalate_reason}
+    if args.delta_only:
+        review["delta_only"] = True
+        if args.base_sha:
+            review["base_sha"] = args.base_sha
+        review["reviewed_files"] = sorted({c["target"].split(":")[0] for c in checks if "target" in c and c["target"] != "?"})
+
     unit_file.write_text(json.dumps(review, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     (outdir / "review.json").write_text(json.dumps(review, ensure_ascii=False, indent=1) + "\n",
                                         encoding="utf-8")

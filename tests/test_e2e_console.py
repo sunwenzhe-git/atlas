@@ -798,3 +798,130 @@ def test_committed_snapshot_merges_partial_submits() -> None:
         app_snap = ledger.committed_snapshot("app")
         assert set(app_snap["cases"]) == {"A", "B"}, app_snap
         assert set(ledger.committed_snapshot("prototype")["cases"]) == {"C"}
+
+
+# ── 2026-10-21 D128：评审绑定提交指纹与陈旧度（stale）判定 ────────────────────────
+def test_scripts_hash_excludes_runtime_artifacts_and_whitelists_scripts() -> None:
+    """D128：scripts_hash 必须对源码脚本敏感、对运行期产物免疫。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        s_dir = root / "product" / "e2e" / "scripts"
+        s_dir.mkdir(parents=True)
+        # 空目录 => None
+        assert cons.scripts_hash(root) is None
+
+        # 写入源码脚本 => 产生 hash
+        spec = s_dir / "demo.spec.ts"
+        spec.write_text("test('a', async () => {});\n", encoding="utf-8")
+        h1 = cons.scripts_hash(root)
+        assert h1 is not None and len(h1) == 16, h1
+
+        # 写入运行期产物（trace、png、test-results）=> hash 严格不变
+        results = s_dir / "test-results" / "run-1"
+        results.mkdir(parents=True)
+        (results / "trace.zip").write_bytes(b"trace-bytes")
+        (s_dir / "failure.png").write_bytes(b"png-bytes")
+        (s_dir / ".last-run.json").write_text("{}", encoding="utf-8")
+        h2 = cons.scripts_hash(root)
+        assert h2 == h1, (h1, h2)
+
+        # 修改源码脚本 => hash 变化
+        spec.write_text("test('a-modified', async () => {});\n", encoding="utf-8")
+        h3 = cons.scripts_hash(root)
+        assert h3 != h1, (h1, h3)
+
+        # 增加 atlas-prepare.mjs 钩子 => hash 包含钩子
+        (root / "atlas-prepare.mjs").write_text("// prep\n", encoding="utf-8")
+        h4 = cons.scripts_hash(root)
+        assert h4 != h3, (h3, h4)
+
+
+def test_case_review_state_lifecycle() -> None:
+    """D128：case_review_state 四态闭集（unreviewed / fresh / stale / legacy）。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    # ① 未评审
+    st1 = cons.case_review_state({"ok": True, "reviewed": {"pass": False}}, None)
+    assert st1["state"] == "unreviewed", st1
+
+    # ② 历史账本无指纹 => legacy
+    st2 = cons.case_review_state({"ok": True, "reviewed": {"pass": True}}, {"head_sha": "abc", "scripts_hash": "123"})
+    assert st2["state"] == "legacy", st2
+
+    # ③ 指纹完全匹配 => fresh
+    prov = {"head_sha": "abc1234567890", "scripts_hash": "hash1234", "git_dirty": False, "actor_type": "human"}
+    current = dict(prov)
+    st3 = cons.case_review_state({"ok": True, "reviewed": {"pass": True}, "prov": prov}, current)
+    assert st3["state"] == "fresh", st3
+    assert "warning" not in st3, st3
+
+    # ④ 提交时工作区 dirty => fresh 但带警告
+    prov_dirty = dict(prov, git_dirty=True)
+    st4 = cons.case_review_state({"ok": True, "reviewed": {"pass": True}, "prov": prov_dirty}, current)
+    assert st4["state"] == "fresh" and "dirty" in st4.get("warning", ""), st4
+
+    # ⑤ HEAD 变动 => stale
+    cur_new_head = dict(current, head_sha="def9999999999")
+    st5 = cons.case_review_state({"ok": True, "reviewed": {"pass": True}, "prov": prov}, cur_new_head)
+    assert st5["state"] == "stale" and "HEAD变动" in st5["reason"], st5
+
+    # ⑥ 脚本变动 => stale
+    cur_new_scripts = dict(current, scripts_hash="hash9999")
+    st6 = cons.case_review_state({"ok": True, "reviewed": {"pass": True}, "prov": prov}, cur_new_scripts)
+    assert st6["state"] == "stale" and "脚本变动" in st6["reason"], st6
+
+
+def test_submit_attaches_provenance_and_committed_computes_stale() -> None:
+    """D128：_compact 留存 prov，committed_snapshot 注入 review_state 且重算最新新鲜度。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    prov_v1 = {"head_sha": "11111112222222", "scripts_hash": "aaaa1111", "git_dirty": False, "actor_type": "human"}
+    compacted = cons._compact({"ok": True, "reviewed": {"pass": True, "checked_at": "12:00"}}, prov=prov_v1)
+    assert compacted["prov"]["head_sha"] == "11111112222222"
+    assert compacted["reviewed"]["pass"] is True
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        ledger = cons.Ledger(root, "tester")
+        ledger.append({
+            "kind": "submit",
+            "source": "app",
+            "prov": prov_v1,
+            "reviewed_scope": ["E2E-001"],
+            "cases": {"E2E-001": compacted},
+        })
+        # 用相同指纹读取 => fresh
+        snap_fresh = ledger.committed_snapshot("app", current=prov_v1)
+        assert snap_fresh["cases"]["E2E-001"]["review_state"]["state"] == "fresh"
+
+        # 换新提交指纹读取 => 自动判定为 stale，不污染底表
+        prov_v2 = dict(prov_v1, head_sha="33333334444444")
+        snap_stale = ledger.committed_snapshot("app", current=prov_v2)
+        assert snap_stale["cases"]["E2E-001"]["review_state"]["state"] == "stale"
+        assert "HEAD变动" in snap_stale["cases"]["E2E-001"]["review_state"]["reason"]
+
+        # reviewed_scope 必须有消费者（否则是死字段）：committed 视图 + 人读账本都要暴露
+        assert snap_fresh["reviewed_scope"] == ["E2E-001"] and snap_fresh["reviewed_count"] == 1, snap_fresh
+        ledger_md = (root / "product" / "e2e" / "reviews" / "console" / "ledger.md").read_text(encoding="utf-8")
+        assert "本次评审范围：**1 条**" in ledger_md, ledger_md
+        # 旧事件（无 reviewed_scope）⇒ 空范围，不谎报条数
+        assert ledger.committed_snapshot("prototype")["reviewed_count"] == 0
+
+
+def test_console_app_js_handles_stale_and_legacy_and_provenance() -> None:
+    """前端 UI（D128）：stale 与 legacy 同等「需重审」，meta 行暴露当前提交/脚本指纹。
+
+    **Blocker 回归防护**：`rowHTML` 里 `const canCheck` 曾出现两次声明（同作用域重复 `const`
+    = JS SyntaxError ⇒ 控制台整页白屏），而字符串 grep 拦不住 ⇒ 本钉按**出现次数**判，
+    杜绝「关键字读得到、语法其实炸」的假绿。
+    """
+    app_js = (Path(__file__).parent.parent / "templates" / "e2e" / "console" / "app.js").read_text(encoding="utf-8")
+    assert app_js.count("const canCheck") == 1, "同作用域重复 const canCheck ⇒ app.js 语法错，控制台全灭"
+    assert "STALE 需重审" in app_js
+    assert "LEGACY" in app_js
+    assert "HEAD=" in app_js
+    assert "评审范围" in app_js          # reviewed_scope 的前端消费者（死字段防护）
+    assert "needsRecheck" in app_js
+    # legacy 不得冒充有效评审（旧账本可被重勾洗白 = 审查逃逸）
+    assert "st.state === 'stale' || st.state === 'legacy'" in app_js
+    assert "statList.push(['需重审', k.stale])" in app_js
+

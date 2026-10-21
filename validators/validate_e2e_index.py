@@ -579,6 +579,75 @@ def validate(root: Path) -> Result:
                 (detail + "；残留待裁决（清零后升 FAIL，规则在 shared/gates.md §3 AC⇔用例行）")
                 if gaps else detail)
 
+    # AC × 覆盖维度（D130，2026-10-21）：
+    # 检验已在域级 PRD 声明适用维度的 AC，其 E2E 用例是否覆盖了声明的维度（C01-C14 前端裁剪版）。
+    # 仅对已实现域且已有用例挂靠的 AC 计算；未声明适用维度的项目按 N/A 兜底，不报假缺口。
+    # 解析口径（评审 Minor 修正）：① `\b` 对 CJK 邻接失效（「C01正常流」不命中）⇒ 改前后界定符；
+    # ② 「C01-C03」区间须展开（否则只命中两端、中间维度被误报缺口）；③ 不做「含『维度』二字即跳过」
+    # 的粗暴表头过滤（会误杀「C13 状态维度」这类数据行）——表头/分隔行首格不是 AC 形态，天然不被外层正则命中。
+    _DIM_TOKEN = r"C(?:0[1-9]|1[0-4])"
+    _dim_range_re = re.compile(rf"(?<![0-9A-Za-z])({_DIM_TOKEN})\s*[-~至]\s*({_DIM_TOKEN})(?![0-9])")
+    _dim_code_re = re.compile(rf"(?<![0-9A-Za-z]){_DIM_TOKEN}(?![0-9])")
+    _dim_looks_re = re.compile(r"[Cc]\d{1,2}")
+
+    def _parse_dims(raw) -> tuple[set[str], bool]:
+        """覆盖维度文本 → (命中维度集合, 是否含疑似维度写法)。区间展开、中文邻接可命中。"""
+        text = str(raw or "")
+        dims: set[str] = set()
+        for m in _dim_range_re.finditer(text):
+            lo, hi = int(m.group(1)[1:]), int(m.group(2)[1:])
+            if lo > hi:
+                lo, hi = hi, lo
+            dims |= {f"C{i:02d}" for i in range(lo, hi + 1)}
+        dims |= set(_dim_code_re.findall(text))
+        return dims, bool(_dim_looks_re.search(text))
+
+    declared_ac_dims: dict[str, set[str]] = {}
+    for p in prd_files:
+        seg = p.read_text(encoding="utf-8")
+        for m in re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|[^|\n]*\|[^|\n]*\|([^|\n]+)\|", seg, re.M):
+            dims, _looks = _parse_dims(m.group(2))
+            if dims:
+                declared_ac_dims[m.group(1)] = dims
+
+    covered_ac_dims: dict[str, set[str]] = {}
+    bad_case_dims: list[str] = []
+    for g in grid:
+        cid = g["用例ID"]
+        acid = g["关联AC"]
+        blk = blocks.get(cid, {})
+        for d_str in (blk.get("覆盖维度") or []):
+            found, looks = _parse_dims(d_str)
+            if not found and looks:
+                bad_case_dims.append(f"{cid}:{d_str}")
+            covered_ac_dims.setdefault(acid, set()).update(found)
+
+    if not declared_ac_dims:
+        res.add("AC × 覆盖维度", "N/A", "域级 PRD 验收标准表未声明「适用覆盖维度」列（按需启用）")
+    else:
+        dim_gaps: list[str] = []
+        covered_ac_set = {g["关联AC"] for g in grid}
+        for dom in sorted(dom_acs):
+            if dom_status.get(dom) != {"已实现"}:
+                continue
+            for acid in sorted(dom_acs[dom]):
+                if acid not in covered_ac_set or acid not in declared_ac_dims:
+                    continue
+                applicable = declared_ac_dims[acid]
+                actual = covered_ac_dims.get(acid, set())
+                missing = applicable - actual
+                if missing:
+                    dim_gaps.append(f"{acid}缺{','.join(sorted(missing))}")
+        detail_parts = []
+        if dim_gaps:
+            detail_parts.append(f"维度缺口={dim_gaps[:6]}")
+        if bad_case_dims:
+            detail_parts.append(f"未知维度={bad_case_dims[:4]}")
+        total_declared = len([ac for dom in dom_acs if dom_status.get(dom) == {"已实现"} for ac in dom_acs[dom] if ac in declared_ac_dims and ac in covered_ac_set])
+        status = "WARN" if (dim_gaps or bad_case_dims) else "PASS"
+        detail = "；".join(detail_parts) if detail_parts else f"{total_declared} 条已实现 AC 声明维度全量覆盖"
+        res.add("AC × 覆盖维度", status, detail)
+
     # 零证据用例须挂结构类 AC（契约 §8.2；2026-09-25 补，`3509 §B36` + `§B50`）：
     # `expected` **全部**带 `initial:` 的用例 = 零证据用例（它自己声明「不构成验证」）——
     # 只允许挂**结构类 AC**（PRD 环 §五「结构类 AC 清单」登记：该 AC 的被测属性只能在初始态观测）。

@@ -35,7 +35,13 @@ import json
 import sys
 from pathlib import Path
 
-LEVELS = ("Critical", "Major", "Minor")
+HERE = Path(__file__).resolve().parent
+if str(HERE.parent) not in sys.path:
+    sys.path.insert(0, str(HERE.parent))
+from _support.siblings import load_module  # noqa: E402
+
+review_policy = load_module("review_policy")
+LEVELS = review_policy.LEVELS
 # §3 必备键 → 期望类型（bool 必须先于 int 判——Python 里 bool 是 int 子类）
 REQUIRED_KEYS: list[tuple[str, type]] = [
     ("ok", bool), ("status", str), ("root", str), ("scope", str),
@@ -100,6 +106,9 @@ def validate_report(d: Path) -> Result:
 
     checks = data.get("checks") if isinstance(data.get("checks"), list) else []
     bad_lv: list[str] = []
+    schema_version = data.get("schema_version", 1)
+    if not isinstance(schema_version, int) or schema_version < 1:
+        bad_lv.append("`schema_version` 若存在必须为 ≥ 1 的整数")
     for i, c in enumerate(checks):
         if not isinstance(c, dict):
             bad_lv.append(f"checks[{i}] 不是对象")
@@ -109,21 +118,36 @@ def validate_report(d: Path) -> Result:
         rb = c.get("rollback")
         if not (isinstance(rb, str) and rb.strip()):
             bad_lv.append(f"checks[{i}] 缺非空 rollback（骨架 §2.4）")
+        if schema_version >= 2:
+            bad_lv.extend(review_policy.validate_v2_finding(c, i))
+
+    if schema_version >= 2:
+        bad_lv.extend(review_policy.validate_v2_report_fields(data))
+        # v2 去重指纹校验：未 fixed 的 finding 不得有重复 fingerprint
+        fps: dict[str, int] = {}
+        for c in checks:
+            if isinstance(c, dict) and c.get("fingerprint") and c.get("disposition") != "fixed":
+                fp = str(c["fingerprint"])
+                fps[fp] = fps.get(fp, 0) + 1
+        dup_fps = [fp for fp, cnt in fps.items() if cnt > 1]
+        if dup_fps:
+            bad_lv.append(f"存在重复 finding 指纹（D129 去重）：{dup_fps}")
+
     res.add("分级闭集 + 回退环", "FAIL" if bad_lv else "PASS",
             ("；".join(bad_lv))[:200] if bad_lv else f"{len(checks)} 条 finding 闭集与回退环齐")
 
-    lv_set = {c.get("level") for c in checks if isinstance(c, dict)}
     # 应审/实审先解析（映射复算要把 §6 第 8 条的 WARN 下限算进去 —— cli_review_convert 同规则：
     # Critical ⇒ FAIL；否则 Major 或 M<N 或预算击穿 ⇒ WARN；否则 PASS）
     exp, rev = data.get("expected"), data.get("reviewed")
     exec_val = data.get("executed")
     warn_floor = (data.get("budget_exceeded") is True) or (
         _is_int(exp) and _is_int(rev) and rev < exp) or (exec_val is False)
-    expect = "FAIL" if "Critical" in lv_set else ("WARN" if ("Major" in lv_set or warn_floor) else "PASS")
+    expect = review_policy.calculate_status(checks, warn_floor=warn_floor,
+                                            schema_version=schema_version)
     st, ok = data.get("status"), data.get("ok")
     map_bad: list[str] = []
     if st != expect:
-        map_bad.append(f"status={st!r} ≠ 映射复算 {expect}（§3 写死 + §6 第 8 条下限）")
+        map_bad.append(f"status={st!r} ≠ 映射复算 {expect}（§3 写死 + §6 第 8 条下限 + D129）")
     if ok is not (expect != "FAIL"):
         map_bad.append(f"ok={ok!r} ≠ (status != FAIL)")
     res.add("状态映射复算（§3 写死 + §6 下限）", "FAIL" if map_bad else "PASS",

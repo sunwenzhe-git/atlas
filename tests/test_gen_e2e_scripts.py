@@ -2068,6 +2068,18 @@ def test_f21_baseline_shape_lock_and_sort_precedence() -> None:
         level, detail = gen.review_report_status(rdir)
         assert level == "critical" and "Critical" in detail, (level, detail)
 
+        # 2b. D129：pre_existing Critical 经判定 status=WARN，不阻断生成器
+        (bad_basis_dir / "review.json").write_text(
+            json.dumps({
+                "ok": True,
+                "status": "WARN",
+                "checks": [{"level": "Critical", "check": "存量隐患", "pre_existing": True}],
+            }),
+            encoding="utf-8",
+        )
+        level, detail = gen.review_report_status(rdir)
+        assert level == "ok", (level, detail)
+
         # 3. 同日排序消歧：同一天下存在基线报告与真审报告
         # 基线目录
         baseline_dir = rdir / "2026-10-16-adopt-baseline"

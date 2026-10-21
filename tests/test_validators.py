@@ -1222,6 +1222,59 @@ def test_e2e_index_pass() -> None:
         assert res.status in ("PASS", "WARN"), [(c["check"], c["level"], c["detail"]) for c in res.checks]
 
 
+def test_e2e_index_coverage_dimensions_pass_and_warn() -> None:
+    """D130：AC 覆盖维度（C01-C14）缺口校验：
+    ① 未在 PRD 声明 4 列时为 N/A；
+    ② 声明适用维度但用例分片未全量覆盖时为 WARN；
+    ③ 用例全量覆盖时为 PASS。
+    """
+    INDEX_WITH_PAGE = INDEX_GOOD + "\n## 页面\n\n| 页面 | 路由 | 所属域 | 状态 |\n|---|---|---|---|\n| home | / | home | 已实现 |\n"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_index(root, INDEX_WITH_PAGE)
+
+        # 默认无域 PRD 或只有 3 列 => N/A
+        mk_cases(root)
+        res = ve.validate(root)
+        check = next((c for c in res.checks if c["check"] == "AC × 覆盖维度"), None)
+        assert check is not None and check["level"] == "N/A", check
+
+        # 构造带 4 列「适用覆盖维度」的域 PRD（区间写法 C01-C02 须展开为两维）
+        prd_dir = root / "product" / "prd"
+        prd_dir.mkdir(parents=True, exist_ok=True)
+        (prd_dir / "home-prd.md").write_text(
+            "---\ndomain: home\n---\n\n"
+            "## 五、验收标准\n\n"
+            "| AC ID | 场景 | 回指规则 | 适用覆盖维度 |\n"
+            "|---|---|---|---|\n"
+            "| `AC-HOME-001` | 首页展示正常 | HOME-R-001 | C01-C02 |\n",
+            encoding="utf-8"
+        )
+        # 用例只声明 C01（中文邻接写法「C01正常流」须命中——`\b` 对 CJK 不成立）⇒ 缺 C02 ⇒ WARN
+        case_with_c01 = CASE_GOOD.strip()[:-3] + "覆盖维度:\n  - C01正常流\n```\n"
+        mk_cases(root, case_with_c01)
+        res_warn = ve.validate(root)
+        check_warn = next((c for c in res_warn.checks if c["check"] == "AC × 覆盖维度"), None)
+        assert check_warn is not None and check_warn["level"] == "WARN", check_warn
+        assert "AC-HOME-001缺C02" in check_warn["detail"], check_warn
+
+        # 用例同时覆盖 C01 与 C02 => PASS
+        case_with_all = CASE_GOOD.strip()[:-3] + "覆盖维度:\n  - C01正常流\n  - C02\n```\n"
+        mk_cases(root, case_with_all)
+        res_pass = ve.validate(root)
+        check_pass = next((c for c in res_pass.checks if c["check"] == "AC × 覆盖维度"), None)
+        assert check_pass is not None and check_pass["level"] == "PASS", check_pass
+
+        # 词表外的疑似维度写法（C15）⇒ WARN 点名，不静默吸收
+        case_bad_dim = CASE_GOOD.strip()[:-3] + "覆盖维度:\n  - C01\n  - C02\n  - C15\n```\n"
+        mk_cases(root, case_bad_dim)
+        res_bad = ve.validate(root)
+        check_bad = next((c for c in res_bad.checks if c["check"] == "AC × 覆盖维度"), None)
+        assert check_bad is not None and check_bad["level"] == "WARN", check_bad
+        assert "未知维度" in check_bad["detail"], check_bad
+
+
 def test_e2e_index_verb_fail() -> None:
     """新门（契约 §5.5，2026-09-23）：step/expected 首 token 不在动词词表内 → FAIL。"""
     with tempfile.TemporaryDirectory() as td:

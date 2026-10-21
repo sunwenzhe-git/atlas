@@ -1015,8 +1015,11 @@ def review_report_status(reports_dir: Path) -> tuple[str, str]:
     if status not in REVIEW_LEVELS:
         return "invalid", f"{d.name}/review.json 的 status={status!r} 不在 {sorted(REVIEW_LEVELS)} 内"
     if status == "FAIL":
-        crit = [c for c in (data.get("checks") or []) if c.get("level") == "Critical"]
-        return "critical", f"{d.name} 含 {len(crit)} 条 Critical"
+        sv = data.get("schema_version", 1)
+        rp = load_module("review_policy")
+        crit = [c for c in (data.get("checks") or [])
+                if isinstance(c, dict) and rp.is_blocking_critical(c, schema_version=sv)]
+        return "critical", f"{d.name} 含 {len(crit)} 条阻断性 Critical"
 
     # 形状锁：检查 auto-baseline 兜底形态（C1 修订）
     if data.get("basis") == "auto-baseline":

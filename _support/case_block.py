@@ -45,7 +45,8 @@ strip_inline_comment = load_module("stack_profile").strip_inline_comment
 # 键空间 = `rings/e2e/reference.md` §5.5 用例块字段（消费方按需读取）。
 # `参数`（2026-10-18，`DESIGN.md` D109）：宿主注入型 URL 参数的**键清单**（值内联在 step 的
 # `goto` 查询串里）——不在键空间内的键会被按**标量**入表（`key = None`），其后 `- 项` 行跟丢。
-_BLOCK_KEYS = ("pages", "precondition", "seed", "mock", "step", "expected", "testid", "落点", "会话", "参数")
+# `覆盖维度`（2026-10-21，`DESIGN.md` D130）：前端适配版 C01-C14 场景维度列表。
+_BLOCK_KEYS = ("pages", "precondition", "seed", "mock", "step", "expected", "testid", "落点", "会话", "参数", "覆盖维度")
 
 
 def parse_block(body: str) -> dict:

@@ -64,8 +64,15 @@
 
 - **`unit` / `round`**（2026-09-27 补）：单元产物的扇出单元键与**第几轮**。每复审一次 `round` +1；两者都落进文件，供「未改动单元复用上轮结论」（§6 第 5 条）与 §4「复审落点」使用。
 - **`expected` / `reviewed` / `budget_exceeded`**（2026-10-06 补，`3509 §B112` 残留清偿）：**应审 N / 实审 M 对账的机器落点**（§6 第 8 条）——**必填**（单审查者实例记 `1 / 1`）；`reviewed < expected` 或 `budget_exceeded: true` ⇒ 报告级 `status` 至少 `WARN`（状态映射复算含此下限，`cli_review_convert` 同规则）。实例 ⑤ 由 `cli_review_convert` 写入；①②④ 由聚合器写入。**报告落盘当轮必跑** `scripts/validate_review_report.py --dir <报告目录>`（形态 + 对账门，登记 `shared/gates.md` 2.1）。
+- **`schema_version: 2` 与收敛与处置扩展（2026-10-21，`DESIGN.md` D129）**：
+  - **`checks[].fingerprint`**（可选，v2 推荐）：基于目标文件路径（排除行号）+ 检查类别 + 核心摘要计算的去重指纹。v2 报告中未关闭（`disposition != "fixed"`）的 finding 出现重复 fingerprint ⇒ 校验器直接 FAIL，防止反复报同类问题刷分。
+  - **`checks[].pre_existing`**（bool，缺省 `false`）：标记该缺陷是否为改动前即已存在的存量代码问题。`pre_existing=true` 的 Critical **不阻断本次收口**，但状态下限维持 `WARN`（记录于存量台账，不静默放行）。
+  - **`checks[].disposition`**（闭集：`open` / `fixed` / `false_positive` / `intentional` / `ignored`）：每条 finding 必须有显式处置状态。若标记为 `fixed` 或 `false_positive`，必须附带非空 `disposition_by`（人/架构签字）与 `disposition_evidence`（取证说明），否则仍按阻断性 Critical 计算。
+  - **`checks[].verification`**（可选对象）：外部或二次审查者验证结论 `{status: "confirmed"|"rejected"|"inconclusive", by, evidence, at}`。Critical 保持先阻断，verification 仅用于取证核验。
+  - **轮次上限与升级复议**：v2 报告若 `round >= 4`，必须显式登记 `escalation: {to, reason, approved_by}` 升级到人工或架构复议，否则转换器与校验器拒绝放行，杜绝无休止的 Agent 自审死循环。
+  - **首轮后差量审查（`delta_only: true`）**：`round >= 2` 时支持仅针对改动 diff 进行差量复审，记录 `base_sha`、`head_sha` 与 `reviewed_files[]`。
 
-- **`status` 与分级的映射（写死）**：存在任一 `level == "Critical"` ⇒ `status = "FAIL"`；否则若存在 `Major` ⇒ `"WARN"`；否则 `"PASS"`。
+- **`status` 与分级的映射（写死，D129 统一策略内核）**：存在任一**阻断性 Critical**（`level == "Critical"` 且 `pre_existing != true` 且 `disposition` 未关闭）⇒ `status = "FAIL"`；否则若存在任一 Critical（含存量）或 `Major` 或 `warn_floor` 为真 ⇒ `"WARN"`；否则 `"PASS"`。
 - **`ok = status != "FAIL"`**；**退出码 1 ⟺ `status == "FAIL"`**——与 `validators/*.py`、`scripts/*.py` 完全同源，门禁因此**不需在门口信任模型结论**（读文件即可判）。
 - **`checks[]` 带用例级 / 页级内容哈希**（实例可选，见 §6 第 5 条）时，键名固定 `target_hash`。
 
@@ -205,6 +212,15 @@ atlas-grill（提炼刺痛代价与致命冲突） → 用户拍板关键抉择
 - **`Critical` 判级硬口径（2026-10-10 补，`3507 BQ`）**：`Critical` 的 finding 必须在 `detail` 内附**证据链**——diff 中的具体位置 + 从权威输入到缺陷结论的推理路径；给不出证据链的至多判 `Major`（无证据不配阻断收口门，与骨架 §2.6「缺权威输入不得给通过」同源）。
 - **边界（同轮定案）**：实现期的代码规范（「在正确的层解决」类准则）**不进本契约**——atlas 不介入实现过程（§10 引言既定边界），代码规范由目标项目自己的 lint / typecheck / test 机器门承担；本节只是**收口侧的审查焦点**。
 - 措辞纪律：不写任何框架名与语言特性（`global-rules.md` §1）。
+
+### 10.5 按域审查指引（REVIEW 模板，2026-10-21 补，`DESIGN.md` D131）
+
+判断类焦点归 §10.4 三问，但**每个域「失败长什么样」只有该域的作者知道**。为让审查者在读 diff 前对齐焦点，提供轻量指引：
+
+- **模板**：`.atlas/templates/reviews/README.md`（≤10 行：本域失败形态 / 重点检查 / 跳过路径 / 证据要求 `file:line` / 总结以数字开头、无事可修直说）；
+- **落点（可选）**：`product/reviews/REVIEW-<域>.md`，随 §10.1 的 background **按指针注入**（给路径，不复制正文）；
+- **不造第二真相源**：只写「这个域什么算坏」，**不得**复述 AC、状态词表或门清单——那些各有唯一真相源（`single-source.md` §1）；与 AC / 契约冲突时**以契约为准**，冲突本身按 finding 报出；
+- **缺文件 = 合法降级**：没有该域指引 ⇒ 按 §10.4 三问审即可，不因此报红（新增内容面不设永久红门，同 `DESIGN.md` D130 口径）。
 
 ## Guidance
 

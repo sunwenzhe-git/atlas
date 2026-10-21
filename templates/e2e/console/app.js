@@ -86,10 +86,15 @@ async function load() {
   const c = S.committed;
   S.heldCase = d.held_case || null;
   const cfg = srcCfg();
+  const prov = d.provenance || {};
+  const provNote = prov.head_short
+    ? ` · HEAD=${prov.head_short}${prov.git_dirty ? '(dirty)' : ''} · 脚本=${prov.scripts_hash || '无'}`
+    : '';
   $('meta').textContent = `来源 ${cfg.label || S.source}（${cfg.base_url || '未配置'}）`
     + ` · ${d.head ? '执行时弹出浏览器窗口' : '无头执行（不弹窗口）'} · 一次跑一条 · 单条超时 ${d.timeout}s`
+    + provNote
     + manualNote
-    + (c.ts ? ` · 最近提交 ${hhmm(c.ts)}（${c.actor || ''}）` : ' · 尚未提交过');
+    + (c.ts ? ` · 最近提交 ${hhmm(c.ts)}（${c.actor || ''}${c.reviewed_count ? ` · 评审范围 ${c.reviewed_count} 条` : ''}）` : ' · 尚未提交过');
   const pages = [...new Set(S.cases.map((x) => x.page))];
   $('f-page').innerHTML = '<option value="all">全部</option>' + pages.map((p) => `<option value="${p}">${p}</option>`).join('');
   if (d.problem) notify(d.problem, true);
@@ -99,7 +104,14 @@ async function load() {
 
 /* ---------------- 视图 ---------------- */
 const isPass = (id) => !!(effective(id) || {}).ok;
-const isReviewed = (id) => !!(((effective(id) || {}).reviewed) || {}).pass;
+const isReviewed = (id) => {
+  const e = effective(id);
+  const rev = (e || {}).reviewed;
+  if (!rev || !rev.pass) return false;
+  const st = (e || {}).review_state;
+  if (st && (st.state === 'stale' || st.state === 'legacy')) return false;
+  return true;
+};
 
 function visible(c) {
   const f = S.filter;
@@ -114,23 +126,28 @@ function visible(c) {
 }
 
 function counts() {
-  let ran = 0, pass = 0, bad = 0, reviewed = 0;
+  let ran = 0, pass = 0, bad = 0, reviewed = 0, stale = 0;
   for (const c of S.cases) {
     const e = effective(c.id);
     if (e && typeof e.ok === 'boolean') { ran++; e.ok ? pass++ : bad++; }
     if (isReviewed(c.id)) reviewed++;
+    const st = e && e.review_state;
+    if (st && (st.state === 'stale' || st.state === 'legacy')) stale++;
   }
   const realTotal = S.cases.length - (S.manualCount || 0);
-  return { total: realTotal, ran, pass, bad, reviewed, left: S.cases.length - reviewed, pending: pendingCount() };
+  return { total: realTotal, ran, pass, bad, reviewed, stale, left: S.cases.length - reviewed, pending: pendingCount() };
 }
 
 function render() {
   const k = counts();
-  $('stats').innerHTML = [
+  const statList = [
     ['用例', k.total], ['已执行', k.ran], ['执行通过', k.pass], ['执行失败', k.bad],
-    ['已评审', k.reviewed], ['待评审', k.left], ['未提交', k.pending],
-  ].map(([label, n], i) => {
-    const hot = (i === 6 && n > 0) ? ' hot' : '';
+    ['已评审', k.reviewed], ['待评审', k.left],
+  ];
+  if (k.stale > 0) statList.push(['需重审', k.stale]);
+  statList.push(['未提交', k.pending]);
+  $('stats').innerHTML = statList.map(([label, n], i) => {
+    const hot = ((label === '未提交' || label === '需重审') && n > 0) ? ' hot' : '';
     return `<div class="stat${hot}"><b>${n}</b><span>${label}</span></div>`;
   }).join('');
 
@@ -165,7 +182,6 @@ function rowHTML(c) {
   const reviewed = (e || {}).reviewed;
   const reviewedPass = !!(reviewed && reviewed.pass);
   const unlocked = isManual || !!(e && e.ok);
-  const canCheck = unlocked || reviewedPass;
 
   let pill = isManual ? '<span class="pill none">走查</span>' : '<span class="pill none">未跑</span>';
   let excerpt = '';
@@ -186,11 +202,22 @@ function rowHTML(c) {
   }
   if (busy) pill = '<span class="pill run">执行中…</span>';
 
-  const reviewCell = `<label class="chk${canCheck ? '' : ' off'}" title="${unlocked ? '勾选＝复核该条执行结果符合业务预期；再点一次取消（提交后才落账本）' : reviewedPass ? '取消勾选即撤销评审' : '执行通过后才可勾选'}">
-      <input type="checkbox" data-review="${c.id}" ${reviewedPass ? 'checked' : ''} ${canCheck ? '' : 'disabled'}>
+  const revState = (e && e.review_state) || {};
+  const isStale = (revState.state === 'stale');
+  const isLegacy = (revState.state === 'legacy');
+  const needsRecheck = isStale || isLegacy;
+  const canCheck = (unlocked || reviewedPass) && !needsRecheck;
+
+  const recheckTitle = isStale
+    ? `代码或脚本已变化（${esc(revState.reason || '')}），需重新执行并复核`
+    : `旧账本快照无提交指纹，重新执行后将自动绑定当前版本`;
+  const reviewCell = `<label class="chk${canCheck ? '' : ' off'}" title="${needsRecheck ? recheckTitle : unlocked ? '勾选＝复核该条执行结果符合业务预期；再点一次取消（提交后才落账本）' : reviewedPass ? '取消勾选即撤销评审' : '执行通过后才可勾选'}">
+      <input type="checkbox" data-review="${c.id}" ${reviewedPass && !needsRecheck ? 'checked' : ''} ${canCheck ? '' : 'disabled'}>
       <span>通过</span>
     </label>`
-    + (reviewedPass
+    + (needsRecheck
+        ? `<div class="why" style="color:var(--bad)">需重审：${esc(revState.reason || (isLegacy ? '历史快照无提交指纹' : ''))}</div>`
+        : reviewedPass
         ? `<div class="who" title="勾选 ${esc(reviewed.checked_at || '')}${reviewed.unchecked_at ? ` · 上次撤销 ${esc(reviewed.unchecked_at)}` : ''}">`
           + `勾于 ${esc(hhmm(reviewed.checked_at))}${reviewed.unchecked_at ? ` · 撤过 ${esc(hhmm(reviewed.unchecked_at))}` : ''}</div>`
         : (unlocked ? '' : `<div class="why">执行通过未达成</div>`));
@@ -203,6 +230,9 @@ function rowHTML(c) {
       <div class="cmeta">
         ${isManual ? '' : `<span class="tag">${esc(c.type)}</span>`}
         ${(c.mock && c.mock.length) ? '<span class="tag mocked" title="本用例声明了 mock: 桩行——执行绿可能有桩支撑（契约 §5.8 桩披露）">MOCKED</span>' : ''}
+        ${isStale ? `<span class="tag stale" title="代码或脚本已变动（${esc(revState.reason || '')}）">STALE 需重审</span>` : ''}
+        ${isLegacy ? `<span class="tag" style="background:#555;color:#ddd" title="旧账本快照无提交指纹">LEGACY</span>` : ''}
+        ${(revState.warning) ? `<span class="tag dirty" title="${esc(revState.warning)}">DIRTY</span>` : ''}
         <span class="tag">${esc(c.ac)}</span>
         ${c.need ? `<span class="tag">需求 ${esc(c.need)}</span>` : ''}
         ${S.draft[c.id] ? '<span class="tag dirty">未提交</span>' : ''}
@@ -288,7 +318,9 @@ function run(id) {
         S.heldCase = d.held ? id : null;
         patch(id, { ok: d.ok, exit: d.exit, duration_ms: d.duration_ms, timeout: d.timeout,
                     tail: S.outputs[id] || d.tail || '', ts: d.ts, slowmo: d.slowmo,
-                    prep_failed: Boolean(d.prep_failed) });
+                    prep_failed: Boolean(d.prep_failed),
+                    prov: d.prov,
+                    reviewed: null });
         render();
         // 跑完不关窗的状态已在右上角「关闭浏览器窗口（E2E-XXX）」按钮上可见，不再多弹一条提示。
         if (!d.ok) {
