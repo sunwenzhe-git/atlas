@@ -4,6 +4,14 @@
 
 ---
 
+## [v0.1.0-beta.37] - 2026-10-21
+
+### 🩹 控制台「已提交」视图累积合并 (D127)
+
+- **部分提交不再抹掉历史（D127）**：`scripts/e2e_console.py` 新增 `Ledger.committed_snapshot(source)`，按 append-only 事件顺序合并所有 submit 快照（后提交覆盖同名用例）；`cases_payload` / `_submit` 改用该视图，彻底修复「重复提交后历史已评审/已执行用例变回未跑」的问题。
+
+---
+
 ## [v0.1.0-beta.36] - 2026-10-21
 
 ### 🔧 `select` 选项候选集排除内部子节点防假歧义 (D122 补漏)
