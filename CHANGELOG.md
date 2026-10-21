@@ -4,6 +4,17 @@
 
 ---
 
+## [v0.1.0-beta.34] - 2026-10-20
+
+### 🔧 控制台前置准备钩子环境与前端诊断补齐 (D125)
+
+* **【D125 NODE_PATH 同步注入与 UI 诊断分流】**：
+  - `scripts/e2e_console.py` 调用项目 `product/e2e/scripts/atlas-prepare.mjs` 前置钩子时，若探测到 `nm_dir`，同步注入 `NODE_PATH`，确保前置脚本依赖解析环境与真跑子进程严格对齐，消除在未自建 `node_modules` 目录下运行时模块解析 `ERR_MODULE_NOT_FOUND` 的缺陷；
+  - `templates/e2e/console/app.js` 前端 UI 正式消费 `d.prep_failed`：状态 pill 显示为「前置失败」（warn 级），错误摘录与通告显式提示「前置数据准备 atlas-prepare 失败，与用例脚本本身无关」，消除误导使用人员改动用例脚本的假象；
+  - 契约 `rings/e2e/reference.md` §10「执行」与 `DESIGN.md` D125 决策行同步；钉 = `tests/test_e2e_console.py` prepare 四元组扩为五元组（含 NODE_PATH）+ `test_console_app_js_handles_prep_failed_distinctly`，变异 **M126**。
+
+---
+
 ## [v0.1.0-beta.33] - 2026-10-20
 
 ### 🔧 prepare 用例上下文 / select 候选集 / ESM upload 路径 / 就绪门浏览器判据（D121–D124 / #37 / #38）
