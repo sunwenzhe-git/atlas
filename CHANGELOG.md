@@ -4,6 +4,26 @@
 
 ---
 
+## [v0.2.0-beta.1] - 2026-10-21
+
+### ✨ 评审 / 覆盖 / 事故三条反馈闭环（D128–D131）
+
+* **【D128 人工评审绑定提交指纹】**：控制台账本与逐用例快照绑定 `prov: {head_sha, scripts_hash, git_dirty, actor_type}`，`scripts_hash` 对生成脚本与 `atlas-prepare.mjs` 敏感、**对运行期产物免疫**；服务端按当前指纹复算 `review_state` 四态（`fresh`/`stale`/`legacy`/`unreviewed`），代码或脚本一变即标 **STALE 需重审**并禁用勾选，读不到指纹时 fail-closed；重跑自动清旧勾选；`reviewed_scope` 落账本与控制台顶栏。钉 4 条，变异 **M129**；
+* **【D129 独立审查报告 `schema_version: 2`】**：新增单源内核 `_support/review_policy.py`（校验器 / CLI 转换器 / 生成器三方共用同一状态映射）；finding 级 `fingerprint`（剥行号，跨轮去重）/ `pre_existing`（存量缺陷降为 WARN 下限、不阻断本次收口）/ `disposition`（`fixed`、`false_positive` 须签字 + 取证）/ `verification`；**轮次上限**：第 4 轮起必须登记 `escalation` 升级复议；v1 历史报告保持旧语义且不回扫。钉 4 + 3 + 1 条，变异 **M130 / M130b / M130c**；
+* **【D130 AC × 覆盖维度矩阵】**：前端适配版 `C01`–`C14` 闭集；用例分片新增可选 `覆盖维度:`，域级 PRD §五 新增可选第 4 列 `适用覆盖维度`（支持 `C01-C03` 区间与中文邻接写法）；`validate_e2e_index.py` 增「AC × 覆盖维度」行：缺维度 / 词表外写法 ⇒ **WARN**，未声明 ⇒ **N/A**（不给存量项目造红门）。钉 1 条（四态），变异 **M131**；
+* **【D131 收口风控与事故闭环】**：`shared/closeout.md` 补**步骤 3 变更风险定档**（三档 + `auth/permission/routing/CI/deps/contracts` 为 Always-Human 路径，禁止 Agent 代勾）与**步骤 4 缺陷修复验证 7 检查点**（含 Red First 先失败测试）；步骤 11 与 `duty-review/` 引入**事故追问**——逃逸缺陷须标注「哪层本该接住」并落成 E2E 回归用例或变异钉；新增 `templates/reviews/README.md` 按域审查指引（`independent-review.md` §10.5 承载引用，不造第二真相源）。
+
+### 🩹 独立评审抓出的缺陷（当场修并重跑全量）
+
+* **Blocker**：`app.js` 同作用域重复 `const canCheck` ⇒ JS SyntaxError（控制台整页白屏），而字符串 grep 拦不住 ⇒ 已修，并把钉子改成按**出现次数**判 + `node --check` 实验；
+* **Major**：`clean_target_file` 剥不掉 CLI 恒产的 `path:12-15` 行号区间 ⇒ 指纹跨轮漂移、去重门永不命中；`legacy` 未等同 `stale` ⇒ 旧账本可被重勾洗白；
+* **Minor**：`scripts_hash` 钩子候选顺序对齐 Runner 执行面；生成器 critical 判定改走同一 policy；`current=None` 不再冒充已核验；`--schema-version 1` 不得绕过轮次上限；维度解析支持区间展开且不再误杀含「维度」的数据行；
+* **登记面**：`install.sh` 补登记 `_support/review_policy.py` 与 `templates/reviews/README.md`（**49** 条 check）；修正 `gates.md` 对「closeout 步骤 4」的死引用与 README/docs 中过期的「M93」；对外文档（README + `docs/innovations` + `docs/gates`）补齐四项新能力。
+
+> **验证**：全量 `549 passed / 4 skipped`；空目录装配探针 `exit 0`（0 条 FAIL）；五片变异四段协议（基线绿→注入红→逐字节还原→复绿）全部成立；真实 git 靶场端到端复验 `fresh → stale → 落库 stale → 重跑 fresh → legacy`。**控制台 UI 的徽标与禁用态未经真浏览器人工点击复核**（按纪律须你自己有头亲测一次）。
+
+---
+
 ## [v0.1.0-beta.37] - 2026-10-21
 
 ### 🩹 控制台「已提交」视图累积合并（D127）

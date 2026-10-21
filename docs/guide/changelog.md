@@ -4,6 +4,17 @@
 
 ---
 
+## [v0.2.0-beta.1] - 2026-10-21
+
+### ✨ 评审 / 覆盖 / 事故三条反馈闭环 (D128–D131)
+
+- **人工评审绑定提交指纹（D128）**：控制台账本快照绑定 `head_sha` + `scripts_hash`（对运行期产物免疫），服务端按当前指纹复算 `review_state`；代码或脚本一变即标 **STALE 需重审**、禁用勾选，旧账本无指纹判 `legacy`（fail-closed）——彻底堵住「曾经有人看过 = 当前版本已验收」的审查逃逸。
+- **独立审查报告 `schema_version: 2`（D129）**：新增单源内核 `_support/review_policy.py`，校验器 / CLI 转换器 / 生成器共用同一状态映射；finding 支持 `fingerprint` 跨轮去重、`pre_existing`（存量缺陷不阻断本次收口、仍留 WARN 下限）、`disposition`（误报须签字 + 取证才可关闭）；**第 4 轮起必须登记 `escalation` 升级复议**，终结「Agent 作者 ⇔ Agent 评审」死循环；v1 历史报告语义不变且不回扫。
+- **AC × 覆盖维度矩阵（D130）**：前端适配版 `C01`–`C14` 闭集 + 分片 `覆盖维度:` + 域级 PRD 可选第 4 列；缺维度 / 词表外写法 ⇒ WARN，未声明 ⇒ N/A 兜底，把「每条 AC 有没有用例」升级为「每条 AC 的失败面有没有被覆盖」。
+- **收口风控与事故闭环（D131）**：`closeout.md` 补步骤 3 风险定档（`auth/permission/routing/CI/deps/contracts` 为 Always-Human 路径，禁止 Agent 代勾）与步骤 4 缺陷修复验证 7 检查点（含 Red First）；事故复盘必答「哪一层本该接住它」，并落成 E2E 回归用例或变异钉。
+
+---
+
 ## [v0.1.0-beta.37] - 2026-10-21
 
 ### 🩹 控制台「已提交」视图累积合并 (D127)
