@@ -767,3 +767,34 @@ def test_console_app_js_handles_prep_failed_distinctly() -> None:
     assert "与用例脚本本身无关" in app_js
     assert "prep_failed: Boolean(d.prep_failed)" in app_js
 
+
+
+def test_committed_snapshot_merges_partial_submits() -> None:
+    """D127：单次提交只携带页面草稿（部分用例），「已提交」必须按事件流累积合并；
+    否则后一次部分提交会把之前提交过的用例从 committed 视图抹掉，控制台表现为
+    已执行/已评审的用例变回「未跑」。
+    """
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        ledger = cons.Ledger(root, "tester")
+        ledger.append({"kind": "submit", "source": "app",
+                       "cases": {"A": {"ok": True, "reviewed": {"pass": True}}}})
+        ledger.append({"kind": "submit", "source": "app",
+                       "cases": {"B": {"ok": True, "reviewed": {"pass": False}}}})
+        snap = ledger.committed_snapshot("app")
+        assert set(snap["cases"]) == {"A", "B"}, snap
+        assert snap["cases"]["A"]["reviewed"]["pass"] is True, snap
+
+        # 后提交覆盖同名用例，其余用例保留
+        ledger.append({"kind": "submit", "source": "app", "cases": {"A": {"ok": False}}})
+        snap = ledger.committed_snapshot("app")
+        assert set(snap["cases"]) == {"A", "B"}, snap
+        assert snap["cases"]["A"]["ok"] is False, snap
+
+        # 其他 source 不混入；legacy list 形态不污染累积视图
+        ledger.append({"kind": "submit", "source": "prototype", "cases": {"C": {"ok": True}}})
+        ledger.append({"kind": "submit", "source": "app", "cases": [{"id": "legacy"}]})
+        app_snap = ledger.committed_snapshot("app")
+        assert set(app_snap["cases"]) == {"A", "B"}, app_snap
+        assert set(ledger.committed_snapshot("prototype")["cases"]) == {"C"}

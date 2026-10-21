@@ -389,6 +389,24 @@ class Ledger:
                 return e
         return None
 
+    def committed_snapshot(self, source: str) -> dict:
+        """某个来源的**累计**已提交快照：按事件流顺序合并，后提交覆盖同名用例。
+
+        单次提交只携带页面草稿（通常是本次执行/勾选的那几条），不是全量快照；
+        若「已提交」只取最后一条事件，之前提交过的用例会在下一次部分提交后消失
+        （表现为控制台里已执行/已评审的用例变回「未跑」）。这里按 append-only 的
+        事件顺序逐条合并，保持「提交即留痕、后写覆盖先写」的语义。
+        """
+        merged: dict = {}
+        ts = actor = None
+        for e in self.read():
+            if e.get("kind") != "submit" or e.get("source", "prototype") != source:
+                continue
+            merged.update(_snap_cases(e))
+            ts = e.get("ts") or ts
+            actor = e.get("actor") or actor
+        return {"ts": ts, "actor": actor, "cases": merged}
+
 
 # ---------------------------------------------------------------- 执行器（并发=1）
 
@@ -717,7 +735,7 @@ class App:
                     "slowmo": self.slowmo, "timeout": self.runner.timeout, "head": self.runner.head,
                     "ledger": "product/e2e/reviews/console/events.jsonl", "cases": [], "nodeids": {},
                     "committed": {"ts": None, "actor": None, "cases": {}}}
-        last = self.ledger.last_submit(source) or {}
+        committed = self.ledger.committed_snapshot(source)
         return {
             "source": source,
             "sources": read_sources(self.root),
@@ -738,7 +756,7 @@ class App:
             # （rings/e2e/reference.md §5.4 末 / §10 执行纪律 5）。
             "nodeids": snap["nodeids"],
             # 已提交的快照（页面草稿覆盖它；草稿在浏览器本地，见 docstring 的「乙」）
-            "committed": {"ts": last.get("ts"), "actor": last.get("actor"), "cases": last.get("cases", {})},
+            "committed": committed,
         }
 
 
@@ -870,7 +888,7 @@ class Handler(BaseHTTPRequestHandler):
             snap = {cid: _compact(v) for cid, v in draft.items()}
             self.app.ledger.append({"kind": "submit", "source": source,
                                     "changed": res["changed"], "cases": snap})
-            res["committed_ts"] = self.app.ledger.last_submit(source).get("ts")
+            res["committed_ts"] = self.app.ledger.committed_snapshot(source).get("ts")
         self._json(res)
 
     def _stream(self) -> None:
