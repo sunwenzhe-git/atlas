@@ -300,6 +300,58 @@ def test_runner_injects_slowmo_via_env_not_cli_flag() -> None:
     assert captured["env"].get("ATLAS_BASE_URL") == "http://127.0.0.1:8000"
 
 
+def test_runner_disables_playwright_test_timeout_only_in_hold_mode() -> None:
+    """D126（2026-10-21）：Playwright 默认 test timeout（30s）**覆盖 fixture teardown**——
+    `atlas-hold.ts` 的留窗等待会在约 30s 处被判超时并强制关窗（实测：
+    `Tearing down "atlasHold" exceeded the test timeout of 30000ms`）⇒ 用户看到「跑完仍自动
+    关闭」。持窗模式必须传 `--timeout=0`，让控制台的 wall-clock `--timeout` 成为唯一超时
+    真相源；自动关窗模式不传，保留运行器原生 30s 兜底（防孤儿进程）。
+
+    变异 **M127**：摘掉持窗分支的 `--timeout=0` ⇒ 本钉红，还原逐字节一致。
+    """
+    cons = load("e2e_console", "scripts/e2e_console.py")
+
+    class FakeProc:
+        stdout = iter(())
+        returncode = 0
+
+        def poll(self) -> int:
+            return 0
+
+        def kill(self) -> None:
+            pass
+
+    def run_with(keep_open: bool) -> tuple[list[str], dict]:
+        captured: dict = {}
+
+        def fake_popen(cmd, cwd=None, stdout=None, stderr=None, text=None, bufsize=None, env=None):
+            captured["cmd"] = list(cmd)
+            captured["env"] = dict(env or {})
+            return FakeProc()
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            ledger = cons.Ledger(root, "tester")
+            runner = cons.Runner(root, ledger, timeout=60, head=True, keep_open=keep_open)
+            orig = cons.subprocess.Popen
+            cons.subprocess.Popen = fake_popen
+            try:
+                runner._run({"id": "E2E-DEMO-001"}, "demo.spec.ts:3", 0, "app",
+                            "http://127.0.0.1:8000",
+                            Path("/nonexistent/playwright"), Path("/nonexistent/nm"))
+            finally:
+                cons.subprocess.Popen = orig
+        return captured["cmd"], captured["env"]
+
+    hold_cmd, hold_env = run_with(True)
+    assert "--timeout=0" in hold_cmd, hold_cmd
+    assert hold_env.get("ATLAS_KEEP_OPEN") == "1", hold_env
+
+    auto_cmd, auto_env = run_with(False)
+    assert "--timeout=0" not in auto_cmd, auto_cmd
+    assert "ATLAS_KEEP_OPEN" not in auto_env, auto_env
+
+
 # ── 2026-10-18 v3 现场实证移植批（D110）：执行前的项目数据准备钩子 ──────────────────────
 def test_prepare_hook_runs_before_case_and_refuses_on_failure() -> None:
     """契约 §10「执行」（D110，v3 现场实证移植）：项目自带 `product/e2e/scripts/atlas-prepare.mjs`

@@ -28,6 +28,9 @@
   `launchOptions.slowMo`（Playwright `test` CLI 无 `--slowmo` 旗标，2026-10-14 F11）；
   「跑完留窗 + 结果哨兵」由生成物 `atlas-hold.ts` 承载——契约 `rings/e2e/reference.md` §10.1）；
 * **并发 = 1**（同时只跑一条，其余按钮禁用）；单条 wall-clock 超时到点 kill 并如实报「超时」；
+* **留窗不被运行器超时掐断**（2026-10-21，D126）：持窗模式给 playwright 传 `--timeout=0`——
+  其默认 30s test timeout **计入 fixture teardown**，会把「等人工关窗」判超时并在约 30s 处
+  强制关窗（现场：执行完毕后浏览器仍自动关闭）；控制台的 `--timeout` 是唯一超时真相源；
 * **数据准备钩子**（2026-10-18，D110；2026-10-20，D121 补用例上下文）：项目自带
   `product/e2e/scripts/atlas-prepare.mjs` ⇒ 每条用例执行前先跑它（失败/超时 ⇒ 拒绝执行并
   如实上报，见契约 §10「执行」）；运行时经 `ATLAS_CASE_ID` 传入当前用例 ID，项目脚本可据此
@@ -516,6 +519,13 @@ class Runner:
         cmd = [str(pw_bin), "test", "-c", "playwright.config.ts", nodeid]
         if self.head:
             cmd.append("--headed")
+        if self.keep_open:
+            # D126（2026-10-21）：Playwright 默认 test timeout（30s）**计入 fixture teardown**
+            # ⇒ `atlas-hold.ts` 的留窗等待会被判超时并把浏览器关掉（实测报错：
+            # Tearing down "atlasHold" exceeded the test timeout of 30000ms）。
+            # 持窗模式关掉运行器自身超时，控制台的 wall-clock `--timeout` 是唯一超时真相源
+            # （到点 kill 并如实报「超时」）；自动关窗模式保留 30s 原生兜底，防孤儿进程。
+            cmd.append("--timeout=0")
         self._emit(f"# 来源 {source} → ATLAS_BASE_URL={base_url}（slowmo={slowmo}ms via ATLAS_SLOWMO）\n$ cd {scripts}\n$ {' '.join(cmd)}\n")
         t0 = time.time()
         timed_out = False
