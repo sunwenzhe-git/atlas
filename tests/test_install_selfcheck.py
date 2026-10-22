@@ -65,7 +65,7 @@ HINT_ENTRIES = ("atlas-apply adopt", "atlas-apply all")
 
 # 包内变量前缀 → 包内相对目录（$ATLAS_DEST = <目标>/.atlas/，逐字镜像包内布局）
 # 非环 skill 白名单（`3509 §95`）：它们不是「环」，不参与环退役对称判据。
-NON_RING_SKILLS = ("apply", "design-review", "grill")
+NON_RING_SKILLS = ("apply", "design-review", "grill", "release")
 PKG_VARS = {
     "$ATLAS_DEST": "",
     "${ATLAS_DEST}": "",

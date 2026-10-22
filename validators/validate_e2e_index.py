@@ -321,11 +321,15 @@ def _route_hit(p: str, page_routes) -> bool:
     """路径 `p` 是否命中页面表 `路由` 列（契约 §8.2）：精确命中，或**非根路由**的子路径前缀命中
     （`/projects/x` 匹配 `/projects`；根路由 `/` 仅精确）。
 
+    两侧都先 `strip_queries`：页面表 `路由` 列是路径形态，但可能携带宿主注入 query
+    （`?switchAgent=…`）或 hash 查询；用例侧也可能带 `参数:` / `hash参数:` 的内联查询。
     单源：`goto` 路径与 `守卫` 路径两处判定共用本函数（二者是同一套「不得私藏路径」口径）。
     """
-    if p in page_routes:
+    p = url_merge.strip_queries(p)
+    routes = [url_merge.strip_queries(r) for r in page_routes]
+    if p in routes:
         return True
-    return any(r != "/" and p.startswith(r + "/") for r in page_routes)
+    return any(r != "/" and p.startswith(r + "/") for r in routes)
 
 
 def validate(root: Path) -> Result:
@@ -685,13 +689,17 @@ def validate(root: Path) -> Result:
     inject_bad: list[str] = []        # `参数:` 声明形态 / 白名单 / 死声明（契约 §5.5，2026-10-18）
     inject_value_bad: list[str] = []  # `goto` 查询值的形态（生成物单引号拼接面，见 §5.5）
     dual_carrier_bad: list[str] = []  # 同键同时出现在 `会话:` 与 `参数:`（前提不可解释）
+    hash_inject_bad: list[str] = []   # `hash参数:` 声明形态 / 白名单 / 死声明（HashRouter，2026-10-22）
+    hash_goto_param: list[str] = []   # `goto` hash 查询键未声明 / 白名单外
+    hash_value_bad: list[str] = []    # `goto` hash 查询值形态
+    hash_dual_carrier_bad: list[str] = []  # 同键同时出现在 `hash参数:` 与其他载体
     # 预设白名单（契约 §5.5 / `shared/stack-profile.md` §2）：`<载体>_preset.keys`。
     # 段缺失 / keys 为空 ⇒ 该靶场不允许任何该类预设（用例出现对应行即 FAIL）。
     # `session_preset`（2026-10-16，issue #13）与 `query_preset`（2026-10-18，`DESIGN.md` D109）
     # 同族：同为**前提面**，两个载体各一段。
     _prof_path = root / "product" / "stack-profile.yaml"
 
-    def _preset_keys(sub: str) -> set[str]:
+    def _preset_keys(sub: str, field: str = "keys") -> set[str]:
         if not _prof_path.is_file():
             return set()
         try:
@@ -700,11 +708,12 @@ def validate(root: Path) -> Result:
             return set()
         sub_cfg = cfg.get(sub) if isinstance(cfg, dict) else None
         if isinstance(sub_cfg, dict):
-            return {str(k).strip() for k in (sub_cfg.get("keys") or []) if str(k).strip()}
+            return {str(k).strip() for k in (sub_cfg.get(field) or []) if str(k).strip()}
         return set()
 
     _session_keys = _preset_keys("session_preset")
     _query_keys = _preset_keys("query_preset")
+    _hash_query_keys = _preset_keys("query_preset", "hash_keys")
     nested_prefix, unchanged_no_action = [], []
     initial_no_reason = []
     after_bad = []
@@ -786,6 +795,50 @@ def validate(root: Path) -> Result:
         for _k in _declared:
             if _k not in _used_inject:
                 inject_bad.append(f"{g['用例ID']}:{_k}（声明了但没有任何 `goto` 用到 = 死声明）")
+        # 契约 §5.5 `hash参数:`（2026-10-22，HashRouter）：`#` 之后 hash 查询串的键清单。
+        # 值与 `参数:` 同纪律（单一来源 = `goto` 的 hash 查询串），但载体/白名单分开。
+        _declared_hash: list[str] = []
+        _seen_hash: set[str] = set()
+        for entry in d.get("hash参数") or []:
+            k = strip_inline_comment(entry).strip()
+            if not k:
+                continue
+            if "=" in k or any(ch.isspace() for ch in k):
+                hash_inject_bad.append(f"{g['用例ID']}:{k}（只声明键，值写在 goto 的 hash 查询串里）")
+                continue
+            if k in _seen_hash:
+                hash_inject_bad.append(f"{g['用例ID']}:{k}（重复声明）")
+                continue
+            _seen_hash.add(k)
+            _declared_hash.append(k)
+            if k not in _hash_query_keys:
+                hash_inject_bad.append(
+                    f"{g['用例ID']}:{k}（不在 e2e.query_preset.hash_keys，白名单={sorted(_hash_query_keys)}）")
+        _used_hash: set[str] = set()
+        for s in step:
+            code = strip_inline_comment(s)
+            parts = code.split(" ", 1)
+            if len(parts) < 2 or parts[0] != "goto":
+                continue
+            for pair in url_merge.hash_query_of(parts[1].strip()).split("&"):
+                if not pair:
+                    continue
+                _k, _, _v = pair.partition("=")
+                _k, _v = _k.strip(), _v.strip()
+                if not _k:
+                    hash_goto_param.append(f"{g['用例ID']}:<空键>")
+                    continue
+                _used_hash.add(_k)
+                if _k not in _hash_query_keys:
+                    hash_goto_param.append(
+                        f"{g['用例ID']}:{_k}（不在 e2e.query_preset.hash_keys，白名单={sorted(_hash_query_keys)}）")
+                elif _k not in _declared_hash:
+                    hash_goto_param.append(f"{g['用例ID']}:{_k}（未在本用例 `hash参数:` 内声明）")
+                if _v and not url_merge.VALUE_RE.match(_v):
+                    hash_value_bad.append(f"{g['用例ID']}:{_k}={_v}")
+        for _k in _declared_hash:
+            if _k not in _used_hash:
+                hash_inject_bad.append(f"{g['用例ID']}:{_k}（声明了但没有任何 `goto` 用到 = 死声明）")
         # 契约 §5.5（2026-09-30 补）：`goto` 路径必须命中页面表的「路由」列（唯一真相源）——
         # 挡「原型时代路径漂移」（实测 `goto /home` 而页面表为 `/`，真栈上 404 进 NotFound 页）。
         # 匹配规则：精确命中，或**非根路由**的子路径前缀命中（`/projects/x` 匹配 `/projects`，
@@ -802,9 +855,9 @@ def validate(root: Path) -> Result:
             if not page_routes:
                 continue
             p = parts[1].strip()
-            # 契约 §5.5（2026-10-18，D109）：带 `参数:` 的用例其 `goto` 带查询串 ⇒ 路径门须按
-            # **去 query 后的路径形态**匹配（页面表 `路由` 列是路径形态；hash 段保留）。
-            if _route_hit(url_merge.strip_query(p), page_routes):
+            # 契约 §5.5（2026-10-18，D109 / 2026-10-22 hash 查询）：`goto` 可带常规查询与
+            # hash 查询 ⇒ 路径门按**去双查询后的路径形态**匹配（`_route_hit` 内部同口径）。
+            if _route_hit(p, page_routes):
                 continue
             goto_path.append(f"{g['用例ID']}:{p}")
         # 契约 §5.7（2026-09-30 补）：`auth` 取值白名单（preset | none）——文本期挡住，
@@ -834,6 +887,9 @@ def validate(root: Path) -> Result:
         # 两个载体写同一键 = 前提不可解释（同 R7「自相矛盾」族）。
         for _k in sorted(_session_declared & set(_declared)):
             dual_carrier_bad.append(f"{g['用例ID']}:{_k}")
+        # `hash参数:` 与 `参数:` / `会话:` 是两个不同消费面，同键双写同样不可解释。
+        for _k in sorted(set(_declared_hash) & (set(_declared) | _session_declared)):
+            hash_dual_carrier_bad.append(f"{g['用例ID']}:{_k}")
         # 契约 §5.5（2026-10-16 补，issue #23）：`守卫:` 值（具体路径）同样不得私藏于分片 ——
         # 它必须命中页面表 `路由` 列（同 §8.2 的前缀口径）。缺路径 / 越界 ⇒ FAIL。
         _guard = d.get("守卫")
@@ -1022,6 +1078,14 @@ def validate(root: Path) -> Result:
             f"查询值含越形态字符={_format_list(inject_value_bad)}（契约 §5.5：禁空白 / 引号 / 反斜杠 / `&` / `#`）" if inject_value_bad else "")
     res.add("会话·参数 同键不叠写", "PASS" if not dual_carrier_bad else "FAIL",
             f"同键双载体={_format_list(dual_carrier_bad)}（契约 §5.5：两个载体写同一键 ⇒ 前提不可解释）" if dual_carrier_bad else "")
+    res.add("goto hash 查询键须已声明", "PASS" if not hash_goto_param else "FAIL",
+            f"未声明 / 白名单外的 hash 查询键={_format_list(hash_goto_param)}（契约 §5.5：`goto` 的 hash 查询键须 ∈ `e2e.query_preset.hash_keys` 且 ∈ 本用例 `hash参数:`）" if hash_goto_param else "")
+    res.add("hash 参数 声明有效", "PASS" if not hash_inject_bad else "FAIL",
+            f"`hash参数:` 声明不合法={_format_list(hash_inject_bad)}（契约 §5.5：只声明键、须在 `e2e.query_preset.hash_keys` 内、且须被某个 `goto` 的 hash 查询用到）" if hash_inject_bad else "")
+    res.add("hash 参数 值形态", "PASS" if not hash_value_bad else "FAIL",
+            f"hash 查询值含越形态字符={_format_list(hash_value_bad)}（契约 §5.5：禁空白 / 引号 / 反斜杠 / `&` / `#`）" if hash_value_bad else "")
+    res.add("hash参数·其他载体 同键不叠写", "PASS" if not hash_dual_carrier_bad else "FAIL",
+            f"同键双载体={_format_list(hash_dual_carrier_bad)}（契约 §5.5：`hash参数:` 与 `参数:`/`会话:` 不得写同一键）" if hash_dual_carrier_bad else "")
     res.add("断言不自相矛盾", "PASS" if not contradict else "FAIL",
             f"同一 testid 既断言可见又断言不可见={_format_list(contradict)}")
     res.add("expected 动词合法", "PASS" if not assert_bad else "FAIL", f"词表外={_format_list(assert_bad)}")

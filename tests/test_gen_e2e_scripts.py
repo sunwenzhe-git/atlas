@@ -15,9 +15,11 @@ import subprocess
 import sys
 import difflib
 import json
+import shutil
 import tempfile
 from pathlib import Path
 
+import pytest
 import re
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
@@ -247,6 +249,17 @@ QUERY_CASE = CASE.replace("step:", "参数:\n  - flag\nstep:", 1).replace(
     "  - goto /home?flag=on          # 宿主以查询串注入前提后载入\n"
     "  - click home-cta-btn          # 点击主操作按钮")
 
+# 契约 §5.5 `hash参数:`（2026-10-22，HashRouter）：`#` 之后的 hash 查询串。
+# base query 仍在 `#` 之前（tenant），hash 参数在 `#` 之后，验证两者不会互相吞掉。
+PROFILE_HASH = PROFILE.replace("app_base_url: http://127.0.0.1:8000",
+                               "app_base_url: http://127.0.0.1:8000/?tenant=9"
+                               ) + "  query_preset:\n    hash_keys:\n      - flag\n"
+INDEX_HASH = INDEX.replace("| home | /home | home |", "| home | /home#/detail | home |")
+HASH_CASE = CASE.replace("step:", "hash参数:\n  - flag\nstep:", 1).replace(
+    "  - click home-cta-btn          # 点击主操作按钮",
+    "  - goto /home#/detail?flag=on  # 宿主以 hash 查询串注入前提\n"
+    "  - click home-cta-btn          # 点击主操作按钮")
+
 
 def test_injected_param_carried_to_guard_and_goto() -> None:
     """`参数:` 的值（内联在 `goto` 里）必须到达**两处导航面**：元素齐全守卫 + 用例自己的 `goto`。
@@ -337,6 +350,88 @@ def test_injected_param_bad_value_aborts() -> None:
         r = run(root, "--apply")
         assert r.returncode == 2, (r.returncode, r.stdout + r.stderr)
         assert "未在本用例" in r.stderr, r.stderr
+
+
+def test_hash_param_carried_to_guard_and_goto() -> None:
+    """`hash参数:` 的值必须到达**守卫**与用例自己的 `goto`，且 base query 留在 `#` 之前。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=HASH_CASE, profile=PROFILE_HASH, index=INDEX_HASH)
+        assert run(root, "--apply").returncode == 0
+        text = spec_of(root)
+        seg = text[text.index("E2E-HOME-001"):]
+        merged = "await page.goto('/home?tenant=9#/detail?flag=on');"
+        assert seg.count(merged) >= 2, seg[:900]
+        i_guard = seg.index(merged)
+        assert "atlasAwaitAnyDeclared(page," in seg[i_guard:i_guard + 200], seg[i_guard:i_guard + 200]
+
+
+def test_zero_step_baseline_carries_no_hash_param() -> None:
+    """零步基线**不施加** `hash参数:`（与 `参数:` 同纪律）——基线数据对象与测试体都不得出现。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=HASH_CASE, profile=PROFILE_HASH, index=INDEX_HASH)
+        assert run(root, "--apply").returncode == 0
+        text = spec_of(root)
+        data_obj = text.split("const ATLAS_ZS_home = ", 1)[1].split("\n", 1)[0]
+        assert "flag=on" not in data_obj, data_obj
+        assert "tenant=9" in data_obj, data_obj
+        marker = "test('test_home__zero_step_baseline'"
+        baseline_body = text.split(marker, 1)[1].split("\ntest(", 1)[0]
+        assert "flag=on" not in baseline_body, baseline_body
+
+
+def test_hash_param_without_whitelist_aborts() -> None:
+    """坏输入：项目未声明 `e2e.query_preset.hash_keys` ⇒ 生成器 exit 2。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=HASH_CASE, profile=PROFILE, index=INDEX_HASH)
+        r = run(root, "--apply")
+        assert r.returncode == 2, (r.returncode, r.stdout + r.stderr)
+        assert "hash_keys" in r.stderr, r.stderr
+
+
+def test_hash_param_dead_declaration_aborts() -> None:
+    """坏输入：`hash参数:` 声明了键、但没有任何 `goto` 的 hash 查询用到 ⇒ exit 2。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=CASE.replace("step:", "hash参数:\n  - flag\nstep:", 1),
+             profile=PROFILE_HASH, index=INDEX_HASH)
+        r = run(root, "--apply")
+        assert r.returncode == 2, (r.returncode, r.stdout + r.stderr)
+        assert "死声明" in r.stderr, r.stderr
+
+
+def test_hash_param_bad_value_aborts() -> None:
+    """坏输入：hash 查询值含越形态字符 ⇒ 生成器 exit 2（不静默转义）。"""
+    bad_case = HASH_CASE.replace("goto /home#/detail?flag=on", "goto /home#/detail?flag=a'b")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=bad_case, profile=PROFILE_HASH, index=INDEX_HASH)
+        r = run(root, "--apply")
+        assert r.returncode == 2, (r.returncode, r.stdout + r.stderr)
+        assert "越形态" in r.stderr, r.stderr
+
+
+def test_hash_query_merge_helpers() -> None:
+    """`url_merge` 的 hash 查询原语：解析 / 追加 / 剥离 / 与 base query 求并集。"""
+    spec = importlib.util.spec_from_file_location("gen_e2e_hash_merge", GEN)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    um = mod.url_merge
+    assert um.hash_query_of("/a#/h?k=v") == "k=v"
+    assert um.hash_query_of("/a?t=1#/h?k=v") == "k=v"
+    assert um.hash_query_of("/a#/h") == ""
+    assert um.hash_query_keys("/a#/h?k=v&x=1") == ["k", "x"]
+    assert um.append_hash_query("/a#/h", "k=v") == "/a#/h?k=v"
+    assert um.append_hash_query("/a#/h?x=1", "k=v") == "/a#/h?x=1&k=v"
+    assert um.append_hash_query("/a#/h?k=old", "k=new") == "/a#/h?k=new"
+    assert um.append_hash_query("/a", "k=v") == "/a"
+    assert um.strip_query("/a?t=1#/h?k=v") == "/a#/h?k=v"
+    assert um.strip_hash_query("/a?t=1#/h?k=v") == "/a?t=1#/h"
+    assert um.strip_queries("/a?t=1#/h?k=v") == "/a#/h"
+    assert um.merge_base_query("/a#/h?k=v", "http://h/?t=1") == "/a?t=1#/h?k=v"
+    assert um.merge_base_query("/a#/h?k=v", "http://h/") == "/a#/h?k=v"
 
 
 def test_retired_python_runner_rejected() -> None:
@@ -1397,6 +1492,76 @@ def test_zero_step_probes_never_wait_for_attachment() -> None:
     bad = [e for e in exprs
            if not any(g in e for g in ("count()) > 0", "tsVis(", "tsVisible(", "atlasValueOf("))]
     assert not bad, f"这些探针会在元素缺席时等挂载（违反 §5.5）：{bad}"
+
+
+def test_assert_probe_tristate_absent_and_present() -> None:
+    """三态契约：元素缺失时 hidden/unchecked ⇒ null（基线跳过），
+    visible/enabled/disabled/checked ⇒ false（不判恒真）。
+
+    现场（2026-10-22，百炼/v3 工作流零步基线）：hidden/unchecked 探针在元素
+    不存在时被 count 守卫反转成 true，基线把「面板未打开」误判为恒真。
+    本钉按 **动词 × 场景** 真求值生成表达式，锁住三态；只查表达式里有没有
+    count/tsVis 守卫（上一钉）无法发现这种反转。
+    """
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node 不可用，跳过探针表达式求值")
+
+    gn = _load_gen()
+    verbs = ("visible", "hidden", "enabled", "disabled", "checked", "unchecked")
+    exprs = {verb: gn.ts_assert_expr(f"{verb} home-item") for verb in verbs}
+    scenarios = {
+        "absent": {"present": False, "visible": False, "enabled": False, "checked": False},
+        "present_off": {"present": True, "visible": False, "enabled": False, "checked": False},
+        "present_on": {"present": True, "visible": True, "enabled": True, "checked": True},
+    }
+    expected = {
+        "absent": {"visible": False, "hidden": None, "enabled": False,
+                   "disabled": False, "checked": False, "unchecked": None},
+        "present_off": {"visible": False, "hidden": True, "enabled": False,
+                        "disabled": True, "checked": False, "unchecked": True},
+        "present_on": {"visible": True, "hidden": False, "enabled": True,
+                       "disabled": False, "checked": True, "unchecked": False},
+    }
+    script = """
+const exprs = __EXPRS__;
+const scenarios = __SCENARIOS__;
+function makePage(s) {
+  const loc = {
+    count: async () => (s.present ? 1 : 0),
+    first() { return this; },
+    nth() { return this; },
+    isVisible: async () => s.visible,
+    isEnabled: async () => s.enabled,
+    isDisabled: async () => !s.enabled,
+    isChecked: async () => s.checked,
+  };
+  return { getByTestId: () => loc };
+}
+let page;
+async function tsVisible(p, tid) {
+  const loc = p.getByTestId(tid);
+  if ((await loc.count()) === 0) return false;
+  return await loc.first().isVisible();
+}
+(async () => {
+  const out = {};
+  for (const [name, state] of Object.entries(scenarios)) {
+    page = makePage(state);
+    out[name] = {};
+    for (const [verb, expr] of Object.entries(exprs)) {
+      out[name][verb] = await eval(expr);
+    }
+  }
+  process.stdout.write(JSON.stringify(out));
+})().catch((err) => { console.error(err); process.exit(1); });
+"""
+    script = script.replace("__EXPRS__", json.dumps(exprs, ensure_ascii=False))
+    script = script.replace("__SCENARIOS__", json.dumps(scenarios))
+    proc = subprocess.run([node, "-e", script], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got == expected, f"探针三态不符合契约：{json.dumps(got, ensure_ascii=False)}"
 
 
 def test_runner_config_declares_expect_timeout_floor() -> None:

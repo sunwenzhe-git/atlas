@@ -440,6 +440,13 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
         # `url` 在调用侧已并入 base query（幂等）；`守卫:` 是未合并的具体路径 —— 两者都按
         # 「追加到自身 query」处理（插在 hash 之前），随后的一次 merge 会把 base 去重并上来。
         _guard_target = url_merge.append_query(_guard_target, _inject_q)
+    _inject_hq = case.get("_inject_hash_query") or ""
+    if _inject_hq:
+        # `hash参数:` 是 HashRouter 的 `#` 后查询前提；守卫导航必须带同一段，否则守卫读的是
+        # 无前提的 DOM（快照页会停在「缺少快照标识」错误态）。没有 hash 路由 ⇒ 响亮失败。
+        if "#" not in _guard_target:
+            raise ValueError(f"{cid}: `hash参数:` 需要守卫/页面路由含 hash 段")
+        _guard_target = url_merge.append_hash_query(_guard_target, _inject_hq)
     guard_url = url_merge.merge_base_query(_guard_target, base)
     # 契约 §5.5 / §7.1（"元素齐全守卫按自动等待判定"）：守卫 id 面 = **该用例 `testid:` 应然清单**
     # （实测：首步为 `goto`/`refresh` 的用例取 `step[0]` 会得到**空表** ⇒ 守卫静默消失）。
@@ -738,9 +745,11 @@ def ts_assert_expr(line: str) -> str:
         return f"(async () => (await {target}.locator('option').count()) === Number({v}))()"
     if verb == "visible":
         return f"(async () => await tsVisible(page, {tid_param}))()"
+    # is*() 对缺失元素会等挂载（30s 挂起）——先 count 守卫。
+    # enabled/disabled/checked 缺失 ⇒ false；hidden/unchecked 缺失 ⇒ null，
+    # 否则「元素不存在」会被反转成 true，基线误判为恒真假阳性。
     if verb == "hidden":
-        return f"(async () => !(await tsVisible(page, {tid_param})))()"
-    # is*() 对缺失元素会等挂载（30s 挂起）——先 count 守卫：缺失 ⇒ false（基线探针安全跳过）
+        return f"(async () => {{ const c = await page.getByTestId({t}).count(); if (c <= {nth_idx}) return null; return !(await tsVisible(page, {tid_param})); }})()"
     if verb == "enabled":
         return f"(async () => (await page.getByTestId({t}).count()) > {nth_idx} && (await {nth_locator}.isEnabled()))()"
     if verb == "disabled":
@@ -748,7 +757,7 @@ def ts_assert_expr(line: str) -> str:
     if verb == "checked":
         return f"(async () => (await page.getByTestId({t}).count()) > {nth_idx} && (await {nth_locator}.isChecked()))()"
     if verb == "unchecked":
-        return f"(async () => !((await page.getByTestId({t}).count()) > {nth_idx} && (await {nth_locator}.isChecked())))()"
+        return f"(async () => {{ const c = await page.getByTestId({t}).count(); if (c <= {nth_idx}) return null; return !(await {nth_locator}.isChecked()); }})()"
     if verb == "value":
         if value.strip() in ('""', "(空)"):
             v = json.dumps("", ensure_ascii=False)
@@ -1367,6 +1376,13 @@ def main() -> int:
     qpreset_keys: set[str] = set()
     if isinstance(qpreset_cfg, dict):
         qpreset_keys = {str(k).strip() for k in (qpreset_cfg.get("keys") or []) if str(k).strip()}
+    # 契约 §5.5 `hash参数:`（2026-10-22，HashRouter）：`#` 之后 hash 查询串的键清单。
+    # 与 `参数:` 分载体、分白名单（`query_preset.hash_keys`），守卫导航同样取首跳。
+    hash_qpreset_keys: set[str] = set()
+    if isinstance(qpreset_cfg, dict):
+        hash_qpreset_keys = {
+            str(k).strip() for k in (qpreset_cfg.get("hash_keys") or []) if str(k).strip()
+        }
     bad_inject: list[str] = []
     for items in cases.values():
         for c in items:
@@ -1419,11 +1435,73 @@ def main() -> int:
                         f"{c['id']}: 参数键 {k!r} 已在 `参数:` 声明、但没有任何 `goto` 用到（死声明）")
             c["_inject_keys"] = ok_keys
             c["_inject_query"] = first_q
-    if bad_inject:
-        print("ERROR: `参数:` 行不合法（契约 rings/e2e/reference.md §5.5）：", file=sys.stderr)
-        for b in bad_inject[:40]:
-            print(f"  - {b}", file=sys.stderr)
-        print(f"  共 {len(bad_inject)} 条", file=sys.stderr)
+    # 契约 §5.5 `hash参数:`（2026-10-22，HashRouter）：第二遍独立校验，不能复用 `参数:`
+    # 分支的 `continue`（没有常规 `参数:` 的用例同样要能声明 hash 参数）。
+    bad_hash_inject: list[str] = []
+    for items in cases.values():
+        for c in items:
+            c["_inject_hash_keys"] = []
+            c["_inject_hash_query"] = None
+            declared_hash = [str(x).strip() for x in (c.get("hash参数") or []) if str(x).strip()]
+            if not declared_hash:
+                continue
+            if not hash_qpreset_keys:
+                bad_hash_inject.append(
+                    f"{c['id']}: 出现 `hash参数:` 行，但 stack-profile 未声明 "
+                    "`e2e.query_preset.hash_keys`（该靶场不允许 hash 查询前提；契约 §5.5）")
+                continue
+            ok_hash_keys: list[str] = []
+            for k in declared_hash:
+                if "=" in k or any(ch.isspace() for ch in k):
+                    bad_hash_inject.append(
+                        f"{c['id']}: `hash参数:` 项须为纯键（值写在 goto 的 hash 查询串里）：{k!r}")
+                elif k not in hash_qpreset_keys:
+                    bad_hash_inject.append(
+                        f"{c['id']}: hash 参数键 {k!r} 不在 `e2e.query_preset.hash_keys` 白名单内"
+                        f"（={sorted(hash_qpreset_keys)}）")
+                elif k not in ok_hash_keys:
+                    ok_hash_keys.append(k)
+            first_hq: str | None = None
+            used_hash: set[str] = set()
+            for s in c.get("step") or []:
+                verb, _tid, value, _ = parse_line(s)
+                if verb != "goto":
+                    continue
+                keep_hash: list[str] = []
+                for pair in url_merge.hash_query_of(value.strip()).split("&"):
+                    if not pair:
+                        continue
+                    k, _, v = pair.partition("=")
+                    k, v = k.strip(), v.strip()
+                    if k not in ok_hash_keys:
+                        bad_hash_inject.append(
+                            f"{c['id']}: `goto` hash 查询键 {k!r} 未在本用例 `hash参数:` 内声明"
+                            "或不在白名单内")
+                        continue
+                    if v and not url_merge.VALUE_RE.match(v):
+                        bad_hash_inject.append(f"{c['id']}: hash 查询值含越形态字符：{k}={v}")
+                        continue
+                    keep_hash.append(pair)
+                    used_hash.add(k)
+                if keep_hash and first_hq is None:
+                    first_hq = "&".join(keep_hash)
+            for k in ok_hash_keys:
+                if k not in used_hash:
+                    bad_hash_inject.append(
+                        f"{c['id']}: hash 参数键 {k!r} 已在 `hash参数:` 声明、但没有任何 `goto` 用到（死声明）")
+            c["_inject_hash_keys"] = ok_hash_keys
+            c["_inject_hash_query"] = first_hq
+    if bad_inject or bad_hash_inject:
+        if bad_inject:
+            print("ERROR: `参数:` 行不合法（契约 rings/e2e/reference.md §5.5）：", file=sys.stderr)
+            for b in bad_inject[:40]:
+                print(f"  - {b}", file=sys.stderr)
+            print(f"  共 {len(bad_inject)} 条", file=sys.stderr)
+        if bad_hash_inject:
+            print("ERROR: `hash参数:` 行不合法（契约 rings/e2e/reference.md §5.5）：", file=sys.stderr)
+            for b in bad_hash_inject[:40]:
+                print(f"  - {b}", file=sys.stderr)
+            print(f"  共 {len(bad_hash_inject)} 条", file=sys.stderr)
         return 2
     # upload fixture 引用闭环（契约 §5.5，B201-1，2026-10-12）：值 = 相对
     # `product/e2e/fixtures/` 的文件路径（与 §5.8 mock 同基线、同一 fixtures 树）。

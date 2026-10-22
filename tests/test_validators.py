@@ -686,6 +686,81 @@ def test_param_and_session_same_key_fails() -> None:
     assert rows2["会话·参数 同键不叠写"]["level"] == "PASS", rows2["会话·参数 同键不叠写"]
 
 
+# ── hash 查询参数（2026-10-22，HashRouter）：`hash参数:` + `query_preset.hash_keys` ──
+_QP_HASH = "e2e:\n  query_preset:\n    hash_keys:\n      - flag\n"
+_QP_BOTH = "e2e:\n  query_preset:\n    keys:\n      - flag\n    hash_keys:\n      - flag\n"
+
+
+def _hash_param_case(body: str = "hash参数:\n  - flag\n") -> str:
+    return CASE_GOOD.replace("step:", body + "step:", 1).replace(
+        "- click home-cta-btn", "- goto /home#/detail?flag=on")
+
+
+def _hash_index() -> str:
+    return INDEX_GOOD.replace(
+        "## 页面 ↔ 用例",
+        "## 页面表（页 ↔ 路由）\n\n| 页面 | 路由 | 域 | 实现状态 |\n|---|---|---|---|\n"
+        "| home | /home?tenant=9#/detail | demo | 已实现 |\n\n## 页面 ↔ 用例")
+
+
+def _ve_hash_rows(case: str | None = None, profile_extra: str = _QP_HASH,
+                  index: str | None = None) -> dict:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        if profile_extra:
+            p = root / "product" / "stack-profile.yaml"
+            p.write_text(p.read_text(encoding="utf-8") + profile_extra, encoding="utf-8")
+        mk_cases(root, case or _hash_param_case())
+        mk_index(root, index or _hash_index())
+        return {c["check"]: c for c in ve.validate(root).checks}
+
+
+def test_hash_param_declared_and_whitelisted_passes() -> None:
+    """正向：hash 键既在 `e2e.query_preset.hash_keys` 又在 `hash参数:` 内，且被 goto 的 hash 查询使用。"""
+    rows = _ve_hash_rows()
+    for g in ("goto hash 查询键须已声明", "hash 参数 声明有效", "hash 参数 值形态",
+              "goto 路径 ∈ 页面表", "hash参数·其他载体 同键不叠写"):
+        assert rows[g]["level"] == "PASS", rows[g]
+
+
+def test_hash_param_without_whitelist_fails() -> None:
+    rows = _ve_hash_rows(profile_extra="")
+    assert rows["hash 参数 声明有效"]["level"] == "FAIL", rows["hash 参数 声明有效"]
+
+
+def test_hash_param_key_outside_whitelist_fails() -> None:
+    rows = _ve_hash_rows(profile_extra="e2e:\n  query_preset:\n    hash_keys: [other]\n")
+    assert rows["hash 参数 声明有效"]["level"] == "FAIL", rows["hash 参数 声明有效"]
+
+
+def test_hash_param_dead_declaration_fails() -> None:
+    dead = CASE_GOOD.replace("step:", "hash参数:\n  - flag\nstep:", 1)
+    rows = _ve_hash_rows(case=dead)
+    assert rows["hash 参数 声明有效"]["level"] == "FAIL", rows["hash 参数 声明有效"]
+
+
+def test_hash_param_value_shape_fails() -> None:
+    bad = _hash_param_case().replace("goto /home#/detail?flag=on", "goto /home#/detail?flag=a'b")
+    rows = _ve_hash_rows(case=bad)
+    assert rows["hash 参数 值形态"]["level"] == "FAIL", rows["hash 参数 值形态"]
+
+
+def test_hash_goto_undeclared_key_fails() -> None:
+    bad = _hash_param_case().replace("goto /home#/detail?flag=on",
+                                     "goto /home#/detail?flag=on&other=1")
+    rows = _ve_hash_rows(case=bad)
+    assert rows["goto hash 查询键须已声明"]["level"] == "FAIL", rows["goto hash 查询键须已声明"]
+
+
+def test_hash_param_and_regular_param_same_key_fails() -> None:
+    both = CASE_GOOD.replace("step:", "hash参数:\n  - flag\n参数:\n  - flag\nstep:", 1).replace(
+        "- click home-cta-btn", "- goto /home?flag=on#/detail?flag=on")
+    rows = _ve_hash_rows(case=both, profile_extra=_QP_BOTH)
+    assert rows["hash参数·其他载体 同键不叠写"]["level"] == "FAIL", rows[
+        "hash参数·其他载体 同键不叠写"]
+
+
 def test_testids_mismatch_fail() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -1329,7 +1404,7 @@ def test_e2e_index_new_assert_verbs_render_and_validate() -> None:
     exprs = {
         # is*() 先 count 守卫（缺失元素不挂起——projects 页基线实测 2026-10-02）
         "- checked home-cta-btn": '(async () => (await page.getByTestId("home-cta-btn").count()) > 0 && (await page.getByTestId("home-cta-btn").first().isChecked()))()',
-        "- unchecked home-cta-btn": '(async () => !((await page.getByTestId("home-cta-btn").count()) > 0 && (await page.getByTestId("home-cta-btn").first().isChecked())))()',
+        "- unchecked home-cta-btn": '(async () => { const c = await page.getByTestId("home-cta-btn").count(); if (c <= 0) return null; return !(await page.getByTestId("home-cta-btn").first().isChecked()); })()',
         "- countOptions home-cta-btn 9": '(async () => (await page.getByTestId("home-cta-btn").locator(\'option\').count()) === Number("9"))()',
         # B173-1：value 经 atlasValueOf 实现无关化（原生表单读值，combobox 读触发器文本）
         '- value home-cta-btn ""': '(async () => { const x = await atlasValueOf(page, "home-cta-btn"); return x === null ? null : x === ""; })()',

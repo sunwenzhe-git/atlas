@@ -81,6 +81,17 @@ def query_of(target: str) -> str:
     return target.partition("#")[0].partition("?")[2]
 
 
+def hash_query_of(target: str) -> str:
+    """`target` 的 **hash 查询串**（`/a#/h?k=v` ⇒ `k=v`；无 hash / 无查询 ⇒ 空串）。
+
+    与 `query_of` 分载体：HashRouter 页面的 `useSearchParams` 读的是 hash 内的查询段，
+    常规查询串（`#` 之前）由 `query_of` 负责。两者不得混用。
+    """
+    if "#" not in target:
+        return ""
+    return target.partition("#")[2].partition("?")[2]
+
+
 def query_keys(target: str) -> list[str]:
     """`target` 查询串里的键（按出现顺序去重）——「键须已声明」门与生成器守卫取值**共用本单源**。"""
     out: list[str] = []
@@ -107,12 +118,57 @@ def append_query(target: str, q: str) -> str:
     return f"{joined}#{frag}" if sep else joined
 
 
-def strip_query(target: str) -> str:
-    """去掉查询串、保留 hash（`/a?k=v#/h` ⇒ `/a#/h`）——供路径门按**路径形态**匹配（`_route_hit`）。"""
-    if "?" not in target:
+def hash_query_keys(target: str) -> list[str]:
+    """`target` 的 hash 查询键（按出现顺序去重）——`hash参数:` 声明门与生成器守卫取值共用。"""
+    out: list[str] = []
+    for part in hash_query_of(target).split("&"):
+        if not part:
+            continue
+        k = part.partition("=")[0].strip()
+        if k and k not in out:
+            out.append(k)
+    return out
+
+
+def append_hash_query(target: str, q: str) -> str:
+    """把查询串 `q` 追加到 `target` 的 **hash 查询段**（`/a#/h` ⇒ `/a#/h?q`）。
+
+    只处理已带 hash 的目标；没有 hash 时原样返回（不私造一条 hash 路由，调用方应响亮失败）。
+    已有 hash 查询 ⇒ 与 `q` 求并集（既有在前、`q` 在后，**同键 ⇒ `q` 胜**）。
+    """
+    if not q or "#" not in target:
         return target
-    head, _, rest = target.partition("?")
-    return head + "#" + rest.partition("#")[2] if "#" in rest else head
+    head, _, frag = target.partition("#")
+    fpath, fsep, fq = frag.partition("?")
+    merged = q if not fsep else union_query(fq, q)
+    return f"{head}#{fpath}?{merged}"
+
+
+def strip_query(target: str) -> str:
+    """去掉**常规查询串**、保留 hash 段（含 hash 查询）（`/a?k=v#/h?x=1` ⇒ `/a#/h?x=1`）。
+
+    只处理 `#` 之前的查询；hash 内的查询由 `strip_hash_query` 单独处理。
+    """
+    head, sep, frag = target.partition("#")
+    if "?" in head:
+        head = head.partition("?")[0]
+    return f"{head}#{frag}" if sep else head
+
+
+def strip_hash_query(target: str) -> str:
+    """去掉 **hash 查询串**、保留 hash 路径（`/a#/h?k=v` ⇒ `/a#/h`）。"""
+    head, sep, frag = target.partition("#")
+    if not sep or "?" not in frag:
+        return target
+    return f"{head}#{frag.partition('?')[0]}"
+
+
+def strip_queries(target: str) -> str:
+    """同时去掉常规查询串与 hash 查询串，保留 hash 路径（`/a?t=1#/h?k=v` ⇒ `/a#/h`）。
+
+    供 `goto` / `守卫` 路径门按**路径形态**匹配（页面表 `路由` 列是路径形态）。顺序无关。
+    """
+    return strip_hash_query(strip_query(target))
 
 
 def origin_of(base: str) -> str:
