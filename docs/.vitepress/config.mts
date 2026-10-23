@@ -70,7 +70,7 @@ export default defineConfig({
       { text: '技能生态', link: '/ecosystem/skills' },
       { text: '社区交流', link: '/guide/community' },
       { text: '更新日志', link: '/guide/changelog' },
-      { text: 'v0.2.0-beta.3', link: 'https://github.com/sunwenzhe-git/atlas/releases' }
+      { text: 'v0.2.0-beta.4', link: 'https://github.com/sunwenzhe-git/atlas/releases' }
     ],
 
     socialLinks: [

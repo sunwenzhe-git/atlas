@@ -4,7 +4,7 @@
 
 ---
 
-## [Unreleased]
+## [v0.2.0-beta.4] - 2026-10-23
 
 ### 🧷 testid 提取器容忍 `setAttribute` 尾逗号（D135）
 

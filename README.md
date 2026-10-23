@@ -1,7 +1,7 @@
 # Atlas — 践行 Project Harness 的全流程 AI 编程工作流
 
 <p align="left">
-  <img src="https://img.shields.io/badge/version-0.2.0--beta.3-blue.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.2.0--beta.4-blue.svg" alt="Version" />
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License" />
   <img src="https://img.shields.io/badge/tests-passing-success.svg" alt="Tests" />
   <a href="https://sunwenzhe-git.github.io/atlas/"><img src="https://img.shields.io/badge/docs-VitePress-green.svg" alt="Docs" /></a>
