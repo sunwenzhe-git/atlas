@@ -442,6 +442,36 @@ def check_version(root: Path, rows: Row) -> None:
              "（SOURCE_ONLY 拒绝护栏；D79 ⑤）")
 
 
+def check_write_claims(root: Path, rows: Row) -> None:
+    """「写面残留」门（M3，`RFC-20261022-01` 批 3；`apply/reference.md` §5.1）。
+
+    只 glob `.atlas/runs/write-claims/*.json`：有未释放的 claim ⇒ WARN 指名
+    （任务完成后的收口应 `write_claim.py release`；残留 = 收口漏了一步）。
+    这是**提醒面不是门禁**：残留不影响退出码——`validate_e2e_index` 的事后兜底
+    保留不撤（D 类不一致仍由它咬）。
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from write_claim import scan_residuals  # noqa: E402  单源：落点/格式只此一处
+    except ImportError:
+        rows.add("写面残留", "SKIP", "无 scripts/write_claim.py（旧装配；纪律照旧）")
+        return
+    try:
+        residuals = scan_residuals(root)
+    except OSError as e:
+        rows.add("写面残留", "SKIP", f"claims 目录不可读（{e}）")
+        return
+    if not residuals:
+        rows.add("写面残留", "ok", "无未释放的写面 claim")
+        return
+    parts = [f"{x['file']}（{x['task']}）" for x in residuals[:3]]
+    more = "" if len(residuals) <= 3 else f"…共 {len(residuals)} 个"
+    rows.add("写面残留", "WARN",
+             f"{len(residuals)} 个未释放的写面 claim：{'；'.join(parts)}{more}"
+             "（确认任务已完成 ⇒ `write_claim.py release --file <路径>`；"
+             "claims 是运行态，不进 git 历史）")
+
+
 def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     prof = root / "product" / "stack-profile.yaml"
     text = prof.read_text(encoding="utf-8") if prof.is_file() else ""
@@ -628,6 +658,7 @@ def main() -> int:
     check_serial_execution(root, rows)
     check_drift(root, rows)
     check_version(root, rows)
+    check_write_claims(root, rows)
     if not args.fast:
         check_e2e(root, rows, args.page)
 
