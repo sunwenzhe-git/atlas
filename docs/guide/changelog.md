@@ -4,6 +4,25 @@
 
 ---
 
+## [v0.2.0-beta.5] - 2026-10-23
+
+### ✨ E2E `request` 请求载荷断言（D142）
+
+- **能力**：`request <api> <json-path> <expected>` 断言某 step 后新出现的匹配请求；无新请求、路径缺失、越界、解析失败均 fail-loud；含该断言的用例默认 `trace: off`。
+- **钉**：生成器动作锚定 / trace off、Node 真求值三态、校验器正反例；变异 **M145–M147**。
+
+### 🧭 人工走查项结构化块（D143）
+
+- **能力**：`manual.md` 兼容旧单行，新增 `## <ID> <标题>` + `atlas-manual` 块（page/precondition/step/evidence），控制台按步渲染、命令可复制。
+- **钉**：解析单源 `_support/manual_block.py`，旧行零迁移；校验器页面/步骤/重复 ID；变异 **M148**。
+
+### 🩹 `after:<N>` 步骤锚错位（D136）
+
+- **假红修复**：`refresh` 发射两个动作行导致 `after:N` 整体前移一格；定案为 `refresh` 两行合并为一个动作槽位，动作与 step 严格 1:1。
+- **钉**：`test_after_anchor_stays_aligned_when_step_emits_multiple_lines`。
+
+---
+
 ## [v0.2.0-beta.4] - 2026-10-23
 
 ### 🧷 testid 提取器容忍 `setAttribute` 尾逗号（D135）
