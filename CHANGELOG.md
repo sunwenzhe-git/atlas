@@ -4,6 +4,15 @@
 
 ---
 
+## [Unreleased]
+
+### 🧷 testid 提取器容忍 `setAttribute` 尾逗号（D135）
+
+* **修复**：Prettier `trailingComma: all` 会把多行 `el.setAttribute("data-testid", "x")` 写成尾逗号形态，旧正则漏抽导致已实现 testid 被判缺失；`SETATTR_TESTID` / `SETATTR_TESTID_TPL` 现允许值后可选 `,`。
+* **钉**：`test_f22_imperative_testid_extraction_and_counts` 增加多行 + 尾逗号样本（Red First），变异 **M135**。
+
+---
+
 ## [v0.2.0-beta.3] - 2026-10-23
 
 ### 🩹 `value` 断言读可见文本（D133）

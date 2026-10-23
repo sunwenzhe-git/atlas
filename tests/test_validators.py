@@ -2778,6 +2778,11 @@ def test_f22_imperative_testid_extraction_and_counts() -> None:
             li.dataset.testid = "notes-item";
             // setAttribute 字面量
             btn.setAttribute("data-testid", "notes-submit");
+            // setAttribute 多行 + Prettier 尾逗号
+            img.setAttribute(
+              "data-testid",
+              "notes-avatar",
+            );
             // setAttribute 模板展开
             el.setAttribute("data-testid", `${slug}-header`);
             """,
@@ -2792,6 +2797,7 @@ def test_f22_imperative_testid_extraction_and_counts() -> None:
         # 1. 抽取源覆盖：字面量与注入全部抽取
         assert "notes-item" in counts
         assert "notes-submit" in counts
+        assert "notes-avatar" in counts
         # 2. counts 为声明文件数：同文件出现多次 notes-item，文件数仍为 1
         assert counts["notes-item"] == 1
         assert counts["notes-submit"] == 1

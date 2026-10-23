@@ -68,10 +68,11 @@ TESTID_ATTR = re.compile(r"""data-testid\s*=\s*(?:\{\s*)?["']([a-zA-Z0-9_\-]+)["
 TEMPLATE_TESTID_ATTR = re.compile(r"""data-testid\s*=\s*\{\s*`([^`]+)`\s*\}""")
 # 命令式注入 testid（F22，2026-10-15；v0.1.0-beta.14）：原生 JS / Web Components 常见注入形态
 # 识别 `el.dataset.testid = "..."`、`el.dataset['testid'] = "..."` 与 `el.setAttribute("data-testid", "...")`，消除假桩诱因
+# setAttribute 允许尾逗号（Prettier `trailingComma: all` 会把多行调用写成 `...,\n)`；2026-10-23 D135）
 DATASET_TESTID = re.compile(r"""(?:\.dataset\.testid|\.dataset\[["']testid["']\])\s*=\s*["']([a-zA-Z0-9_\-]+)["']""")
-SETATTR_TESTID = re.compile(r"""\.setAttribute\(\s*["']data-testid["']\s*,\s*["']([a-zA-Z0-9_\-]+)["']\s*\)""")
+SETATTR_TESTID = re.compile(r"""\.setAttribute\(\s*["']data-testid["']\s*,\s*["']([a-zA-Z0-9_\-]+)["']\s*,?\s*\)""")
 DATASET_TESTID_TPL = re.compile(r"""(?:\.dataset\.testid|\.dataset\[["']testid["']\])\s*=\s*`([^`]+)`""")
-SETATTR_TESTID_TPL = re.compile(r"""\.setAttribute\(\s*["']data-testid["']\s*,\s*`([^`]+)`\s*\)""")
+SETATTR_TESTID_TPL = re.compile(r"""\.setAttribute\(\s*["']data-testid["']\s*,\s*`([^`]+)`\s*,?\s*\)""")
 # 同文件静态字符串常量 + 单层引用（issue #19，2026-10-16）：`const X = 'a-b-c'; … data-testid={X}`。
 # 值仍**静态可枚举**（单跳、同文件），且字面量仍只出现在常量声明处**一处** ⇒ 与字面量同档：
 # 计入声明处计数（跨文件重名照报）、参与双向集合两侧判罚。
