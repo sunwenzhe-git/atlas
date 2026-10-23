@@ -7,7 +7,8 @@
 #
 # 装配行为：
 #   1. 整包装配到 <目标>/.atlas/（shared / rings / apply / templates / adapters /
-#      validators / patches / tests）。.atlas/ 属包产物，默认刷新。
+#      validators / patches / tests）。.atlas/ 属包产物：白名单子目录默认刷新，
+#      `.atlas/runs/`（运行态：E2E 汇总 / check 事件 / write-claims）保留不删。
 #   2. 每个 skills/atlas-*/ 以一个瘦桩 SKILL.md 装到各平台 skill 目录。
 #   3. 清理历史遗留的单入口 skill（<平台>/skills/atlas）。
 #   4. 建 product/ 骨架（已有内容永不覆盖）。
@@ -427,6 +428,7 @@ check "校验器 validate_testids" "$ATLAS_DEST/validators/validate_testids.py"
 check "校验器 validate_e2e_index" "$ATLAS_DEST/validators/validate_e2e_index.py"
 check "校验器 validate_design_exemptions" "$ATLAS_DEST/validators/validate_design_exemptions.py"
 check "校验器 validate_e2e_mocks" "$ATLAS_DEST/validators/validate_e2e_mocks.py"
+check "校验器 validate_ac_alignment" "$ATLAS_DEST/validators/validate_ac_alignment.py"
 check "校验器 validate_adr" "$ATLAS_DEST/validators/validate_adr.py"
 check "校验器 validate_walkthrough" "$ATLAS_DEST/validators/validate_walkthrough.py"
 check "E2E 脚本生成器" "$ATLAS_DEST/scripts/gen_e2e_scripts.py"

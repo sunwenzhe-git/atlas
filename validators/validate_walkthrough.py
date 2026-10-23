@@ -43,6 +43,9 @@ from pathlib import Path
 TASKS_RELPATH = Path(".trellis") / "tasks"
 APPLY_RECORD = "atlas-apply.md"
 ACTIVE_STATUSES = {"planning", "in_progress"}
+# Trellis 三态里的归档态；其余未知值（`in-progress` 手滑 / `blocked` 一类）
+# 必须**显式 SKIP 指名**，不得静默出域（评审 P1-1：静默继续 = 门失效）
+ARCHIVED_STATUSES = {"completed"}
 
 # 三问小节标题（`## 2. 三问门判定` / `### 三问门判定`；不绑定编号）
 Q_SECTION_RE = re.compile(r"^#{2,6}\s+.*三问.*$", re.M)
@@ -125,6 +128,7 @@ def parse_question_two(apply_text: str) -> tuple[str, str]:
     sec = _section(apply_text, Q_SECTION_RE)
     if sec is None:
         return "no_section", "无三问门判定小节"
+    found: list[tuple[str, str]] = []
     for raw in sec.splitlines():
         if not Q2_LINE_RE.match(raw):
             continue
@@ -133,10 +137,18 @@ def parse_question_two(apply_text: str) -> tuple[str, str]:
         parts = re.split(r"[？?]", line, maxsplit=1)
         answer = parts[1] if len(parts) > 1 else line
         m = ANSWER_RE.match(answer.strip().lstrip("：:—- "))
-        if m:
-            return ("yes" if m.group(1) == "是" else "no"), raw.strip()
-        return "unparseable", raw.strip()
-    return "no_line", "三问小节存在但无第 2 问行"
+        found.append((("yes" if m.group(1) == "是" else "no") if m else "unparseable",
+                      raw.strip()))
+    if not found:
+        return "no_line", "三问小节存在但无第 2 问行"
+    answers = {a for a, _ in found}
+    if "unparseable" in answers:
+        return "unparseable", found[0][1]
+    if len(answers) > 1:
+        # 小节里出现多条第 2 问行且判定相反（典型：引用模板行 + 本轮判定行）——
+        # 不得按 first-match-wins 取一条（评审 P1-2：模板行可遮蔽真实判定）
+        return "unparseable", "多条第 2 问行判定不一致：" + " / ".join(s for _, s in found[:3])
+    return answers.pop(), found[0][1]
 
 
 def walkthrough_confirmation(prd_text: str) -> tuple[str, str]:
@@ -165,7 +177,14 @@ def check_task(root: Path, res: Result, task_dir: Path) -> None:
         res.add(f"task:{name}", "SKIP", f"任务记录不可判定（{why}）——不假红，人工核对")
         return
     if status not in ACTIVE_STATUSES:
-        return  # 时空域：已归档 / 未知非在办状态不扫
+        if status in ARCHIVED_STATUSES:
+            return  # 时空域：已归档不扫
+        # 未知 / 变体状态（`in-progress`、`Planning`、`blocked`…）必须可见跳过：
+        # 静默出域 = 该任务整体绕过走查锁，正好是本 RFC 要防的「接线断」
+        res.add(f"task:{name}", "SKIP",
+                f"status={status!r} 不在已知集 {sorted(ACTIVE_STATUSES | ARCHIVED_STATUSES)}"
+                "——不扫但不静默，请核对任务记录")
+        return
 
     apply_path = task_dir / APPLY_RECORD
     if not apply_path.is_file():
@@ -241,7 +260,7 @@ def run(root: Path) -> Result:
     if not res.checks:
         # 零行 ≠ PASS：全部任务都在时空域外（已归档）必须显式可见跳过
         res.add("时空域", "SKIP",
-                "无 status ∈ {planning, in_progress} 的在办任务（已归档不扫）")
+                "无在办任务（已归档或未识别状态不扫）")
     return res
 
 

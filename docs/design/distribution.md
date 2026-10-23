@@ -131,9 +131,9 @@ atlas/
 
 ## 八、机器校验与命令面
 
-**校验器（现行 9 个）**：`validate_structure` / `validate_stack_profile` / `validate_prd` / `validate_testids` / `validate_e2e_index` / `validate_design_exemptions` / `validate_e2e_mocks` / `validate_ac_alignment` / `validate_adr`。
+**校验器（现行 10 个）**：`validate_structure` / `validate_stack_profile` / `validate_prd` / `validate_testids` / `validate_e2e_index` / `validate_design_exemptions` / `validate_e2e_mocks` / `validate_ac_alignment` / `validate_adr` / `validate_walkthrough`。
 
-**脚本侧工具链**：`atlas_check`（门总览：校验器 / 出厂测试 / 生成物 / 真跑）、`refresh_structure`（事实区刷新）、`gen_e2e_scripts`（脚本派生）、`gen_testid_stub`（testid 薄桩）、`impact_report` / `impact_reconcile`（影响面预测与对账）、`pkg_digest`（装配版本摘要）、`backflow`（回灌助手）、`mutation_proof`（变异证明）、`e2e_console`（评审控制台）。
+**脚本侧工具链**：`atlas_check`（门总览：校验器 / 出厂测试 / 生成物 / 真跑）、`refresh_structure`（事实区刷新）、`gen_e2e_scripts`（脚本派生）、`gen_testid_stub`（testid 薄桩）、`impact_report` / `impact_reconcile`（影响面预测与对账）、`pkg_digest`（装配版本摘要）、`backflow`（回灌助手）、`closeout_derive`（收口步骤派生）、`write_claim`（写面 claim 仲裁）、`mutation_proof`（变异证明）、`e2e_console`（评审控制台）。
 
 **CLI 命令面**（`atlas <command>`）：
 

@@ -241,3 +241,14 @@ def test_cli_json_and_exit_codes(tmp_path, capsys) -> None:
         "| 环退役 / 真相源迁移 / 产物改名 | 12（生命周期三件套） |"))
     assert MOD.main(["--root", str(bad), "--diff-base", "HEAD"]) == 2
     assert "[FAIL]" in capsys.readouterr().err
+
+
+def test_non_git_project_fails_with_short_message(tmp_path, capsys) -> None:
+    """评审 P2-2：非 git 项目不是坏 ref —— 短句拒绝，不刷整屏 git usage。"""
+    root = tmp_path / "plain"
+    (root / ".atlas" / "shared").mkdir(parents=True)
+    (root / ".atlas" / "shared" / "closeout.md").write_text(CONTRACT, encoding="utf-8")
+    assert MOD.main(["--root", str(root), "--diff-base", "HEAD"]) == 2
+    err = capsys.readouterr().err
+    assert "不是 git 仓库" in err
+    assert "usage:" not in err.lower()

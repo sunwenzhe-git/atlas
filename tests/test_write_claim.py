@@ -188,3 +188,49 @@ def test_atlas_check_write_residual_row(tmp_path) -> None:
     row = rows.rows[-1]
     assert row["status"] == "WARN" and "shared/gates.md" in row["detail"] and "T1" in row["detail"]
     assert not rows.failed  # 提醒面不置红
+
+
+def test_case_variant_paths_share_one_claim(tmp_path) -> None:
+    """评审 P1-4：大小写不敏感文件系统上 `README.md` / `readme.md` 是同一物理文件。"""
+    MOD.take(tmp_path, "README.md", "T1")
+    code, msg = MOD.take(tmp_path, "readme.md", "T1")
+    assert code == 0 and "已持有" in msg
+    try:
+        MOD.take(tmp_path, "README.md", "T2")
+    except MOD.ClaimError as e:
+        assert "T1" in str(e) and "不得抢占" in str(e)
+    else:
+        raise AssertionError("大小写变体必须共享同一把锁")
+    assert len(_claim_files(tmp_path)) == 1
+
+
+def test_take_retries_when_claim_vanishes(tmp_path, monkeypatch) -> None:
+    """评审 P1-3：EEXIST 与读取之间持有方 release ⇒ 重试一次拿锁，不得误拒。"""
+    real_open = MOD.os.open
+    state = {"first": True}
+
+    def fake_open(path, flags, mode=0o777):
+        if state["first"]:
+            state["first"] = False
+            p = Path(path)
+            p.write_text('{"file": "shared/gates.md", "task": "GONE"}', encoding="utf-8")
+            p.unlink()
+            raise FileExistsError
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(MOD.os, "open", fake_open)
+    code, msg = MOD.take(tmp_path, "shared/gates.md", "T1")
+    assert code == 0 and "取得写权" in msg
+    assert len(_claim_files(tmp_path)) == 1
+
+
+def test_release_empty_task_does_not_bypass(tmp_path) -> None:
+    """评审 P2-5：`--task ""` 不得被当成「未传」而静默释放他人 claim。"""
+    MOD.take(tmp_path, "shared/gates.md", "T1")
+    try:
+        MOD.release(tmp_path, "shared/gates.md", "")
+    except MOD.ClaimError as e:
+        assert "空串" in str(e)
+    else:
+        raise AssertionError("空串 task 必须拒绝")
+    assert len(_claim_files(tmp_path)) == 1

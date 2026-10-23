@@ -166,7 +166,12 @@ def git_changed_files(root: Path, diff_base: str) -> list[str]:
     p = subprocess.run(["git", "-C", str(root), "diff", "--name-only", diff_base],
                        capture_output=True, text=True)
     if p.returncode != 0:
-        raise DeriveError(f"git diff --name-only {diff_base} 失败：{(p.stderr or p.stdout).strip()}")
+        err = (p.stderr or p.stdout).strip()
+        if "not a git repository" in err.lower():
+            # 非 git 项目不是「坏 ref」，是形态不适用：短句拒绝，不刷整屏 git usage
+            raise DeriveError("本仓不是 git 仓库（无法用 diff 派生）——按 closeout.md 查表照旧")
+        last = [l for l in err.splitlines() if l.strip()][-1:] or [""]
+        raise DeriveError(f"git diff --name-only {diff_base} 失败：{last[0]}")
     changed = [l.strip() for l in p.stdout.splitlines() if l.strip()]
     u = subprocess.run(["git", "-C", str(root), "ls-files", "--others", "--exclude-standard"],
                        capture_output=True, text=True)

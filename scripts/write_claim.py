@@ -28,6 +28,7 @@ import json
 import os
 import sys
 import time
+import unicodedata
 from pathlib import Path
 
 CLAIMS_RELPATH = Path(".atlas") / "runs" / "write-claims"
@@ -55,8 +56,22 @@ def normalize_file(root: Path, raw: str) -> str:
         return p_abs.as_posix()
 
 
+def _canon(rel: str) -> str:
+    """claim 键的归一：NFC + casefold。
+
+    大小写不敏感文件系统（darwin/APFS 默认）上 `README.md` 与 `readme.md` 是
+    同一物理文件；不归一 ⇒ 两个持有人各拿一把锁，one-writer 承诺被穿
+    （评审 P1-4）。保守起见在**所有**文件系统上都按大小写不敏感处理。
+    """
+    return unicodedata.normalize("NFC", rel).casefold()
+
+
+def _same_file(a: object, b: str) -> bool:
+    return a is not None and _canon(str(a)) == _canon(b)
+
+
 def claim_key(rel: str) -> str:
-    return hashlib.sha256(rel.encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(_canon(rel).encode("utf-8")).hexdigest()[:16]
 
 
 def claim_path(root: Path, rel: str) -> Path:
@@ -85,20 +100,32 @@ def take(root: Path, raw_file: str, task: str) -> tuple[int, str]:
         "pid": os.getpid(),
         "taken_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }, ensure_ascii=False, indent=2)
-    try:
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-    except FileExistsError:
-        data = _read_claim(path)
-        if data.get("file") not in (rel, None):
-            # 哈希 16 位的同前缀碰撞（极不可能）；响亮失败而不是把两把锁混成一把
+    fd = None
+    for attempt in range(2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            break
+        except FileExistsError:
+            try:
+                data = _read_claim(path)
+            except ClaimError:
+                # 持有方在 EEXIST 与读取之间 release ⇒ 文件消失，重试一次拿锁
+                # （评审 P1-3：否则合法 take 被误拒，且指引指向一个不存在的文件）
+                if not path.exists() and attempt == 0:
+                    continue
+                raise
+            if not _same_file(data.get("file"), rel):
+                # 哈希 16 位的同前缀碰撞（极不可能）；响亮失败而不是把两把锁混成一把
+                raise ClaimError(
+                    f"claim 文件碰撞：{path.name} 记录的是 {data.get('file')!r}，本次是 {rel!r}")
+            holder = str(data.get("task", "?"))
+            if holder == task:
+                return 0, f"已持有：{rel}（task={task}）"
             raise ClaimError(
-                f"claim 文件碰撞：{path.name} 记录的是 {data.get('file')!r}，本次是 {rel!r}")
-        holder = str(data.get("task", "?"))
-        if holder == task:
-            return 0, f"已持有：{rel}（task={task}）"
-        raise ClaimError(
-            f"冲突：{rel} 的写权由 {holder} 持有"
-            f"（taken_at={data.get('taken_at', '?')}）—— §5.1 停下报告，不得抢占")
+                f"冲突：{rel} 的写权由 {holder} 持有"
+                f"（taken_at={data.get('taken_at', '?')}）—— §5.1 停下报告，不得抢占")
+    if fd is None:
+        raise ClaimError("claim 状态竞争过频（连续两次 EEXIST 后消失）——请重试")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(payload)
     return 0, f"取得写权：{rel}（task={task}；claim={path.name}）"
@@ -109,12 +136,16 @@ def release(root: Path, raw_file: str, task: str | None = None) -> tuple[int, st
     path = claim_path(root, rel)
     if not path.is_file():
         return 0, f"无 claim（幂等释放）：{rel}"
-    if task is not None and task.strip():
+    if task is not None:
+        if not task.strip():
+            # 空串 ≠ 未传：不得用 `--task ""` 静默绕过持有者校验（评审 P2-5）
+            raise ClaimError("--task 不得为空串（空串不等于未传；省略该参数才是无归属释放）")
         data = _read_claim(path)
         holder = str(data.get("task", "?"))
         if holder != task:
             raise ClaimError(f"拒绝释放：{rel} 由 {holder} 持有，调用方是 {task}（不得释放他人的 claim）")
-    path.unlink()
+    # 并发双 release 的第二个不得裸 traceback（评审 P1-3）
+    path.unlink(missing_ok=True)
     return 0, f"释放写权：{rel}"
 
 

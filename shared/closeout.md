@@ -37,7 +37,7 @@ python3 .atlas/scripts/closeout_derive.py --diff-base <ref>
 python3 .atlas/scripts/atlas_check.py            # 一门一行；--fast 只跑校验器 + 生成物
 ```
 
-- **先派生、再自检**：`closeout_derive` 只回答「本轮必跑哪几步」，不改任何判据；它解析失败 / 触发表引用空号时必须当场停下修表（FAIL 响亮，不得退化成空清单）。
+- **先派生、再自检**：`closeout_derive` 只回答「本轮必跑哪几步」，不改任何判据；它解析失败 / 触发表引用空号时必须当场停下修表（FAIL 响亮，不得退化成空清单）。派生器需要 git 仓库；非 git 项目 ⇒ 短句拒绝并回到查表（不是坏 ref）。
 
 - **逐行读**，不只看退出码。
 - `SKIP` 是**一等结论**（未走到这一步 / 前置未声明），**不是通过**，必须带原因；`FAIL` 必须当场查因或登记台账。

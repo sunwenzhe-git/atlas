@@ -304,7 +304,7 @@ VETO_WORDS = ("Leiden", "拓扑聚类", "自动归域", "端点到模型", "阻�
 # 豁免锚**局部自持**：只认否决判据编号（D77/D78——收窄/否决后的行必须回锚它们）。
 # **不得并入 `RETIRE_MARKS`**：那个元组被判据 ①/③/⑤ 共享，把「已收窄」一类词塞进去
 # 会让活语境行顺带豁免幽灵环引用 / 幽灵 shared 引用（同元组串门）。
-VETO_EXEMPT_ANCHORS = ("D77", "D78")
+VETO_EXEMPT_ANCHORS = ("D77", "D78", "D138", "D139", "D140")
 
 
 def _veto_scan_files() -> list[Path]:

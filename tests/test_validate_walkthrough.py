@@ -261,3 +261,42 @@ def test_no_tasks_dir_skips(tmp_path) -> None:
     res = MOD.run(tmp_path)
     assert res.status == "SKIP", _checks(res)
     assert "未就绪" in res.checks[0]["detail"]
+
+
+def test_unknown_status_is_visible_skip(tmp_path) -> None:
+    """评审 P1-1：未知 / 变体 status 不得静默出域（手滑 `in-progress` 会整体绕过锁）。"""
+    d = _task(tmp_path, status="in-progress")
+    _apply(d, APPLY_YES)
+    _prd(tmp_path, confirm=None)
+    res = MOD.run(tmp_path)
+    assert res.status == "SKIP", _checks(res)
+    named = [c for c in res.checks if "in-progress" in c["detail"]]
+    assert named and named[0]["status"] == "SKIP", _checks(res)
+
+
+def test_conflicting_second_question_lines_warn_not_bypass(tmp_path) -> None:
+    """评审 P1-2：小节里模板行「否」在前、真实判定「是」在后 ⇒ WARN，不得按首行 SKIP。"""
+    text = APPLY_YES.replace(
+        "## 2. 三问门判定\n\n",
+        "## 2. 三问门判定\n\n"
+        "2. **这次是否需要人来确认应然 UI / 流程**？否（引用的模板行）\n")
+    d = _task(tmp_path)
+    _apply(d, text)
+    _prd(tmp_path, confirm=None)
+    res = MOD.run(tmp_path)
+    assert res.status == "WARN", _checks(res)
+    assert any("不一致" in c["detail"] for c in res.checks if c["status"] == "WARN")
+    assert not any(c["status"] == "SKIP" and "第 2 问＝否" in c["detail"] for c in res.checks)
+
+
+def test_consistent_duplicate_second_question_lines_resolve(tmp_path) -> None:
+    """多行一致（都答「是」）⇒ 正常取值并进入对账，不误判 WARN。"""
+    text = APPLY_YES.replace(
+        "## 2. 三问门判定\n\n",
+        "## 2. 三问门判定\n\n"
+        "2. **这次是否需要人来确认应然 UI / 流程**？是（引用模板）\n")
+    d = _task(tmp_path)
+    _apply(d, text)
+    _prd(tmp_path, confirm=None)
+    res = MOD.run(tmp_path)
+    assert res.status == "FAIL", _checks(res)
