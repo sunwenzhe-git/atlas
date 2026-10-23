@@ -428,6 +428,7 @@ check "校验器 validate_e2e_index" "$ATLAS_DEST/validators/validate_e2e_index.
 check "校验器 validate_design_exemptions" "$ATLAS_DEST/validators/validate_design_exemptions.py"
 check "校验器 validate_e2e_mocks" "$ATLAS_DEST/validators/validate_e2e_mocks.py"
 check "校验器 validate_adr" "$ATLAS_DEST/validators/validate_adr.py"
+check "校验器 validate_walkthrough" "$ATLAS_DEST/validators/validate_walkthrough.py"
 check "E2E 脚本生成器" "$ATLAS_DEST/scripts/gen_e2e_scripts.py"
 check "结构事实刷新器" "$ATLAS_DEST/scripts/refresh_structure.py"
 check "testid 薄桩生成器" "$ATLAS_DEST/scripts/gen_testid_stub.py"
