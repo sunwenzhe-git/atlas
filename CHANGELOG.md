@@ -4,6 +4,16 @@
 
 ---
 
+## [Unreleased]
+
+### 🐛 E2E `select` 点中错误选项（D144）
+
+* **病灶**：`atlasSelect` 采样后按**整页 DOM 下标**再点击。一个面板同时挂多个下拉（关闭态节点仍在 DOM、rc-select 另有零宽 `role=option` 镜像），组件重排后同一数字指向别当下拉的选项 ⇒ 选「不限时间」却点中「自定义范围」镜像节点，重试至 30s 超时。全量 41 条 2/2 红、单跑 2/2 绿（顺序依赖的假绿）。
+* **修复**：唯一命中改为给该元素打一次性标记，点击锚定标记本身（走 Playwright actionability）；每次采样先清遗留标记 ⇒ 选择器无歧义；标记失效 ⇒ 重新采样打标再点，有界 3 次，仍不成则带可见选项响亮失败。轮询、三级降级、歧义即拒、原生 `<select>` 分支不变。
+* **钉**：`tests/test_gen_e2e_scripts.py::test_select_clicks_the_marked_option_not_a_global_index`；既有 D112/D117 两条钉按新形态更新（返回 token 而非 idx、候选选择器出现次数 2 → 1）。
+
+---
+
 ## [v0.2.0-beta.5] - 2026-10-23
 
 ### ✨ E2E `request` 请求载荷断言（D142）
