@@ -698,6 +698,55 @@ def test_start_refuses_when_browser_missing(monkeypatch) -> None:
         assert "浏览器未就绪" in msg and "install chromium" in msg, msg
 
 
+def test_manual_block_steps_parsed_and_legacy_compatible() -> None:
+    """D143：`## ID 标题` + `atlas-manual` 块（扁平行式）与旧单行格式共存；
+    id/title 只从标题行取，块内重复声明 ⇒ 响亮失败。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    text = """- MANUAL-OLD-001 | home | 旧项 | 自己点一遍
+
+## MANUAL-NEW-001 结构化项
+
+```atlas-manual
+page: home
+precondition:
+  - 已登录
+step:
+  - 打开页面 | 页面出现 |
+  - 保存 | payload 不含字段 | const p = 1
+evidence:
+  - 截图
+```
+"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product" / "e2e").mkdir(parents=True)
+        (root / "product" / "e2e" / "manual.md").write_text(text, encoding="utf-8")
+        items = cons.read_manual(root)
+    assert items[0] == {"id": "MANUAL-OLD-001", "page": "home", "title": "旧项",
+                        "note": "自己点一遍"}, items[0]
+    assert items[1]["id"] == "MANUAL-NEW-001", items[1]
+    assert items[1]["title"] == "结构化项", items[1]
+    assert items[1]["page"] == "home" and items[1]["precondition"] == ["已登录"], items[1]
+    assert items[1]["steps"] == [
+        {"action": "打开页面", "expect": "页面出现", "command": ""},
+        {"action": "保存", "expect": "payload 不含字段", "command": "const p = 1"},
+    ], items[1]
+    assert items[1]["evidence"] == ["截图"], items[1]
+
+    # 块内再写 id/title ⇒ 解析错误（两处真相）
+    bad = text.replace("page: home\n", "id: MANUAL-NEW-001\npage: home\n")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product" / "e2e").mkdir(parents=True)
+        (root / "product" / "e2e" / "manual.md").write_text(bad, encoding="utf-8")
+        try:
+            cons.read_manual(root)
+        except ValueError as exc:
+            assert "id/title" in str(exc), exc
+        else:
+            raise AssertionError("块内重复 id/title 未被拒绝")
+
+
 def test_manual_open_url_keeps_base_query_and_path_prefix() -> None:
     """issue #27 / D104（评审 SHOULD：**第五消费者**）：控制台手工项「打开」的地址构造。
 

@@ -1,0 +1,76 @@
+{
+  "ok": false,
+  "status": "FAIL",
+  "root": "/Users/sunwenzhe/Desktop/atlas",
+  "scope": "RFC-20261023-01 · D140 request 断言动词 / D141 结构化人工走查（高风险，需维护者签字）",
+  "unit": "RFC-20261023-01",
+  "round": 1,
+  "expected": 1,
+  "reviewed": 1,
+  "budget_exceeded": false,
+  "executed": true,
+  "schema_version": 2,
+  "checks": [
+    {
+      "id": "F1",
+      "level": "Critical",
+      "check": "请求断言时序",
+      "target": "RFC-20261023-01 §2.1 / §5 Q3",
+      "detail": "默认取最近一次匹配请求，动作未发请求时历史请求（自动保存/重试/首屏）会满足断言；after:N 只描述时点，不证明请求发生在第 N 步之后。",
+      "rollback": "决策本身",
+      "pre_existing": false,
+      "disposition": "open"
+    },
+    {
+      "id": "F2",
+      "level": "Critical",
+      "check": "JSON 路径三态语义",
+      "target": "RFC-20261023-01 §2.1 / §5 Q2",
+      "detail": "(空) 合并「键不存在」与「值为 null」；中间路径写错、过滤 0/多命中、数组越界都可能被当作字段缺席通过；示例对完整 params=... 体解码会失败/双重解码。",
+      "rollback": "决策本身",
+      "pre_existing": false,
+      "disposition": "open"
+    },
+    {
+      "id": "F3",
+      "level": "Major",
+      "check": "隐私与 trace",
+      "target": "RFC-20261023-01 §2.1 / §5 Q4",
+      "detail": "失败消息/expect.poll 可能打印 expected/actual；失败 trace 保存请求体，RFC 的「不落盘」承诺不成立。",
+      "rollback": "决策本身",
+      "pre_existing": false,
+      "disposition": "open"
+    },
+    {
+      "id": "F4",
+      "level": "Major",
+      "check": "改动面完整性",
+      "target": "RFC-20261023-01 §3；validate_testids / 零步基线",
+      "detail": "validate_testids 把 expected 第二个 token 当 testid，request app.updateApp 会误算应然 testid；零步基线逐条 parse_line，未跳过 request 会抛未知动词；verbs_by_slice 同源。",
+      "rollback": "决策本身",
+      "pre_existing": false,
+      "disposition": "open"
+    },
+    {
+      "id": "F5",
+      "level": "Major",
+      "check": "编号一致性",
+      "target": "RFC-20261023-01 头部 / §4；DESIGN.md:607-610",
+      "detail": "D140（write_claim）、D141（validate_testids 性能）与 M143/M144 已被占用，按现稿落盘会重号。",
+      "rollback": "决策本身",
+      "pre_existing": false,
+      "disposition": "open"
+    },
+    {
+      "id": "F6",
+      "level": "Major",
+      "check": "人工块解析与登记面",
+      "target": "RFC-20261023-01 §2.1 批 2 / §3；e2e_console.py / case_block.py / app.js",
+      "detail": "case_block 只支持扁平数组，嵌套 steps + command 块标量需新解析器；read_manual 逐行扫 '-' 可能误吸块内带竖线行；新增校验器未登记 atlas_check/install.sh/gates；标题与块字段两处真相。",
+      "rollback": "决策本身",
+      "pre_existing": false,
+      "disposition": "open"
+    }
+  ],
+  "other": []
+}

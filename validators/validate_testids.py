@@ -471,7 +471,7 @@ def shard_testids(cases: Path, proto_pages: list[str] | None = None) -> dict[str
 
 
 # 契约 §5.5：这两个动作没有 testid（`goto` 取路径、`refresh` 无参）。
-_NO_TID_VERBS = {"goto", "refresh"}
+_NO_TID_VERBS = {"goto", "refresh", "request"}  # D142：request 的第二个 token 是 api 后缀，不是 testid
 
 
 def case_testid_usage(md: Path) -> list[tuple[str, set[str], set[str]]]:

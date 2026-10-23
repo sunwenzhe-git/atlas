@@ -4,6 +4,28 @@
 
 ---
 
+## [Unreleased]
+
+### ✨ E2E `request` 请求载荷断言（D142）
+
+* **能力**：`request <api> <json-path> <expected>`，断言某 step 后**新出现**的匹配请求；api 带点后缀（歧义拒绝），path 支持点号/`[N]`/`[key=value]`，值分 `(缺席)` / `null` / `""` 三态；无新请求、中间路径缺失、过滤不唯一、越界、解析失败均 fail-loud。
+* **隐私**：含 request 断言的用例默认 `trace: off`（`ATLAS_REQUEST_TRACE=1` opt-in），失败消息不打印载荷；零步基线、testid 提取均豁免 api 后缀。
+* **钉**：生成器动作锚定/trace off/零变化、Node 真求值三态与新请求、校验器正反例；变异 **M145–M147**。
+
+### 🧭 人工走查项结构化块（D143）
+
+* **能力**：`manual.md` 兼容旧单行；新增 `## <ID> <标题>` + `atlas-manual` 块（`page / precondition / step / evidence`），步骤行 `操作 | 观察 | 命令(可空)`；id/title 只从标题行取。
+* **控制台**：按步渲染、命令可复制；账本仍用例级。解析单源 `_support/manual_block.py`，旧行零迁移。
+* **钉**：控制台解析/旧行兼容/块内 id 拒绝、校验器页面/步骤/重复 ID；变异 **M148**。
+
+### 🩹 `after:<N>` 步骤锚错位（D136）
+
+* **假红修复**：`refresh` 发射「先等后刷」两个动作槽位，而锚点按动作下标挂载 ⇒ 从 `refresh` 起 `after:N` 整体前移一格（实测 `after:9` 落在「重新打开面板」之前，面板未开时必红）。
+* **定案**：`refresh` 两行合并为一个动作槽位，动作槽位与 step 严格 1:1，生成物逐行内容不变。
+* **钉**：`test_after_anchor_stays_aligned_when_step_emits_multiple_lines`。
+
+---
+
 ## [v0.2.0-beta.4] - 2026-10-23
 
 ### 🧷 testid 提取器容忍 `setAttribute` 尾逗号（D135）

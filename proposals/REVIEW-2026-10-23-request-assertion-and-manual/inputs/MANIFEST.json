@@ -1,0 +1,50 @@
+{
+ "kind": "atlas-review-input-manifest",
+ "note": "指针化清单：审查者按 path 读**当前**文件；要冻结基线用 sha256，不要拷副本。",
+ "root": "/Users/sunwenzhe/Desktop/atlas",
+ "taken_at": "2026-10-23T12:23:25+08:00",
+ "files": [
+  {
+   "path": "DESIGN.md",
+   "sha256": "03f91a9a01b14801b96931525c2ee7c08dc6d8db43b12fedcf8a16b295cc08d4",
+   "bytes": 201741,
+   "lines": 633
+  },
+  {
+   "path": "proposals/RFC-20261023-01-request-assertion-and-manual-structure.md",
+   "sha256": "944e23da42d53a5d7accd67ea824b708e5ff947744c920a6d5d576a6e88ef515",
+   "bytes": 14741,
+   "lines": 224
+  },
+  {
+   "path": "rings/e2e/reference.md",
+   "sha256": "2d5f27682026aa7e44b6577e2c35e8b9de9838435b9f944837167ee5e0e65f21",
+   "bytes": 129060,
+   "lines": 750
+  },
+  {
+   "path": "scripts/e2e_console.py",
+   "sha256": "2e400f7ba555eaf29b95cba057e7d9ff3c9cab7a126dacf95eba553dc68cc4fe",
+   "bytes": 53764,
+   "lines": 1092
+  },
+  {
+   "path": "scripts/gen_e2e_scripts.py",
+   "sha256": "24d52de246864c91d9639b45bdb5d69033e55ccdba3f491a68c8bd1ee69be6b6",
+   "bytes": 132173,
+   "lines": 2161
+  },
+  {
+   "path": "templates/e2e/console/app.js",
+   "sha256": "e5552ff4b109b6db7eec746f336bd16ff547e670d29496a07a03b83c4c6c193f",
+   "bytes": 20703,
+   "lines": 424
+  },
+  {
+   "path": "validators/validate_e2e_index.py",
+   "sha256": "0e1fe755b6002e162ca65a95d7e0dd672c25249393609fba11d0d07717837587",
+   "bytes": 68693,
+   "lines": 1142
+  }
+ ]
+}

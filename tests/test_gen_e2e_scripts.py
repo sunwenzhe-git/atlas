@@ -139,6 +139,10 @@ def spec_of(root: Path, page: str = "home") -> str:
     return (root / "product" / "e2e" / "scripts" / f"{page}.spec.ts").read_text(encoding="utf-8")
 
 
+def request_spec_of(root: Path, page: str = "home") -> str:
+    return (root / "product" / "e2e" / "scripts" / f"{page}.request.spec.ts").read_text(encoding="utf-8")
+
+
 def zs_probes(spec_text: str, page: str = "home") -> list[dict]:
     """抽出页面脚本内联的零步基线清单（`const ATLAS_ZS_<page> = {...}`）并解析。"""
     m = re.search(rf"const ATLAS_ZS_{page} = (\{{.*?\}});\n", spec_text, re.S)
@@ -902,6 +906,7 @@ ASSERT_SAMPLES = {
     "value": "home-cta-btn 首页",
     "attr": "home-cta-btn data-theme dark",
     "delta": "home-title +1",
+    "request": "app.updateApp Data.reqDTO.config.nodeParam.mailStatus (缺席)",
 }
 
 
@@ -1087,6 +1092,146 @@ function node({ text = "", opacity = 1, children = [] } = {}) {
     assert got["value"] == got["label"], f"隐藏的 a11y 播报被计入 value：{got}"
     assert got["restored"] == "opacity: 0;", f"采值后未恢复隐藏节点原始 style：{got}"
     assert got["hidden"] is False, f"采值后隐藏节点仍处于 display:none：{got}"
+
+
+def test_request_assertion_emits_action_anchored_watcher_and_trace_off() -> None:
+    """D142：`request` 断言必须「动作锚定新请求」——watcher 先于首屏 goto，序号采样
+    先于锚定 step；并默认关闭 trace（`ATLAS_REQUEST_TRACE=1` 才保留失败 trace）。
+    """
+    case = CASE.replace(
+        "  - click home-cta-btn          # 点击主操作按钮\n",
+        "  - click home-cta-btn          # 点击主操作按钮\n"
+        "  - click home-title            # 保存\n",
+    ).replace(
+        "  - text home-title 首页        # 页面标题文案为「首页」",
+        "  - after:2 request app.updateApp Data.reqDTO.config.nodeParam.mailStatus (缺席)  # 字段缺席",
+    )
+    assert "after:2 request" in case
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=case)
+        assert run(root, "--apply").returncode == 0
+        text = request_spec_of(root)
+    # request 用例独立文件：顶层 test.use 关 trace（describe 内不允许改 trace）
+    assert "test.use({ trace: process.env.ATLAS_REQUEST_TRACE === '1'" in text, text
+    block = text[text.index('test("E2E-HOME-001'):]
+    assert "await atlasWatchRequests(page);" in block, block
+    assert block.index("await atlasWatchRequests(page);") < block.index("page.goto("), block
+    # 序号采样必须早于锚定动作（第 2 步 click home-title），断言在其后
+    mark = "__reqmark_2 = atlasRequestMark(page);"
+    click = "page.getByTestId('home-title').first().click"
+    assert block.index(mark) < block.index(click), block
+    assert block.index(click) < block.index("await atlasExpectRequest("), block
+    # trace 默认关闭；env 显式 opt-in
+    assert "ATLAS_REQUEST_TRACE === '1' ? 'retain-on-failure' : 'off'" in text, text
+    # 无 request 的页面不得出现 watcher/helper（零变化）
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        plain = spec_of(root)
+    assert "atlasWatchRequests" not in plain, plain
+    assert "atlasExpectRequest" not in plain, plain
+
+
+def _request_helpers_js(text: str) -> str:
+    start = text.index("const ATLAS_ABSENT")
+    end = text.index("async function atlasSelect", start)
+    src = text[start:end]
+    src = re.sub(r"type AtlasReqRecord = .*?;\n", "", src)
+    for token in (": string | undefined", ": AtlasReqRecord[]", ": any", ": string",
+                  ": number", " as AtlasReqRecord[]", " as any"):
+        src = src.replace(token, "")
+    for token in ("): boolean", "): number", "): string", "): void"):
+        src = src.replace(token, ")")
+    return src
+
+
+def test_request_path_tristate_and_errors() -> None:
+    """D142：路径三态 —— 叶子缺失 = absent；null / 空串是**存在**的值；中间缺失、
+    过滤 0/多命中、数组越界 = 解析错误（不得当作缺席通过）。"""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node 不可用，跳过 request 路径求值")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=CASE.replace(
+            "  - text home-title 首页        # 页面标题文案为「首页」",
+            "  - request app.updateApp Data.a (缺席)  # 路径三态"))
+        assert run(root, "--apply").returncode == 0
+        text = spec_of(root)
+    src = _request_helpers_js(text)
+    script = """
+globalThis.ATLAS_WAIT_TIMEOUT_MS = 1;
+const factory = new Function(__SRC__ + "\\nreturn { atlasReqResolve, ATLAS_ABSENT };");
+const { atlasReqResolve } = factory();
+const body = { a: { b: null, c: "", list: [{ k: "x", v: 1 }, { k: "y", v: 2 }] } };
+const out = {};
+out.missingLeaf = atlasReqResolve(body, "a.nope");
+out.nullLeaf = atlasReqResolve(body, "a.b");
+out.emptyLeaf = atlasReqResolve(body, "a.c");
+try { atlasReqResolve(body, "a.nope.x"); out.midMissing = "no-throw"; } catch { out.midMissing = "throw"; }
+try { atlasReqResolve(body, "a.list[k=z].v"); out.filter0 = "no-throw"; } catch { out.filter0 = "throw"; }
+try { out.filter1 = atlasReqResolve(body, "a.list[k=x].v"); } catch { out.filter1 = "throw"; }
+try { atlasReqResolve(body, "a.list[9]"); out.oor = "no-throw"; } catch { out.oor = "throw"; }
+process.stdout.write(JSON.stringify(out));
+"""
+    script = script.replace("__SRC__", json.dumps(src, ensure_ascii=False))
+    proc = subprocess.run([node, "-e", script], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got["missingLeaf"] == {"found": False}, got
+    assert got["nullLeaf"] == {"found": True, "value": None}, got
+    assert got["emptyLeaf"] == {"found": True, "value": ""}, got
+    assert got["midMissing"] == "throw", got
+    assert got["filter0"] == "throw", got
+    assert got["filter1"] == {"found": True, "value": 1}, got  # a.list[k=x].v ⇒ 1
+    assert got["oor"] == "throw", got
+
+
+def test_request_action_anchored_new_request_and_tristate() -> None:
+    """D142：只认 mark 之后**新出现**的匹配请求；无新请求 ⇒ 失败；`(缺席)` 不吞 null；
+    解析错误不折叠为缺席。"""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node 不可用，跳过 request 断言求值")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=CASE.replace(
+            "  - text home-title 首页        # 页面标题文案为「首页」",
+            "  - request app.updateApp Data.a null  # 动作锚定"))
+        assert run(root, "--apply").returncode == 0
+        text = spec_of(root)
+    src = _request_helpers_js(text)
+    script = """
+globalThis.ATLAS_WAIT_TIMEOUT_MS = 1;
+globalThis.expect = { poll: (fn) => ({ toBe: async (want) => { const v = await fn(); if (v !== want) throw new Error("poll timeout"); } }) };
+const factory = new Function(__SRC__ + "\\nreturn { atlasExpectRequest, ATLAS_ABSENT };");
+const { atlasExpectRequest, ATLAS_ABSENT } = factory();
+const page = { __atlasReq: { records: [
+  { seq: 1, api: "zb.app.updateApp", body: { a: 1 } },
+  { seq: 2, api: "zb.app.updateApp", body: { a: null } },
+] } };
+(async () => {
+  const out = {};
+  try { await atlasExpectRequest(page, "app.updateApp", "a", null, 1); out.newPass = true; } catch (e) { out.newPass = String(e.message); }
+  try { await atlasExpectRequest(page, "app.updateApp", "a", 1, 1); out.oldIgnored = "no-throw"; } catch { out.oldIgnored = "throw"; }
+  try { await atlasExpectRequest(page, "app.updateApp", "a", null, 2); out.noNew = "no-throw"; } catch { out.noNew = "throw"; }
+  try { await atlasExpectRequest(page, "app.updateApp", "a", ATLAS_ABSENT, 1); out.absentVsNull = "no-throw"; } catch { out.absentVsNull = "throw"; }
+  page.__atlasReq.records.push({ seq: 3, api: "zb.app.updateApp", body: null, parseError: "bad" });
+  try { await atlasExpectRequest(page, "app.updateApp", "a", null, 2); out.parseError = "no-throw"; } catch { out.parseError = "throw"; }
+  process.stdout.write(JSON.stringify(out));
+})();
+"""
+    script = script.replace("__SRC__", json.dumps(src, ensure_ascii=False))
+    proc = subprocess.run([node, "-e", script], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got["newPass"] is True, got
+    assert got["oldIgnored"] == "throw", got  # seq1 是旧请求被忽略；seq2 值 null 对 1 必失配
+    assert got["noNew"] == "throw", got
+    assert got["absentVsNull"] == "throw", got  # null 是存在的值，不是缺席
+    assert got["parseError"] == "throw", got
 
 
 def test_download_renders_register_then_click() -> None:
@@ -2714,6 +2859,29 @@ def test_refresh_emits_settle_wait_before_reload() -> None:
     settle = 'await page.waitForTimeout(Number(process.env.ATLAS_REFRESH_SETTLE || "0"));'
     assert settle in spec, spec
     assert spec.index(settle) < spec.index("await page.reload();"), spec
+
+
+def test_after_anchor_stays_aligned_when_step_emits_multiple_lines() -> None:
+    """契约 §5.5 `after:<N>`：一条 step 只能占一个 action 槽位。
+
+    现场（2026-10-23）：`refresh` 发射「先等后刷」两行，若拆成两个 actions 元素，
+    后续 `after:N` 会整体前移一格 —— `after:9`（刷新后重新打开面板）落在
+    「点击节点」之前，面板未开时断言必红；且用例越靠后错位越大。
+    """
+    gn = _load_gen()
+    case = {
+        "id": "E2E-REFRESH-002",
+        "_title": "刷新后打开面板",
+        "step": ["refresh", "click home-cta-btn"],
+        "expected": ["after:1 visible home-h1", "after:2 visible home-panel"],
+        "testid": ["home-h1", "home-cta-btn", "home-panel"],
+    }
+    spec = gn.ts_case(case, "/")
+    reload_idx = spec.index("await page.reload();")
+    h1_idx = spec.index("getByTestId('home-h1')")
+    click_idx = spec.index("getByTestId('home-cta-btn').first().click")
+    panel_idx = spec.index("getByTestId('home-panel')")
+    assert reload_idx < h1_idx < click_idx < panel_idx, spec
 
 
 # ── issue #R1/S1（2026-10-16）：`testid:` 项带行内注释 ⇒ F24 规则二豁免仍生效 ────────

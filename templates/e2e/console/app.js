@@ -73,6 +73,7 @@ async function load() {
   S.cases = S.cases.concat(S.manual.map((m) => ({
     id: m.id, page: m.page, title: m.title, type: 'manual', status: 'manual',
     ac: '', need: '', intent: m.note, note: m.note,
+    steps: m.steps || [], precondition: m.precondition || [], evidence: m.evidence || [],
   })));
   S.manualCount = S.manual.length;
   // 手工面存在性披露（RFC-20261015-01，issue #10）：「没有」与「忘了」不得同形——
@@ -236,7 +237,7 @@ function rowHTML(c) {
         <span class="tag">${esc(c.ac)}</span>
         ${c.need ? `<span class="tag">需求 ${esc(c.need)}</span>` : ''}
         ${S.draft[c.id] ? '<span class="tag dirty">未提交</span>' : ''}
-        ${isManual ? '' : `<button class="btn btn-ghost" data-detail="${c.id}">${S.open.has('d:' + c.id) ? '收起' : '展开'}</button>`}
+        ${(isManual && !(c.steps && c.steps.length)) ? '' : `<button class="btn btn-ghost" data-detail="${c.id}">${S.open.has('d:' + c.id) ? '收起' : '展开'}</button>`}
       </div>
       ${S.open.has('d:' + c.id) ? detailHTML(c) : ''}
     </td>
@@ -263,6 +264,21 @@ function detailHTML(c) {
     const [code, note] = String(x).split('#');
     return `<li>${esc(code.trim())}${note ? ` <span class="note">#${esc(note)}</span>` : ''}</li>`;
   }).join('');
+  if (c.type === 'manual') {
+    const pre = li(c.precondition || []);
+    const steps = (c.steps || []).map((s, i) => `<div class="manual-step">
+      <div><b>${i + 1}. ${esc(s.action)}</b></div>
+      <div>观察：${esc(s.expect)}</div>
+      ${s.command ? `<pre>${esc(s.command)}</pre><button class="btn btn-ghost" data-copy="${esc(s.command)}">复制命令</button>` : ''}
+    </div>`).join('');
+    const ev = li(c.evidence || []);
+    return `<div class="detail">
+      ${pre ? `<h4>数据前提（precondition，不执行）</h4><ul>${pre}</ul>` : ''}
+      <h4>走查步骤（${(c.steps || []).length}）</h4>${steps}
+      ${ev ? `<h4>证据要求</h4><ul>${ev}</ul>` : ''}
+      <h4>页面</h4><div><code>${esc(c.page)}</code></div>
+    </div>`;
+  }
   return `<div class="detail">
     <h4>数据前提（precondition，不执行）</h4><ul>${li(c.precondition)}</ul>
     <h4>步骤（step）</h4><ul>${li(c.step)}</ul>
@@ -373,6 +389,11 @@ document.addEventListener('click', (ev) => {
     if (wb.dataset.wb === 'apply') submitApply();
     else if (wb.dataset.wb === 'drop') { dropDraft(); notify('已丢弃本地改动（账本与索引未被触碰，页面回到最近提交的状态）。'); render(); }
     else notify('');
+    return;
+  }
+  const cp = ev.target.closest('[data-copy]');
+  if (cp) {
+    navigator.clipboard.writeText(cp.dataset.copy).then(() => notify('命令已复制。')).catch(() => notify('复制失败，请手选命令复制。', true));
     return;
   }
   const t = ev.target.closest('[data-run],[data-open],[data-review],[data-toggle],[data-detail],[data-out]');

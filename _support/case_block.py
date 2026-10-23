@@ -51,14 +51,14 @@ strip_inline_comment = load_module("stack_profile").strip_inline_comment
 _BLOCK_KEYS = ("pages", "precondition", "seed", "mock", "step", "expected", "testid", "落点", "会话", "参数", "hash参数", "覆盖维度")
 
 
-def parse_block(body: str) -> dict:
-    """解析 `atlas-case` 块体 → dict（键见 `_BLOCK_KEYS`）。
+def parse_block(body: str, extra_keys: tuple[str, ...] = ()) -> dict:
+    """解析 `atlas-case` 块体 → dict（键见 `_BLOCK_KEYS`；`extra_keys` 供人工块复用同一行式解析）。
 
     语义（与原两处实现逐字一致；**唯一例外** = 键空间外的标量键剥行内注释，见模块 docstring）：
     `- ` 开头的行归当前键；`<key>:` 开新键（键在键空间内）；`key: value` 带值形态追加一条；
     键空间外的 `key: value` 以标量入表（**标量值剥行内 `#` 注释**）。
     """
-    d: dict = {k: [] for k in _BLOCK_KEYS}
+    d: dict = {k: [] for k in _BLOCK_KEYS + tuple(extra_keys)}
     key = None
     for line in body.splitlines():
         s = line.strip()

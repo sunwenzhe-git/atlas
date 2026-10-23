@@ -81,6 +81,7 @@ CONTENT_TYPES = {
 if str(HERE.parent) not in sys.path:
     sys.path.insert(0, str(HERE.parent))
 from _support.siblings import load_module  # noqa: E402
+from _support.manual_block import parse_manual  # noqa: E402
 
 # 用例 ID 文法体单源（正文归 rings/e2e/reference.md §5.3）；锚点在使用处自留。
 case_id = load_module("case_id")
@@ -227,22 +228,13 @@ def load_profile_parser(root: Path):
 def read_manual(root: Path) -> list[dict]:
     """手工走查项（product/e2e/manual.md，用户 2026-10-01 设计）：控制台「手工」类型承载。
 
-    每行 `- <ID> | <页面> | <标题> | <操作说明>`；执行 = 开浏览器到对应页面，其余人工。
-    文件缺失 = 空清单（手工面是可选增强，不阻塞任何项目）。
+    兼容旧单行格式与 D143 `atlas-manual` 结构化块（解析单源 `_support/manual_block.py`）；
+    执行 = 开浏览器到对应页面，其余人工。文件缺失 = 空清单（手工面是可选增强）。
     """
     path = root / "product" / "e2e" / "manual.md"
     if not path.is_file():
         return []
-    items = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        s = line.strip()
-        if not s.startswith("- "):
-            continue
-        parts = [x.strip() for x in s[2:].split("|")]
-        if len(parts) >= 4:
-            items.append({"id": parts[0], "page": parts[1], "title": parts[2],
-                          "note": " | ".join(parts[3:])})
-    return items
+    return parse_manual(path.read_text(encoding="utf-8"))
 
 
 def manual_open_url(root: Path, route: str) -> str:

@@ -1440,6 +1440,97 @@ def test_e2e_index_new_assert_verbs_render_and_validate() -> None:
         ), [(c["check"], c["level"]) for c in res.checks]
 
 
+def test_e2e_index_request_assertion_shape() -> None:
+    """D142：`request <api> <json-path> <expected>` 的形态门；api 不得被 testid 提取器误算。
+
+    正向：合法 request 断言 PASS；反向：缺 path/expected、api 无点、`(空)`、与
+    initial/unchanged 叠写均 FAIL。两侧同测（校验器放行 + 生成器可渲染）。
+    """
+    good = CASE_GOOD.replace(
+        "- text home-title 首页        # 页面标题文案为「首页」",
+        "- request app.updateApp Data.reqDTO.config.nodeParam.mailStatus (缺席)  # 字段缺席")
+
+    def level(case_text: str) -> tuple[str, list[dict]]:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            mk_prototype(root)
+            mk_cases(root, case_text)
+            mk_index(root)
+            res = ve.validate(root)
+            return res.status, res.checks
+
+    status, checks = level(good)
+    assert not any(c["check"] == "request 断言形态" and c["level"] == "FAIL" for c in checks), checks
+    assert any(c["check"] == "request 断言形态" and c["level"] == "PASS" for c in checks), checks
+    assert gn.ts_case(
+        {"id": "E2E-HOME-001", "_title": "t", "step": ["click home-cta-btn"],
+         "expected": ["request app.updateApp Data.a (缺席)"], "testid": ["home-cta-btn"]},
+        "/",
+    ).count("await atlasExpectRequest(") == 1
+
+    bad_cases = [
+        ("request app.updateApp", "形态"),
+        ("request app Data.a (缺席)", "api 须为带点后缀"),
+        ("request app.updateApp Data.a (空)", "(空) 三态不明"),
+        ("initial: request app.updateApp Data.a null", "叠写"),
+    ]
+    for bad, needle in bad_cases:
+        status, checks = level(CASE_GOOD.replace(
+            "- text home-title 首页        # 页面标题文案为「首页」", f"- {bad}  # bad"))
+        row = next(c for c in checks if c["check"] == "request 断言形态")
+        assert row["level"] == "FAIL", (bad, row)
+        assert needle in row["detail"], (bad, row)
+
+    # testid 提取：api 不是 testid（不得报「原型无 app.updateApp」）
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, good)
+        mk_index(root)
+        tres = vt.validate(root)
+    assert not any("app.updateApp" in (c.get("detail") or "") for c in tres.checks), tres.checks
+
+
+def test_e2e_index_manual_block_shape() -> None:
+    """D143：manual.md 的 `atlas-manual` 块必须 ID 唯一、页面在页面表、步骤含操作/观察；
+    旧单行格式继续可用。坏块/坏页面/重复 ID ⇒ FAIL，解析失败也 FAIL。"""
+    valid = """## MANUAL-HOME-001 结构化走查
+
+```atlas-manual
+page: home
+step:
+  - 打开首页 | 首页出现 |
+  - 保存 | payload 不含字段 | const p = 1
+```
+"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root)
+        manual = root / "product" / "e2e" / "manual.md"
+        manual.write_text(valid, encoding="utf-8")
+        res = ve.validate(root)
+        row = next(c for c in res.checks if c["check"] == "manual 走查项形态")
+        assert row["level"] == "PASS", row
+
+    def level(text: str) -> dict:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            mk_prototype(root)
+            mk_cases(root, CASE_GOOD)
+            mk_index(root)
+            (root / "product" / "e2e" / "manual.md").write_text(text, encoding="utf-8")
+            res = ve.validate(root)
+            return next(c for c in res.checks if c["check"] == "manual 走查项形态")
+
+    assert level(valid.replace("page: home", "page: nope"))["level"] == "FAIL"
+    assert level(valid.replace("  - 打开首页 | 首页出现 |", "  - 打开首页 | |"))["level"] == "FAIL"
+    dup = valid + "\n" + valid.replace("MANUAL-HOME-001", "MANUAL-HOME-001")
+    assert level(dup)["level"] == "FAIL"
+    assert level(valid.replace("page: home", "id: MANUAL-HOME-001\npage: home"))["detail"].startswith("解析失败")
+
+
 def test_e2e_index_title_must_match_shard() -> None:
     """契约 §8.2（2026-09-25 补，`3509 §B31`）：索引 `中文标题` == 分片
     `## <ID> <标题>` 的**标题段**（空白归一后全等）。
