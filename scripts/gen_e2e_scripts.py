@@ -5,9 +5,9 @@
 改为「操作脚本」）：
   * 读 `product/e2e/cases/<page>.md` 的 `atlas-case` 块，**一页一脚本**；
   * 生成**可运行的操件脚本**：每条用例一个测试——`goto(<页面 URL>)` → 按 `step`
-    **逐行执行动作**（click / fill / select / check / uncheck / press / hover /
-    refresh / goto）→ 按 `expected` **逐行执行断言**（text / contains / count /
-    visible / hidden / enabled / disabled / value）；`#` 之后的中文说明作为注释保留；
+    **逐行执行动作**（动词表见契约 §5.5；含 click / fill / type / press 等）→ 按
+    `expected` **逐行执行断言**（text / contains / count / visible / hidden /
+    enabled / disabled / value）；`#` 之后的中文说明作为注释保留；
   * **动词解析失败即中止**：`step` / `expected` 出现词表外的动词 → 报错并列出违规行，
     不得静默跳过或降级为注释；
   * `testid:` 数组作为**元素齐全守卫**：每用例运行前按**自动等待**断言其列出的 testid 全部
@@ -93,7 +93,7 @@ APP_LOGIN_MODES = ("real", "fabricated", "none")
 MOCK_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 
 # 分片 step / expected 的动词词表（契约 `rings/e2e/reference.md` §5.5，2026-09-23 定）
-ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "hover", "refresh", "goto", "waitFor", "download", "upload", "dispatch")
+ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "type", "hover", "refresh", "goto", "waitFor", "download", "upload", "dispatch")
 ASSERT_VERBS = ("text", "contains", "count", "countOptions", "visible", "hidden", "enabled", "disabled", "checked", "unchecked", "value", "attr", "delta")
 NO_TESTID_VERBS = ("refresh", "goto")  # 这两个动词第二个 token 不是 testid（goto 的值是路径）
 # 契约 §5.5（2026-10-16 补，issue #R4）：`click` / `hover` 默认追加 `{ force: true }`
@@ -526,6 +526,15 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
             actions.append(f"await {tid_locator(tid)}.uncheck();")
         elif verb == "press":
             actions.append(f"await {tid_locator(tid)}.press({json.dumps(value)});")
+        elif verb == "type":
+            # 契约 §5.5（D134，2026-10-23）：逐字键入 —— 触发 keydown/keypress/input 的真实
+            # 按键链，供带掩码 / 受控输入的控件使用（`fill` 一次性写 DOM 不触发组件内部解析，
+            # 如 Ant Design RangePicker 的日期输入）。**不先清空原值**；替换语义用 `fill`。
+            if not value.strip():
+                raise ValueError(
+                    f"{cid}: `type` 需要输入文本，得空值：{s!r}（契约 §5.5）")
+            actions.append(
+                f"await {tid_locator(tid)}.pressSequentially({json.dumps(value, ensure_ascii=False)});")
         elif verb == "hover":
             actions.append(
                 f"await {tid_locator(tid)}.hover("
@@ -1636,6 +1645,31 @@ def main() -> int:
             "  const l = loc.nth(nth);\n"
             "  return (await l.isVisible()) ? l : null;\n"
             "}\n"
+            "async function atlasVisibleText(loc: any): Promise<string> {\n"
+            "  // 契约 §5.5（D133，2026-10-23）：`value` 读**可见文本**。组件库会在触发器内放\n"
+            "  // 视觉隐藏的 a11y 播报节点（Ant Design Select 交互后注入的 aria-live span，opacity:0），\n"
+            "  // innerText 会把同一文案读两遍（现场：模式选择器断言收到两行相同标签）⇒ 采值前把\n"
+            "  // 不可见子树临时移出布局，读完（含异常路径）原样恢复 style；innerText 的排版归一半径不变。\n"
+            "  return loc.evaluate((e: HTMLElement) => {\n"
+            "    const hidden: { el: HTMLElement; style: string | null }[] = [];\n"
+            "    for (const node of Array.from(e.querySelectorAll('*')) as HTMLElement[]) {\n"
+            "      const check = (node as any).checkVisibility;\n"
+            "      const visible = typeof check === 'function'\n"
+            "        ? check.call(node, { opacityProperty: true, visibilityProperty: true })\n"
+            "        : (() => { const s = getComputedStyle(node); return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0'; })();\n"
+            "      if (visible) continue;\n"
+            "      hidden.push({ el: node, style: node.getAttribute('style') });\n"
+            "      node.style.setProperty('display', 'none', 'important');\n"
+            "    }\n"
+            "    try { return (e.innerText || '').trim(); }\n"
+            "    finally {\n"
+            "      for (let i = hidden.length - 1; i >= 0; i--) {\n"
+            "        const { el, style } = hidden[i];\n"
+            "        if (style === null) el.removeAttribute('style'); else el.setAttribute('style', style);\n"
+            "      }\n"
+            "    }\n"
+            "  });\n"
+            "}\n"
             "async function atlasValueOf(page: any, tid: string): Promise<string | null> {\n"
             "  // 契约 §5.5（B173-1，2026-10-04）：`value` 断言/探针的实现无关入口。\n"
             "  // 原生表单元素读 input 值；否则视作 trigger+listbox 组合（如 Radix/shadcn\n"
@@ -1645,7 +1679,7 @@ def main() -> int:
             "  const tag = await l.evaluate((e) => e.tagName.toLowerCase());\n"
             "  return (tag === 'select' || tag === 'input' || tag === 'textarea')\n"
             "    ? l.inputValue()\n"
-            "    : (await l.innerText()).trim();\n"
+            "    : atlasVisibleText(l);\n"
             "}\n"
             "async function atlasSelect(page: any, tid: string, label: string, nth: number = 0) {\n"
             "  // 契约 §5.5（B173-1，2026-10-04；**2026-10-19 D112** 选项定位放宽）：`select` 的语义 =\n"
@@ -1706,7 +1740,10 @@ def main() -> int:
             "  if (tag === 'select' || tag === 'input' || tag === 'textarea') {\n"
             "    await expect(el).toHaveValue(v);\n"
             "  } else {\n"
-            "    await expect(el).toHaveText(v, { useInnerText: true });\n"
+            "    // 契约 §5.5（D133）：读可见文本，保留 expect 的自动轮询语义（元素迟到/重渲染）。\n"
+            "    await expect.poll(async () => {\n"
+            "      try { return await atlasVisibleText(el); } catch { return null; }\n"
+            "    }, { timeout: ATLAS_WAIT_TIMEOUT_MS }).toBe(v);\n"
             "  }\n"
             "}\n"
             "async function atlasProbeOnce(page: any, p: any): Promise<boolean | null> {\n"

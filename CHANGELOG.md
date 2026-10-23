@@ -4,6 +4,22 @@
 
 ---
 
+## [Unreleased]
+
+### 🩹 `value` 断言读可见文本（D133）
+
+* **假红修复**：Ant Design Select 交互后会在触发器内注入 `aria-live` 播报 span（`opacity:0`），旧实现用 `innerText` 把选中文案读两遍，`value` 断言在「先选择再断言」的用例上必红而页面本身正常。
+* **定案**：新增 `atlasVisibleText` 助手（临时移出不可见子树 → 读 `innerText` → `try/finally` 恢复 style），`atlasValueOf` 与 `atlasExpectValue` 统一走它；原生表单元素的 `toHaveValue` 路径不变。
+* **钉**：`test_value_reads_visible_text_excluding_a11y_mirror` 从生成物抽助手在 Node 里真求值（隐藏播报不计入、style 恢复、发射面无裸 `innerText` 回退）。
+
+### ⌨️ E2E 新增 `type` 逐字输入动词（D134）
+
+* **场景**：带掩码 / 受控输入的控件（如 Ant Design RangePicker 的日期输入）用 `fill` 一次性写 DOM 不会触发组件内部解析，模型状态不提交；逐条 `press` 每次只发单键、无法形成连续输入链。
+* **定案**：`type <tid> <text>` → `locator.pressSequentially(text)`，逐字触发 `keydown/keypress/input`；**不先清空**原值（替换语义用 `fill`），值必填；动作词表 13 → 14。
+* **钉**：样例守恒 +1、`test_type_verb_emits_press_sequentially_without_clearing`（发射形态 / 空值中止 / `[N]`）+ 校验器动作侧 `test_e2e_index_type_is_action_not_assertion`；变异 **M134**。
+
+---
+
 ## [v0.2.0-beta.2] - 2026-10-22 - 2026-10-22
 
 ### ✨ E2E hash 查询参数（D132）

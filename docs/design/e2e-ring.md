@@ -121,7 +121,7 @@ product/e2e/
 
 - 分片另有 `intent` 字段：**可证伪的一句话声明**（这条用例证明什么），不得是「页面显示正确」类模糊表述。
 - **`step` / `expected` 行式语法**：`<动词> <testid> [<值>]  # 中文说明`，词表封闭：
-  - **动作（13 词，封闭）**：`click` `fill` `select` `check` `uncheck` `press` `hover` `dispatch` `refresh` `goto` `waitFor` `download` `upload`（`click` / `hover` 缺省追加 `force: true`，`dispatch` = 合成事件直发——力面三态、适用边界与值域封闭见契约 §5.5）
+  - **动作（14 词，封闭）**：`click` `fill` `type` `select` `check` `uncheck` `press` `hover` `dispatch` `refresh` `goto` `waitFor` `download` `upload`（`click` / `hover` 缺省追加 `force: true`，`dispatch` = 合成事件直发，`type` = 逐字键入——力面三态、适用边界与值域封闭见契约 §5.5）
   - **断言（13 词，封闭）**：`text` `contains` `count` `visible` `hidden` `enabled` `disabled` `checked` `unchecked` `value` `countOptions` `attr` `delta`（相对值增量断言，应对未读数 / 购物车类累加业务，无需硬编码初始基数）
   - `expected` 行可加 `initial:` / `unchanged:` 豁免前缀；中文降为 `#` 注释。
 

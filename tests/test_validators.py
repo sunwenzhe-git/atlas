@@ -1487,6 +1487,25 @@ def test_e2e_index_download_is_action_not_assertion() -> None:
     assert bad["expected 动词合法"] == "FAIL", bad
 
 
+def test_e2e_index_type_is_action_not_assertion() -> None:
+    """契约 §5.5（D134，2026-10-23）：`type` 属**动作**（写在 `step` 侧）。
+
+    两侧同测：写在 `step` ⇒ 校验器放行（`step 动词合法` PASS）；写在 `expected` ⇒ 被拒
+    （断言词表里没有它）——反向证据：它确实落在动作侧，不是两边都收。
+    """
+    ok = _levels(CASE_GOOD.replace(
+        "- click home-cta-btn          # 点击主操作按钮",
+        "- type home-title 首页        # 逐字键入标题",
+    ))
+    assert ok["step 动词合法"] == "PASS", ok
+
+    bad = _levels(CASE_GOOD.replace(
+        "- text home-title 首页        # 页面标题文案为「首页」",
+        "- type home-title 首页",
+    ))
+    assert bad["expected 动词合法"] == "FAIL", bad
+
+
 def test_e2e_index_upload_is_action_and_fixture_reference_closed() -> None:
     """契约 §5.5（B201-1，2026-10-12）：`upload` 属**动作**（写在 `step` 侧），
     值 = **相对 `product/e2e/fixtures/` 的文件路径**（与 §5.8 mock 同一 fixtures 树）。

@@ -4,6 +4,21 @@
 
 ---
 
+## [Unreleased]
+
+### 🩹 `value` 断言读可见文本（D133）
+
+- **假红修复**：Ant Design Select 交互后会向触发器注入 `aria-live` 播报 span（`opacity:0`），旧实现用 `innerText` 把选中文案读两遍；新增 `atlasVisibleText`，采值前临时移出不可见子树、读完恢复 style。
+- **钉**：`test_value_reads_visible_text_excluding_a11y_mirror` 在 Node 里以假 DOM 真求值（隐藏播报不计入、style 恢复、发射面无裸 `innerText` 回退）。
+
+### ⌨️ E2E 新增 `type` 逐字输入动词（D134）
+
+- **场景**：带掩码 / 受控输入的控件（如 Ant Design RangePicker 的日期输入）用 `fill` 一次性写 DOM 不会触发组件内部解析；逐条 `press` 无法形成连续输入链。
+- **定案**：`type <tid> <text>` → `locator.pressSequentially(text)`，逐字触发按键链；**不先清空**原值（替换用 `fill`），值必填；动作词表 13 → 14。
+- **钉**：`test_type_verb_emits_press_sequentially_without_clearing` + `test_e2e_index_type_is_action_not_assertion`；变异 **M134**。
+
+---
+
 ## [v0.2.0-beta.2] - 2026-10-22 - 2026-10-22
 
 ### ✨ E2E hash 查询参数 (D132)

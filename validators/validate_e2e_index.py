@@ -102,7 +102,7 @@ REFRESH_WORDS = ("刷新", "reload", "refresh")
 I18N_HINTS = (re.compile(r"\bt\("), re.compile(r"\b[a-z]+\.[a-z]+\.[a-z]+\b"), re.compile(r"\b[A-Z]{2,}_[A-Z_]+\b"))
 
 # 分片 step / expected 的动词词表（契约 `rings/e2e/reference.md` §5.5，2026-09-23 定）
-ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "hover", "refresh", "goto", "waitFor", "download", "upload", "dispatch")
+ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "type", "hover", "refresh", "goto", "waitFor", "download", "upload", "dispatch")
 ASSERT_VERBS = ("text", "contains", "count", "countOptions", "visible", "hidden", "enabled", "disabled", "checked", "unchecked", "value", "attr", "delta")
 # 契约 §5.6 R9：`expected` 行可加**行首前缀**，显式声明该断言的判据形状。
 # 本校验器只负责**形态项**（前缀后是词表内的动词 / 不嵌套 / `unchanged:` 的用例有提交性动作）；

@@ -1016,6 +1016,79 @@ def test_select_and_value_are_implementation_agnostic() -> None:
             assert frag in ts, (frag, ts[:2000])
 
 
+def test_value_reads_visible_text_excluding_a11y_mirror() -> None:
+    """契约 §5.5（D133，2026-10-23）：`value` 读**可见文本**，不得把视觉隐藏的 a11y
+    播报节点算进去。
+
+    现场（百炼/v3 邮件工作流）：Ant Design Select 在用户交互后向触发器内注入
+    `aria-live` 播报 span（`opacity:0`），`innerText` 把选中文案读两遍
+    （`模式一…\\n模式一…`）⇒ `value` 断言假红。本钉从生成物抽出 `atlasVisibleText`
+    在 Node 里真求值：隐藏子树不计入、读完 style 原样恢复；同时钉发射面改用该助手。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        text = spec_of(root)
+    assert "async function atlasVisibleText(" in text, text[:2000]
+    assert "await atlasVisibleText(el)" in text, text
+    # 探针侧（atlasValueOf）也必须走同一助手；只钉断言侧会让探针回退 innerText 仍绿
+    assert "    : atlasVisibleText(l);" in text, "atlasValueOf 探针未走可见文本助手"
+    # 回归：非原生元素不得再走 innerText 直读
+    assert "toHaveText(v, { useInnerText: true })" not in text, text
+
+    m = re.search(r"async function atlasVisibleText\(loc: any\): Promise<string> \{.*?\n\}\n", text, re.S)
+    assert m, "未找到 atlasVisibleText 定义"
+    # Node 不能直接 eval TS 注解：仅剥类型标注，逻辑逐字保留。
+    js_src = (m.group(0)
+              .replace("(loc: any): Promise<string>", "(loc)")
+              .replace("(e: HTMLElement)", "(e)")
+              .replace("const hidden: { el: HTMLElement; style: string | null }[] = []", "const hidden = []")
+              .replace(" as HTMLElement[]", "")
+              .replace("(node as any)", "node"))
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node 不可用，跳过可见文本求值")
+    script = """
+const factory = new Function(__SRC__ + "\\nreturn atlasVisibleText;");
+const helper = factory();
+function node({ text = "", opacity = 1, children = [] } = {}) {
+  const n = {
+    _hidden: false,
+    _styleAttr: opacity === 0 ? "opacity: 0;" : null,
+    children,
+    text,
+    style: { setProperty(name, value) { if (name === "display") { n._hidden = true; n._styleAttr = `display: ${value};`; } } },
+    getAttribute(name) { return name === "style" ? n._styleAttr : null; },
+    setAttribute(name, value) { if (name === "style") { n._styleAttr = value; n._hidden = /display\\s*:\\s*none/.test(String(value)); } },
+    removeAttribute(name) { if (name === "style") { n._styleAttr = null; n._hidden = false; } },
+    checkVisibility(opts = {}) { const opacityHidden = opts.opacityProperty === true && opacity === 0; return !n._hidden && !opacityHidden; },
+    querySelectorAll() { return children.flatMap((c) => [c, ...c.querySelectorAll()]); },
+  };
+  Object.defineProperty(n, "innerText", {
+    get() { return [n.text, ...children.filter((c) => !c._hidden).map((c) => c.innerText)].join(""); },
+  });
+  return n;
+}
+(async () => {
+  const label = "模式一：读取邮件（获取全文，可带附件）";
+  const shown = node({ text: label });
+  const live = node({ text: label, opacity: 0 });
+  const rootEl = node({ children: [shown, live] });
+  const loc = { evaluate: async (fn) => fn(rootEl) };
+  const value = await helper(loc);
+  process.stdout.write(JSON.stringify({ value, restored: live.getAttribute("style"), hidden: live._hidden, label }));
+})().catch((err) => { console.error(err); process.exit(1); });
+"""
+    script = script.replace("__SRC__", json.dumps(js_src, ensure_ascii=False))
+    proc = subprocess.run([node, "-e", script], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got["value"] == got["label"], f"隐藏的 a11y 播报被计入 value：{got}"
+    assert got["restored"] == "opacity: 0;", f"采值后未恢复隐藏节点原始 style：{got}"
+    assert got["hidden"] is False, f"采值后隐藏节点仍处于 display:none：{got}"
+
+
 def test_download_renders_register_then_click() -> None:
     """契约 §5.5 / §7.1（`3509 §B26`）：`download` 属**动作**，必须渲染为「**先注册下载监听 →
     再点击 → 校验建议文件名**」—— 下载是动作的副作用，事后无法补取证。
@@ -1171,6 +1244,7 @@ ACTION_SAMPLES = {
     "check": "home-cta-btn",
     "uncheck": "home-cta-btn",
     "press": "home-cta-btn Enter",
+    "type": "home-title 首页",
     "hover": "home-cta-btn",
     "refresh": "",
     "goto": "/home",
@@ -1199,6 +1273,32 @@ def test_every_action_verb_renders() -> None:
         }
         spec = gn.ts_case(case, "/")
         assert "home-cta-btn" in spec, (verb, spec)
+
+
+def test_type_verb_emits_press_sequentially_without_clearing() -> None:
+    """契约 §5.5（D134，2026-10-23）：`type` 渲染为 `pressSequentially`（逐字键入，
+    不清空原值），支持 `[N]` 下标；空值 ⇒ 报错中止（不静默空转）。
+    """
+    gn = _load_gen()
+    case = {
+        "id": "E2E-TYPE-001",
+        "_title": "逐字输入日期",
+        "step": ["type date-input[1] 2026-10-01"],
+        "expected": ["visible date-input"],
+        "testid": ["date-input"],
+    }
+    spec = gn.ts_case(case, "/")
+    assert "await page.getByTestId('date-input').nth(1).pressSequentially(\"2026-10-01\");" in spec
+    assert ".fill(" not in spec
+    assert ".clear(" not in spec
+    with pytest.raises(ValueError, match="type"):
+        gn.ts_case({
+            "id": "E2E-TYPE-002",
+            "_title": "空值中止",
+            "step": ["type date-input"],
+            "expected": ["visible date-input"],
+            "testid": ["date-input"],
+        }, "/")
 
 
 def test_dispatch_verb_emits_synthetic_event_without_force() -> None:
@@ -2430,6 +2530,7 @@ def test_strict_mode_actions_and_asserts_use_first() -> None:
             "click item-btn",
             "hover item-card",
             "fill item-input hello",
+            "type item-input 你好",
             "press item-input Enter",
             "check item-checkbox",
             "uncheck item-checkbox",
@@ -2452,6 +2553,7 @@ def test_strict_mode_actions_and_asserts_use_first() -> None:
     assert "await page.getByTestId('item-btn').first().click({ force: true });" in spec
     assert "await page.getByTestId('item-card').first().hover({ force: true });" in spec
     assert "await page.getByTestId('item-input').first().fill(\"hello\");" in spec
+    assert "await page.getByTestId('item-input').first().pressSequentially(\"你好\");" in spec
     assert "await page.getByTestId('item-input').first().press(\"Enter\");" in spec
     assert "await page.getByTestId('item-checkbox').first().check();" in spec
     assert "await page.getByTestId('item-checkbox').first().uncheck();" in spec
