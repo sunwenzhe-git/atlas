@@ -69,7 +69,7 @@ NBER（美国国家经济研究局）2026 年工作论文 35275 追踪了超过 
 | :--- | :--- | :--- | :--- |
 | **CPU / 算力核心** | **LLM（大语言模型）** | Claude 3.7 / GPT-5 / GLM-5 | 负责纯粹的逻辑推理与自回归计算（纯算力输入与输出） |
 | **操作系统 / Runtime (OS)** | **Agent Harness** | Claude Code / Cursor / Pi Agent / OpenCode | **提供系统调用（Syscall）与运行环境**<br>• 文件读写、Bash 执行（工具调用）<br>• 内存与缓存管理（KV Cache 保温、上下文窗口截断）<br>• 多进程调度（Subagent 派生） |
-| **工程框架 / 工业级脚手架** | **Project Harness** | **Atlas** / Trellis / OpenSpec | **定义项目物理秩序与全生命周期防线**<br>• 规范与应然资产基线（PRD / AC 账本）<br>• 依赖图谱影响面基准（可选增强，advisory）<br>• 机器物理阻断门禁（防止 AI 敷衍实现与伪造测试） |
+| **工程框架 / 工业级脚手架** | **Project Harness** | **Atlas** / Trellis / OpenSpec | **定义项目物理秩序与全生命周期防线**<br>• 规范与应然资产基线（PRD / AC 账本）<br>• 依赖图谱影响面基准（advisory；后端栈条件项，纯前端栈近零收益）<br>• 机器物理阻断门禁（防止 AI 敷衍实现与伪造测试） |
 
 ### 3. 为什么说 Project Harness 是 AI 时代的 Spring Boot？
 
