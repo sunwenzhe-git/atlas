@@ -33,7 +33,8 @@ TABLE_ROUTES = ["页面/路由", "域", "用途", "关键交互", "实现状态"
 TABLE_DATA_MODELS = ["表/模型", "字段", "类型", "约束/默认", "关系", "枚举"]
 TABLE_APIS = ["方法", "路径", "用途", "请求要点", "响应要点", "来源模块"]
 
-FORBIDDEN = ["TODO", "待补充", "TBD", "待定", "(To be filled)", "[FIELD:]", "视情况而定", "后续补充"]
+FORBIDDEN = ["TODO", "待补充", "TBD", "待定", "(To be filled)", "[FIELD:]", "视情况而定", "后续补充",
+             "[必填", "[条件必填"]
 
 SECRET_RES = [
     re.compile(r"\bsk-[A-Za-z0-9]{12,}"),

@@ -372,6 +372,65 @@ def test_f40_root_config_found_under_app_scope() -> None:
         assert data["items"][0]["run_command"] == "python3 -m pytest", data["items"][0]
 
 
+def test_rfc20261023_02_manifest_lists_assembly_files_and_matches_digest() -> None:
+    """RFC-20261023-02 ②：装配基线 manifest = `{digest, files}`；files 覆盖装配集且摘要
+    与 `digest()` 逐字节一致；装配集外文件不进基线。
+
+    变异（**M-new-4** 的联动面）：摘要与逐文件表分叉而门仍接受 ⇒
+    `test_rfc20261023_02_manifest_unpaired_warns` 红。
+    """
+    pd = load("pkg_digest", "scripts/pkg_digest.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "scripts").mkdir()
+        (root / "scripts" / "a.py").write_text("a\n", encoding="utf-8")
+        (root / "validators").mkdir()
+        (root / "validators" / "x.py").write_text("x\n", encoding="utf-8")
+        (root / "docs").mkdir()
+        (root / "docs" / "d.md").write_text("d\n", encoding="utf-8")
+        m = pd.manifest(root)
+        assert set(m) == {"digest", "files"}, m
+        assert set(m["files"]) == {"scripts/a.py", "validators/x.py"}, m
+        assert m["digest"] == pd.digest(root)
+        # 装配集外变化不进基线；装配集内变化同时改逐文件指纹与摘要
+        (root / "docs" / "d.md").write_text("d2\n", encoding="utf-8")
+        assert pd.manifest(root)["files"] == m["files"]
+        (root / "scripts" / "a.py").write_text("a2\n", encoding="utf-8")
+        m2 = pd.manifest(root)
+        assert m2["files"]["scripts/a.py"] != m["files"]["scripts/a.py"]
+        assert m2["digest"] != m["digest"]
+
+
+def test_rfc20261023_02_stamp_writes_paired_manifest_and_version() -> None:
+    """落戳双写：VERSION 三行契约不变；MANIFEST.digest == VERSION 首行；
+    「VERSION 在场 ⇒ manifest 在场」（写序先 MANIFEST 后 VERSION 的可观测推论）。"""
+    pd = load("pkg_digest", "scripts/pkg_digest.py")
+    with tempfile.TemporaryDirectory() as td:
+        src, root = Path(td) / "src", Path(td) / "proj"
+        (src / "scripts").mkdir(parents=True)
+        (src / "scripts" / "a.py").write_text("a\n", encoding="utf-8")
+        root.mkdir()
+        d = pd.stamp_file(src, root / ".atlas" / "VERSION")
+        vlines = [l for l in (root / ".atlas" / "VERSION").read_text(encoding="utf-8").splitlines() if l.strip()]
+        assert vlines[0] == d and len(vlines) == 3, vlines
+        m = json.loads((root / ".atlas" / "MANIFEST.json").read_text(encoding="utf-8"))
+        assert m["digest"] == d and m["files"], m
+
+
+def test_rfc20261023_02_manifest_empty_assembly_raises() -> None:
+    """空装配集 ⇒ `EmptyAssembly`（不得把空基线记成一次合法装配）。"""
+    pd = load("pkg_digest", "scripts/pkg_digest.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "docs").mkdir()
+        (root / "docs" / "d.md").write_text("d\n", encoding="utf-8")
+        try:
+            pd.manifest(root)
+        except pd.EmptyAssembly:
+            return
+        raise AssertionError("空装配集必须抛 EmptyAssembly")
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

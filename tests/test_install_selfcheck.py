@@ -378,6 +378,8 @@ def test_update_guard_refuses_dirty_touchpoints_and_force_overrides() -> None:
         assert "感知到装配触点未提交改动" in r2[1], r2[1]
         stamped = (root / ".atlas" / "VERSION").read_text(encoding="utf-8")
         assert stamped != "dirty local edit\n" and stamped.count("\n") == 3, stamped
+        # RFC-20261023-02 ②：真装配同点落基线 manifest（install.sh 落戳后硬校验其在场）。
+        assert (root / ".atlas" / "MANIFEST.json").is_file(), "真装配未落下 .atlas/MANIFEST.json"
 
 
 def test_f54_dry_run_writes_nothing_and_leaves_no_residue_on_fresh_target() -> None:
@@ -411,13 +413,19 @@ def test_f54_dry_run_writes_nothing_and_leaves_no_residue_on_fresh_target() -> N
         (root / ".trellis").mkdir()
         (root / ".atlas" / "VERSION").write_text(
             "f54-fixture-stamp\n2026-10-16T00:00:00+08:00\nnowhere\n", encoding="utf-8")
+        # RFC-20261023-02 ②（B2）：基线 manifest 也是装配态——干跑同样不得动它。
+        (root / ".atlas" / "MANIFEST.json").write_text(
+            '{"digest": "f54-fixture-stamp", "files": {"x": "y"}}\n', encoding="utf-8")
         before = (root / ".atlas" / "VERSION").read_bytes()
+        before_m = (root / ".atlas" / "MANIFEST.json").read_bytes()
         r = sh("bash", str(PKG_ROOT / "install.sh"),
                "--update", "--target", str(root),
                "--no-skill", "--no-patch", "--no-wiring", "--dry-run")
         assert r[0] == 0, r[1]
         assert "[dry-run] 装配版本戳" in r[1], r[1]
         assert (root / ".atlas" / "VERSION").read_bytes() == before, "干跑真写了版本戳（恒等铁律破例）"
+        assert (root / ".atlas" / "MANIFEST.json").read_bytes() == before_m, \
+            "干跑真写了装配基线 manifest（M-new-5：摘干跑闸 ⇒ 本断言红）"
 
         # ② 全新 target 干跑：不残留 <target>/.atlas/（旧路径 stamp_file mkdir 副作用 ⇒ 红）
         fresh = Path(td) / "fresh"

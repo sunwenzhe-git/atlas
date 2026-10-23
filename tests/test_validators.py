@@ -315,7 +315,13 @@ PRD_DEMO = """# demo 域 PRD
 
 ## 六、Assumptions & Defaults
 
+无。
+
 ## 七、变更记录
+
+| 版本 | 日期 | 变更内容及原因 | 影响 | 结论与后续 |
+|---|---|---|---|---|
+| 1.0 | 2026-09-25 | 初始 | 无（未触达验证面） | 无 |
 """
 
 
@@ -2575,6 +2581,89 @@ def test_prd_change_form_fields_and_revision_log_body() -> None:
         mk_prd_raw(root, empty11, dom)
         c = _p4(root)
         assert c["status"] == "FAIL" and "正文为空" in c["detail"], c
+
+
+def test_rfc20261023_02_change_record_shape_and_impact_column() -> None:
+    """RFC-20261023-02 ③：§七 表头三态 + 「影响」单元格空 ⇒ FAIL（独立 check 行）。
+
+    变异：**M-new-3** 删 legacy 分支（3 列直接 FAIL）⇒ 第二侧红；摘「影响」空判据
+    ⇒ 第三侧红；表头不可辨分支摘掉 ⇒ 第四侧红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        dom = FM_DOMAIN + PRD_DEMO.format(ac="AC-HOME-001", rows="| `AC-HOME-001` | 纯渲染 |")
+        plain = FM_GLOBAL + PRD_GLOBAL
+
+        def row() -> dict:
+            return {c["check"]: c for c in vpr.validate(root).checks}["变更记录形态"]
+
+        mk_prd_raw(root, plain, dom)
+        assert row()["status"] == "PASS", row()
+
+        legacy = dom.replace(
+            "| 版本 | 日期 | 变更内容及原因 | 影响 | 结论与后续 |\n|---|---|---|---|---|\n"
+            "| 1.0 | 2026-09-25 | 初始 | 无（未触达验证面） | 无 |",
+            "| 版本 | 日期 | 变更说明 |\n|---|---|---|\n| 1.0 | 2026-09-25 | 初始 |")
+        mk_prd_raw(root, plain, legacy)
+        assert row()["status"] == "WARN" and "legacy" in row()["detail"], row()
+
+        blank = dom.replace("| 无（未触达验证面） | 无 |", "|  | 无 |")
+        mk_prd_raw(root, plain, blank)
+        assert row()["status"] == "FAIL" and "影响" in row()["detail"], row()
+
+        weird = dom.replace("| 变更内容及原因 | 影响 | 结论与后续 |", "| 甲 | 乙 | 丙 |")
+        mk_prd_raw(root, plain, weird)
+        assert row()["status"] == "FAIL", row()
+
+
+def test_rfc20261023_02_optional_section_explicit_none() -> None:
+    """RFC-20261023-02 ④：§六 空表/空节且无显式结论 ⇒ WARN 首版；`无` ⇒ PASS；
+    开户最小集（§六 整节不出现）⇒ 本检查不参与（PASS 行）。
+
+    变异：**M-new-2** 空表判据恒真（恒 PASS）⇒ 第一侧红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        plain = FM_GLOBAL + PRD_GLOBAL
+        dom = FM_DOMAIN + PRD_DEMO.format(ac="AC-HOME-001", rows="| `AC-HOME-001` | 纯渲染 |")
+
+        def row() -> dict:
+            return {c["check"]: c for c in vpr.validate(root).checks}["可无项显式（§六）"]
+
+        empty = dom.replace("## 六、Assumptions & Defaults\n\n无。",
+                            "## 六、Assumptions & Defaults\n\n")
+        mk_prd_raw(root, plain, empty)
+        assert row()["status"] == "WARN" and "显式结论" in row()["detail"], row()
+
+        empty_tbl = dom.replace("## 六、Assumptions & Defaults\n\n无。",
+                                "## 六、Assumptions & Defaults\n\n"
+                                "| 假设内容 | 采用的默认值 | 影响面 | 何时需要澄清 |\n"
+                                "|---|---|---|---|\n")
+        mk_prd_raw(root, plain, empty_tbl)
+        assert row()["status"] == "WARN", row()
+
+        mk_prd_raw(root, plain, dom)
+        assert row()["status"] == "PASS", row()
+
+        na = dom.replace("## 六、Assumptions & Defaults\n\n无。\n\n", "")
+        mk_prd_raw(root, plain, na)
+        assert row()["status"] == "PASS", row()      # 节缺席 = 开户最小集，不参与
+
+
+def test_forbidden_vocabulary_single_source() -> None:
+    """RFC-20261023-02 ④ 词表守恒：两校验器 `FORBIDDEN` ⊆ `global-rules` §5 词表，
+    且 `[必填` / `[条件必填` 三方齐在（改任一侧 ⇒ 红）。"""
+    rules = (PKG_ROOT / "shared" / "global-rules.md").read_text(encoding="utf-8")
+    m = re.search(r"## 5\. 占位符禁令.*?(?=\n## )", rules, re.S)
+    assert m, "找不到 global-rules §5 占位符禁令"
+    tokens = set(re.findall(r"`([^`\n]+)`", m.group(0)))
+    vs = load("validate_structure", "validators/validate_structure.py")
+    for mod, name in ((vpr, "validate_prd"), (vs, "validate_structure")):
+        extra = set(mod.FORBIDDEN) - tokens
+        assert not extra, f"{name} FORBIDDEN 超出 §5 单源：{sorted(extra)}"
+        for tok in ("[必填", "[条件必填"):
+            assert tok in mod.FORBIDDEN, (name, "缺", tok)
+            assert tok in tokens, ("§5 缺", tok)
 
 
 def test_testids_stub_missing_fails() -> None:

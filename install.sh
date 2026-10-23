@@ -524,6 +524,14 @@ print(stamp_file(Path(sys.argv[1]), Path(sys.argv[2])))
 PY
 )"; then
     say "  [ok] .atlas/VERSION 装配版本戳（${OUT}）"
+    # RFC-20261023-02 ②（2026-10-23）：装配基线 manifest 必须与戳同点落下——落戳成功而
+    # manifest 缺失 = 逐文件对账面不存在，按装配失败处理（硬错，与 F37 同款理由）。
+    if [ -s "$TARGET/.atlas/MANIFEST.json" ]; then
+      say "  [ok] .atlas/MANIFEST.json 装配基线（逐文件摘要）"
+    else
+      say "  [FAIL] 装配基线 manifest 未落下（.atlas/MANIFEST.json）⇒ 装配态无法逐文件对账。"
+      exit 1
+    fi
   else
     # 硬错而非 WARN（F37，2026-10-15）：落戳失败 = 装配集为空（摘要算不出来）或脚本缺失。
     # 「装配 0 文件」不得被记成一次合法装配，且 WARN 会让后续步骤照常往下走。

@@ -416,6 +416,22 @@ def check_drift(root: Path, rows: Row) -> None:
              duration_ms=_elapsed_ms(started))
 
 
+def _parse_manifest(path: Path) -> dict | None:
+    """读 `.atlas/MANIFEST.json`：`{digest: str, files: {rel: sha256}}` 两键齐才认。
+
+    形态非法返回 None（调用方据此给「形态非法」WARN，不猜、不静默）。
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if (isinstance(data, dict) and isinstance(data.get("digest"), str)
+            and isinstance(data.get("files"), dict)
+            and all(isinstance(k, str) and isinstance(v, str) for k, v in data["files"].items())):
+        return data
+    return None
+
+
 def check_version(root: Path, rows: Row) -> None:
     """「装配版本」对账（gates.md §2.2，P3；2026-10-05）：.atlas/VERSION 记装配时的
     源包内容摘要，与当前源包重算摘要比对——不一致 ⇒ WARN（源包已前进/落后于装配态，
@@ -428,6 +444,13 @@ def check_version(root: Path, rows: Row) -> None:
     安装的源包位于 `<prefix>/lib/node_modules/<pkg>` ⇒ 每个文件都被滤掉 ⇒ 空摘要落戳，
     而副本侧同错重算 ⇒ 两侧恒等 ⇒ 本门恒 ok。修后 `digest()` 对空装配直接抛
     `EmptyAssembly`，故该哨兵只可能对应「修复前落的戳」。
+
+    `RFC-20261023-02` ②（2026-10-23）：`.atlas/MANIFEST.json` 装配基线（逐文件摘要）。
+    * **配对校验先行**：manifest.digest ≠ 装配戳 ⇒ 半态，退聚合口径并指名重装
+      （写序「先 MANIFEST 后 VERSION」保证 VERSION 在场即 manifest 已齐，B1）；
+    * 配对成立且漂移 ⇒ **逐文件指名**（改/增/删，各 cap 10 + 计数）；
+    * 旧装配无 manifest ⇒ 聚合口径 + ok 行尾注「正式判据未齐」（status 仍 ok）；
+    * 两分支 WARN 文案均保留 M68 三词（`atlas upgrade` / `install.sh` / `backflow`）。
     """
     version_file = root / ".atlas" / "VERSION"
     if not version_file.is_file():
@@ -449,14 +472,14 @@ def check_version(root: Path, rows: Row) -> None:
         return
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from pkg_digest import EmptyAssembly, digest  # noqa: E402  延迟导入：旧装配无此文件时走 SKIP
+        from pkg_digest import EmptyAssembly, manifest  # noqa: E402  延迟导入：旧装配无此文件时走 SKIP
     except ImportError:
         rows.add("装配版本", "SKIP",
                  "无 scripts/pkg_digest.py 或版本过旧（无 EmptyAssembly）——重跑 install.sh 补齐")
         return
     started = time.perf_counter()
     try:
-        current = digest(source_dir)
+        current = manifest(source_dir)
     except EmptyAssembly as e:
         # 独立子句且**排在 (OSError, ValueError) 之前**：EmptyAssembly 是 ValueError 子类，
         # 并进同一个 tuple 会被当成 SKIP，而「装配集为空」绝不是合法降级。
@@ -468,12 +491,65 @@ def check_version(root: Path, rows: Row) -> None:
                  duration_ms=_elapsed_ms(started))
         return
     duration_ms = _elapsed_ms(started)
-    if current == stamped:
-        rows.add("装配版本", "ok", f"源包与装配态一致（{stamped}）",
+
+    manifest_file = root / ".atlas" / "MANIFEST.json"
+    recorded = _parse_manifest(manifest_file) if manifest_file.is_file() else None
+    if manifest_file.is_file() and recorded is None:
+        rows.add("装配版本", "WARN",
+                 ".atlas/MANIFEST.json 形态非法（应为 {digest, files} 两键）——"
+                 "重跑 install.sh 补齐；源包侧 `atlas upgrade` / `install.sh` 落戳，"
+                 "细节走 `backflow.py` 三态对账",
+                 duration_ms=duration_ms)
+        return
+    if recorded is not None:
+        if recorded["digest"] != stamped:
+            rows.add("装配版本", "WARN",
+                     f"manifest 与 VERSION 不配套（manifest {recorded['digest']} ≠ 装配戳 {stamped}）"
+                     "——半态装配，重跑 install.sh；`atlas upgrade` / `install.sh` 落戳后 "
+                     "`backflow.py` 可对账细节",
+                     duration_ms=duration_ms)
+            return
+        if current["digest"] == stamped:
+            rows.add("装配版本", "ok",
+                     f"源包与装配态一致（{stamped}，{len(current['files'])} 文件基线齐）",
+                     duration_ms=duration_ms)
+            return
+        old, new = recorded["files"], current["files"]
+        changed = sorted(k for k in set(old) & set(new) if old[k] != new[k])
+        added = sorted(set(new) - set(old))
+        removed = sorted(set(old) - set(new))
+
+        def _name(keys: list[str]) -> str:
+            shown = "、".join(keys[:10])
+            return shown + (f" 等 {len(keys)} 项" if len(keys) > 10 else "")
+
+        named = []
+        if changed:
+            named.append("改=" + _name(changed))
+        if added:
+            named.append("增=" + _name(added))
+        if removed:
+            named.append("删=" + _name(removed))
+        if not named:
+            named.append("摘要不一致但逐文件无差异（manifest 与摘要算法不同代）——重跑 install.sh")
+        rows.add("装配版本", "WARN",
+                 f"源包已前进/落后于装配态（装配 {stamped} → 当前 {current['digest']}）："
+                 f"改 {len(changed)} / 增 {len(added)} / 删 {len(removed)}；" + "；".join(named)
+                 + "。生效：npm 全局源包态 `atlas upgrade` 后在项目里跑 `atlas update`；"
+                 "本地源仓态重跑 `install.sh`；差异明细跑 `backflow.py` 三态对账"
+                 "（SOURCE_ONLY 拒绝护栏；D79 ⑤）",
+                 duration_ms=duration_ms)
+        return
+
+    # 旧装配（VERSION 在场、manifest 缺）：干净的历史语义，不新增红；聚合口径 + 补装提示。
+    if current["digest"] == stamped:
+        rows.add("装配版本", "ok",
+                 f"源包与装配态一致（{stamped}）；旧装配无 manifest——正式判据未齐，重跑 install.sh 补",
                  duration_ms=duration_ms)
         return
     rows.add("装配版本", "WARN",
-             f"源包已前进/落后于装配态（装配 {stamped} → 当前 {current}）——"
+             f"源包已前进/落后于装配态（装配 {stamped} → 当前 {current['digest']}）；"
+             "旧装配无 manifest（无法逐文件指名）——重跑 install.sh 补齐。"
              "生效：npm 全局源包态 `atlas upgrade` 后在项目里跑 `atlas update`；"
              "本地源仓态重跑 `install.sh`；差异明细跑 `backflow.py` 三态对账"
              "（SOURCE_ONLY 拒绝护栏；D79 ⑤）",

@@ -865,6 +865,93 @@ def test_f37_empty_assembly_is_warn_not_skip() -> None:
         assert "装配集为空" in row["detail"], row
 
 
+# ---- RFC-20261023-02 ②：装配基线 manifest（逐文件指名 + 配对校验 + 旧装配降级）----
+
+
+def test_rfc20261023_02_manifest_drift_names_files_with_action_words() -> None:
+    """配对成立且漂移 ⇒ 逐文件指名（改/增/删 + 计数）；M68 三词在两分支各自复断言。"""
+    with tempfile.TemporaryDirectory() as td:
+        src, root = Path(td) / "atlas", Path(td) / "proj"
+        (src / "scripts").mkdir(parents=True)
+        (src / "scripts" / "a.py").write_text("a1\n", encoding="utf-8")
+        (src / "scripts" / "b.py").write_text("b1\n", encoding="utf-8")
+        root.mkdir()
+        _stamp(src, root)
+        (src / "scripts" / "a.py").write_text("a2\n", encoding="utf-8")
+        (src / "scripts" / "c.py").write_text("c1\n", encoding="utf-8")
+        (src / "scripts" / "b.py").unlink()
+        row = _version_rows(root)["装配版本"]
+        assert row["status"] == "WARN", row
+        assert "改 1 / 增 1 / 删 1" in row["detail"], row
+        for name in ("scripts/a.py", "scripts/c.py", "scripts/b.py"):
+            assert name in row["detail"], row
+        for word in ("atlas upgrade", "install.sh", "backflow"):      # M68 双分支
+            assert word in row["detail"], row
+
+
+def test_rfc20261023_02_manifest_caps_named_files_and_counts_rest() -> None:
+    """cap 10：同类超 10 只点名前 10 + 「等 N 项」（O3：上限改 0 也绿不可接受）。"""
+    with tempfile.TemporaryDirectory() as td:
+        src, root = Path(td) / "atlas", Path(td) / "proj"
+        (src / "scripts").mkdir(parents=True)
+        for i in range(12):
+            (src / "scripts" / f"f{i:02d}.py").write_text("v1\n", encoding="utf-8")
+        root.mkdir()
+        _stamp(src, root)
+        for i in range(12):
+            (src / "scripts" / f"f{i:02d}.py").write_text("v2\n", encoding="utf-8")
+        row = _version_rows(root)["装配版本"]
+        assert row["status"] == "WARN", row
+        assert "改 12" in row["detail"] and "等 12 项" in row["detail"], row
+
+
+def test_rfc20261023_02_manifest_unpaired_warns() -> None:
+    """manifest.digest ≠ 装配戳 ⇒ 半态 WARN（配对校验先行，不拿脏 manifest 逐文件指名）。
+
+    变异：**M-new-4** 摘配对校验 ⇒ 本侧红（会落进「逐文件无差异」或错误指名）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        src, root = Path(td) / "atlas", Path(td) / "proj"
+        (src / "scripts").mkdir(parents=True)
+        (src / "scripts" / "a.py").write_text("a1\n", encoding="utf-8")
+        root.mkdir()
+        _stamp(src, root)
+        mf = root / ".atlas" / "MANIFEST.json"
+        data = json.loads(mf.read_text(encoding="utf-8"))
+        data["digest"] = "deadbeefdeadbeef"
+        mf.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        row = _version_rows(root)["装配版本"]
+        assert row["status"] == "WARN" and "不配套" in row["detail"], row
+        for word in ("atlas upgrade", "install.sh", "backflow"):
+            assert word in row["detail"], row
+
+
+def test_rfc20261023_02_manifest_malformed_warns() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        src, root = Path(td) / "atlas", Path(td) / "proj"
+        (src / "scripts").mkdir(parents=True)
+        (src / "scripts" / "a.py").write_text("a1\n", encoding="utf-8")
+        root.mkdir()
+        _stamp(src, root)
+        (root / ".atlas" / "MANIFEST.json").write_text("{not-json", encoding="utf-8")
+        row = _version_rows(root)["装配版本"]
+        assert row["status"] == "WARN" and "形态非法" in row["detail"], row
+
+
+def test_rfc20261023_02_manifest_missing_is_legacy_ok_with_footnote() -> None:
+    """旧装配（VERSION 在、manifest 缺）⇒ ok + 「正式判据未齐」尾注（S4，不新增红）。"""
+    with tempfile.TemporaryDirectory() as td:
+        src, root = Path(td) / "atlas", Path(td) / "proj"
+        (src / "scripts").mkdir(parents=True)
+        (src / "scripts" / "a.py").write_text("a1\n", encoding="utf-8")
+        root.mkdir()
+        stamped = _stamp(src, root)
+        (root / ".atlas" / "MANIFEST.json").unlink()
+        row = _version_rows(root)["装配版本"]
+        assert row["status"] == "ok" and "旧装配无 manifest" in row["detail"], row
+        assert stamped in row["detail"], row
+
+
 def test_atlas_check_failure_log_written_on_fail_and_cleaned_on_pass() -> None:
     """atlas_check.py 失败时落盘 .atlas/runs/last-check-error.log；全绿时自动清理。"""
     with tempfile.TemporaryDirectory() as td:
