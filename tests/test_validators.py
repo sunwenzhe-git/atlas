@@ -3632,6 +3632,41 @@ def test_validate_testids_strip_comments() -> None:
         assert "notes-commented-html" not in counts
 
 
+def test_validate_testids_strip_comments_once_per_file() -> None:
+    """P5-A（D141）：剥注释每文件只做一次；第二次循环复用第一次结果。
+
+    直接数 `strip_comments` 的调用次数：修复前每文件 2 次（第一次循环 + 第二次循环），
+    修复后 1 次。输出仍要正确（静态属性 / dataset / setAttribute 都要抽到）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        src = root / "src"
+        src.mkdir(parents=True)
+        (src / "a.js").write_text('el.dataset.testid = "p5a-a";', encoding="utf-8")
+        (src / "b.js").write_text('<i data-testid="p5a-b"></i>', encoding="utf-8")
+        (src / "c.js").write_text('el.setAttribute("data-testid", "p5a-c");', encoding="utf-8")
+        (root / "product").mkdir(parents=True, exist_ok=True)
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: p5a-test\norigin: greenfield\napps:\n  - name: web\n    kind: frontend\n    path: src\n",
+            encoding="utf-8",
+        )
+        original = vt.strip_comments
+        calls: list[str] = []
+
+        def counted(text: str) -> str:
+            calls.append(text)
+            return original(text)
+
+        vt.strip_comments = counted
+        try:
+            _per_page, counts, files, _expanded, _dups = vt.collect_testids_expanded(root, ["src"])
+        finally:
+            vt.strip_comments = original
+        assert len(files) == 3  # 夹具自检：三个源文件
+        assert len(calls) == len(files), f"每文件只应剥一次；实际 {len(calls)} 次（修复前为 6）"
+        assert {"p5a-a", "p5a-b", "p5a-c"} <= set(counts), counts
+
+
 def test_stack_profile_review_section_validation() -> None:
     """v0.1.0-beta.14: 校验 e2e.review 配置段（mode: gate | auto-baseline | off）。"""
     with tempfile.TemporaryDirectory() as td:

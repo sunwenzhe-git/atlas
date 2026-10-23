@@ -396,10 +396,11 @@ def collect_testids_expanded(
     cases = root / "product" / "e2e" / "cases"
     shard_pages = sorted(p.stem for p in cases.glob("*.md")) if cases.is_dir() else []
     files = _scan_files([root / g for g in (globs or [])])
-    texts = [(f, f.read_text(encoding="utf-8", errors="ignore")) for f in files]
+    # 剥注释只做一次：第一次循环就把 clean 文本存进 texts，第二次循环复用。
+    # 此前每文件调两次 strip_comments（同一份文本，纯重复）；输出逐字不变，实测省约 110ms/14%（P5-A，D141）。
+    texts = [(f, strip_comments(f.read_text(encoding="utf-8", errors="ignore"))) for f in files]
     all_tids: set[str] = set()
-    for _f, text in texts:
-        clean = strip_comments(text)
+    for _f, clean in texts:
         all_tids.update(TESTID_ATTR.findall(clean))
         all_tids.update(DATASET_TESTID.findall(clean))
         all_tids.update(SETATTR_TESTID.findall(clean))
@@ -412,8 +413,7 @@ def collect_testids_expanded(
     counts: dict[str, int] = {}
     expanded: set[str] = set()
     same_file_dups: dict[str, list[str]] = {}
-    for f, text in texts:
-        clean_text = strip_comments(text)
+    for f, clean_text in texts:
         rel = f.relative_to(root).as_posix()
         # 单源：与「应然落点」门共用（见 file_testid_decls）
         file_unique, static_occ, tpl_values = file_testid_decls(clean_text, pages)

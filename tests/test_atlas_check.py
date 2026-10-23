@@ -902,6 +902,112 @@ def test_atlas_check_failure_log_written_on_fail_and_cleaned_on_pass() -> None:
         assert not fake_log.is_file(), "全绿时必须自动清理旧的 last-check-error.log"
 
 
+def test_check_events_log_records_durations_on_fail() -> None:
+    """P2（2026-10-23）：每轮向 `.atlas/runs/check-events.jsonl` 追加一行，
+    行内含门名/状态/耗时；JSON 输出同字段；失败轮也要写，且是追加不是覆盖。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / ".atlas").mkdir(parents=True, exist_ok=True)
+        os.symlink(PKG_ROOT / "validators", root / ".atlas" / "validators")
+        os.symlink(PKG_ROOT / "scripts", root / ".atlas" / "scripts")
+        (root / "product").mkdir(parents=True, exist_ok=True)
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: 夹具\napps:\n  - name: web\n    path: web\n    kind: frontend\n"
+            "    role: landing\n    stack: x\n", encoding="utf-8")
+        c = root / "product" / "e2e" / "cases"
+        c.mkdir(parents=True, exist_ok=True)
+        (c / "home.md").write_text(CASE_BAD, encoding="utf-8")
+
+        code, out = run(["--root", ".", "--fast", "--json"], root)
+        assert code == 1, out
+        log = root / ".atlas" / "runs" / "check-events.jsonl"
+        assert log.is_file(), "失败轮也必须写运行事件行"
+        lines = log.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1, lines
+        ev = json.loads(lines[0])
+        assert ev["ok"] is False
+        assert ev["fast"] is True
+        assert ev["page"] is None
+        assert ev["timestamp"]
+        assert set(ev) >= {"timestamp", "git_head", "git_dirty", "ok", "fast",
+                           "page", "ablation_id", "rows"}
+        assert all({"name", "status", "duration_ms"} <= set(r) for r in ev["rows"]), ev
+        by_name = {r["name"]: r for r in ev["rows"]}
+        assert isinstance(by_name["validate_e2e_index"]["duration_ms"], int), by_name
+        payload = json.loads(out)
+        assert any(r.get("duration_ms") is not None for r in payload["rows"]), payload
+
+        code2, out2 = run(["--root", ".", "--fast"], root)
+        assert code2 == 1, out2
+        assert len(log.read_text(encoding="utf-8").splitlines()) == 2, "事件行必须追加，不得覆盖"
+
+
+def test_check_events_log_written_on_ok_run() -> None:
+    """P2：全绿轮同样写事件行（ok=true），观测面不为失败轮专属。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        code, out = run(["--root", ".", "--fast", "--json"], root)
+        assert code == 0, out
+        log = root / ".atlas" / "runs" / "check-events.jsonl"
+        assert log.is_file()
+        ev = json.loads(log.read_text(encoding="utf-8").splitlines()[-1])
+        assert ev["ok"] is True
+        assert ev["fast"] is True
+        assert isinstance(ev["rows"], list)
+
+
+def test_check_events_log_write_failure_does_not_fail_check() -> None:
+    """P2：观测面写失败（`.atlas/runs` 被文件占用）不得反过来把检查判红。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / ".atlas").mkdir()
+        (root / ".atlas" / "runs").write_text("not a dir", encoding="utf-8")
+        code, out = run(["--root", ".", "--fast"], root)
+        assert code == 0, out
+        assert "OK" in out
+
+
+def test_check_events_log_serialization_failure_does_not_raise(monkeypatch) -> None:
+    """P2 blocker（评审 2026-10-23）：事件写入只捕 OSError 时，序列化 / 编码异常
+    会从观测面漏成检查崩溃。这里让 `json.dumps` 抛 TypeError，助手必须吞掉。"""
+    mod = _load_check()
+    with tempfile.TemporaryDirectory() as td:
+        rows = mod.Row()
+        rows.add("x", "ok", "")
+        monkeypatch.setattr(mod.json, "dumps", lambda *a, **k: (_ for _ in ()).throw(TypeError("boom")))
+        mod._write_check_event(Path(td), rows, fast=True, page=None)  # 不得抛
+
+
+def test_check_event_git_state_ignores_atlas_runtime() -> None:
+    """P2 major（评审 2026-10-23）：`.atlas/` 是运行态，不得把仓库判脏；
+    非 git 目录无法判定 ⇒ None，不冒充 clean。"""
+    mod = _load_check()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        def git(*args: str) -> None:
+            subprocess.run(["git", *args], cwd=str(root), check=True,
+                           capture_output=True, text=True)
+        git("init")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "t")
+        (root / "a.txt").write_text("a", encoding="utf-8")
+        git("add", "a.txt")
+        git("commit", "-m", "init")
+        head, dirty = mod._git_state(root)
+        assert head != "unknown" and dirty is False
+        (root / ".atlas" / "runs").mkdir(parents=True)
+        (root / ".atlas" / "runs" / "check-events.jsonl").write_text("{}\n", encoding="utf-8")
+        _head, dirty_runtime = mod._git_state(root)
+        assert dirty_runtime is False, "`.atlas/` 运行态不得把仓库判脏"
+        (root / "a.txt").write_text("changed", encoding="utf-8")
+        _head, dirty_tracked = mod._git_state(root)
+        assert dirty_tracked is True
+    with tempfile.TemporaryDirectory() as td:
+        _head, dirty_unknown = mod._git_state(Path(td))
+        assert dirty_unknown is None, "非 git 目录不得冒充 clean"
+
+
 def test_check_review_report_exposes_fake_stub_and_warns_baseline() -> None:
     """F21（R6「融与化」）：atlas_check 常驻巡检行对假桩报 FAIL，对基线兜底报 WARN。"""
     spec = importlib.util.spec_from_file_location("atlas_check", CK)
