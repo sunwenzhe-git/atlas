@@ -375,6 +375,22 @@ def cmd_release(target_version: str | None = None, auto: bool = False, dry_run: 
     # 3. 版本同步
     print(f"\n📝 正在同步版本号到 {next_ver}...")
     mod_files = sync_version_files(next_ver, dry_run=dry_run)
+    # 2026-10-25 加固(beta.8 教训:并行会话在途改动被 chore 卷入发布):版本落点同步后,
+    # 工作树里若还有「版本落点之外」的未提交改动 ⇒ 拒绝发版(等维护者分流)。
+    if not dry_run:
+        dirty_out = run_cmd("git status --porcelain", use_proxy=False).stdout
+        mod_set = {m.split(" → ")[-1].strip() for m in mod_files}
+        strays = []
+        for line in dirty_out.splitlines():
+            path = line[3:].strip().strip('"')
+            if path and path not in mod_set:
+                strays.append(path)
+        if strays:
+            raise RuntimeError(
+                "工作树存在版本落点之外的未提交改动(会被卷入发版 chore)——请先分流:\n  "
+                + "\n  ".join(strays[:10])
+                + ("\n  …" if len(strays) > 10 else ""))
+
     if mod_files:
         print(f"  已更新版本落点文件: {', '.join(mod_files)}")
     else:
