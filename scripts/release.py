@@ -222,6 +222,26 @@ def sync_version_files(new_version: str, dry_run: bool = False) -> list[str]:
         if not dry_run:
             vite_path.write_text(new_vite_text, encoding="utf-8")
 
+    # 5. docs/map/index.md 锚定版本 + atlas-map.html 版本串（2026-10-25 补，beta.8 漏刷教训：
+    #    map 锚门「始终最新」会咬发版——版本同步面必须含 docs/map 两个落点）
+    map_idx = ROOT_DIR / "docs" / "map" / "index.md"
+    if map_idx.is_file():
+        t = map_idx.read_text(encoding="utf-8")
+        nt = re.sub(r"(v\d+\.\d+\.\d+-beta\.\d+)", f"v{new_version}", t, count=0) if False else re.sub(
+            r"v\d+\.\d+\.\d+-beta\.\d+", f"v{new_version}", t)
+        if nt != t:
+            modified.append("docs/map/index.md")
+            if not dry_run:
+                map_idx.write_text(nt, encoding="utf-8")
+    map_html = ROOT_DIR / "docs" / "map" / "atlas-map.html"
+    if map_html.is_file():
+        t = map_html.read_text(encoding="utf-8")
+        nt = re.sub(r"v\d+\.\d+\.\d+-beta\.\d+", f"v{new_version}", t)
+        if nt != t:
+            modified.append("docs/map/atlas-map.html")
+            if not dry_run:
+                map_html.write_text(nt, encoding="utf-8")
+
     # 4. CHANGELOG.md (收拢 [Unreleased] 为 [vX.Y.Z])
     changelog_path = ROOT_DIR / "CHANGELOG.md"
     changelog_text = changelog_path.read_text(encoding="utf-8")

@@ -14,12 +14,14 @@
           重跑因此不被短路。
   backfill **缓行**(首批写面零触碰:不写 e2e-index 状态列、不进评审账本、不取写面 claim)。
 
-续跑语义(无独立状态文件——产物存在性 = 唯一判据,失败停环语义沿 `apply/reference.md` §7):
+续跑语义(无独立状态文件;失败停环沿 `apply/reference.md` §7;**落刀现场修正 2026-10-25**:
+  原「run 按 results.json 产物跳过」有假绿通道——Playwright 在**失败批**结束同样写出
+  results.json ⇒ 失败后重跑会跳过 run、把空行集落档成 ok。修正:run 步**恒重跑**
+  (atlas_check 本就是验收本体),**留档是唯一短路门户**——只有全链绿落过档的批才不再重跑;
   - 留档目录在 ⇒ 整批短路(已成功的批不重跑);
-  - pre 无文件产物(改的是靶场服务端态)⇒ **恒重跑**(幂等廉价,如实);
-  - run 产物 = `product/e2e/scripts/.atlas-run/results.json`:缺 ⇒ 执行;在 ⇒ 跳过并注记
-    「沿用既有 results,原批退出码未知」(正常中途失败时 Playwright 起跑清空 `.atlas-run`
-    ⇒ 产物必缺;在而留档无 = 上批死于 run 成功与落档之间的窄窗);
+  - pre / run 均**恒重跑**(pre 幂等廉价;run = 验收本体,重跑它就是验收)——
+    副作用 = 重跑会清空上一失败批的 `.atlas-run` 留证(已知观察,bugs.md 留存窗口行,
+    跨轮取证先手动归档);
   - 任一步失败 ⇒ 停该步、结构化报告(哪步/为何/已完步产物清单),下游不静默跳过。
 
 退出码:**0** 全链绿或短路;**1** 失败(结构化报告);**2** 参数错(不写盘)。纯标准库。
@@ -85,13 +87,9 @@ def _parse_rows(output: str) -> list[dict]:
 
 
 def step_run(root: Path, py: str) -> dict:
-    """run = atlas_check 默认模式(含全量真跑);产物在 ⇒ 跳过(见模块 docstring 续跑语义)。"""
+    """run = atlas_check 默认模式(含全量真跑);**恒重跑**(留档是唯一短路门户——
+    results.json 在失败批同样存在,按它跳过 = 假绿通道,落刀现场修正 2026-10-25)。"""
     started = time.perf_counter()
-    results = root / "product" / "e2e" / "scripts" / ".atlas-run" / "results.json"
-    if results.is_file():
-        return {"name": "run", "status": "SKIP",
-                "detail": "沿用既有 results.json(原批退出码未知;强制重跑请先删留档与 .atlas-run)",
-                "duration_ms": 0, "rows": [], "real_run_count": 0}
     check = root / ".atlas" / "scripts" / "atlas_check.py"
     if not check.is_file():
         return {"name": "run", "status": "FAIL", "detail": "atlas_check.py 不存在(未装配?)",

@@ -383,12 +383,18 @@ def test_docs_map_anchors_alive() -> None:
 
 
 def test_docs_map_snapshot_matches_reality() -> None:
+    if not (PKG_ROOT / "docs" / "map" / "index.md").is_file():
+        import pytest
+        pytest.skip("docs/map 不在场(采纳仓装配态;map 工程自用门,缺席 = 如实态非失败——2026-10-25 真发现:beta.8 装配进无 docs/map 采纳仓必红,补缺席守卫)")
     vs = check_snapshot(PKG_ROOT)
     assert not vs, "数字快照与实况不符:\n" + \
         "\n".join(v["msg"] for v in vs)
 
 
 def test_map_claims_fresh() -> None:
+    if not (PKG_ROOT / "docs" / "map" / "index.md").is_file():
+        import pytest
+        pytest.skip("docs/map 不在场(同上:缺席守卫,2026-10-25 补)")
     vs = check_freshness(PKG_ROOT)
     assert not vs, "docs/map 声明过期(版本/行数/计数):\n" + \
         "\n".join(f"[{v['code']}] {v['msg']}" for v in vs)

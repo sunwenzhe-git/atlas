@@ -2,8 +2,7 @@
 """atlas_verify(验收执行器,RFC-20261025-02 v2 / D150)七钉。
 
 四步版:pre / run=atlas_check / report(留档) / backfill 缓行(写面零触碰)。
-钉对应 RFC §4 ①–⑦;变异 **MB19**(摘「留档短路」⇒ 钉④红)/ **MB20**(run 跳过判据
-恒重跑 ⇒ 单次真跑语义破 ⇒ 钉⑥红),四段协议还原逐字节一致。
+钉对应 RFC §4 ①–⑦;变异 **MB19**(摘「留档短路」⇒ 钉④红)/ **MB20**(摘「失败停环」⇒ 失败批被落档成 ok ⇒ 钉③红),四段协议还原逐字节一致。
 
 夹具:temp root + 假 `atlas-prepare.mjs`(node,记调用数/批级 ID/可注入失败)
 + 假 `.atlas/scripts/atlas_check.py`(记真跑调用数,可注入失败行/成功行/留证构件)。
@@ -142,23 +141,23 @@ def test_existing_archive_short_circuits_whole_batch() -> None:
         assert _invocations(root) == 0
 
 
-def test_resume_semantics_pre_always_reruns_run_by_artifact() -> None:
-    """钉⑤:断点语义——pre 恒重跑(幂等廉价,如实);run 按产物跳过(results 在 ⇒ 沿用并注记)。"""
+def test_resume_semantics_run_always_reruns() -> None:
+    """钉⑤:断点语义——pre 恒重跑(幂等廉价);run **恒重跑**(验收本体;results.json 在失败批
+    也存在,按它跳过 = 假绿通道——上一失败批的 check 若被误信为绿,空行集会落档成 ok)。
+    留档是唯一短路门户(钉④);重跑清空上一失败批留证 = 已登记观察(bugs.md 留存窗口行)。"""
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         make(root)
         run_dir = root / "product/e2e/scripts/.atlas-run"
         run_dir.mkdir(parents=True, exist_ok=True)
-        (run_dir / "results.json").write_text("{}", encoding="utf-8")
-        (root / ".verify-check-mode").write_text("fail", encoding="utf-8")  # 若误调 check ⇒ 立刻暴露
+        (run_dir / "results.json").write_text("{}", encoding="utf-8")      # 上一批残留(无论成败)
         r = run(root, "--json")
         assert r.returncode == 0, (r.stdout, r.stderr)
         data = json.loads(r.stdout)
         assert (root / ".verify-prep-count").read_text().strip() == "1"    # pre 恒重跑
-        assert _invocations(root) == 0                                     # run 按产物跳过
+        assert _invocations(root) == 1                                     # run 恒重跑(不被残留产物跳过)
         run_step = next(s for s in data["steps"] if s["name"] == "run")
-        assert run_step["status"] == "SKIP" and "原批退出码未知" in run_step["detail"], run_step
-        assert data["archive"]                                             # 留档补齐
+        assert run_step["status"] == "ok" and run_step["real_run_count"] == 1, run_step
 
 
 def test_exactly_one_real_run_per_green_batch() -> None:
