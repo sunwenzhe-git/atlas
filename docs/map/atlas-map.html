@@ -59,7 +59,6 @@
   .node.external rect.box{stroke:var(--muted-foreground);stroke-dasharray:5 4;fill:var(--card)}
   .node text.t{fill:var(--card-foreground);font-size:12px;font-weight:600}
   .node text.s{fill:var(--muted-foreground);font-size:10px}
-  .node text.l1{fill:var(--nc);font-size:11px;font-weight:700}
   /* ---- 详情页 ---- */
   .detail{max-width:860px;margin:0 auto}
   .detail h2{margin:0 0 4px;font-size:22px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -105,10 +104,10 @@
   #canvas>svg .edge.hi{stroke-width:2.6}
   #tourbar{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:60;display:none;
     background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 6px 24px rgba(10,14,20,.16);
-    padding:10px 16px;max-width:min(92vw,760px);align-items:center;gap:14px}
+    padding:10px 12px 10px 16px;width:min(92vw,760px);align-items:center;gap:14px}
   #tourbar .step{font-size:11px;color:var(--muted-foreground);white-space:nowrap;font-weight:700}
-  #tourbar .tt{font-size:13.5px;line-height:1.5}
-  #tourbar .tbtns{display:flex;gap:6px}
+  #tourbar .tt{font-size:13.5px;line-height:1.5;flex:1}
+  #tourbar .tbtns{display:flex;gap:6px;border-left:1px solid var(--border);padding-left:12px}
   #tourbar button{font:inherit;font-size:13px;line-height:1;padding:6px 9px;border-radius:8px;cursor:pointer;
     border:1px solid var(--border);background:var(--card);color:var(--foreground)}
   #tourbar button:hover{border-color:var(--primary);color:var(--primary)}
@@ -161,16 +160,16 @@ overview: {
   nodes:[
     {id:'code',  x:38,  y:92, kind:'external', title:'业务代码', sub:'只读 · 不回写'},
     {id:'req',   x:38,  y:174, kind:'external', title:'Trellis 需求卡', sub:'task 的 prd.md'},
-    {id:'graph', x:38,  y:256, kind:'tool', title:'代码图谱', sub:'adapters/_graph.py', l1:true},
-    {id:'apply', x:288, y:92, kind:'orch', title:'apply 跨环编排', sub:'apply/reference.md', l1:true},
-    {id:'adapt', x:288, y:174, kind:'tool', title:'结构抽取适配器', sub:'adapters/ 四件', l1:true},
+    {id:'graph', x:38,  y:256, kind:'tool', title:'代码图谱', sub:'adapters/_graph.py'},
+    {id:'apply', x:288, y:92, kind:'orch', title:'apply 跨环编排', sub:'apply/reference.md'},
+    {id:'adapt', x:288, y:174, kind:'tool', title:'结构抽取适配器', sub:'adapters/ 四件'},
     {id:'rings', x:538, y:92, kind:'asset', title:'三环资产引擎', sub:'rings/*/reference.md'},
-    {id:'e2egen',x:538, y:174, kind:'tool', title:'E2E 生成与控制台', sub:'gen_e2e_scripts.py', l1:true},
-    {id:'gates', x:788, y:92, kind:'gate', title:'门禁与校验', sub:'scripts/atlas_check.py', l1:true},
-    {id:'review',x:788, y:174, kind:'proc', title:'评审与收口', sub:'closeout_derive.py', l1:true},
+    {id:'e2egen',x:538, y:174, kind:'tool', title:'E2E 生成与控制台', sub:'gen_e2e_scripts.py'},
+    {id:'gates', x:788, y:92, kind:'gate', title:'门禁与校验', sub:'scripts/atlas_check.py'},
+    {id:'review',x:788, y:174, kind:'proc', title:'评审与收口', sub:'closeout_derive.py'},
     {id:'shared',x:38,  y:362, kind:'asset', title:'共享契约层', sub:'shared/ 契约 ×7'},
     {id:'kernel',x:288, y:362, kind:'support', title:'共享内核', sub:'_support/ 内核 ×8'},
-    {id:'cli',   x:538, y:362, kind:'support', title:'CLI 与装配', sub:'install.sh · atlas.js', l1:true},
+    {id:'cli',   x:538, y:362, kind:'support', title:'CLI 与装配', sub:'install.sh · atlas.js'},
     {id:'ops',   x:788, y:362, kind:'proc', title:'运营面', sub:'duty-review/ · report'},
   ],
   edges:[
@@ -178,9 +177,9 @@ overview: {
     {from:'apply',to:'rings',label:'增量落笔'},
     {from:'rings',to:'e2egen',label:'分片 → 脚本'},
     {from:'e2egen',to:'gates',label:'受门禁校验'},
-    {from:'code',to:'adapt',label:'只读抽取'},
-    {from:'adapt',to:'rings',label:'结构事实'},
-    {from:'graph',to:'apply',label:'影响面证据'},
+    {from:'code',to:'adapt',label:'只读抽取',route:'hv',mx:224,tx:320},
+    {from:'adapt',to:'rings',label:'结构事实',mx:498,ty:132},
+    {from:'graph',to:'apply',label:'影响面证据',mx:276,ty:132},
     {from:'code',to:'graph',route:'leftU'},
     {from:'gates',to:'review',label:'全绿才收口'},
     {from:'kernel',to:'adapt',route:'hv',dash:1},
@@ -571,9 +570,9 @@ function edgePath(v,e){
     return `M${a.x},${ay} H${a.x-14} V${ry} H${b.x+b.w+14} V${by} H${b.x+b.w}`;}
   const ay=a.y+a.h/2, by=b.y+b.h/2;
   if(e.route==='hv'){const ax=a.x+a.w, mx=e.mx||Math.max(ax+16,(a.x+a.w+b.x+b.w)/2);
-    return `M${ax},${ay} H${mx} V${b.y-12} H${b.x+b.w/2} V${b.y}`;}
+    return `M${ax},${ay} H${mx} V${b.y-12} H${e.tx||b.x+b.w/2} V${b.y}`;}
   const ax=a.x+a.w, bx=b.x;
-  if(bx>ax+18){const mx=(ax+bx)/2;return `M${ax},${ay} H${mx} V${by} H${bx}`;}
+  if(bx>ax+18){const mx=e.mx||(ax+bx)/2;return `M${ax},${ay} H${mx} V${e.ty||by} H${bx}`;}
   const ax2=a.x, bx2=b.x+b.w, mx2=(ax2+bx2)/2;
   return `M${ax2},${ay} H${mx2} V${by} H${bx2}`;
 }
@@ -593,7 +592,7 @@ function renderMap(container, viewId, interactive){
   const gZ=el('g',{class:'zone'},svg), gE=el('g',{},svg), gN=el('g',{},svg);
   v.zones.forEach(z=>{const g=el('g',{class:'zone'},gZ);
     el('rect',{x:z.x,y:z.y,width:z.w,height:z.h,rx:10},g);
-    el('text',{x:z.x+2,y:v.zoneLabIn?z.y+20:z.y-9},g).textContent=z.label;});
+    el('text',{x:z.x+10,y:v.zoneLabIn?z.y+20:z.y-9},g).textContent=z.label;});
   v.edges.forEach(e=>{
     el('path',{class:'edge'+(e.dash?' dash':''),d:edgePath(v,e),'marker-end':`url(#${mkId})`,'data-e':JSON.stringify([e.from,e.to])},gE);
   });
@@ -618,7 +617,6 @@ function renderMap(container, viewId, interactive){
     el('rect',{class:'box',x:0,y:0,width:NW,height:NH,rx:10},g);
     const t=el('text',{class:'t',x:NW/2,y:23,'text-anchor':'middle'},g);t.textContent=n.title;
     if(n.sub){const st=el('text',{class:'s',x:NW/2,y:41,'text-anchor':'middle'},g);st.textContent=n.sub;}
-    if(n.l1)el('text',{class:'l1',x:NW-7,y:15,'text-anchor':'end'},g).textContent='L1 ↗';
     g.addEventListener('mouseenter',ev=>showTip(n,k,ev));
     g.addEventListener('mousemove',ev=>moveTip(ev));
     g.addEventListener('mouseleave',hideTip);

@@ -57,7 +57,7 @@ function labelRects(v) { // 与 renderMap 内标签牌落位逻辑逐字一致
 function zoneLabelRects(v) {
   return v.zones.map(z => {
     const y = v.zoneLabIn ? z.y + 20 : z.y - 9;
-    return { id: '分区「' + z.label + '」', x: z.x + 2, y: y - 10.5, w: strW(z.label, 11.5, 1.5) + 4, h: 14 };
+    return { id: '分区「' + z.label + '」', x: z.x + 10, y: y - 10.5, w: strW(z.label, 11.5, 1.5) + 4, h: 14 };
   });
 }
 let total = 0;
