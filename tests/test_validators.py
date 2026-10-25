@@ -3977,3 +3977,42 @@ testid:
         lv = {c["check"]: c["level"] for c in res.checks}
     assert lv["ID 格式"] == "PASS", lv["ID 格式"]
     assert lv["索引↔分片标题一致"] == "PASS", lv["索引↔分片标题一致"]
+
+
+def test_testids_scan_skips_runtime_artifact_dirs() -> None:
+    """D150 合成靶场咬合批(2026-10-25):实然扫描**必须跳过运行期产物目录**
+    (`.atlas-run/` / `test-results/` 等,SKIP_DIRS 新增段)。
+
+    现场:执行器时序下「失败批 ⇒ 立即重验」成为常态路径,而 Playwright 失败批会在
+    `.atlas-run/<用例>/error-context.md` 留下含 testid 字面的快照文本——不排除则
+    `validate_testids` 扫出「testid 全站唯一 —— 重复」**假红**(真源只声明一次)。
+    产物是**回声**,与测试文件同族(issue #27/#33 同判据)。
+    变异 **MB21**(摘 `.atlas-run` 排除 ⇒ 本钉红)。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        # 复现 playground 场景:apps[].path = "."(整仓扫描)——只有这时 .atlas-run/ 才落在扫描域内
+        (root / "product").mkdir(parents=True, exist_ok=True)
+        (root / "product/stack-profile.yaml").write_text(
+            "product: demo\napps:\n  - name: web\n    path: .\n    kind: frontend\n"
+            "    role: landing\n    stack: demo\n", encoding="utf-8")
+        (root / "page.html").write_text(
+            '<button data-testid="home-title">ok</button>', encoding="utf-8")
+        mk_stub(root)
+        mk_cases(root)
+        mk_index(root)
+        art = root / ".atlas-run" / "some-case-chromium"
+        art.mkdir(parents=True)
+        (art / "error-context.md").write_text(
+            '<h1 data-testid="home-title">快照回声</h1>', encoding="utf-8")
+        tr = root / "test-results" / "x"
+        tr.mkdir(parents=True)
+        (tr / "trace.md").write_text('data-testid="home-title"', encoding="utf-8")
+        import importlib.util as _iu
+        spec_ = _iu.spec_from_file_location(
+            "vtid_scan", PKG_ROOT / "validators" / "validate_testids.py")
+        vtid_ = _iu.module_from_spec(spec_)
+        spec_.loader.exec_module(vtid_)
+        files = {str(f.relative_to(root)) for f in vtid_._scan_files([root])}
+        assert not any(f.startswith((".atlas-run/", "test-results/")) for f in files), \
+            sorted(f for f in files if f.startswith((".atlas-run/", "test-results/")))

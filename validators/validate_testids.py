@@ -101,7 +101,11 @@ ORIGINS = ("greenfield", "adopt")
 DEFAULT_ORIGIN = "greenfield"
 FRONTEND_KINDS = ("frontend", "fullstack")
 SKIP_DIRS = {"node_modules", ".git", "dist", "build", ".next", "coverage", "__pycache__",
-             ".venv", "venv", "vendor", ".cache", "out", "target"}
+             ".venv", "venv", "vendor", ".cache", "out", "target",
+             # 运行期产物目录(2026-10-25,合成靶场 D150 咬合批发现):失败批的 error-context.md /
+             # trace 快照文本里含 testid 字面 ⇒ 不排除则下一批 validate(先于 playwright 清空
+             # 执行)会扫出「testid 重复」假红。产物是**回声**,与测试文件同族。
+             ".atlas-run", "test-results", "playwright-report", ".atlas", ".trellis", ".verify"}
 # 测试文件/目录**不入实然集合**（issue #27/#33，2026-10-19）：单元测试与夹具里的
 # `querySelector('[data-testid=x]')` 是页面元素的**回声**，不是声明处 —— 计进「声明处计数」
 # 会把「真实元素 + 自身测试文件里的同名字符串」判成全站重复假红（同文件重复 WARN 同理）。

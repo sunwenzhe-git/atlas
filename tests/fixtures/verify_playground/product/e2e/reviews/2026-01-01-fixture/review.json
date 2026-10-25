@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "status": "PASS",
+  "basis": "fixture",
+  "executed": true,
+  "root": ".",
+  "scope": "fixture",
+  "unit": "ring",
+  "round": 1,
+  "expected": 1,
+  "reviewed": 1,
+  "budget_exceeded": false,
+  "checks": [],
+  "other": [
+    "合成靶场开户夹具(机器兜底,独立审查未执行)"
+  ]
+}

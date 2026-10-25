@@ -76,7 +76,11 @@ def step_pre(root: Path) -> dict:
 
 
 def _parse_rows(output: str) -> list[dict]:
-    """解析 atlas_check 行形态(`ok|WARN|FAIL|SKIP <名称> <摘要>`,与门行原样)。"""
+    """解析 atlas_check 行形态(`ok|WARN|FAIL|SKIP <名称> <摘要>`,与门行原样)。
+
+    已知局限:名称含空格的门行(如「E2E 真跑(六页)」)name 只取到首词——
+    消费方按 startswith 匹配;摘要列完整保留。"""
+    
     rows = []
     for line in output.splitlines():
         toks = line.split(None, 2)
