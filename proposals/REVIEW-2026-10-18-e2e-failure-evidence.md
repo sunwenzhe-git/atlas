@@ -52,3 +52,9 @@
   -            "    trace: 'retain-on-failure',\n"
   +            "    trace: 'on',\n"
   ```
+
+## 勘误与补定(2026-10-25 真跑日实咬,D148 首轮)
+
+1. **落点勘误**:D108 首版契约写「落 Playwright 缺省 `test-results/`」,实际落 **`.atlas-run/`**——生成物早已有显式 `outputDir: '.atlas-run'`,Playwright 构件目录跟着 outputDir 走。实咬形态:`.atlas-run/<用例目录>/trace.zip + test-failed-*.png` 成对,红轮 28 构件、绿轮零构件。契约/门册/生成物注释/协议页同批改口(本 RFC 正文按惯例不回改,以本节与 `rings/e2e/reference.md` §7.1 现行为准)。
+2. **留存窗口补定**:Playwright 每次 `playwright test` 起动即清空 outputDir ⇒ 留证只存到**下一次起跑**。「首跑红→复跑绿」场景(节拍类判据的固有流程)复跑起动瞬间旧构件蒸发——跨轮取证须在起跑前归档。已立观察(`duty-review/bugs.md` E2E 段,升格条件 = 首个「复跑后取证已丢」现场)。
+3. **同轮另证**:环境红形态(前端 200、内网后端不可达 ⇒ 门放行、用例全红于白屏)= 「栈起没起」探针盲区首个活体实证(门文案早明示「不判页面对不对」)。

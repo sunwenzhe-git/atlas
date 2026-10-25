@@ -33,9 +33,9 @@
     凭据只来自运行期环境变量 `ATLAS_APP_USER` / `ATLAS_APP_PASSWORD`（不读项目 `.env`、不硬编码）；
     未设置 ⇒ 跳过预置 + 明确警告；换取令牌失败 ⇒ 报错中止
     （不得静默续跑——那会退化成「未登录态跑用例」的假绿）。
-    **段缺失 = 未声明（不再是「合法降级」）**：`validate_stack_profile` 已 WARN 指名；
-    生成器升档点 = 下一次真跑准备日（见 `shared/gates.md`「E2E 真跑」行——届时改推
-    `not_ready`：退出码 3 + 机读 `not_ready: "app_login"`）。
+    **段缺失 = 未声明（不再是「合法降级」，D80② 升档已落地 2026-10-24 / `DESIGN.md` D149）**：
+    `validate_stack_profile` WARN 指名在前；生成器直接推 `not_ready`：退出码 3 + 机读
+    `not_ready: "app_login"`（文案按 D103 指路「有门但三态都装不下 ⇒ 人工会话取出」）。
   * **网络边界打桩**（契约 §5.8，2026-10-12）：`mock:` 行（用例级）在 `e2e.mock.mode: on`
     时编译为**单条** `context.route` 派发表（pathname+method 命中、query 免疫；前缀内未命中
     fail-loud abort + 用例末审计断言点名；OPTIONS 自动 204 + CORS 头）；fixture 内容**生成期
@@ -51,8 +51,8 @@
 退出码（`3509 §B110`）：**0** 正常 · **2** 真错（缺 profile / 动词越界 / 审查门不过…） ·
 **3** 前置未声明 —— **3 不是失败**：调用方应判「未就绪」而不是「生成失败」，
 且 `--json` 下 stdout 给出 `{"ok": false, "not_ready": <键>, …}`。
-当阶段键 = `app_base_url`（地址未声明）；`app_login` 未声明按 RFC-20261015-02 于
-下一次真跑准备日并入同一通道（机读键 `"app_login"`，升档记录见 `shared/gates.md`「E2E 真跑」行）。
+键 = `app_base_url`（地址未声明）/ `app_login`（登录形态未声明；D80② 升档 2026-10-24 落地，
+`DESIGN.md` D149，升档记录见 `shared/gates.md`「E2E 真跑」行）。
 """
 from __future__ import annotations
 
@@ -1402,14 +1402,21 @@ def main() -> int:
 
     app_login = e2e.get("app_login") or None
     if app_login is None:
-        # RFC-20261015-02（issue #11）：段缺失不再是「合法降级」。当阶段（第一阶段）仍按既有
-        # 占位形态生成 + 警告；**升档点 = 下一次真跑准备日**（`shared/gates.md`「E2E 真跑」行）：
-        # 届时把这里的警告改推 `NOT_READY`（机读键 `"app_login"`，message 带显式 token）。
-        # `validate_stack_profile` 侧已先行 WARN 指名 —— 缺口在两道机器面上都看得见。
-        print("WARN: stack-profile 未声明 e2e.app_login —— 将跳过登录态预置"
-              "（依赖预置登录态的用例会失败。有门项目请补 real 取证四值；无门项目请显式声明"
-              " mode: none；升档记录见 shared/gates.md「E2E 真跑」行）", file=sys.stderr)
-        login_mode = "real"
+        # RFC-20261015-02（issue #11）/ D80② 升档落地（2026-10-24，D149，真跑日批）：
+        # 段缺失不再是「合法降级」——直接推 NOT_READY（退出码 3 + 机读键 "app_login"，
+        # 与 app_base_url 同一通道）。硬前提的输入不得靠「缺失即静默放行」吸收。
+        # 文案按 D103 相抵点指路：「有门但三态都装不下」（图形验证码 / 服务端 cookie 会话 /
+        # 登录响应体无令牌）⇒ 人工会话取出路径，不是「补声明」能解决的形态，不属本判据。
+        msg = ("e2e.app_login 未声明（E2E 硬前提：登录形态。三选一：real 取证四值 / "
+               "mode: none（靶场无门，显式声明）/ mode: fabricated（桩令牌，必填收窄 "
+               "storage_key）；「有门但三态都装不下」（图形验证码 / 服务端 cookie 会话 / "
+               "登录响应体无令牌）⇒ 人工会话取出（rings/e2e/reference.md §7.1 / "
+               "DESIGN.md D103），是描述路径、不是本判据的对象）")
+        if args.json:
+            print(json.dumps({"ok": False, "not_ready": "app_login", "message": msg},
+                             ensure_ascii=False, indent=2))
+        print(f"NOT_READY: {msg}", file=sys.stderr)
+        return NOT_READY
     else:
         login_mode = app_login.get("mode") or "real"
         if login_mode not in APP_LOGIN_MODES:
@@ -2107,7 +2114,8 @@ def main() -> int:
             "  // 3 failed 1 passed）。提升到 20s（仍远小于 test 超时），并留 `ATLAS_EXPECT_TIMEOUT` 覆盖口。\n"
             "  expect: { timeout: Number(process.env.ATLAS_EXPECT_TIMEOUT ?? 20_000) },\n"
             f"  use: {{ baseURL: process.env.ATLAS_BASE_URL ?? '{base}',\n"
-            "    // 失败留证（2026-10-18，RFC-20261018-01）：失败才落 test-results/，全绿轮零产物；\n"
+            "    // 失败留证（2026-10-18，RFC-20261018-01；落点勘误 2026-10-25）：失败才落 .atlas-run/（本配置 outputDir），\n"
+            "    // 全绿轮零产物；留存窗口 = 到下一次起跑（Playwright 启动清空 outputDir）。\n"
             "    // 生效咬合点 = 重装配（install --update / 首装），不溯及已装配副本。\n"
             "    trace: 'retain-on-failure',\n"
             "    screenshot: 'only-on-failure',\n"
@@ -2142,7 +2150,8 @@ def main() -> int:
             "  // 3 failed 1 passed）。提升到 20s（仍远小于 test 超时），并留 `ATLAS_EXPECT_TIMEOUT` 覆盖口。\n"
             "  expect: { timeout: Number(process.env.ATLAS_EXPECT_TIMEOUT ?? 20_000) },\n"
             f"  use: {{ baseURL: process.env.ATLAS_BASE_URL ?? '{base}',  // E1 单段\n"
-            "    // 失败留证（2026-10-18，RFC-20261018-01）：失败才落 test-results/，全绿轮零产物；\n"
+            "    // 失败留证（2026-10-18，RFC-20261018-01；落点勘误 2026-10-25）：失败才落 .atlas-run/（本配置 outputDir），\n"
+            "    // 全绿轮零产物；留存窗口 = 到下一次起跑（Playwright 启动清空 outputDir）。\n"
             "    // 生效咬合点 = 重装配（install --update / 首装），不溯及已装配副本。\n"
             "    trace: 'retain-on-failure',\n"
             "    screenshot: 'only-on-failure',\n"

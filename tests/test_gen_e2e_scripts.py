@@ -2140,22 +2140,39 @@ run().then((r) => console.log(JSON.stringify(r))).catch((e) => { console.log('ER
     assert data["retried"] == "不限时间", data
 
 
-def test_setup_without_app_login_degrades_loudly() -> None:
-    """契约 §7.1（RFC-20261015-02，2026-10-16 改判）：stack-profile 未声明 e2e.app_login =
-    **未声明**（不再是「合法降级」）——第一阶段仍生成成功 + 生成期 WARN（升档 = 下一次真跑
-    准备日推 `not_ready`，记录见 `shared/gates.md`「E2E 真跑」行）；setup 以占位默认值发射
-    （凭据缺失 ⇒ 空 state + 警告，不发真实登录请求）。
+def test_setup_without_app_login_pushes_not_ready() -> None:
+    """契约 §7.1（RFC-20261015-02，2026-10-16 改判；**D80② 升档落地 2026-10-24 / D149**）：
+    stack-profile 未声明 e2e.app_login ⇒ 生成器推 **NOT_READY（退出码 3）**，不再「占位生成 +
+    WARN」半生成——硬前提的输入不得靠「缺失即静默放行」吸收。
+
+    文案按 D103 相抵点指路：「有门但三态都装不下」⇒ 人工会话取出，不是「补声明」的对象。
+    变异 **MB17**：退回 WARN 半生成（退出码 0）⇒ 本钉红。
     """
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         # app_login 是 e2e 段最后一个键（夹具约定）⇒ 切到它之前 = 整段去掉
         make(root, profile=PROFILE.split("  app_login:")[0])
-        r = run(root, "--apply")
-        assert r.returncode == 0, r.stderr + r.stdout
-        assert "e2e.app_login" in r.stderr, r.stderr          # 生成期 WARN（不静默）
-        assert "mode: none" in r.stderr, r.stderr             # WARN 指路：无门项目的声明出口
-        setup_ts = (root / "product" / "e2e" / "scripts" / "atlas-auth.setup.ts").read_text(encoding="utf-8")
-        assert 'const endpoint = "/login";' in setup_ts, setup_ts  # 占位默认（未声明 ⇒ 非取证值）
+        r = run(root)                      # dry-run 即判（前置链在写盘前）
+        assert r.returncode == 3, (r.returncode, r.stderr, r.stdout)
+        assert "NOT_READY" in r.stderr and "e2e.app_login" in r.stderr, r.stderr
+        assert "mode: none" in r.stderr, r.stderr          # 指路：无门项目的显式声明出口
+        assert "人工会话取出" in r.stderr, r.stderr        # D103 相抵点排除类的出路在文案里
+        assert not (root / "product" / "e2e" / "scripts" / "atlas-auth.setup.ts").is_file()
+
+
+def test_app_login_not_ready_json_face_matches_channel() -> None:
+    """D80② 升档（D149）：`--json` 面与 `app_base_url` 同一通道族——`{"ok": false,
+    "not_ready": "app_login", "message": …}`，机读键供消费者（atlas_check 三态 SKIP）分流。
+    变异 **MB18**：机读键写错 / 缺 message ⇒ 本钉红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=PROFILE.split("  app_login:")[0])
+        j = run(root, "--json")
+        assert j.returncode == 3, (j.returncode, j.stdout, j.stderr)
+        data = json.loads(j.stdout)
+        assert data.get("ok") is False and data.get("not_ready") == "app_login", j.stdout
+        assert "message" in data and "app_login" in data["message"], j.stdout
 
 
 def test_app_login_section_incomplete_fails_generation() -> None:
