@@ -145,6 +145,20 @@ def compute_next_beta_version(explicit_version: str | None = None) -> str:
     dist_tags = get_npm_dist_tags()
     npm_ver = dist_tags.get("latest") or dist_tags.get("beta") or ""
 
+    # 2026-10-25 加固(beta.9 空号教训:三源瞬时不一致 ⇒ 顺延跳号,npm 不可补):
+    # 真相源升级 = registry versions **全集**语义最大,再对 next 做防撞兜底。
+    registry_versions: list[str] = []
+    try:
+        res = run_cmd(
+            f"npm view {PKG_NAME} versions --json", check=False, use_proxy=False
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout)
+            if isinstance(data, list):
+                registry_versions = [v for v in data if isinstance(v, str)]
+    except Exception:
+        pass
+
     pkg_json_path = ROOT_DIR / "package.json"
     pkg_ver = ""
     if pkg_json_path.exists():
@@ -169,10 +183,22 @@ def compute_next_beta_version(explicit_version: str | None = None) -> str:
     major, minor, patch, pre, pre_num = parse_semver(highest_ver_str)
     if pre:
         next_pre_num = pre_num + 1
-        return f"{major}.{minor}.{patch}-{pre}.{next_pre_num}"
+        candidate = f"{major}.{minor}.{patch}-{pre}.{next_pre_num}"
     else:
         # 如果当前是非 prerelease，默认进入下一个 minor beta
-        return f"{major}.{minor + 1}.0-beta.1"
+        candidate = f"{major}.{minor + 1}.0-beta.1"
+
+    # 防撞兜底:候选若已在 registry versions 全集里 ⇒ 顺延直至空位(跳号不可逆,撞号即 E409)
+    existing = set(registry_versions)
+    guard = 0
+    while candidate in existing and guard < 100:
+        major_, minor_, patch_, pre_, num_ = parse_semver(candidate)
+        if pre_:
+            candidate = f"{major_}.{minor_}.{patch_}-{pre_}.{num_ + 1}"
+        else:
+            candidate = f"{major_}.{minor_ + 1}.0-beta.1"
+        guard += 1
+    return candidate
 
 
 def sync_version_files(new_version: str, dry_run: bool = False) -> list[str]:
