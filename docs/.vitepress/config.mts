@@ -7,6 +7,8 @@ export default defineConfig({
   base: '/atlas/',
   cleanUrls: true,
   lastUpdated: true,
+  // docs/map = 创造者内幕文档（含 atlas-map.html），不进公开站点（2026-10-25 用户拍板：私有）
+  srcExclude: ['map/**'],
 
   head: [
     ['link', { rel: 'icon', href: '/atlas/images/e2e-console.png' }],

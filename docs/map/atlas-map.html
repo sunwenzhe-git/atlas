@@ -1,0 +1,806 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atlas 实现地图 · 交互全景</title>
+<style>
+  :root{
+    --background:#eef1f6; --foreground:#16181d; --card:#fdfdfe; --card-foreground:#16181d;
+    --border:#d8dde6; --muted-foreground:#5f6772; --popover:#fdfdfe; --popover-foreground:#16181d;
+    --grid:rgba(22,24,29,.05); --zone:rgba(22,24,29,.42);
+    --primary:#4f46e5;
+    --blue:#2563eb; --green:#059669; --yellow:#d97706; --red:#e11d48; --orange:#7c3aed; --purple:#7c3aed; --slate:#475569;
+    --shadow:0 10px 30px rgba(20,26,40,.10); --card-shadow:0 1px 2px rgba(20,26,40,.05);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--background);color:var(--foreground);
+    font-family:-apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    min-height:100vh;display:flex;flex-direction:column}
+  .page{width:100%;max-width:min(96vw,1680px);margin:0 auto;padding:0 18px;display:flex;flex-direction:column}
+  .page+.page{flex:1}
+  header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:12px 0 9px;
+    border-bottom:1px solid var(--border);margin-bottom:12px}
+  .brand{font-weight:700;font-size:17px;letter-spacing:.3px;color:var(--foreground);display:flex;align-items:center;gap:12px}
+  .brand .logo{width:9px;height:26px;border-radius:3px;background:linear-gradient(180deg,var(--primary),var(--blue))}
+  .brand .bt{display:flex;flex-direction:column}
+  .brand small{font-weight:400;font-size:10.5px;color:var(--muted-foreground);letter-spacing:0;margin-top:1px}
+  .actions{display:flex;gap:8px;margin-left:auto}
+  .actions button{appearance:none;border:1px solid var(--border);background:var(--card);color:var(--muted-foreground);
+    border-radius:9px;padding:7px 13px;font-size:12.5px;cursor:pointer;font-family:inherit;box-shadow:var(--card-shadow)}
+  .actions button:not(:disabled):hover{color:var(--primary);border-color:var(--primary)}
+  .actions button:disabled{cursor:default;opacity:.6}
+  .actions button.primarylike{background:var(--primary);border-color:var(--primary);color:var(--card)}
+  .crumb{display:flex;align-items:center;gap:8px;padding:0 0 7px;font-size:13px;color:var(--muted-foreground)}
+  .crumb a{color:var(--muted-foreground);cursor:pointer;text-decoration:none}
+  .crumb a:hover{color:var(--primary);text-decoration:underline}
+  .crumb .cur{color:var(--foreground);font-weight:600}
+  #canvas{border:1px solid var(--border);border-radius:16px;background-color:var(--card);
+    background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+    background-size:22px 22px;background-position:center;overflow:hidden;box-shadow:var(--shadow)}
+  #canvas.svgmode{padding:8px;width:fit-content;max-width:100%;margin:0 auto}
+  #canvas.detailmode{padding:30px 34px;width:100%}
+  #canvas svg{display:block;width:100%;height:auto}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;padding:8px 2px 0;font-size:12px;color:var(--muted-foreground);align-items:center}
+  .legend .li{display:inline-flex;align-items:center;gap:5px}
+  .legend .dot{width:9px;height:9px;border-radius:3px;display:inline-block}
+  footer{padding:5px 2px 10px;font-size:11.5px;color:var(--muted-foreground);display:flex;gap:14px;flex-wrap:wrap}
+  /* ---- SVG 图内元素 ---- */
+  .zone rect{fill:color-mix(in srgb,var(--blue) 4%,transparent);stroke:var(--zone);stroke-dasharray:6 4;stroke-width:1.3;rx:12}
+  .zone text{fill:var(--muted-foreground);font-size:11.5px;font-weight:600;letter-spacing:1.5px}
+  .edge{fill:none;stroke:var(--muted-foreground);stroke-width:1.7;opacity:.8}
+  .edge.dash{stroke-dasharray:4 5;stroke-width:1.2;opacity:.45}
+  .edgeLabel{fill:var(--muted-foreground);font-size:12px;font-weight:500;
+    paint-order:stroke;stroke:var(--card);stroke-width:4px;stroke-linejoin:round}
+  .node{cursor:pointer}
+  .node rect.box{fill:var(--card);stroke:var(--nc);stroke-width:1.4;rx:11;
+    filter:drop-shadow(0 1px 2px rgba(10,14,20,.06));transition:filter .16s,stroke-width .16s}
+  .node:hover rect.box{stroke-width:2.1;filter:drop-shadow(0 7px 18px rgba(10,14,20,.15))}
+  .node.external rect.box{stroke:var(--muted-foreground);stroke-dasharray:5 4;fill:var(--card)}
+  .node text.t{fill:var(--card-foreground);font-size:12px;font-weight:600}
+  .node text.s{fill:var(--muted-foreground);font-size:10px}
+  .node text.l1{fill:var(--nc);font-size:11px;font-weight:700}
+  /* ---- 详情页 ---- */
+  .detail{max-width:860px;margin:0 auto}
+  .detail h2{margin:0 0 4px;font-size:22px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .detail .badge{font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:99px;
+    border:1px solid var(--nc);color:var(--nc);white-space:nowrap;background:color-mix(in srgb,var(--nc) 7%,transparent)}
+  .detail .sum{color:var(--foreground);font-size:14.5px;line-height:1.65;margin:8px 0 0}
+  .detail h3{margin:24px 0 8px;font-size:12px;color:var(--muted-foreground);font-weight:600;
+    letter-spacing:1.5px;border-bottom:1px solid var(--border);padding-bottom:7px}
+  .detail ul.points{margin:0;padding:0;list-style:none}
+  .detail ul.points li{position:relative;padding:5px 0 5px 22px;font-size:14px;line-height:1.6}
+  .detail ul.points li::before{content:'';position:absolute;left:3px;top:13px;width:8px;height:8px;
+    border-radius:2.5px;background:var(--nc);opacity:.85}
+  .detail .files{display:flex;flex-direction:column;gap:2px;margin:0}
+  .frow{display:flex;flex-direction:column;gap:1px;padding:5px 0}
+  .frow code{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12.5px;color:var(--primary);word-break:break-all}
+  .frow .fdesc{font-size:12.5px;color:var(--muted-foreground);line-height:1.45}
+  .detail .blind{background:color-mix(in srgb,var(--nc) 7%,transparent);border:1px dashed var(--nc);
+    border-radius:10px;padding:10px 14px;font-size:13.5px;line-height:1.6;color:var(--foreground)}
+  .detail .doclink{display:inline-block;margin-top:2px;font-family:ui-monospace,Menlo,monospace;
+    font-size:12.5px;color:var(--primary);text-decoration:none;cursor:pointer}
+  .detail .doclink:hover{text-decoration:underline}
+  .detail .submap{margin-top:6px}
+  .detail .pinned{margin:0 0 10px;border:1px solid var(--border);border-radius:10px;background:var(--popover);
+    padding:10px 14px;font-size:13px;line-height:1.55;display:none;box-shadow:var(--card-shadow)}
+  .detail .pinned h5{margin:0 0 3px;font-size:13.5px}
+  .detail .pinned p{margin:2px 0}
+  /* ---- tooltip ---- */
+  #tip{position:fixed;z-index:50;max-width:340px;background:var(--popover);color:var(--popover-foreground);
+    border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 32px rgba(10,14,20,.18);
+    padding:13px 15px;font-size:13px;line-height:1.55;pointer-events:none;display:none}
+  #tip h4{margin:0 0 2px;font-size:14px;display:flex;align-items:center;gap:8px}
+  #tip .badge{font-size:10.5px;font-weight:600;padding:1px 8px;border-radius:99px;
+    border:1px solid var(--nc);color:var(--nc);white-space:nowrap;background:color-mix(in srgb,var(--nc) 8%,transparent)}
+  #tip p{margin:6px 0 8px}
+  #tip .files{display:flex;flex-direction:column;gap:2px;margin:0 0 6px}
+  #tip .files code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--primary);word-break:break-all}
+  #tip .frow{padding:1px 0}
+  #tip .frow .fdesc{font-size:11px}
+  #tip .drill{margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:12px;color:var(--nc);font-weight:700}
+  /* ---- 讲述模式:非焦点降透明,焦点边加粗;底部字幕条 ---- */
+  #canvas>svg .node.dim{opacity:.18;pointer-events:none}
+  #canvas>svg .edge.dim{opacity:.1}
+  #canvas>svg .edge.hi{stroke-width:2.6}
+  #tourbar{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:60;display:none;
+    background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 6px 24px rgba(10,14,20,.16);
+    padding:10px 16px;max-width:min(92vw,760px);align-items:center;gap:14px}
+  #tourbar .step{font-size:11px;color:var(--muted-foreground);white-space:nowrap;font-weight:700}
+  #tourbar .tt{font-size:13.5px;line-height:1.5}
+  #tourbar .tbtns{display:flex;gap:6px}
+  #tourbar button{font:inherit;font-size:13px;line-height:1;padding:6px 9px;border-radius:8px;cursor:pointer;
+    border:1px solid var(--border);background:var(--card);color:var(--foreground)}
+  #tourbar button:hover{border-color:var(--primary);color:var(--primary)}
+</style>
+</head>
+<body>
+<div class="page"><header>
+  <div class="brand"><span class="logo"></span><span class="bt">Atlas 实现地图<small>锚定 v0.2.0-beta.6 · 图是导航面,细节以 docs/map/ 与代码为准</small></span></div>
+  <div class="actions">
+    <button id="tourBtn" title="十步主数据流动线:←/→/空格步进,Esc 退出,可点高亮节点下钻">▶ 讲述模式</button>
+  </div>
+</header>
+<div class="crumb" id="crumb"></div></div>
+<div class="page"><div id="canvas"></div><div class="legend" id="legend"></div></div>
+<div id="fitbadge" style="position:fixed;right:10px;bottom:8px;font-size:10px;color:var(--muted-foreground);opacity:.55;z-index:40;pointer-events:none"></div>
+
+<div id="tip"></div>
+
+<div id="tourbar">
+  <span class="step" id="tstep"></span>
+  <span class="tt" id="ttext"></span>
+  <span class="tbtns">
+    <button id="tprev" title="上一步(←)">⏮</button><button id="tplay" title="自动播放 5s/步">▶</button><button id="tnext" title="下一步(→/空格)">⏭</button><button id="texit" title="退出(Esc)">✕</button>
+  </span>
+</div>
+
+<script>
+/* ================= 类型 ================= */
+const KIND = {
+  asset:   {c:'--blue',   label:'资产 / 契约'},
+  orch:    {c:'--green',  label:'编排'},
+  tool:    {c:'--yellow', label:'工具 / 生成'},
+  gate:    {c:'--red',    label:'门禁 / 校验'},
+  proc:    {c:'--orange', label:'流程 / 评审'},
+  support: {c:'--purple', label:'支撑'},
+  external:{c:'--muted-foreground', label:'外部 / 输入', external:true},
+};
+
+/* ================= 拓扑图数据(与 docs/map/ 同源,发版时随活文档刷新) ================= */
+const VIEWS = {
+overview: {
+  title:'Atlas 全景 · 11 子系统与主数据流', vb:[-4,36,1024,414], zoneLabIn:true,
+  zones:[
+    {x:12,y:52,w:222,h:262,label:'输入 · 实然'},
+    {x:262,y:52,w:222,h:262,label:'编排与抽取'},
+    {x:512,y:52,w:222,h:262,label:'应然资产 → 生成'},
+    {x:762,y:52,w:242,h:262,label:'验收'},
+    {x:12,y:322,w:992,h:112,label:'支撑层(服务全链)'},
+  ],
+  nodes:[
+    {id:'code',  x:38,  y:92, kind:'external', title:'业务代码', sub:'只读 · 不回写'},
+    {id:'req',   x:38,  y:174, kind:'external', title:'Trellis 需求卡', sub:'task 的 prd.md'},
+    {id:'graph', x:38,  y:256, kind:'tool', title:'代码图谱', sub:'adapters/_graph.py', l1:true},
+    {id:'apply', x:288, y:92, kind:'orch', title:'apply 跨环编排', sub:'apply/reference.md', l1:true},
+    {id:'adapt', x:288, y:174, kind:'tool', title:'结构抽取适配器', sub:'adapters/ 四件', l1:true},
+    {id:'rings', x:538, y:92, kind:'asset', title:'三环资产引擎', sub:'rings/*/reference.md'},
+    {id:'e2egen',x:538, y:174, kind:'tool', title:'E2E 生成与控制台', sub:'gen_e2e_scripts.py', l1:true},
+    {id:'gates', x:788, y:92, kind:'gate', title:'门禁与校验', sub:'scripts/atlas_check.py', l1:true},
+    {id:'review',x:788, y:174, kind:'proc', title:'评审与收口', sub:'closeout_derive.py', l1:true},
+    {id:'shared',x:38,  y:362, kind:'asset', title:'共享契约层', sub:'shared/ 契约 ×7'},
+    {id:'kernel',x:288, y:362, kind:'support', title:'共享内核', sub:'_support/ 内核 ×8'},
+    {id:'cli',   x:538, y:362, kind:'support', title:'CLI 与装配', sub:'install.sh · atlas.js', l1:true},
+    {id:'ops',   x:788, y:362, kind:'proc', title:'运营面', sub:'duty-review/ · report'},
+  ],
+  edges:[
+    {from:'req',to:'apply',label:'需求进入'},
+    {from:'apply',to:'rings',label:'增量落笔'},
+    {from:'rings',to:'e2egen',label:'分片 → 脚本'},
+    {from:'e2egen',to:'gates',label:'受门禁校验'},
+    {from:'code',to:'adapt',label:'只读抽取'},
+    {from:'adapt',to:'rings',label:'结构事实'},
+    {from:'graph',to:'apply',label:'影响面证据'},
+    {from:'code',to:'graph',route:'leftU'},
+    {from:'gates',to:'review',label:'全绿才收口'},
+    {from:'kernel',to:'adapt',route:'hv',dash:1},
+  ],
+},
+apply: {
+  title:'apply 跨环编排 · 内部结构', vb:[0,23,1000,393],
+  zones:[
+    {x:18,y:60,w:210,h:320,label:'上游输入'},
+    {x:248,y:60,w:240,h:320,label:'四模式'},
+    {x:510,y:60,w:230,h:320,label:'判定与推导'},
+    {x:762,y:60,w:220,h:320,label:'落笔与留痕'},
+  ],
+  nodes:[
+    {id:'a-req',  x:40,  y:100, kind:'external', title:'Trellis 需求卡',
+      tip:{sum:'apply <需求ID> 的输入;需求卡是唯一需求上游(需求 ID = task id)。',files:[]}},
+    {id:'a-fact', x:40,  y:250, kind:'asset', title:'结构事实 + 图谱',
+      tip:{sum:'影响面推导的结构证据:routes/页面表 + impact 报告(声明 graph 段时先跑)。',files:[]}},
+    {id:'a-m1',   x:268, y:76,  kind:'orch', title:'apply <ID> 增量',
+      tip:{sum:'需求式跨环增量:prd → e2e 顺序,只动受影响集合,每条需求的常规路径。',files:[]}},
+    {id:'a-m2',   x:268, y:154, kind:'orch', title:'adopt 开户',
+      tip:{sum:'既有项目一次性接入:只跟 structure 全量 + 域级「开户最小集」PRD + testid 薄桩;不做全量重述,断点续跑。',files:[]}},
+    {id:'a-m3',   x:268, y:232, kind:'orch', title:'all 全量',
+      tip:{sum:'structure → prd → e2e 按序全量;幂等,门控态如实报告不判失败。',files:[]}},
+    {id:'a-m4',   x:268, y:310, kind:'orch', title:'backfill 回流',
+      tip:{sum:'已裁决回填条目分组攒批(≤10 条/批)灌回上游;闭环钩子:下游重跑 + 登记随批收口 + 各环门照跑。',files:[]}},
+    {id:'a-gate', x:530, y:154, kind:'gate', title:'三问门',
+      tip:{sum:'①改既有能力?②需人确认应然 UI?③需可重复验收?,判定与依据必须写进报告;第 2 问「是」⇒ 走查确认行由 validate_walkthrough 机器对账。',files:[['validators/validate_walkthrough.py','走查确认行对账器:三问第 2 问的机器面']]}},
+    {id:'a-imp',  x:530, y:76,  kind:'tool', title:'影响面推导',
+      tip:{sum:'agent 语义判断 + 结构证据约束;禁 regex 判语义;二义/判不准 ⇒ 一次汇总问用户(≤3 问)。',files:[['apply/reference.md §4','影响面识别契约:结构化清单与证据纪律']]}},
+    {id:'a-inc',  x:782, y:100, kind:'asset', title:'增量落笔',
+      tip:{sum:'只对受影响集合落笔,从不整文件覆盖;破坏性动作过用户确认门;共享表面走 claim 单写者仲裁。',files:[['scripts/write_claim.py','claim 单写者仲裁:take/release 原子文件']]}},
+    {id:'a-rep',  x:782, y:230, kind:'proc', title:'执行记录',
+      tip:{sum:'落 .trellis/tasks/<ID>/atlas-apply.md,固定七小节,幂等覆写;失败停在 planning,不得进实现。',files:[]}},
+  ],
+  edges:[
+    {from:'a-req',to:'a-m1'},
+    {from:'a-fact',to:'a-imp',route:'ring'},
+    {from:'a-m1',to:'a-gate'},{from:'a-m2',to:'a-gate'},{from:'a-m3',to:'a-gate'},{from:'a-m4',to:'a-gate'},
+    {from:'a-imp',to:'a-inc',route:'hv'},
+    {from:'a-gate',to:'a-inc'},
+    {from:'a-inc',to:'a-rep',route:'v'},
+  ],
+},
+gates: {
+  title:'门禁与校验 · 内部结构', vb:[0,23,1000,375],
+  zones:[
+    {x:18,y:60,w:220,h:320,label:'编排'},
+    {x:258,y:60,w:250,h:320,label:'判据本体'},
+    {x:530,y:60,w:220,h:320,label:'结果'},
+    {x:772,y:60,w:210,h:320,label:'证明体系'},
+  ],
+  nodes:[
+    {id:'g-chk', x:40,  y:170, kind:'orch', title:'atlas_check 编排器',
+      tip:{sum:'一门一行 ok|FAIL|WARN|SKIP;任一 FAIL ⇒ exit 1;只聚合不改判据。',files:[['scripts/atlas_check.py:816','main() 编排入口:一门一行调度全部校验']]}},
+    {id:'g-val', x:280, y:76,  kind:'gate', title:'10 校验器',
+      tip:{sum:'判据本体:testids 双向集合 / PRD 链路 / e2e 索引 / AC 对账 / stack-profile / structure / ADR / 走查 / mock / 设计豁免。',files:[['validators/','判据本体目录:10 个 validate_*.py']]}},
+    {id:'g-rows',x:280, y:170, kind:'gate', title:'8 编排门行',
+      tip:{sum:'对齐测试 / 生成物最新 / 审查报告形态 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 / E2E 真跑;三态:未就绪≠过期≠失败。',files:[]}},
+    {id:'g-book',x:280, y:264, kind:'asset', title:'门册总账',
+      tip:{sum:'不在 gates.md = 不存在。六列登记,含显式盲区列;取证五档,真跑级逐格、无咬合不预填。',files:[['shared/gates.md:3','元规则三律起笔:注册义务/假绿测试/响亮原则']]}},
+    {id:'g-ok',  x:552, y:100, kind:'asset', title:'全绿 ⇒ 收口',
+      tip:{sum:'全绿是域收口前置;每轮门事件追加 check-events.jsonl(观测面,不参与判定)。',files:[]}},
+    {id:'g-fail',x:552, y:230, kind:'gate', title:'FAIL ⇒ exit 1',
+      tip:{sum:'硬阻断退出码 1,WARN 不影响退出码;SKIP 永不当绿灯放行(带原因)。',files:[]}},
+    {id:'g-test',x:794, y:76,  kind:'proc', title:'出厂测试 ×37',
+      tip:{sum:'tests/ 37 文件,含每道门的坏输入钉子与守恒钉(词表/计数/装配三表);check-all 全绿为出厂条件。',files:[['tests/','出厂测试套件目录:37 个测试文件']]}},
+    {id:'g-mut', x:794, y:190, kind:'proc', title:'变异证明',
+      tip:{sum:'注入坏输入 ⇒ 门必红 ⇒ 还原逐字节一致 ⇒ 复绿;报告须含注入 diff。',files:[['scripts/mutation_proof.py','变异证明工具:注入→红→逐字节还原→复绿']]}},
+  ],
+  edges:[
+    {from:'g-chk',to:'g-val'},{from:'g-chk',to:'g-rows'},
+    {from:'g-book',to:'g-val',dash:1,label:'注册义务',route:'hv'},
+    {from:'g-val',to:'g-ok'},{from:'g-val',to:'g-fail'},{from:'g-rows',to:'g-fail'},
+    {from:'g-test',to:'g-mut',route:'v'},
+    {from:'g-mut',to:'g-rows',dash:1,label:'M 钉钉住'},
+  ],
+},
+graph: {
+  title:'代码图谱 · 内部结构', vb:[0,23,1000,387],
+  zones:[
+    {x:18,y:60,w:210,h:332,label:'声明与后端'},
+    {x:248,y:60,w:230,h:332,label:'隔离层(全线唯一)'},
+    {x:506,y:60,w:240,h:332,label:'查询纪律'},
+    {x:768,y:60,w:214,h:332,label:'消费者'},
+  ],
+  nodes:[
+    {id:'r-code',x:40,  y:100, kind:'external', title:'业务代码',
+      tip:{sum:'图谱索引对象:代码态指纹 = HEAD + 脏文件集(排 .adapter-out 自身,防自激振荡)。',files:[]}},
+    {id:'r-cfg', x:40,  y:250, kind:'asset', title:'graph 段声明',
+      tip:{sum:'stack-profile 可选段:backend: cgc + pinned 版本;段缺失/null ⇒ 整个子系统不启用(不阻断)。',files:[['shared/stack-profile.md §2','graph 段声明契约:backend/pinned 键白名单']]}},
+    {id:'r-cgc', x:40,  y:330, kind:'external', title:'cgc 后端',
+      tip:{sum:'CodeGraphContext(pin 0.6.13);不可用 ⇒ 调用方响亮降级,本层绝不静默。',files:[]}},
+    {id:'r-acl', x:272, y:170, kind:'tool', title:'_graph.py ACL',
+      tip:{sum:'全线唯一接触图谱的模块:薄后端厚自有,只走 CLI 不走 import;换后端只改这一个文件。',files:[['adapters/_graph.py','ACL 本体:全线唯一图谱接触面']]}},
+    {id:'r-fresh',x:508,y:170, kind:'proc', title:'用前现刷',
+      tip:{sum:'新鲜度键一致 ⇒ 微秒级返回;不一致 ⇒ cgc index --force 全量(update 增量只加不减,实测弃用)。',files:[['adapters/_graph.py:181','freshness_key:代码态指纹(HEAD+脏文件集)']]}},
+    {id:'r-q',   x:508, y:76,  kind:'gate', title:'确定性查询',
+      tip:{sum:'file_paths / symbols_in_files / callers 一跳;全带 ORDER BY + Python 再排序;根外路径丢弃。',files:[['adapters/_graph.py:299','query 查询族:确定性纪律(ORDER BY+再排序)']]}},
+    {id:'r-rep', x:790, y:76,  kind:'tool', title:'影响面预测',
+      tip:{sum:'种子符号沿 CALLS 边 BFS 分层,落 impact.json|md;未声明 ⇒ exit 3 not_ready。',files:[['scripts/impact_report.py','影响面预测器:BFS 分层出 impact.json']]}},
+    {id:'r-rec', x:790, y:230, kind:'gate', title:'收口对账',
+      tip:{sum:'预测集 ⇔ 实际 diff 双向差集:漏报/多报/基准漂移 ⇒ WARN 指名;台账观察 miss 升 FAIL 窗。',files:[['scripts/impact_reconcile.py','收口对账器:预测 vs 实际 diff 双向差集']]}},
+  ],
+  edges:[
+    {from:'r-code',to:'r-acl',label:'索引'},
+    {from:'r-cfg',to:'r-acl',dash:1,route:'hv'},
+    {from:'r-cgc',to:'r-acl',route:'hv'},
+    {from:'r-acl',to:'r-fresh'},{from:'r-acl',to:'r-q',route:'v'},
+    {from:'r-q',to:'r-rep'},
+    {from:'r-rep',to:'r-rec',route:'v',label:'收口'},
+  ],
+},
+adapt: {
+  title:'结构抽取适配器 · 内部结构', vb:[0,23,1000,380],
+  zones:[
+    {x:18,y:60,w:220,h:330,label:'输入与声明'},
+    {x:268,y:60,w:250,h:330,label:'四件适配器'},
+    {x:548,y:60,w:220,h:330,label:'渲染'},
+    {x:798,y:60,w:200,h:330,label:'落点与对账'},
+  ],
+  nodes:[
+    {id:'ad-code',x:40,y:100,kind:'external', title:'业务代码',
+      tip:{sum:'只读源;适配器绝不回写业务代码。',files:[]}},
+    {id:'ad-prof',x:40,y:250,kind:'asset', title:'adapters 段声明',
+      tip:{sum:'stack-profile 声明启用哪些适配器;未声明 = 不启用(不是失败)。',files:[['shared/stack-profile.md §2','adapters 段声明契约:键白名单']]}},
+    {id:'ad-routes',x:288,y:76,kind:'tool', title:'routes.py',
+      tip:{sum:'文件式路由 + JSX <Route> 两种形态,apps 挂载前缀合成(实测 19→52 条)。',files:[['adapters/routes.py','路由适配器 781 行:pyxle_route / load_apps / collect_file_routes']]}},
+    {id:'ad-api',x:288,y:154,kind:'tool', title:'api.py',
+      tip:{sum:'OpenAPI/Swagger 描述文件 + FastAPI/JS 装饰器正则双通道。',files:[['adapters/api.py','API 适配器 248 行:DESCRIPTOR_FILES + 双通道正则']]}},
+    {id:'ad-models',x:288,y:232,kind:'tool', title:'models.py',
+      tip:{sum:'AST 解析,SQLModel 式含继承字段合并。',files:[['adapters/models.py','模型适配器 616 行:AST + _index_columns']]}},
+    {id:'ad-tests',x:288,y:310,kind:'tool', title:'tests.py',
+      tip:{sum:'pytest / Playwright / vitest 盘点与运行命令。',files:[['adapters/tests.py','测试盘点适配器 179 行:PY_TEST_RE / JS_TEST_RE']]}},
+    {id:'ad-out',x:568,y:100,kind:'asset', title:'.adapter-out/ JSON',
+      tip:{sum:'统一产物 {category, items, source_files, adapter_version};失败非零且零部分产物。',files:[]}},
+    {id:'ad-refresh',x:568,y:250,kind:'tool', title:'refresh_structure',
+      tip:{sum:'atlas:facts 标记区键级重写、语义列保留;--chain 链式收口 + 基线自进四前置(F25/F26)。',files:[['scripts/refresh_structure.py','事实渲染器 797 行:标记区 / 漂移 / 链式收口']]}},
+    {id:'ad-facts',x:812,y:100,kind:'asset', title:'结构事实区',
+      tip:{sum:'.trellis/spec/structure/ 指针层与事实表;三环资产的地基。',files:[['rings/structure/reference.md','structure 环契约:事实区规程']]}},
+    {id:'ad-drift',x:812,y:250,kind:'gate', title:'漂移标记 + 门',
+      tip:{sum:'键级增删落 _drift.json;atlas_check 结构漂移门读出 WARN——适配器发现,门可见。',files:[]}},
+  ],
+  edges:[
+    {from:'ad-code',to:'ad-routes',label:'只读抽取'},
+    {from:'ad-prof',to:'ad-routes',dash:1,route:'hv',mx:253,label:'声明启用'},
+    {from:'ad-routes',to:'ad-out'},
+    {from:'ad-out',to:'ad-refresh',route:'v',label:'消费产物'},
+    {from:'ad-refresh',to:'ad-facts'},
+    {from:'ad-refresh',to:'ad-drift',label:'键级漂移'},
+  ],
+},
+e2egen: {
+  title:'E2E 生成与控制台 · 内部结构', vb:[0,23,1000,386],
+  zones:[
+    {x:18,y:60,w:210,h:330,label:'输入'},
+    {x:258,y:60,w:230,h:330,label:'文法与语义'},
+    {x:518,y:60,w:250,h:330,label:'门与产物'},
+    {x:798,y:60,w:200,h:330,label:'执行与评审'},
+  ],
+  nodes:[
+    {id:'e2-cases',x:40,y:100,kind:'asset', title:'用例分片 cases/',
+      tip:{sum:'```atlas-case 围栏块,中文 DSL 三段式:动词 · testid · 值。',files:[]}},
+    {id:'e2-index',x:40,y:250,kind:'asset', title:'e2e-index 索引',
+      tip:{sum:'总索引:页面 ↔ 用例状态机(seed/green/red);validate_e2e_index 守形态。',files:[]}},
+    {id:'e2-parse',x:278,y:76,kind:'tool', title:'行解析 parse_line',
+      tip:{sum:'三段式解析 + initial:/unchanged: 前缀 + after:N 时序。',files:[['scripts/gen_e2e_scripts.py','生成器本体 2383 行(全仓最大单件)']]}},
+    {id:'e2-verbs',x:278,y:170,kind:'gate', title:'动词值域封闭',
+      tip:{sum:'ACTION/ASSERT 词表封闭,陌生动词中止生成(D98);dispatch 走合成事件直发。',files:[]}},
+    {id:'e2-login',x:278,y:264,kind:'proc', title:'登录三态',
+      tip:{sum:'real 四值 / fabricated+storage_key / none 显式无门(D80②)。',files:[]}},
+    {id:'e2-mock',x:278,y:340,kind:'tool', title:'mock 派发表',
+      tip:{sum:'打桩声明编译为单条 context.route:pathname+method 命中、query 免疫、前缀未命中即红。',files:[]}},
+    {id:'e2-review',x:538,y:100,kind:'gate', title:'独立审查前置',
+      tip:{sum:'最新审查报告有 Critical ⇒ --apply 拒写盘;前置未声明 ⇒ exit 3 not_ready。',files:[['shared/independent-review.md','独立审查契约:实例⑤规程与 N/M 对账']]}},
+    {id:'e2-spec',x:538,y:230,kind:'tool', title:'.spec.ts 产物',
+      tip:{sum:'trace retain-on-failure + screenshot only-on-failure(D108);request 断言单独成文件(D142)。',files:[]}},
+    {id:'e2-runner',x:818,y:76,kind:'tool', title:'Playwright 运行器',
+      tip:{sum:'判据 = 依赖可导入性 + 浏览器就绪探针,内核 _support/pw_runner.py。',files:[['_support/pw_runner.py','运行器单源内核:可解析性判据 / 全局兜底修复 / 浏览器就绪探针']]}},
+    {id:'e2-console',x:818,y:190,kind:'proc', title:'评审控制台',
+      tip:{sum:'纯标准库 SSE(127.0.0.1:4190):500ms 慢动作回放、逐用例三值走查、提交解锁人工 Review。',files:[['scripts/e2e_console.py','评审控制台 1084 行:慢动作回放 + 评审指纹']]}},
+    {id:'e2-evid',x:818,y:304,kind:'asset', title:'留证与台账',
+      tip:{sum:'评审指纹 head_sha+scripts_hash 防旧账本挂新执行;失败构件只在失败轮落盘。',files:[]}},
+  ],
+  edges:[
+    {from:'e2-cases',to:'e2-parse',label:'用例块'},
+    {from:'e2-index',to:'e2-parse',dash:1},
+    {from:'e2-parse',to:'e2-verbs',route:'v'},
+    {from:'e2-verbs',to:'e2-spec'},
+    {from:'e2-login',to:'e2-spec'},
+    {from:'e2-mock',to:'e2-spec'},
+    {from:'e2-review',to:'e2-spec',route:'v',label:'Critical 拒写盘'},
+    {from:'e2-spec',to:'e2-runner'},
+    {from:'e2-runner',to:'e2-console',route:'v'},
+    {from:'e2-console',to:'e2-evid',route:'v'},
+  ],
+},
+cli: {
+  title:'CLI 与装配 · 内部结构', vb:[0,23,1000,380],
+  zones:[
+    {x:18,y:60,w:230,h:330,label:'命令与装配'},
+    {x:278,y:60,w:240,h:330,label:'基线'},
+    {x:548,y:60,w:240,h:330,label:'对账与回灌'},
+    {x:808,y:60,w:190,h:330,label:'接线'},
+  ],
+  nodes:[
+    {id:'c-cli',x:40,y:170,kind:'orch', title:'bin/atlas.js',
+      tip:{sum:'命令面 init/update/upgrade/check/console/report/version;init 先探测 Trellis 再调装配器。',files:[['bin/atlas.js','CLI 入口 320 行:命令路由与装配器调度']]}},
+    {id:'c-install',x:298,y:100,kind:'tool', title:'install.sh 六步',
+      tip:{sum:'整包白名单拷贝 → skill 瘦桩 → 骨架 → Trellis 补丁 → 接线 → 图谱探测;54 条自检。',files:[['install.sh','装配器 580 行:白名单拷贝 + 版本戳与 manifest 落盘 + 54 条自检']]}},
+    {id:'c-dry',x:298,y:264,kind:'proc', title:'dry-run / update',
+      tip:{sum:'--dry-run 零落盘(F54);--update 刷新既有副本(存量副本咬合点)。',files:[]}},
+    {id:'c-ver',x:568,y:76,kind:'asset', title:'.atlas/VERSION 戳',
+      tip:{sum:'源包内容摘要戳;与 MANIFEST 配对校验先行(D145)。',files:[['scripts/pkg_digest.py','内容摘要算法单点:装配版本门两侧共用']]}},
+    {id:'c-man',x:568,y:170,kind:'asset', title:'MANIFEST.json',
+      tip:{sum:'逐文件摘要基线(D146);写序先 manifest 后 VERSION。',files:[]}},
+    {id:'c-digest',x:568,y:264,kind:'support', title:'pkg_digest 单源',
+      tip:{sum:'摘要算法全仓唯一——双端各算各的 = 同错恒等 = 门恒绿(F37 教训)。',files:[]}},
+    {id:'c-back',x:820,y:100,kind:'tool', title:'backflow 三态',
+      tip:{sum:'副本⇄源包 NEW/DIFF/SOURCE_ONLY;拒绝护栏防方向搞反 + 并发写入哨兵。',files:[['scripts/backflow.py','三态回灌助手:diff_trees / apply / drift_check']]}},
+    {id:'c-patch',x:820,y:230,kind:'proc', title:'patches 四族',
+      tip:{sum:'锚点式版本化补丁(块指纹 sha256 前 8 位):plan-apply / project-wiring(五触点)/ root-cause / skill-routing。',files:[['patches/project-wiring/','项目接线补丁:五触点幂等写入用户仓库']]}},
+  ],
+  edges:[
+    {from:'c-cli',to:'c-install',label:'装配'},
+    {from:'c-install',to:'c-ver'},
+    {from:'c-install',to:'c-man'},
+    {from:'c-man',to:'c-ver',dash:1,route:'v'},
+    {from:'c-digest',to:'c-man',dash:1,route:'v',label:'单源摘要'},
+    {from:'c-cli',to:'c-patch'},
+    {from:'c-man',to:'c-back',label:'副本⇄源包'},
+  ],
+},
+review: {
+  title:'评审与收口 · 内部结构', vb:[0,23,1000,420],
+  zones:[
+    {x:18,y:60,w:210,h:330,label:'契约'},
+    {x:258,y:60,w:250,h:330,label:'审查链'},
+    {x:538,y:60,w:220,h:330,label:'形态门'},
+    {x:788,y:60,w:200,h:330,label:'收口'},
+  ],
+  nodes:[
+    {id:'rv-irc',x:40,y:100,kind:'asset', title:'独立审查契约',
+      tip:{sum:'四类实例接线 + 骨架条款 + 输出双份契约;不在门口信任模型结论。',files:[['shared/independent-review.md','独立审查契约:实例⑤规程与「应审 N / 实审 M」对账纪律']]}},
+    {id:'rv-close',x:40,y:250,kind:'asset', title:'closeout 触发表',
+      tip:{sum:'唯一真相源:哪类改动要跑哪几步;派生器只解析不判定。',files:[['shared/closeout.md','收口触发表:closeout_derive 的唯一真相源']]}},
+    {id:'rv-input',x:278,y:76,kind:'tool', title:'make_review_inputs',
+      tip:{sum:'按模式收集审查输入文件并附 sha256 摘要。',files:[['scripts/make_review_inputs.py','审查输入收集器 92 行:collect + 摘要']]}},
+    {id:'rv-agent',x:278,y:170,kind:'external', title:'审查器(独立进程)',
+      tip:{sum:'只读 diff 审查,防大模型跳文件少审;agents/atlas-reviewer.md 定义审查 agent。',files:[]}},
+    {id:'rv-conv',x:278,y:264,kind:'tool', title:'cli_review_convert',
+      tip:{sum:'CLI 输出 → review.json 契约 + N/M 对账;缺实审数拒绝产出。',files:[['scripts/cli_review_convert.py','契约转换器 199 行:SEVERITY_MAP + N/M 对账']]}},
+    {id:'rv-val',x:558,y:100,kind:'gate', title:'validate_review_report',
+      tip:{sum:'落盘形态门:分级闭集 / fingerprint 去重 / 签字取证。',files:[['scripts/validate_review_report.py','报告形态门 196 行:validate_report']]}},
+    {id:'rv-pol',x:558,y:250,kind:'support', title:'review_policy 单源',
+      tip:{sum:'三级闭集与处置枚举、指纹去重的单源内核(共享内核件)。',files:[['_support/review_policy.py','审查策略单源 139 行:LEVELS / compute_fingerprint']]}},
+    {id:'rv-derive',x:808,y:100,kind:'tool', title:'closeout_derive',
+      tip:{sum:'按本轮 git diff 匹配触发表路径族,派生必跑步骤清单。',files:[['scripts/closeout_derive.py','收口派生器 283 行:路径族匹配']]}},
+    {id:'rv-steps',x:808,y:250,kind:'asset', title:'收口步骤清单',
+      tip:{sum:'表是真相源、派生是投影——人改表,机器派生。',files:[]}},
+  ],
+  edges:[
+    {from:'rv-irc',to:'rv-input'},
+    {from:'rv-input',to:'rv-agent',route:'v'},
+    {from:'rv-agent',to:'rv-conv',route:'v'},
+    {from:'rv-conv',to:'rv-val',label:'N/M 对账'},
+    {from:'rv-pol',to:'rv-val',dash:1,route:'v'},
+    {from:'rv-close',to:'rv-derive',route:'ring'},
+    {from:'rv-derive',to:'rv-steps',route:'v'},
+  ],
+},
+};
+
+/* ================= 节点详情(提炼自 docs/map/ L0 速览与 L1 样章) ================= */
+const DETAIL = {
+code: {sum:'目标仓库的产品代码,Atlas 一切「实然」事实的唯一来源。',
+  points:['Atlas 对业务代码只做只读抽取(适配器/图谱),从不回写业务代码','实现由 Trellis Execute 承担;实现后实然事实经 after_finish hook 回写结构事实区(D38)','所有机器门对账的「实然侧」最终都指向这里的代码'],files:[],blind:null},
+req: {sum:'需求 ID = Trellis task id;需求卡即 task 的 prd.md,是 apply 的唯一需求上游。',
+  points:['不另建 inbox:一条需求 = 一张卡,跨环增量从这张卡出发','第 4 种形态(应然资产自身修订、无需求卡)不经 apply,直接逐环跑受影响集合,防「把资产修订塑造成需求」的任务树滥用','需求卡由 apply 只读;apply 的痕迹只落 atlas-apply.md'],
+  files:[['.trellis/tasks/<ID>/prd.md','需求卡本体:需求描述与验收要点的唯一上游,apply 只读它']],blind:null},
+graph: {sum:'外部图谱后端(cgc)的全线唯一隔离层:薄后端、厚自有;影响面预测与收口对账两个消费者。',
+  points:['换后端只改一个文件:_graph.py 是唯一接触面,接触只走 CLI 不走 Python import','用前现刷:代码态指纹(HEAD+脏文件集)一致才复用索引,不一致 cgc index --force 全量重建','增量 update 实测只加不减(幽灵符号会让 callers 静默答错),维持全量,切换条件写死在 docstring','查询全带 ORDER BY + Python 侧再排序;根外路径丢弃,防全局库跨仓污染','消费者① impact_report:种子符号沿 CALLS 边 BFS 分层,落 impact.json;未声明 graph 段 ⇒ exit 3 not_ready,不阻断 apply','消费者② impact_reconcile:收口时预测集 ⇔ 实际 diff 双向差集,漏报/多报/基准漂移 ⇒ WARN 指名,不得静默对账'],
+  files:[['adapters/_graph.py','图谱隔离层(ACL)本体 392 行:声明解析 / 后端探测 / 新鲜度 / 查询四段'],
+         ['scripts/impact_report.py','影响面预测器:种子符号沿 CALLS 边 BFS 分层,出 impact.json|md'],
+         ['scripts/impact_reconcile.py','收口对账器:预测集 vs 实际 diff 双向差集,漏报/多报逐文件指名'],
+         ['shared/stack-profile.md §2','graph 段的声明契约:键白名单 / backend 枚举 / pinned 语义']],
+  blind:'JSX/前端引用边为零(实测两轮):routes 通道恒等、impact 通道组件叶失义;name 级匹配同名并入 ⇒ 影响面偏宽,收口以实际 diff 为准',doc:'graph.md',sub:'graph'},
+apply: {sum:'全仓唯一编排件:把「一条需求」灌进项目级应然资产;只做编排与顺序,环内逻辑一律引用各环契约,不产任何正文。',
+  points:['四模式:apply <ID> 需求增量(常规路径)/ adopt 一次性开户(只登记基线+开户最小集,不做全量重述)/ all 按序全量 / backfill 回流攒批(≤10 条/批)','三问门定拉起哪些环:①改既有能力?②需人确认应然 UI?③需可重复验收?三问全否 = 合法的「纯加法」路径;判定与依据必须写进报告','影响面推导 = agent 语义判断 + 结构证据约束;禁 regex 判语义;二义或判不准 ⇒ 一次汇总问用户(≤3 问)','增量边界:只对受影响集合落笔,从不整文件覆盖;破坏性动作(删页/全量重生成/改 stack-profile)过用户确认门','并发写面仲裁:共享文件 claim 单写者(O_CREAT|O_EXCL 原子),残留由 atlas_check 写面残留门 WARN 点名','挂接 = patches/workflow-plan-apply 锚点式版本化补丁(块指纹 sha256 前 8 位),可重放不整体覆盖;失败停 planning 不进实现','执行记录 atlas-apply.md 固定七小节,幂等覆写'],
+  files:[['apply/reference.md','执行契约本体 326 行:四模式 / 三问门 / 影响面 / 增量边界的全部正文'],
+         ['scripts/write_claim.py','写面仲裁钩子:共享文件 take/release 原子 claim,并发冲突直接非零拒绝'],
+         ['patches/workflow-plan-apply/','Trellis 挂接补丁:锚点式版本化,把步骤 1.6 织进目标仓 workflow.md']],
+  blind:'三问门的语义对错机器不判(validate_walkthrough 只对账「写下的『是』与确认行」);门控态是如实态不是失败',doc:'apply.md',sub:'apply'},
+adapt: {sum:'从业务代码确定性抽取路由/API/模型/测试四类事实;refresh_structure 把事实渲染进结构事实区并记录键级漂移。',
+  points:['适配器四件:routes / api / models / tests,由 stack-profile.adapters 段声明启用','统一契约:只读、幂等、失败非零且零部分产物、输出 {category, items, source_files, adapter_version}','产物统一落项目根 .adapter-out/(运行态不入库,.gitignore 应含该行)','refresh_structure:atlas:facts 标记区内键级单元格重写、语义列保留、预算上限;键级增删 ⇒ _drift.json 漂移标记,由结构漂移门 WARN 消费'],
+  files:[['adapters/routes.py','路由抽取适配器:文件式 + JSX <Route> 两种形态,含挂载前缀合成(19→52 条实测扩面)'],
+         ['adapters/api.py','API 抽取适配器:接口端点与调用事实'],
+         ['adapters/models.py','数据模型抽取适配器:SQLModel 式含继承字段合并'],
+         ['scripts/refresh_structure.py','事实渲染器 797 行:适配器产物 → atlas:facts 标记区,键级漂移落 _drift.json']],
+  blind:'语义列(用途/关键交互/实现状态)是否写对机器不判(留空才 WARN);覆盖缺口经 adapter_gaps 可见化(未接 ≠ 缺陷,但必须可见)',doc:'adapters.md',sub:'adapt'},
+rings: {sum:'structure / prd / e2e 三环的规程契约(环内逻辑唯一正文)+ agent skill 执行入口;应然资产的生产环。',
+  points:['单源编号 markdown:每环一份 reference.md,skill 薄桩引用契约不复制正文','应然先行:资产在实现之前更新;原型环已退役(E1),应然 UI 的 testid 随用例分片产出','PRD 环:全局 prd.md + 域级 <domain>-prd.md(功能清单/规则/AC/走查单);E2E 环:e2e-index.md 总索引 + cases/ 分片','门控态:PRD 待决策非空 ⇒ e2e 只落空骨架,如实报告不判失败'],
+  files:[['rings/structure/reference.md','structure 环契约:反向工程与事实区规程'],
+         ['rings/prd/reference.md','prd 环契约:PRD 六件套 / 走查单 / 变更记录规程'],
+         ['rings/e2e/reference.md','e2e 环契约:用例分片文法 / 状态机 / 真跑规程'],
+         ['skills/','8 个 agent 执行入口(atlas-apply/structure/prd/e2e…):薄桩引用契约,不复制正文']],blind:null},
+e2egen: {sum:'用例分片(中文 DSL)编译为 Playwright 脚本 + 纯标准库 SSE 评审控制台(慢动作回放)。',
+  points:['动词值域封闭:click/hover/type/dispatch 等,陌生动词直接中止生成,治旧安装副本「静默吸收新语法」','登录形态三态:real 四值 / fabricated+storage_key / mode: none(显式声明非降级)','独立审查有 Critical ⇒ --apply 拒绝写盘;前置未声明 ⇒ exit 3 not_ready','失败留证:trace retain-on-failure + screenshot only-on-failure,全绿轮零构件','控制台 127.0.0.1:4190:500ms 慢动作弹窗回放、逐用例三值走查、提交解锁人工 Review;评审指纹(head_sha+scripts_hash)防旧评审挂新执行','运行器判据 = 依赖可导入性(非路径存在)+ 浏览器就绪探针,同内核 _support/pw_runner.py'],
+  files:[['scripts/gen_e2e_scripts.py','生成器本体 2383 行(全仓最大单件):分片 DSL → Playwright .spec.ts'],
+         ['scripts/e2e_console.py','评审控制台 1084 行:纯标准库 SSE 服务,慢动作回放 + 评审指纹'],
+         ['scripts/gen_testid_stub.py','testid 实然盘点薄桩生成器:adopt 开户交尾件,缺失由 validate_testids 自愈'],
+         ['_support/pw_runner.py','运行器单源内核:可解析性判据 / 全局兜底修复 / 浏览器就绪探针']],
+  blind:'登录态本身不可覆盖(D103);生成器不判「用例是否值得测」;控制台单机单用户假设',doc:'e2egen.md',sub:'e2egen'},
+gates: {sum:'「每道机器门都要真的会咬」的执行体系:编排器只聚合不改判;判据在 10 个校验器;门册总账 + 变异证明保证可信。',
+  points:['门册三律:不在 gates.md 登记 = 不存在;每门必配「喂坏输入必红」证明;静默继续 = 门失效','四态纪律:ok / FAIL(硬阻断 exit 1)/ WARN(不置红)/ SKIP(未就绪,必须带原因,永不当绿灯放行)','10 校验器各有对账平面:testids 应然⇔实然双向集合、PRD 链路、e2e 索引、AC 对账、走查确认行、stack-profile 形态等','编排门行 8 类:对齐测试/生成物最新/审查报告形态/执行串行/结构漂移/装配版本(MANIFEST 逐文件基线)/写面残留/E2E 真跑(TCP 探活+reset+浏览器就绪)','变异证明四段:注入坏输入⇒必红⇒还原逐字节一致⇒复绿;报告须含注入 diff(M 编号已至 M150 上下)','每轮门事件追加 check-events.jsonl,观测面,不参与判定'],
+  files:[['scripts/atlas_check.py','统一检查入口 903 行:编排 10 器 + 8 门行,一门一行,只聚合不改判据'],
+         ['validators/','判据本体目录:10 个 validate_*.py,每器守一个对账平面'],
+         ['shared/gates.md','门册总账 146 行:六列登记 + 取证五档;不在表 = 不存在'],
+         ['scripts/mutation_proof.py','变异证明工具:注入 → 必红 → 逐字节还原 → 复绿,报告含注入 diff']],
+  blind:'判据语义对错归独立审查与人;契约正文的语义自洽机器判不了(代码与契约陈述级分叉只有人看得到)',doc:'gates.md',sub:'gates'},
+review: {sum:'实例⑤独立审查(应审 N / 实审 M 对账)+ closeout 收口触发派生;审查报告落盘有形态门。',
+  points:['独立审查:独立进程只读 diff 审查,防大模型跳文件少审;CLI 输出经 cli_review_convert 转 review.json 契约并对账 N/M','报告形态门 validate_review_report:分级闭集、v2 阻断性 Critical 判定(单源内核 _support/review_policy.py)、fingerprint 去重、签字取证','closeout_derive:按本轮 git diff 匹配触发表路径族,派生收口必跑步骤;触发表(closeout.md)是唯一真相源,派生器只解析'],
+  files:[['shared/independent-review.md','独立审查契约:实例⑤规程与「应审 N / 实审 M」对账纪律'],
+         ['scripts/cli_review_convert.py','CLI 审查输出 → review.json 契约转换 + N/M 对账(缺实审数拒绝产出)'],
+         ['scripts/validate_review_report.py','审查报告落盘形态门:状态映射复算 / fingerprint 去重 / 签字取证'],
+         ['scripts/closeout_derive.py','收口步骤派生器:按 diff 匹配触发表,输出本轮必跑清单']],
+  blind:'审查质量本身(发现的问题对不对、漏没漏)机器不判——不在门口信任模型结论;指纹去重不防「同一问题换措辞重报」',doc:'review.md',sub:'review'},
+shared: {sum:'7 份 markdown 是对应机器面的真相源,改机器判据必同步这里的契约正文。',
+  points:['gates.md 门登记总账 / global-rules.md 元规则(确认门/退役三件套)/ stack-profile.md 声明 schema / layout.md 产物落点 / single-source.md 单源纪律 / independent-review.md 审查契约 / closeout.md 收口触发表','test_canonical_consistency 守卫跨文件自洽:环引用自明、模板键⊆契约字段、互引可达、门计数对账、D77 否决词汇钉'],
+  files:[['shared/gates.md','门登记总账:每道机器门的六列档案(查什么/不查什么/预算/取证)'],
+         ['shared/global-rules.md','元规则:跨项目无框架名 / 用户确认门 / 退役三件套'],
+         ['shared/stack-profile.md','项目声明 schema:origin / apps / adapters / e2e / graph 段契约'],
+         ['shared/layout.md','产物落点约定:各资产在目标仓的确切位置'],
+         ['shared/single-source.md','单一真相源纪律与迁移史'],
+         ['shared/independent-review.md','独立审查契约(实例⑤)'],
+         ['shared/closeout.md','收口触发表:closeout_derive 的唯一真相源']],blind:null},
+kernel: {sum:'全包只准存在一处的实现内核(8 件);消费者经 siblings.load_module 取用,禁止就地复制。',
+  points:['覆盖:profile/用例块解析、Playwright 运行器探测与修复、审查策略、URL 合并、用例 ID 文法、手工块等','test_shared_kernel 守卫「同名实现全包唯一」+ 黄金期望;yaml_scalar 的 null 家族收窄为 YAML 口径(裸 none 是合法字符串,D80 教训)','历史教训:双端各存一份判据实现 ⇒ 同错恒等 ⇒ 门恒绿(装配版本门 F37 实例),故立此层'],
+  files:[['_support/siblings.py','跨脚本模块加载器:load_module 单源取用入口'],
+         ['_support/stack_profile.py','profile / 用例块解析 + 行内注释剥除的单源实现'],
+         ['_support/pw_runner.py','Playwright 运行器探测 / 修复 / 浏览器就绪探针单源'],
+         ['_support/review_policy.py','审查状态复算策略:v2 阻断性 Critical 判定']],blind:null},
+cli: {sum:'命令面(atlas init/update/upgrade/check/console/report)+ 装配器:把 atlas 装进目标仓 .atlas/ 并保持副本与源包对账。',
+  points:['install.sh 白名单目录拷贝,不整目录删,保住 .atlas/runs/ 运行态基线;--dry-run 零落盘','装配基线:.atlas/VERSION 内容摘要戳 + .atlas/MANIFEST.json 逐文件摘要(配对校验先行,写序先 manifest 后 VERSION)','54 条自检 check 声明:声称落下的每个文件必须真落下','backflow 三态回灌:NEW/DIFF/SOURCE_ONLY(拒绝护栏防方向搞反)+ 并发写入哨兵','project-wiring 五触点接线:AGENTS.md 指针/after_finish hook/pytest 兜底/.gitignore 追加 .adapter-out//pi 扩展'],
+  files:[['bin/atlas.js','CLI 入口 320 行:init / update / upgrade / check / console / report'],
+         ['install.sh','装配器 580 行:白名单拷贝 + 版本戳与 manifest 落盘 + 54 条自检'],
+         ['scripts/backflow.py','副本⇄源包三态回灌助手:SOURCE_ONLY 拒绝护栏 + 并发写入哨兵'],
+         ['scripts/pkg_digest.py','内容摘要算法单点:装配版本门两侧共用同一文件防双端漂移'],
+         ['patches/project-wiring/','项目接线补丁:五触点幂等写入用户仓库']],
+  blind:'npm 升级链显式不支持(B-1 否决);wiring 五触点单向无退役对称;存量副本不自动升级(咬合点 = install.sh --update)',doc:'cli.md',sub:'cli'},
+ops: {sum:'每日巡检(五信号源)+ §15 自感知上报 + 发版流程。',
+  points:['duty-review:README 协议 + QUEUE 三区队列 + bugs.md 按环分类存量库;duty_signals.sh 只读收集','巡检对象 = 「决定/悬案」流水(五信号源),非代码审查;报告只报拍板事,无事「今日无事」','atlas report 四段式零业务上下文;--trigger user 不冒充自动感知','发版:版本串四处落点 + npm prerelease --tag beta;CHANGELOG 判号以 npm dist-tags + git tag 为准'],
+  files:[['duty-review/','每日巡检件:QUEUE 三区队列 + bugs.md 存量库 + families.py 分型'],
+         ['scripts/atlas_report.py','§15 自感知上报 CLI:四段式、零业务上下文、可 GitHub 直推'],
+         ['scripts/duty_signals.sh','巡检信号只读收集脚本(五信号源)'],
+         ['scripts/release.py','发版流程脚本:版本串四处落点核验 + npm prerelease tag']],blind:null},
+};
+
+
+/* ================= 渲染引擎 ================= */
+const NW=170, NH=54;
+const svgNS='http://www.w3.org/2000/svg';
+const $=s=>document.querySelector(s);
+let mode='map';           // 'map' | 'detail'
+let currentMap='overview';// 当前显示的拓扑
+let currentDetail=null;   // 详情节点 id
+
+function nbox(v,id){const n=v.nodes.find(n=>n.id===id);return {x:n.x,y:n.y,w:NW,h:NH};}
+function labelPos(e,a){
+  if(e.route==='v')return [a.x+a.w/2+6, a.y+a.h+15];
+  return [a.x+a.w+8, a.y+a.h/2-7];
+}
+function wrap(t){
+  if(t.length<=8)return [t];
+  const sp=t.lastIndexOf(' ',9);
+  if(sp>3)return [t.slice(0,sp),t.slice(sp+1)];
+  const cut=Math.ceil(t.length/2);
+  return [t.slice(0,cut),t.slice(cut)];
+}
+function edgePath(v,e){
+  const a=nbox(v,e.from), b=nbox(v,e.to);
+  if(e.route==='v'){const ax=a.x+a.w/2, ay=a.y+a.h, bx=b.x+b.w/2, by=b.y;
+    const my=(ay+by)/2; return `M${ax},${ay} V${my} H${bx} V${by}`;}
+  if(e.route==='leftU'){const ay=a.y+a.h/2, by=b.y+b.h/2;
+    return `M${a.x},${ay} H${a.x-14} V${by} H${b.x}`;}
+  if(e.route==='ring'){const ay=a.y+a.h/2, by=b.y+b.h/2;
+    const ry=Math.max(...v.zones.map(z=>z.y+z.h))+18;
+    return `M${a.x},${ay} H${a.x-14} V${ry} H${b.x+b.w+14} V${by} H${b.x+b.w}`;}
+  const ay=a.y+a.h/2, by=b.y+b.h/2;
+  if(e.route==='hv'){const ax=a.x+a.w, mx=e.mx||Math.max(ax+16,(a.x+a.w+b.x+b.w)/2);
+    return `M${ax},${ay} H${mx} V${b.y-12} H${b.x+b.w/2} V${b.y}`;}
+  const ax=a.x+a.w, bx=b.x;
+  if(bx>ax+18){const mx=(ax+bx)/2;return `M${ax},${ay} H${mx} V${by} H${bx}`;}
+  const ax2=a.x, bx2=b.x+b.w, mx2=(ax2+bx2)/2;
+  return `M${ax2},${ay} H${mx2} V${by} H${bx2}`;
+}
+function el(tag,attrs,parent){const e=document.createElementNS(svgNS,tag);
+  for(const k in attrs)e.setAttribute(k,attrs[k]); if(parent)parent.appendChild(e); return e;}
+
+/* 渲染一张拓扑图到容器;interactive=true 时点击节点进详情,false 时点击=钉住摘要 */
+function renderMap(container, viewId, interactive){
+  const v=VIEWS[viewId];
+  const svg=el('svg',{viewBox:`${v.vb[0]} ${v.vb[1]} ${v.vb[2]} ${v.vb[3]}`,role:'img','aria-label':v.title});
+  container.appendChild(svg);
+  const defs=el('defs',{},svg);
+  const mkId='arr-'+viewId+'-'+(interactive?'i':'s');
+  const mk=el('marker',{id:mkId,viewBox:'0 0 10 10',refX:9,refY:5,
+    markerWidth:7,markerHeight:7,orient:'auto-start-reverse'},defs);
+  el('path',{d:'M0,0 L10,5 L0,10 z',fill:'var(--muted-foreground)'},mk);
+  const gZ=el('g',{class:'zone'},svg), gE=el('g',{},svg), gN=el('g',{},svg);
+  v.zones.forEach(z=>{const g=el('g',{class:'zone'},gZ);
+    el('rect',{x:z.x,y:z.y,width:z.w,height:z.h,rx:10},g);
+    el('text',{x:z.x+2,y:v.zoneLabIn?z.y+20:z.y-9},g).textContent=z.label;});
+  v.edges.forEach(e=>{
+    el('path',{class:'edge'+(e.dash?' dash':''),d:edgePath(v,e),'marker-end':`url(#${mkId})`,'data-e':JSON.stringify([e.from,e.to])},gE);
+  });
+  const gL=el('g',{},gE);
+  v.edges.forEach(e=>{
+    if(!e.label)return;
+    const a=nbox(v,e.from), b2=nbox(v,e.to);
+    const tw=e.label.length*12+12;
+    let lx,ly;
+    if(e.route==='v'){ lx=a.x+a.w/2+4; ly=a.y+a.h+12; }
+    else if(!e.route && Math.abs(b2.x-a.x)<20){ const mx2=(a.x+b2.x+b2.w)/2, my=(a.y+b2.y+NH)/2; lx=mx2-tw/2; ly=my+2; }
+    else { lx=a.x+a.w+4; ly=a.y+a.h/2-9; if(lx+tw>v.vb[0]+v.vb[2]-4) lx=a.x-tw-6; }
+    el('rect',{x:lx,y:ly-11,width:tw,height:17,rx:5,fill:'var(--card)',stroke:'var(--zone)','stroke-width':1},gL);
+    const t=el('text',{class:'edgeLabel',x:lx+6,y:ly+1},gL);t.textContent=e.label;
+  });
+  const pinned=interactive?null:(()=>{const d=document.createElement('div');
+    d.className='pinned';container.prepend(d);return d;})();
+  v.nodes.forEach(n=>{
+    const k=KIND[n.kind];
+    const g=el('g',{class:'node'+(k.external?' external':''),transform:`translate(${n.x},${n.y})`,'data-id':n.id},gN);
+    g.style.setProperty('--nc',`var(${k.c})`);
+    el('rect',{class:'box',x:0,y:0,width:NW,height:NH,rx:10},g);
+    const t=el('text',{class:'t',x:NW/2,y:23,'text-anchor':'middle'},g);t.textContent=n.title;
+    if(n.sub){const st=el('text',{class:'s',x:NW/2,y:41,'text-anchor':'middle'},g);st.textContent=n.sub;}
+    if(n.l1)el('text',{class:'l1',x:NW-7,y:15,'text-anchor':'end'},g).textContent='L1 ↗';
+    g.addEventListener('mouseenter',ev=>showTip(n,k,ev));
+    g.addEventListener('mousemove',ev=>moveTip(ev));
+    g.addEventListener('mouseleave',hideTip);
+    g.addEventListener('click',ev=>{ev.stopPropagation();
+      if(interactive){openDetail(n.id);return;}
+      // 子图内节点:钉住摘要
+      if(pinned){pinned.style.display='block';
+        pinned.innerHTML=`<h5>${n.title} <span class="badge" style="--nc:var(${k.c});font-size:10px;border:1px solid var(--nc);color:var(--nc);padding:0 6px;border-radius:99px">${k.label}</span></h5><p>${n.tip.sum}</p>`;
+        pinned.scrollIntoView({block:'nearest',behavior:'smooth'});}
+    });
+  });
+  if(pinned)svg.addEventListener('click',()=>{pinned.style.display='none';});
+}
+
+/* 全景模式 */
+function showMap(){
+  mode='map';currentDetail=null;
+  hideTip();
+  const cv=$('#canvas');cv.innerHTML='';cv.className='svgmode';
+  renderMap(cv,currentMap,true);
+  renderCrumb();
+  fitSvg();
+  if(tourOn)applyTourStep();
+}
+/* 详情模式 */
+function showDetail(id){
+  mode='detail';currentDetail=id;
+  hideTip();
+  const v=VIEWS.overview, node=v.nodes.find(n=>n.id===id), k=KIND[node.kind], d=DETAIL[id];
+  const cv=$('#canvas');cv.innerHTML='';cv.className='detailmode';cv.style.width='';
+  const div=document.createElement('div');div.className='detail';
+  div.style.setProperty('--nc',`var(${k.c})`);
+  let h=`<h2>${node.title}<span class="badge">${k.label}</span></h2>`;
+  h+=`<p class="sum">${d.sum}</p>`;
+  h+=`<h3>核心机制</h3><ul class="points">${d.points.map(p=>`<li>${p}</li>`).join('')}</ul>`;
+  if(d.files&&d.files.length)h+=`<h3>关键文件</h3><div class="files">${d.files.map(f=>`<div class="frow"><code>${esc(f[0])}</code><span class="fdesc">${f[1]}</span></div>`).join('')}</div>`;
+  if(d.blind)h+=`<h3>显式盲区</h3><div class="blind">${d.blind}</div>`;
+  if(d.doc){
+    /* 本地(file:,与 md 同目录)用相对 .md;站点(http)用 cleanUrls 路径 */
+    const href=(location.protocol==='file:')?d.doc:'/atlas/map/'+d.doc.replace(/\.md$/,'');
+    h+=`<h3>完整 L1 文档</h3><a class="doclink" href="${href}">📄 docs/map/${d.doc}</a>`;
+  }
+  div.innerHTML=h;
+  cv.appendChild(div);
+  if(d.sub){
+    const h3=document.createElement('h3');h3.textContent='内部结构(hover 节点看摘要,点击钉住)';h3.style.cssText='margin:26px 0 4px;font-size:13px;color:var(--muted-foreground);font-weight:500;letter-spacing:1px;border-bottom:1px solid var(--border);padding-bottom:6px';
+    div.appendChild(h3);
+    const sub=document.createElement('div');sub.className='submap';
+    sub.style.cssText='border:1px solid var(--border);border-radius:12px;padding:14px;background:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:22px 22px';
+    div.appendChild(sub);
+    renderMap(sub,d.sub,false);
+  }
+  renderCrumb();
+  try{window.scrollTo({top:0});}catch(_){}
+}
+function openDetail(id){showDetail(id);}
+function renderCrumb(){
+  const c=$('#crumb');c.innerHTML='';
+  c.style.display=(mode==='detail')?'flex':'none';
+  const a=document.createElement('a');a.textContent='‹ Atlas 全景';a.onclick=showMap;c.appendChild(a);
+  if(mode==='detail'){
+    const node=VIEWS.overview.nodes.find(n=>n.id===currentDetail);
+    const s=document.createElement('span');s.textContent=' / ';c.appendChild(s);
+    const cur=document.createElement('span');cur.className='cur';cur.textContent=node.title;c.appendChild(cur);
+  }
+}
+/* tooltip */
+const tip=$('#tip');
+function showTip(n,k,ev){
+  const t=n.tip||{sum:DETAIL[n.id]?DETAIL[n.id].sum:'',files:DETAIL[n.id]?DETAIL[n.id].files:[]};
+  let h=`<h4>${n.title}<span class="badge" style="--nc:var(${k.c})">${k.label}</span></h4>`;
+  h+=`<p>${t.sum}</p>`;
+  if(t.files&&t.files.length)h+=`<div class="files">${t.files.map(f=>{const p=Array.isArray(f)?f[0]:f,d=Array.isArray(f)?f[1]:'';return `<div class="frow"><code>${esc(p)}</code>${d?`<span class="fdesc">${d}</span>`:''}</div>`;}).join('')}</div>`;
+  if(mode==='map'&&DETAIL[n.id])h+=`<div class="drill">↳ 点击查看设计详情</div>`;
+  tip.innerHTML=h;tip.style.display='block';moveTip(ev);
+}
+function moveTip(ev){const r=tip.getBoundingClientRect();
+  let x=ev.clientX+16,y=ev.clientY+14;
+  if(x+r.width>innerWidth-8)x=ev.clientX-r.width-14;
+  if(y+r.height>innerHeight-8)y=ev.clientY-r.height-12;
+  tip.style.left=x+'px';tip.style.top=y+'px';}
+function hideTip(){tip.style.display='none';}
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;');}
+/* legend */
+(function(){const lg=document.getElementById('legend');if(!lg)return;
+  for(const k in KIND){const li=document.createElement('span');li.className='li';
+  const dot=document.createElement('span');dot.className='dot';dot.style.background='var('+KIND[k].c+')';
+  li.appendChild(dot);li.appendChild(document.createTextNode(KIND[k].label));lg.appendChild(li);}
+  const v=document.createElement('span');v.className='li';v.style.marginLeft='auto';v.textContent='v0.2.0-beta.6';lg.appendChild(v);})();
+/* fit:按窗口内容比例动态选布局宽高比(1040~1160 / 488),再取 contain 尺寸 */
+function fitSvg(){
+  if(mode!=='map')return;
+  const cv=document.getElementById('canvas');
+  const vw=document.documentElement.clientWidth||innerWidth;
+  const availW=Math.min(vw*0.96,1680)-60;
+  const top=Math.min(Math.max(cv.getBoundingClientRect().top,40),220);
+  const availH=Math.max(280,innerHeight-top-70);
+  const svg=document.querySelector('#canvas>svg'); if(!svg)return;
+  const vb=VIEWS[currentMap].vb, r=vb[2]/vb[3];
+  let h=availH,w=h*r;
+  if(w>availW){w=availW;h=w/r;}
+  svg.style.width=Math.round(w)+'px';svg.style.height=Math.round(h)+'px';
+  cv.style.width=(Math.round(w)+16)+'px';
+  const real=cv.parentElement.clientWidth-36;
+  const intended=parseFloat(cv.style.width)||0;
+  if(intended>real){
+    const f=real/intended;
+    svg.style.width=Math.round(w*f)+'px';svg.style.height=Math.round(h*f)+'px';
+    cv.style.width=(Math.round(w*f)+16)+'px';
+  }
+}
+let _fitT=null;
+window.addEventListener('resize',()=>{clearTimeout(_fitT);_fitT=setTimeout(fitSvg,80);});
+window.addEventListener('load',()=>{fitSvg();requestAnimationFrame(fitSvg);});
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>fitSvg());
+function badge(){
+  const svg=document.querySelector('#canvas>svg');if(!svg)return;
+  const b=document.getElementById('fitbadge');if(!b)return;
+  const r=svg.getBoundingClientRect();
+  b.textContent='视口 '+document.documentElement.clientWidth+'×'+innerHeight+' · 图 '+Math.round(r.width)+'×'+Math.round(r.height);
+}
+const _fitSvgOld=fitSvg;
+fitSvg=function(){_fitSvgOld();badge();};
+/* ================= 讲述模式(2026-10-25:十步主数据流动线,文案与 index.md「一页看懂」同源) ================= */
+const TOUR=[
+ {focus:['code','req'],edges:[],text:'Atlas 管两条输入:你已有的业务代码,和你要做的需求'},
+ {focus:['code','adapt'],edges:[['code','adapt']],text:'适配器只读抽取路由、API、模型、测试事实——实然先入库'},
+ {focus:['adapt','rings'],edges:[['adapt','rings']],text:'结构事实是三环资产的地基,机器渲染、键级对账'},
+ {focus:['code','graph','apply'],edges:[['code','graph'],['graph','apply']],text:'代码图谱只当哑索引,给影响面推导供静态调用面证据'},
+ {focus:['req','apply'],edges:[['req','apply']],text:'需求过三问门,决定拉起哪些环;apply 只编排不越界'},
+ {focus:['apply','rings'],edges:[['apply','rings']],text:'需求落成 PRD 六件套,AC 分解为 E2E 用例分片'},
+ {focus:['rings','e2egen'],edges:[['rings','e2egen']],text:'中文分片编译成 Playwright 脚本,动词值域封闭、陌生即中止'},
+ {focus:['e2egen','gates'],edges:[['e2egen','gates']],text:'十校验器加八类编排门,全绿是收口的硬前置'},
+ {focus:['gates','review'],edges:[['gates','review']],text:'独立审查 N/M 对账,影响面预测也要被 reconcile 审计'},
+ {focus:['shared','kernel','cli'],edges:[],text:'契约真相源、单源内核、装配对账——服务全链'},
+];
+let tourOn=false, tourIdx=0, tourTimer=null;
+function applyTourStep(){
+  if(!tourOn||mode!=='map')return;
+  const st=TOUR[tourIdx], focus=new Set(st.focus);
+  document.querySelectorAll('#canvas>svg .node').forEach(g=>g.classList.toggle('dim',!focus.has(g.dataset.id)));
+  document.querySelectorAll('#canvas>svg .edge').forEach(p=>{
+    let e=null; try{e=JSON.parse(p.dataset.e);}catch(_){}
+    const hi=e&&st.edges.some(x=>x[0]===e[0]&&x[1]===e[1]);
+    p.classList.toggle('hi',hi); p.classList.toggle('dim',!hi);
+  });
+  document.getElementById('tstep').textContent=(tourIdx+1)+' / '+TOUR.length;
+  document.getElementById('ttext').textContent=st.text;
+}
+function startTour(){
+  tourOn=true;tourIdx=0;
+  if(mode!=='map'||currentMap!=='overview'){currentMap='overview';showMap();}
+  document.getElementById('tourbar').style.display='flex';
+  applyTourStep();
+}
+function endTour(){
+  tourOn=false; stopTourPlay();
+  document.querySelectorAll('#canvas>svg .node.dim,#canvas>svg .edge.dim,#canvas>svg .edge.hi')
+    .forEach(x=>x.classList.remove('dim','hi'));
+  document.getElementById('tourbar').style.display='none';
+}
+function stepTour(d){tourIdx=Math.max(0,Math.min(TOUR.length-1,tourIdx+d));applyTourStep();}
+function stopTourPlay(){if(tourTimer){clearInterval(tourTimer);tourTimer=null;}document.getElementById('tplay').textContent='▶';}
+function toggleTourPlay(){
+  if(tourTimer){stopTourPlay();return;}
+  document.getElementById('tplay').textContent='⏸';
+  tourTimer=setInterval(()=>{if(tourIdx>=TOUR.length-1){stopTourPlay();return;}stepTour(1);},5000);
+}
+document.getElementById('tourBtn').onclick=startTour;
+document.getElementById('tprev').onclick=()=>stepTour(-1);
+document.getElementById('tnext').onclick=()=>stepTour(1);
+document.getElementById('tplay').onclick=toggleTourPlay;
+document.getElementById('texit').onclick=endTour;
+window.addEventListener('keydown',ev=>{
+  if(!tourOn)return;
+  if(ev.key==='ArrowRight'||ev.key===' '){ev.preventDefault();stepTour(1);}
+  else if(ev.key==='ArrowLeft'){ev.preventDefault();stepTour(-1);}
+  else if(ev.key==='Escape'){endTour();}
+});
+/* boot;#tour 直入讲述模式(讲解场景:打开链接即讲述) */
+showMap();
+if(location.hash==='#tour')startTour();
+</script>
+</body>
+</html>
