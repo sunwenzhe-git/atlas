@@ -116,7 +116,7 @@
 </head>
 <body>
 <div class="page"><header>
-  <div class="brand"><span class="logo"></span><span class="bt">Atlas 实现地图<small>锚定 v0.2.0-beta.10 · 图是导航面,细节以 docs/map/ 与代码为准</small></span></div>
+  <div class="brand"><span class="logo"></span><span class="bt">Atlas 实现地图<small>锚定 v0.2.0-beta.11 · 图是导航面,细节以 docs/map/ 与代码为准</small></span></div>
   <div class="actions">
     <button id="tourBtn" title="十步主数据流动线:←/→/空格步进,Esc 退出,可点高亮节点下钻">▶ 讲述模式</button>
   </div>
@@ -721,7 +721,7 @@ function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;');}
   for(const k in KIND){const li=document.createElement('span');li.className='li';
   const dot=document.createElement('span');dot.className='dot';dot.style.background='var('+KIND[k].c+')';
   li.appendChild(dot);li.appendChild(document.createTextNode(KIND[k].label));lg.appendChild(li);}
-  const v=document.createElement('span');v.className='li';v.style.marginLeft='auto';v.textContent='v0.2.0-beta.10';lg.appendChild(v);})();
+  const v=document.createElement('span');v.className='li';v.style.marginLeft='auto';v.textContent='v0.2.0-beta.11';lg.appendChild(v);})();
 /* fit:按窗口内容比例动态选布局宽高比(1040~1160 / 488),再取 contain 尺寸 */
 function fitSvg(){
   if(mode!=='map')return;
