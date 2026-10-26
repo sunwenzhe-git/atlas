@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""atlas_verify(验收执行器,RFC-20261025-02 v2 / D150)七钉。
+"""atlas_verify(验收执行器,RFC-20261025-02 v2 / D150;backfill 步 = 附录 B v2 / D151)十钉。
 
-四步版:pre / run=atlas_check / report(留档) / backfill 缓行(写面零触碰)。
-钉对应 RFC §4 ①–⑦;变异 **MB19**(摘「留档短路」⇒ 钉④红)/ **MB20**(摘「失败停环」⇒ 失败批被落档成 ok ⇒ 钉③红),四段协议还原逐字节一致。
+钉对应 RFC §4 ①–⑦ + 附录 B v2 ⑧–⑩;变异 **MB19**(摘「留档短路」⇒ 钉④红)/ **MB20**(摘「失败停环」⇒ 失败批被落档成 ok ⇒ 钉③红)/ **MB22**(回填退回内联改写、不走 `e2e_console.writeback` 同函数 ⇒ 钉⑧红)/ **MB23**(摘写后复检 ⇒ 撞窗不被检测 ⇒ 钉⑩红),四段协议含注入 diff、还原逐字节一致。
 
 夹具:temp root + 假 `atlas-prepare.mjs`(node,记调用数/批级 ID/可注入失败)
-+ 假 `.atlas/scripts/atlas_check.py`(记真跑调用数,可注入失败行/成功行/留证构件)。
-"""
++ 假 `.atlas/scripts/atlas_check.py`(记真跑调用数,可注入失败行/成功行/留证构件;
+绿批输出 Playwright JSON 形态 results.json:①expected / ②skipped——供 backfill 解析)
++ 可选 `e2e-index.md` / `events.jsonl` 夹具(钉⑧⑨⑩)。"""
 from __future__ import annotations
 
 import importlib.util
@@ -45,12 +45,33 @@ if mode == "fail":
     print("  FAIL e2e_real_run  [FAIL] 判据不成立(注入)")
     print("FAIL (详细错误堆栈已落盘)")
     sys.exit(1)
-(run_dir / "results.json").write_text("{}")
+# 绿批:Playwright JSON 报告形态(suites[].specs[].tests[].status)——backfill 逐用例解析源
+(run_dir / "results.json").write_text(_json.dumps({
+    "stats": {"expected": 1, "unexpected": 0, "skipped": 1},
+    "suites": [{"specs": [{"title": "E2E-A-001 点击后标题就绪", "tests": [{"status": "expected"}]}]},
+               {"specs": [{"title": "E2E-A-002 点击后面板展开", "tests": [{"status": "skipped"}]}]}],
+}, ensure_ascii=False))
 (run_dir / "e2e-summary.json").write_text("{}")
 print("  ok   assembly_version  源包与装配态一致")
 print("  ok   e2e_real_run      11/11")
 print("OK")
 """
+
+# backfill 夹具:两条可回填行的索引(①red 待翻绿、②blocked 由 skipped 草稿豁免、③不在 results 故不动)
+FAKE_INDEX = """# E2E 总索引
+
+| 用例ID | 页面 | 中文标题 | 类型 | 关联AC | 需求 | 状态 | 状态原因 | 分片 |
+|---|---|---|---|---|---|---|---|---|
+| E2E-A-001 | home | 点击后标题就绪 | smoke | AC-A-001 | | red | | [cases/home.md](cases/home.md) |
+| E2E-A-002 | home | 点击后面板展开 | smoke | AC-A-001 | | blocked | ENV_ISSUE：断网 | [cases/home.md](cases/home.md) |
+| E2E-A-003 | home | 本批未执行 | smoke | AC-A-002 | | green | | [cases/home.md](cases/home.md) |
+
+## 页面表(页 ↔ 路由 ↔ 实现状态)
+"""
+
+FAKE_LEDGER_EVENT = ('{"kind": "submit", "source": "app", "ts": "2026-10-26T10:00:00", "changed": 0, '
+                     '"cases": {}, "prov": {"head_sha": "base000", "scripts_hash": "hash000", '
+                     '"git_dirty": false, "actor_type": "human"}}')
 
 
 def load_verify():
@@ -180,3 +201,120 @@ def test_missing_root_fails_clean_without_writes() -> None:
                            capture_output=True, text=True)
         assert r.returncode == 2, (r.returncode, r.stderr)
         assert list(empty.iterdir()) == []                                 # 未写盘
+
+
+# ---------------------------------------------------------------- 附录 B v2(D151)⑧⑨⑩
+
+def make_index(root: Path) -> None:
+    (root / "product" / "e2e").mkdir(parents=True, exist_ok=True)
+    (root / "product/e2e/e2e-index.md").write_text(FAKE_INDEX, encoding="utf-8")
+
+
+def make_ledger(root: Path) -> None:
+    p = root / "product" / "e2e" / "reviews" / "console"
+    p.mkdir(parents=True, exist_ok=True)
+    (p / "events.jsonl").write_text(FAKE_LEDGER_EVENT + "\n", encoding="utf-8")
+
+
+def _ledger_bytes(root: Path) -> bytes:
+    return (root / "product/e2e/reviews/console/events.jsonl").read_bytes()
+
+
+def _claim_residue(root: Path) -> list[str]:
+    d = root / ".atlas" / "runs" / "write-claims"
+    return sorted(p.name for p in d.glob("*.json")) if d.is_dir() else []
+
+
+def test_backfill_reuses_console_writeback_identity() -> None:
+    """钉⑧(B1 单一来源):回填走**装配态同目录**的 `e2e_console.writeback` 同一函数——
+    模块解析 = scripts/ 兄弟文件;行为面 = 记录器证回填以 apply=True 调它(而非内联行改写)。
+    变异 **MB22**:回填退回内联改写(绕开 console 函数)⇒ 本钉红。"""
+    import sys as _sys
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        make_index(root)
+        run_dir = root / "product/e2e/scripts/.atlas-run"      # seed 逐用例执行结果(单用例 expected)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "results.json").write_text(json.dumps(
+            {"suites": [{"specs": [{"title": "E2E-A-001 点击后标题就绪", "tests": [{"status": "expected"}]}]}]},
+            ensure_ascii=False), encoding="utf-8")
+        console, claim_mod = load_verify()._import_console()
+        assert Path(console.__file__).resolve() == (PKG_ROOT / "scripts" / "e2e_console.py").resolve()
+        assert Path(claim_mod.__file__).resolve() == (PKG_ROOT / "scripts" / "write_claim.py").resolve()
+        orig, calls = console.writeback, []
+        console.writeback = lambda *a, **k: (calls.append(k.get("apply")), orig(*a, **k))[-1]
+        try:
+            assert load_verify().step_backfill(root).get("status") in {"ok", "SKIP"}
+        finally:
+            console.writeback = orig
+        assert calls == [True], calls   # apply=True:落盘回填确实经由 console 同一函数
+
+
+def test_backfill_never_touches_review_ledger() -> None:
+    """钉⑨(B2 账本不进):全链绿批回填后 **events.jsonl 字节不变**;索引 ①red→green、
+    blocked 行(skipped 草稿豁免)与不在 results 的行不动;留档含回填章(键集 = 改动集)
+    + README 机器批声明行;claim 无残留。变异 **MB22** 同族连带：内联改写不产索引变化 ⇒ 本钉红。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        make_index(root)
+        make_ledger(root)
+        before = _ledger_bytes(root)
+        r = run(root, "--json")
+        assert r.returncode == 0, (r.stdout[-600:], r.stderr[-400:])
+        assert _ledger_bytes(root) == before                      # 账本逐字节不变
+        index = (root / "product/e2e/e2e-index.md").read_text(encoding="utf-8")
+        row = next(l for l in index.splitlines() if l.startswith("| E2E-A-001"))
+        assert "| green |" in row                                 # red → green
+        b2 = next(l for l in index.splitlines() if l.startswith("| E2E-A-002"))
+        assert "| blocked | ENV_ISSUE：断网 |" in b2              # skipped ⇒ 不入 draft,原样
+        data = json.loads(r.stdout)
+        bf = next(s for s in data["steps"] if s["name"] == "backfill")
+        assert bf["status"] == "ok" and bf["backfill"]["cases"].keys() == {"E2E-A-001"}, bf
+        readme = (root / data["archive"] / "README.md").read_text(encoding="utf-8")
+        assert "执行器回填" in readme                              # 机器批声明(分辨面 = 留档)
+        assert _claim_residue(root) == []                         # claim 已 release
+        r2 = run(root, "--json")                                  # 留档短路批:backfill 不再跑
+        assert json.loads(r2.stdout)["short_circuit"] is True
+
+
+def test_backfill_concurrent_submit_reports_collision_and_fails() -> None:
+    """钉⑩(B3 撞窗):回填窗口内账本被注入伪造人批 submit ⇒ 尾 submit 变化被抓到 ⇒
+    exit 非 0 + 撞窗结构化报告(意图改动/写后现值) + **不落档**;claim 无残留。
+    变异 **MB23**:摘写后复检 ⇒ 撞窗被吞 ⇒ 本钉红。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        make_index(root)
+        make_ledger(root)
+        mod = load_verify()
+        console, _ = mod._import_console()
+        orig = console.writeback
+
+        def inject_then_writeback(*a, **k):
+            # 竞写窗内:人批 submit 在「基线读取之后、写索引之前」顶掉尾 submit(时点家族)
+            d = root / "product/e2e/reviews/console/events.jsonl"
+            with d.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"kind": "submit", "source": "app", "ts": "2026-10-26T12:00:00",
+                                     "changed": 2, "cases": {"E2E-A-003": {"ok": True}},
+                                     "prov": {"head_sha": "human999", "scripts_hash": "hash999",
+                                              "git_dirty": True, "actor_type": "human"}},
+                                    ensure_ascii=False) + "\n")
+            return orig(*a, **k)
+
+        console.writeback = inject_then_writeback
+        try:
+            import io, contextlib
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = mod.main(["--root", str(root), "--json"])
+        finally:
+            console.writeback = orig
+        assert code == 1, buf.getvalue()
+        data = json.loads(buf.getvalue())
+        assert data["failed_step"] == "backfill" and data["archive"] is None, data
+        assert "撞窗" in data["steps"][-1]["detail"] and "console 重提交" in data["steps"][-1]["detail"]
+        rows_after = data["steps"][-1].get("backfill", {}).get("rows_after", [])
+        assert any(m["id"] == "E2E-A-001" and m["intended"] == {"状态": "green"} for m in rows_after), rows_after
+        assert _claim_residue(root) == []
