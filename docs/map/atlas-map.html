@@ -74,6 +74,8 @@
   .detail .files{display:flex;flex-direction:column;gap:2px;margin:0}
   .frow{display:flex;flex-direction:column;gap:1px;padding:5px 0}
   .frow code{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12.5px;color:var(--primary);word-break:break-all}
+  .frow a{color:inherit;text-decoration:none}
+  .frow a:hover code,.frow a:focus code{text-decoration:underline}
   .frow .fdesc{font-size:12.5px;color:var(--muted-foreground);line-height:1.45}
   .detail .blind{background:color-mix(in srgb,var(--nc) 7%,transparent);border:1px dashed var(--nc);
     border-radius:10px;padding:10px 14px;font-size:13.5px;line-height:1.6;color:var(--foreground)}
@@ -97,7 +99,6 @@
   #tip .files code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--primary);word-break:break-all}
   #tip .frow{padding:1px 0}
   #tip .frow .fdesc{font-size:11px}
-  #tip .drill{margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:12px;color:var(--nc);font-weight:700}
   /* ---- 讲述模式:非焦点降透明,焦点边加粗;底部字幕条 ---- */
   #canvas>svg .node.dim{opacity:.18;pointer-events:none}
   #canvas>svg .edge.dim{opacity:.1}
@@ -652,7 +653,7 @@ function showDetail(id){
   let h=`<h2>${node.title}<span class="badge">${k.label}</span></h2>`;
   h+=`<p class="sum">${d.sum}</p>`;
   h+=`<h3>核心机制</h3><ul class="points">${d.points.map(p=>`<li>${p}</li>`).join('')}</ul>`;
-  if(d.files&&d.files.length)h+=`<h3>关键文件</h3><div class="files">${d.files.map(f=>`<div class="frow"><code>${esc(f[0])}</code><span class="fdesc">${f[1]}</span></div>`).join('')}</div>`;
+  if(d.files&&d.files.length)h+=`<h3>关键文件</h3><div class="files">${d.files.map(fileEntry).join('')}</div>`;
   if(d.blind)h+=`<h3>显式盲区</h3><div class="blind">${d.blind}</div>`;
   if(d.doc){
     /* 本地(file:,与 md 同目录)用相对 .md;站点(http)用 cleanUrls 路径 */
@@ -685,12 +686,27 @@ function renderCrumb(){
 }
 /* tooltip */
 const tip=$('#tip');
+/* 关键文件行:文件链 vscode://file(仓根绝对路径,含 :行号跳行)——浏览器裸文本难受,编辑器有高亮;
+   目录链 file:// 列表;<ID> 模板占位保持纯文本;§N 只剥出目标,显示文本保留原样。
+   绝对路径以本页 file:// 位置上两级为仓根,非 file:// 环境退回仓根相对路径 */
+function fileEntry(f){
+  const p=Array.isArray(f)?f[0]:f,d=Array.isArray(f)?f[1]:'';
+  if(p.includes('<'))return `<div class="frow"><code>${esc(p)}</code>${d?`<span class="fdesc">${d}</span>`:''}</div>`;
+  const m=p.match(/:(\d+)$/);
+  const t=p.replace(/ *§.*$/,'').replace(/:\d+$/,'');
+  const dir=/(^|\/)$/.test(t);
+  let href;
+  if(dir)href='../../'+t;
+  else if(location.protocol==='file:')href='vscode://file'+location.href.split('/docs/map/')[0].replace(/^file:\/\//,'').replace(/\/$/,'')+'/'+t;
+  else href='../../'+t;
+  if(m&&!dir)href+=':'+m[1];
+  return `<div class="frow"><a href="${esc(href)}" target="_blank" rel="noopener"><code>${esc(p)}</code></a>${d?`<span class="fdesc">${d}</span>`:''}</div>`;
+}
 function showTip(n,k,ev){
   const t=n.tip||{sum:DETAIL[n.id]?DETAIL[n.id].sum:'',files:DETAIL[n.id]?DETAIL[n.id].files:[]};
   let h=`<h4>${n.title}<span class="badge" style="--nc:var(${k.c})">${k.label}</span></h4>`;
   h+=`<p>${t.sum}</p>`;
-  if(t.files&&t.files.length)h+=`<div class="files">${t.files.map(f=>{const p=Array.isArray(f)?f[0]:f,d=Array.isArray(f)?f[1]:'';return `<div class="frow"><code>${esc(p)}</code>${d?`<span class="fdesc">${d}</span>`:''}</div>`;}).join('')}</div>`;
-  if(mode==='map'&&DETAIL[n.id])h+=`<div class="drill">↳ 点击查看设计详情</div>`;
+  if(t.files&&t.files.length)h+=`<div class="files">${t.files.map(fileEntry).join('')}</div>`;
   tip.innerHTML=h;tip.style.display='block';moveTip(ev);
 }
 function moveTip(ev){const r=tip.getBoundingClientRect();
