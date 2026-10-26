@@ -65,6 +65,9 @@ url_merge = load_module("url_merge")
 # 用例 ID 文法体单源（正文归 rings/e2e/reference.md §5.3；锚点本处自留）
 case_id = load_module("case_id")
 stack_profile = load_module("stack_profile")
+# 维度 token 单源（D153）：区间展开 / 中文邻接 / 疑似写法出声归 `_support/ac_coverage.py`。
+ac_coverage = load_module("ac_coverage")
+parse_dims_cell = ac_coverage.parse_dims_cell
 # 契约 §5.5（2026-10-16，issue #R1/#R3）：行内注释剥除口径与内核**同一函数对象**（I3）——
 # 剥注释口径**全域单源**（`_support/stack_profile.strip_inline_comment`，2026-10-17 D104 ⑦ 清偿）：
 # `_code()` 是该口径在本文件的唯一出口，本文件内**不得**再出现 `split("#", 1)[0]`（MB8 钉守着）。
@@ -593,34 +596,13 @@ def validate(root: Path) -> Result:
                 (detail + "；残留待裁决（清零后升 FAIL，规则在 shared/gates.md §3 AC⇔用例行）")
                 if gaps else detail)
 
-    # AC × 覆盖维度（D130，2026-10-21）：
-    # 检验已在域级 PRD 声明适用维度的 AC，其 E2E 用例是否覆盖了声明的维度（C01-C14 前端裁剪版）。
-    # 仅对已实现域且已有用例挂靠的 AC 计算；未声明适用维度的项目按 N/A 兜底，不报假缺口。
-    # 解析口径（评审 Minor 修正）：① `\b` 对 CJK 邻接失效（「C01正常流」不命中）⇒ 改前后界定符；
-    # ② 「C01-C03」区间须展开（否则只命中两端、中间维度被误报缺口）；③ 不做「含『维度』二字即跳过」
-    # 的粗暴表头过滤（会误杀「C13 状态维度」这类数据行）——表头/分隔行首格不是 AC 形态，天然不被外层正则命中。
-    _DIM_TOKEN = r"C(?:0[1-9]|1[0-4])"
-    _dim_range_re = re.compile(rf"(?<![0-9A-Za-z])({_DIM_TOKEN})\s*[-~至]\s*({_DIM_TOKEN})(?![0-9])")
-    _dim_code_re = re.compile(rf"(?<![0-9A-Za-z]){_DIM_TOKEN}(?![0-9])")
-    _dim_looks_re = re.compile(r"[Cc]\d{1,2}")
-
-    def _parse_dims(raw) -> tuple[set[str], bool]:
-        """覆盖维度文本 → (命中维度集合, 是否含疑似维度写法)。区间展开、中文邻接可命中。"""
-        text = str(raw or "")
-        dims: set[str] = set()
-        for m in _dim_range_re.finditer(text):
-            lo, hi = int(m.group(1)[1:]), int(m.group(2)[1:])
-            if lo > hi:
-                lo, hi = hi, lo
-            dims |= {f"C{i:02d}" for i in range(lo, hi + 1)}
-        dims |= set(_dim_code_re.findall(text))
-        return dims, bool(_dim_looks_re.search(text))
-
+    # 解析口径归 `_support/ac_coverage.py::parse_dims_cell`（D153 单源，行为与 D130 逐字节一致）：
+    # 区间展开、中文邻接、疑似写法出声；本文件不再自持第二份 parser。
     declared_ac_dims: dict[str, set[str]] = {}
     for p in prd_files:
         seg = p.read_text(encoding="utf-8")
         for m in re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|[^|\n]*\|[^|\n]*\|([^|\n]+)\|", seg, re.M):
-            dims, _looks = _parse_dims(m.group(2))
+            dims, _looks = parse_dims_cell(m.group(2))
             if dims:
                 declared_ac_dims[m.group(1)] = dims
 
@@ -631,7 +613,7 @@ def validate(root: Path) -> Result:
         acid = g["关联AC"]
         blk = blocks.get(cid, {})
         for d_str in (blk.get("覆盖维度") or []):
-            found, looks = _parse_dims(d_str)
+            found, looks = parse_dims_cell(d_str)
             if not found and looks:
                 bad_case_dims.append(f"{cid}:{d_str}")
             covered_ac_dims.setdefault(acid, set()).update(found)

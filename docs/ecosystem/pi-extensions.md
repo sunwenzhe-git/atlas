@@ -191,6 +191,8 @@ export default (pi) => {
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+> D153 注：校验器内部的 `[N/A ]` 子项只进 detail；**整门不适用**时 `atlas_check` 行状态显示 `N/A`（退出码 0，不是通过）。
+
 全局扩展赋予 Agent 执行能力，项目级 Harness 负责在代码落地时提供可信验证。一旦出现“AI 写得快但管不住”的治理痛点——假完成、测试全绿但业务错、文档与代码长期漂移、改一处坏三处——就值得为项目引入 Project Harness。
 
 * **Atlas 官方文档**：[https://sunwenzhe-git.github.io/atlas/](https://sunwenzhe-git.github.io/atlas/)

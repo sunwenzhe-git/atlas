@@ -14,7 +14,7 @@
 | 文件 | 行数 | 角色 |
 |---|---|---|
 | `bin/atlas.js` | 358 | CLI 入口:命令面总表见 `printHelp`(`bin/atlas.js:10`)= init / update / upgrade / check / console / report / version,分派在同文件 `switch (command)` |
-| `install.sh` | 719 | 装配器:白名单目录拷贝 + 版本戳 + manifest + 55 条自检 |
+| `install.sh` | 720 | 装配器:白名单目录拷贝 + 版本戳 + manifest + 56 条自检 |
 | `scripts/pkg_digest.py` | — | 内容摘要算法单点(`ASSEMBLY_COVER_DIRS`,`scripts/pkg_digest.py:52`):装配版本门两侧共用,防双端漂移 |
 | `scripts/backflow.py` | — | 副本 ⇄ 源包三态回灌(`diff_trees`,`scripts/backflow.py:60`;`apply`,`scripts/backflow.py:97`) |
 | `patches/`(4 族) | — | 锚点式版本化补丁:workflow-plan-apply / project-wiring / workflow-root-cause / workflow-skill-routing |
@@ -23,7 +23,7 @@
 
 ### 1. 装配六步(`install.sh`)
 
-`[1/6]` 整包 → `.atlas/`(`ATLAS_DEST`,`install.sh:328`,白名单目录拷贝,不整目录删,保住 `.atlas/runs/` 运行态)→ `[2/6]` skill 瘦桩(引用契约不复制正文)→ `[4/6]` 骨架 → `[5/6]` Trellis workflow 补丁(遍历 patches/)→ `[6/6]` 项目接线 → 图谱后端探测(可选)→ 自检段(`[自检]`,`install.sh:328`,54 条 `check` 声明)。`--dry-run`(F54)零落盘、双摘要可见化;`--update` 刷新已装配副本。
+`[1/6]` 整包 → `.atlas/`(`ATLAS_DEST`,`install.sh:328`,白名单目录拷贝,不整目录删,保住 `.atlas/runs/` 运行态)→ `[2/6]` skill 瘦桩(引用契约不复制正文)→ `[4/6]` 骨架 → `[5/6]` Trellis workflow 补丁(遍历 patches/)→ `[6/6]` 项目接线 → 图谱后端探测(可选)→ 自检段(`[自检]`,`install.sh:328`,56 条 `check` 声明)。`--dry-run`(F54)零落盘、双摘要可见化;`--update` 刷新已装配副本。
 
 ### 2. 装配基线三件(D145/D146/D147)
 
@@ -46,7 +46,7 @@ AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.ada
 | 消费方 | 触点 |
 |---|---|
 | atlas_check 装配版本门 | VERSION 戳 + MANIFEST 基线 ⇔ 源包重算 |
-| test_install_selfcheck | 自检引用必须存在:54 条 `check` 指向的文件必须真落下 |
+| test_install_selfcheck | 自检引用必须存在:56 条 `check` 指向的文件必须真落下 |
 | test_backflow | 三态语义 + SOURCE_ONLY 护栏钉 |
 | Trellis | patches 族把 apply / 工作流步骤织进 `.trellis/workflow.md` |
 
@@ -69,4 +69,4 @@ AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.ada
 
 1. **副本是资产就有对账面**:版本戳 / manifest / 回灌三态——「装配 ≠ 开户,装完还要对得上」。
 2. **白名单 + 不整删**:装配器知道自己的边界(哪些目录归它),也知道别人的运行态(`.atlas/runs/`)不能碰。
-3. **自检是装配的一部分**:声称落下的每个文件必须真落下——54 条声明本身就是契约。
+3. **自检是装配的一部分**:声称落下的每个文件必须真落下——56 条声明本身就是契约。

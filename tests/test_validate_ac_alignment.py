@@ -220,3 +220,655 @@ def test_valid():
     assert cov_check["status"] == "PASS"
     assert "已声明 AC: 1" in cov_check["detail"]
 
+
+# ---------------------------------------------------------------------------
+# D153：后端通道 AC × 覆盖维度
+# ---------------------------------------------------------------------------
+
+BACKEND_CHECK = "AC × 覆盖维度（后端通道）"
+
+
+def _check(res, name=BACKEND_CHECK):
+    return next((c for c in res.checks if c["check"] == name), None)
+
+
+def create_backend_project(
+    tmp_path: Path,
+    prd_rows: list[tuple],
+    test_code: str | None,
+    *,
+    header: list[str] | None = None,
+    with_backend_test: bool = True,
+    framework: str | None = None,
+    mode: str = "advisory",
+    apps: list[dict] | None = None,
+    test_dir_files: dict[str, str] | None = None,
+) -> Path:
+    prd_dir = tmp_path / "product" / "prd"
+    prd_dir.mkdir(parents=True, exist_ok=True)
+    header = header or ["AC ID", "场景", "回指规则", "适用覆盖维度", "后端适用覆盖维度"]
+    lines = [
+        "# 模块 PRD",
+        "## 五、验收标准",
+        "| " + " | ".join(header) + " |",
+        "|" + "---|" * len(header),
+    ]
+    for row in prd_rows:
+        lines.append("| " + " | ".join(row) + " |")
+    (prd_dir / "test-prd.md").write_text("\n".join(lines), encoding="utf-8")
+
+    apps = apps or [
+        {"name": "backend", "path": "backend", "kind": "backend", "role": "landing", "stack": "python"}
+    ]
+    sp = ["product: 测试项目", "origin: greenfield", "apps:"]
+    for a in apps:
+        sp.extend([
+            f"  - name: {a['name']}",
+            f"    path: {a['path']}",
+            f"    kind: {a['kind']}",
+            f"    role: {a['role']}",
+            f"    stack: {a['stack']}",
+        ])
+    if with_backend_test:
+        sp.extend([
+            "backend_test:",
+            "  test_dir: backend/tests",
+            f"  mode: {mode}",
+            "  ac_marker: pytest_mark",
+        ])
+        if framework:
+            sp.append(f"  framework: {framework}")
+    (tmp_path / "product" / "stack-profile.yaml").write_text("\n".join(sp) + "\n", encoding="utf-8")
+
+    test_dir = tmp_path / "backend" / "tests"
+    test_dir.mkdir(parents=True, exist_ok=True)
+    if test_code is not None:
+        (test_dir / "test_sample.py").write_text(test_code, encoding="utf-8")
+    for name, code in (test_dir_files or {}).items():
+        (test_dir / name).write_text(code, encoding="utf-8")
+    return tmp_path
+
+
+def test_backend_dimensions_pass(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", dims=["C01", "C02"])
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01,C02")],
+        test_code,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "PASS", check
+    assert res.status == "PASS"
+
+
+def test_backend_dimensions_missing_warn(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", dims=["C01"])
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01,C02,C11")],
+        test_code,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "C02" in check["detail"] and "C11" in check["detail"], check
+
+
+def test_backend_zero_test_warn(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        "def test_unrelated():\n    assert True\n",
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "零测试" in check["detail"] and "AC-TEST-001" in check["detail"], check
+
+
+def test_backend_weak_only_warn(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", dims=["C01"])
+@pytest.mark.skip(reason="waiver: 临时跳过")
+def test_ok():
+    assert False
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        test_code,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "弱证据" in check["detail"], check
+
+
+def test_backend_skipif_weak(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.skipif(False, reason="off")
+@pytest.mark.ac("AC-TEST-001", dims=["C01"])
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        test_code,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "弱证据" in check["detail"], check
+
+
+def test_backend_multi_ac_dims_warn(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", "AC-TEST-002", dims=["C01"])
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [
+            ("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01"),
+            ("`AC-TEST-002`", "Given x When y Then z", "`R-001`", "", "C01"),
+        ],
+        test_code,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "一测多AC" in check["detail"], check
+
+
+def test_backend_docstring_ac_not_dims(tmp_path: Path):
+    test_code = '''
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", dims=["C01"])
+def test_ok():
+    """也提到 AC-OTHER-001。"""
+    assert True
+'''
+    proj = create_backend_project(
+        tmp_path,
+        [
+            ("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01"),
+            ("`AC-OTHER-001`", "Given x When y Then z", "`R-001`", "", ""),
+        ],
+        test_code,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "PASS", check
+
+
+def test_backend_dims_shape_warn(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", dims={"C01"})
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        test_code,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "dims形态不支持" in check["detail"], check
+
+
+def test_backend_unknown_dim_warn(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", dims=["C99"])
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        test_code,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "未知维度" in check["detail"], check
+
+
+def test_backend_three_column_na(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001")
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`")],
+        test_code,
+        header=["AC ID", "场景", "回指规则"],
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "N/A", check
+
+
+def test_backend_standard_e2e_four_column_not_warn(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", dims=["C01"])
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "C01,C02")],
+        test_code,
+        header=["AC ID", "场景", "回指规则", "适用覆盖维度"],
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "N/A", check
+
+
+def test_backend_header_in_fourth_column_warns(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", dims=["C01"])
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "C01")],
+        test_code,
+        header=["AC ID", "场景", "回指规则", "后端适用覆盖维度"],
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "第 4 列" in check["detail"], check
+
+
+def test_backend_notes_column_with_dims_warns(tmp_path: Path):
+    test_code = 'def test_unrelated():\n    assert True\n'
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        test_code,
+        header=["AC ID", "场景", "回指规则", "适用覆盖维度", "备注"],
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "疑似后端维度列" in check["detail"], check
+
+
+def test_backend_template_placeholder_na(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "N/A")],
+        "def test_unrelated():\n    assert True\n",
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "N/A", check
+
+
+def test_backend_no_backend_test_na(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", dims=["C01"])
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        test_code,
+        with_backend_test=False,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "N/A", check
+    assert "backend_test" in check["detail"], check
+
+
+def test_backend_non_pytest_na(tmp_path: Path):
+    test_code = 'def test_unrelated():\n    assert True\n'
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        test_code,
+        framework="unittest",
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "N/A", check
+    assert "非 pytest" in check["detail"], check
+
+
+def test_backend_multi_app_na(tmp_path: Path):
+    apps = [
+        {"name": "api1", "path": "api1", "kind": "backend", "role": "landing", "stack": "python"},
+        {"name": "api2", "path": "api2", "kind": "backend", "role": "landing", "stack": "python"},
+    ]
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", dims=["C01"])
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        test_code,
+        apps=apps,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "N/A", check
+    assert "多后端应用" in check["detail"], check
+
+
+def test_backend_star_test_scan_face(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        None,
+        test_dir_files={
+            "foo_test.py": 'import pytest\n\n@pytest.mark.ac("AC-TEST-001", dims=["C01"])\ndef test_x():\n    assert True\n'
+        },
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "扫描面" in check["detail"] and "零测试" in check["detail"], check
+    assert "foo_test.py" in check["detail"], check
+
+
+def test_backend_syntax_error_warn(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        None,
+        test_dir_files={"test_bad.py": "def broken(:\n"},
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "解析失败" in check["detail"], check
+    assert "test_bad.py" in check["detail"], check
+
+
+def test_backend_empty_root_na(tmp_path: Path):
+    proj = create_backend_project(tmp_path, [], None)
+    res = validate_ac_alignment(proj)
+    assert res.status == "N/A"
+    check = _check(res, "AC对账门禁运行态")
+    assert check is not None and check["status"] == "N/A", check
+
+
+def test_backend_dims_string_and_tuple(tmp_path: Path):
+    for idx, dims in enumerate(['"C01,C02"', '("C01", "C02")']):
+        root = tmp_path / str(idx)
+        test_code = f"""
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", dims={dims})
+def test_ok():
+    assert True
+"""
+        proj = create_backend_project(
+            root,
+            [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01,C02")],
+            test_code,
+        )
+        res = validate_ac_alignment(proj)
+        check = _check(res)
+        assert check is not None and check["status"] == "PASS", (dims, check)
+
+
+def test_backend_module_pytestmark_weak(tmp_path: Path):
+    test_code = """
+import pytest
+pytestmark = pytest.mark.skipif(False, reason="off")
+
+@pytest.mark.ac("AC-TEST-001", dims=["C01"])
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        test_code,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "弱证据" in check["detail"], check
+
+
+def test_backend_class_pytestmark_weak(tmp_path: Path):
+    test_code = """
+import pytest
+
+class TestX:
+    pytestmark = pytest.mark.skipif(False, reason="off")
+
+    @pytest.mark.ac("AC-TEST-001", dims=["C01"])
+    def test_ok(self):
+        assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        test_code,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "弱证据" in check["detail"], check
+
+
+def test_backend_pytestmark_ac_unsupported(tmp_path: Path):
+    test_code = """
+import pytest
+pytestmark = pytest.mark.ac("AC-TEST-001")
+
+@pytest.mark.ac("AC-TEST-001", dims=["C01"])
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        test_code,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "pytestmark挂AC不支持" in check["detail"], check
+
+
+def test_backend_prd_unknown_token_warn(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", dims=["C01"])
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01,C99")],
+        test_code,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "未知 token" in check["detail"] and "C99" in check["detail"], check
+
+
+def test_backend_cross_prd_duplicate_warn(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", dims=["C01"])
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        test_code,
+    )
+    (proj / "product" / "prd" / "other-prd.md").write_text(
+        "# 另一域 PRD\n## 五、验收标准\n"
+        "| AC ID | 场景 | 回指规则 | 适用覆盖维度 | 后端适用覆盖维度 |\n"
+        "|---|---|---|---|---|\n"
+        "| `AC-TEST-001` | Given x When y Then z | `R-002` |  | C01 |\n",
+        encoding="utf-8",
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "重复声明" in check["detail"], check
+
+
+def test_backend_notes_ac_id_no_false_warn(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "AC-C01-001")],
+        "def test_unrelated():\n    assert True\n",
+        header=["AC ID", "场景", "回指规则", "适用覆盖维度", "备注"],
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "N/A", check
+
+
+def test_backend_real_template_placeholder_na(tmp_path: Path):
+    template = (PKG_ROOT / "templates" / "prd" / "domain.md").read_text(encoding="utf-8")
+    proj = create_backend_project(
+        tmp_path,
+        [],
+        'import pytest\n\n@pytest.mark.ac("AC-TEST-001")\ndef test_ok():\n    assert True\n',
+    )
+    (proj / "product" / "prd" / "test-prd.md").write_text(
+        template.replace("<CODE>", "TEST"), encoding="utf-8"
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "N/A", check
+    assert "零测试" not in check["detail"], check
+
+
+def test_backend_six_column_pass(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", dims=["C01"])
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "", "C01")],
+        test_code,
+        header=["AC ID", "场景", "回指规则", "适用覆盖维度", "备注", "后端适用覆盖维度"],
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "PASS", check
+
+
+def test_backend_empty_dims_warn(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", dims=[])
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        test_code,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "空dims" in check["detail"], check
+
+
+def test_backend_parametrize_marks_weak(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.parametrize("x", [pytest.param(1, marks=pytest.mark.skip)])
+@pytest.mark.ac("AC-TEST-001", dims=["C01"])
+def test_ok(x):
+    assert x
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        test_code,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert "弱证据" in check["detail"], check
+
+
+def test_backend_enforce_dim_gap_warn(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001", dims=["C01"])
+def test_ok():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01,C02")],
+        test_code,
+        mode="enforce",
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res)
+    assert check is not None and check["status"] == "WARN", check
+    assert res.status == "WARN", res.status
+

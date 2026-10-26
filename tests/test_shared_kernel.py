@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import sys
 from pathlib import Path
@@ -31,6 +32,7 @@ from _support.siblings import load_module  # noqa: E402
 
 sp = load_module("stack_profile")
 cb = load_module("case_block")
+ac = load_module("ac_coverage")
 
 # 冲突覆盖夹具：e2e 子块（§B101/B197-1/§5.8）+ backend_test + 行内注释 + 空值 + 引号 + 流式段
 FIXTURE_PROFILE = """\
@@ -226,6 +228,13 @@ def test_definitions_are_single_sourced() -> None:
         "strip_inline_comment": "_support/stack_profile.py",
         "yaml_scalar": "_support/stack_profile.py",
         "parse_block": "_support/case_block.py",
+        "parse_dims_cell": "_support/ac_coverage.py",
+        "parse_dim_token": "_support/ac_coverage.py",
+        "parse_dims_list": "_support/ac_coverage.py",
+        "iter_md_tables": "_support/ac_coverage.py",
+        "split_md_row": "_support/ac_coverage.py",
+        "has_dim_claim": "_support/ac_coverage.py",
+        "unknown_dim_tokens": "_support/ac_coverage.py",
     }
     found: dict[str, list[str]] = {k: [] for k in allowed}
     for sub in ("scripts", "validators", "_support"):
@@ -246,6 +255,7 @@ def test_consumer_aliases_are_the_kernel_objects() -> None:
     gen = _load("gen_e2e_scripts", "scripts/gen_e2e_scripts.py")
     vsp = _load("validate_stack_profile", "validators/validate_stack_profile.py")
     idx = _load("validate_e2e_index", "validators/validate_e2e_index.py")
+    vaa = _load("validate_ac_alignment", "validators/validate_ac_alignment.py")
     assert gen.parse_profile is sp.parse_profile
     assert gen.parse_block is cb.parse_block
     assert gen.strip_inline_comment is sp.strip_inline_comment
@@ -254,6 +264,46 @@ def test_consumer_aliases_are_the_kernel_objects() -> None:
     assert vsp.yaml_scalar is sp.yaml_scalar
     assert idx.parse_block is cb.parse_block
     assert idx.strip_inline_comment is sp.strip_inline_comment
+    assert idx.parse_dims_cell is ac.parse_dims_cell
+    assert vaa.parse_dims_cell is ac.parse_dims_cell
+
+
+def test_ac_coverage_parsers_golden_and_table_parity() -> None:
+    """D153：维度 token 口径 golden + Markdown 表切分与 E2E 门 parity。"""
+    golden = {
+        "C01-C02": {"C01", "C02"},
+        "C01正常流": {"C01"},
+        "N/A": set(),
+        "": set(),
+        "C99": set(),
+        "C01": {"C01"},
+        "C01-C03": {"C01", "C02", "C03"},
+    }
+    for raw, expected in golden.items():
+        dims, _looks = ac.parse_dims_cell(raw)
+        assert dims == expected, raw
+    assert ac.parse_dims_cell("C99")[1] is True
+    assert ac.parse_dims_cell("N/A")[1] is False
+    assert ac.parse_dim_token("C01") == "C01"
+    assert ac.parse_dim_token("C01正常流") is None
+    assert ac.parse_dims_list(["C01", "C02"])[0] == {"C01", "C02"}
+    assert ac.parse_dims_list("C01,C02")[0] == {"C01", "C02"}
+    assert ac.parse_dims_list(["C01正常流"])[1] == ["C01正常流"]
+    assert ac.parse_dims_list({"C01"})[2] is False
+
+    sample = "| a | b |\n|---|---|\n| 1 | 2 |\n\ntext\n| c |\n|---|\n| 3 |\n"
+    idx = _load("validate_e2e_index", "validators/validate_e2e_index.py")
+    assert list(ac.iter_md_tables(sample)) == idx.tables(sample)
+
+
+def test_ac_coverage_golden_file() -> None:
+    """D153：7 组语料固定 golden（防解析口径静默漂移）。"""
+    path = PKG_ROOT / "tests" / "fixtures" / "e2e_coverage_dims_golden.json"
+    golden = json.loads(path.read_text(encoding="utf-8"))
+    for case in golden["parse_dims_cell"]:
+        dims, looks = ac.parse_dims_cell(case["raw"])
+        assert sorted(dims) == sorted(case["dims"]), case
+        assert bool(looks) is case["looks"], case
 
 
 def test_loader_fails_loud_when_missing() -> None:

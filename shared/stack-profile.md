@@ -97,15 +97,17 @@
 
 ### `backend_test`（后端测试调度与 AC 对账）
 
-纯后端与全栈后端项目的自动化测试调度与验收标准对账契约（2026-10-12 补，`3507 BT` / B209-1）。**可选能力**：段缺失 = 合法降级（项目自行执行原生测试；`validate_ac_alignment` 按降级通过）。
+纯后端与全栈后端项目的自动化测试调度与验收标准对账契约（2026-10-12 补，`3507 BT` / B209-1）。**可选能力**：段缺失 = 合法降级（项目自行执行原生测试；**后端维度子项 N/A**；既有 AC 对账仍按缺省 `test_dir` 扫描）。
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
 | `command` | 否 | 测试执行命令（收口核验命令保管；如 `pytest backend/tests`） |
 | `test_dir` | 否 | 测试代码根目录（相对路径，用于 AST 提取 AC 挂载点，缺省 `backend/tests`） |
 | `framework` | 否 | 测试提取器框架，枚举：`pytest`（v1 仅支持 pytest） |
-| `mode` | 否 | AC 对账门禁模式，枚举：`advisory`（**缺省** = 报告覆盖缺口与对账清单，不阻断）\| `enforce`（对账缺口硬阻断） |
-| `ac_marker` | 否 | 测试用例挂载 AC 的语法形态，如 `pytest_mark`（`@pytest.mark.ac("AC-xxx")`） |
+| `mode` | 否 | AC 对账门禁模式，枚举：`advisory`（**缺省** = 报告覆盖缺口与对账清单，不阻断）\| `enforce`（**AC 挂载**缺口硬阻断；**维度缺口恒 WARN**，不随 mode 升 FAIL） |
+| `ac_marker` | 否 | 测试用例挂载 AC 的语法形态，如 `pytest_mark`（`@pytest.mark.ac("AC-xxx")`；可选 kwarg `dims=[...]`） |
+
+**维度声明（D153）**：PRD §五 第五列 `后端适用覆盖维度` ⇔ 测试 `@pytest.mark.ac("AC-X", dims=["C02","C11"])`；`dims` 只作用于 marker 里的 AC，精确 C01-C14。后端门只对「有 `backend/fullstack` app + `backend_test` + pytest + `test_dir`」的项目启用；缺维度 / 仅弱证据 / 零测试 / 未知 / 孤儿 ⇒ WARN。第 4 列仍归 E2E 门（D130），两列各查各的。`mode` **不覆盖维度**。
 
 **`review` 字段的两条口径（写死）**：
 

@@ -13,7 +13,7 @@
 
 | 文件 | 角色 |
 |---|---|
-| `scripts/atlas_check.py`(924 行) | 统一检查入口 / 编排器(**只聚合,不改判据**) |
+| `scripts/atlas_check.py`(932 行) | 统一检查入口 / 编排器(**只聚合,不改判据**) |
 | `validators/`(10 器) | 判据本体,每器一行输出 |
 | `shared/gates.md`(146 行) | 门登记总账:六列(门 / 对账平面 / 查什么 / **不查什么** / 预算 / 假绿测试等级) |
 | `scripts/mutation_proof.py`(155 行) | 变异证明工具:把缺陷放回去看门红不红,还原须逐字节一致 + 报告须含注入 diff |
@@ -21,18 +21,18 @@
 
 ## 编排器 atlas_check 的结构
 
-调用:`python3 .atlas/scripts/atlas_check.py [--root .] [--page <slug>] [--fast] [--json]`。一门一行 `ok|FAIL|WARN|SKIP <名称> <摘要>`;任一 FAIL ⇒ 退出码 1,WARN 不影响退出码(`scripts/atlas_check.py:1-22`)。
+调用:`python3 .atlas/scripts/atlas_check.py [--root .] [--page <slug>] [--fast] [--json]`。一门一行 `ok|FAIL|WARN|SKIP|N/A <名称> <摘要>`;任一 FAIL ⇒ 退出码 1,WARN 不影响退出码(`scripts/atlas_check.py:1-22`)。
 
 ### 四态语义(`3509 §B110`)
 
 `SKIP` = 未走到 / 前置未声明(**不是通过也不是失败**,必须带原因)≠ `WARN`(过期/提醒,不置红)≠ `FAIL`(硬阻断)≠ `ok`。生成物门三态:未就绪(SKIP)≠ 生成物过期(WARN)≠ 生成失败(FAIL)。
 
-### 门行全景(`main()`,`scripts/atlas_check.py:816-835`)
+### 门行全景(`main()`,`scripts/atlas_check.py:843`)
 
 | 门行 | 实现 | 一句话判据 |
 |---|---|---|
-| 10 个 validate_* | `check_validators` :187 | 逐器调用,一门一行;前置文件缺失 ⇒ SKIP(`_GATE_PRECONDITIONS` :66 定义 7 器的三态前置) |
-| 对齐测试(.atlas/tests) | `check_factory` :220 | 装配副本跑 pytest;目录不存在 = 装配未含测试(F53 三形态 SKIP) |
+| 10 个 validate_* | `check_validators` :203 | 逐器调用,一门一行;前置文件缺失 ⇒ SKIP(`_gate_preconditions` :68 定义 7 器的三态前置) |
+| 对齐测试(.atlas/tests) | `check_factory` :244 | 装配副本跑 pytest;目录不存在 = 装配未含测试(F53 三形态 SKIP) |
 | 生成物最新 | `check_generated` :275 | gen_e2e_scripts 干跑 diff;exit 3 = not_ready SKIP |
 | 审查报告形态 | `check_review_report` :331 | 最新 E2E 审查报告复算(validate_review_report 单源) |
 | 执行串行 | `check_serial_execution` :246 | 运行器配置必须 `workers: 1` + `fullyParallel: false`(D115) |
@@ -53,7 +53,7 @@
 | `validate_testids` | testid 应然(分片)⇔ 实然(源码) | 按页双向集合相等;模板字面量展开;应然落点分档 |
 | `validate_e2e_index` | 索引 ⇔ 分片 ⇔ 契约 | 结构门 + 有意义门 + seed×models + AC 反向覆盖 |
 | `validate_e2e_mocks` | 打桩声明 ⇔ mock 契约 | mock 段形态矩阵 |
-| `validate_ac_alignment` | 后端测试 ⇔ PRD AC | 无主 AC / 无效跳过 / 双向覆盖 / 差量防退化 |
+| `validate_ac_alignment` | 后端测试 ⇔ PRD AC | 无主 AC / 无效跳过 / 双向覆盖 / 差量防退化 / 后端维度（D153） |
 | `validate_design_exemptions` | 设计档案豁免 ⇔ 工具配置 | 双向集合相等(单侧漂移 = 半遮蔽) |
 | `validate_adr` | ADR ⇔ MADR 契约 | 编号唯一 / 演进链闭环 / 章节完整 |
 | `validate_walkthrough` | 走查门声明 ⇔ 凭据 | 三问第 2 问「是」⇒ 域级 PRD 须有 `> 已确认:日期` 行 |
@@ -66,7 +66,7 @@
 
 同族的「可执行性判据本体」纪律(D101/DR4):可执行/可用类前置判据必须 ① 真跑一次功能性探针 ② 有反面包(「东西在但用不了」必须红) ③ 失败原因不被吞。同族复发两轮才立此行(#1 恒绿门 / #24 路径存在当充要)。
 
-## 三态前置表 `_GATE_PRECONDITIONS`(`scripts/atlas_check.py:240`)
+## 三态前置表 `_gate_preconditions`(`scripts/atlas_check.py:68`)
 
 7 个校验器声明了「前置文件缺失 ⇒ SKIP」:stack_profile(无 profile)/ structure(结构环未跑)/ design_exemptions(无设计档案)/ e2e_mocks(无用例资产)/ ac_alignment(无 PRD)/ adr(无 ADR 目录)。**SKIP 是合法降级不是放行**——文案必须带「未就绪,非失败」与出路。
 

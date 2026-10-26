@@ -1197,3 +1197,48 @@ def test_layout_config_drives_preconditions_and_fails_loud(tmp_path) -> None:
     assert not mod.check_layout(tmp_path, rows)
     assert rows.failed
     assert rows.rows[0]["name"] == "项目布局配置"
+
+
+def _fake_validator_root(tmp_path: Path) -> Path:
+    (tmp_path / "product" / "adr").mkdir(parents=True, exist_ok=True)
+    vd = tmp_path / ".atlas" / "validators"
+    vd.mkdir(parents=True, exist_ok=True)
+    (vd / "validate_adr.py").write_text("", encoding="utf-8")
+    return tmp_path
+
+
+def test_check_validators_sub_na_stays_ok(monkeypatch, tmp_path) -> None:
+    """D153：子项 [N/A ] 只进 detail，正常 PASS 轮不得被误标 N/A。"""
+    mod = _load_check()
+    root = _fake_validator_root(tmp_path)
+    monkeypatch.setattr(mod, "run", lambda cmd, cwd: (0, "  [PASS] fake\n  [N/A ] sub —— 不适用\nPASS"))
+    rows = mod.Row()
+    mod.check_validators(root, rows, "python3")
+    row = next(r for r in rows.rows if r["name"] == "validate_adr")
+    assert row["status"] == "ok", row
+    assert "[N/A" in row["detail"], row
+
+
+def test_check_validators_whole_na_marks_row_na(monkeypatch, tmp_path) -> None:
+    """D153：整门末行 N/A ⇒ 行状态 N/A（不是 ok）。"""
+    mod = _load_check()
+    root = _fake_validator_root(tmp_path)
+    monkeypatch.setattr(mod, "run", lambda cmd, cwd: (0, "  [N/A ] whole —— 不适用\nN/A"))
+    rows = mod.Row()
+    mod.check_validators(root, rows, "python3")
+    row = next(r for r in rows.rows if r["name"] == "validate_adr")
+    assert row["status"] == "N/A", row
+    assert "[N/A" in row["detail"], row
+
+
+def test_atlas_check_json_whole_na_row(tmp_path) -> None:
+    """D153：--json 也必须带整门 N/A 行。"""
+    root = _fake_validator_root(tmp_path)
+    (root / ".atlas" / "validators" / "validate_adr.py").write_text(
+        "print('  [N/A ] whole —— 不适用')\nprint('N/A')\n", encoding="utf-8"
+    )
+    code, out = run(["--root", ".", "--fast", "--json"], root)
+    assert code == 0, out
+    rows = {r["name"]: r for r in json.loads(out)["rows"]}
+    assert rows["validate_adr"]["status"] == "N/A", rows["validate_adr"]
+    assert "[N/A" in rows["validate_adr"]["detail"], rows["validate_adr"]

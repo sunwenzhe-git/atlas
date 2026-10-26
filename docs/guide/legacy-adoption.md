@@ -122,7 +122,7 @@ backend_test:                     # 可选段；缺失 = 合法降级
   command: pytest backend/tests   # 测试执行命令
   test_dir: backend/tests         # AC 挂载点扫描根（缺省 backend/tests）
   framework: pytest               # v1 仅支持 pytest
-  mode: advisory                  # advisory（缺省，报告不阻断）| enforce（缺口硬阻断）
+  mode: advisory                  # advisory（缺省）| enforce（仅 AC 挂载缺口硬阻断；维度恒 WARN）
   ac_marker: pytest_mark          # 挂载形态：@pytest.mark.ac("AC-xxx")
 ```
 
@@ -133,6 +133,16 @@ backend_test:                     # 可选段；缺失 = 合法降级
 def test_refund_rejected_when_balance_insufficient():
     ...
 ```
+
+**后端维度（D153，可选）**：在域级 PRD §五 第 5 列写 `后端适用覆盖维度`（如 `C11,C14`；留空 = 未声明后端义务），测试侧声明：
+
+```python
+@pytest.mark.ac("AC-PAYMENT-001", dims=["C11", "C14"])
+def test_refund_is_idempotent():
+    ...
+```
+
+`dims` 只接受 C01-C14 精确 token；docstring 里的 AC 不参与维度归属；维度缺口 / 仅弱证据（skipif、param marks、类级 `pytestmark`）/ 零测试 ⇒ **WARN**，不随 `mode: enforce` 升 FAIL。
 
 四种判据随之生效：
 

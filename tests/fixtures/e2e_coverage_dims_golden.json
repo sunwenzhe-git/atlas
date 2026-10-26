@@ -1,0 +1,12 @@
+{
+  "note": "D153 E2E 纯抽取 golden：parse_dims_cell 的 7 组语料；tests/test_shared_kernel.py 逐条比对。looks = 是否含疑似维度写法（任意 C+数字，含合法 token）。",
+  "parse_dims_cell": [
+    {"raw": "C01-C02", "dims": ["C01", "C02"], "looks": true},
+    {"raw": "C01正常流", "dims": ["C01"], "looks": true},
+    {"raw": "N/A", "dims": [], "looks": false},
+    {"raw": "", "dims": [], "looks": false},
+    {"raw": "C99", "dims": [], "looks": true},
+    {"raw": "C01", "dims": ["C01"], "looks": true},
+    {"raw": "C01-C03", "dims": ["C01", "C02", "C03"], "looks": true}
+  ]
+}

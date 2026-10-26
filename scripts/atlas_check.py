@@ -4,7 +4,7 @@
 **只聚合，不改判据**：本脚本逐项**调用**既有校验器 / 生成器 / 测试，一门一行摘要；
 判据本身仍在各处实现（它们刚证明过自己会咬，不做二次实现，也不放宽）。
 
-    一门一行：`ok|FAIL|WARN|SKIP  <名称>  <一句摘要>`
+    一门一行：`ok|FAIL|WARN|SKIP|N/A  <名称>  <一句摘要>`
 
 **行的语义（`3509 §B110`）**：`SKIP` = 「未走到这一步 / 前置未声明」，**不是通过、也不是失败**，
 必须带原因；`生成物最新` 三态 = 未就绪(SKIP) ≠ 生成物过期(WARN) ≠ 生成失败(FAIL)。
@@ -226,9 +226,17 @@ def check_validators(root: Path, rows: Row, py: str) -> None:
         elif any("[WARN]" in l for l in last):
             # WARN = 提示补不置红（退出码 0），但门总览必须可见，不得静默当 ok
             status = "WARN"
-            bad = [l for l in last if "[WARN]" in l]
+            bad = [l for l in last if "[WARN]" in l or "[N/A" in l]
             detail = "; ".join(bad) if bad else tail
             rows.add(v, status, detail or tail, duration_ms=duration_ms)
+        elif last and last[-1] == "N/A":
+            # 整门不适用 ⇒ 行状态 N/A；子项 N/A 见下一分支
+            na = [l for l in last if "[N/A" in l]
+            rows.add(v, "N/A", "; ".join(na) or tail, duration_ms=duration_ms)
+        elif any("[N/A" in l for l in last):
+            # 子项 N/A 只进 detail；行仍是 ok（不得把正常 PASS 轮误标成 N/A）
+            na = [l for l in last if "[N/A" in l]
+            rows.add(v, status, "; ".join(na) or tail, duration_ms=duration_ms)
         else:
             rows.add(v, status, tail, duration_ms=duration_ms)
 

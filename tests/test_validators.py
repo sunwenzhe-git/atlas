@@ -1356,6 +1356,36 @@ def test_e2e_index_coverage_dimensions_pass_and_warn() -> None:
         assert "未知维度" in check_bad["detail"], check_bad
 
 
+def test_e2e_dimension_check_uses_shared_parser(monkeypatch) -> None:
+    """D153：E2E 门必须实际调用共享 parse_dims_cell（防保留别名、实际走本地副本）。"""
+    INDEX_WITH_PAGE = INDEX_GOOD + "\n## 页面\n\n| 页面 | 路由 | 所属域 | 状态 |\n|---|---|---|---|\n| home | / | home | 已实现 |\n"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_index(root, INDEX_WITH_PAGE)
+        prd_dir = root / "product" / "prd"
+        prd_dir.mkdir(parents=True, exist_ok=True)
+        (prd_dir / "home-prd.md").write_text(
+            "---\ndomain: home\n---\n\n"
+            "## 五、验收标准\n\n"
+            "| AC ID | 场景 | 回指规则 | 适用覆盖维度 |\n"
+            "|---|---|---|---|\n"
+            "| `AC-HOME-001` | 首页展示正常 | HOME-R-001 | C01 |\n",
+            encoding="utf-8",
+        )
+        case_with_c01 = CASE_GOOD.strip()[:-3] + "覆盖维度:\n  - C01\n```\n"
+        mk_cases(root, case_with_c01)
+
+        base = ve.validate(root)
+        base_check = next(c for c in base.checks if c["check"] == "AC × 覆盖维度")
+        assert base_check["level"] == "PASS", base_check
+
+        monkeypatch.setattr(ve, "parse_dims_cell", lambda raw: (set(), False))
+        res = ve.validate(root)
+        check = next(c for c in res.checks if c["check"] == "AC × 覆盖维度")
+        assert check["level"] == "N/A", check
+
+
 def test_e2e_index_verb_fail() -> None:
     """新门（契约 §5.5，2026-09-23）：step/expected 首 token 不在动词词表内 → FAIL。"""
     with tempfile.TemporaryDirectory() as td:

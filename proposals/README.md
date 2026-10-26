@@ -50,3 +50,9 @@ proposals/RFC-YYYYMMDD-序号-<短横线英文主题>.md
 * **为什么这么解**：否定了哪些不合理的方案；
 * **代码与测试**：改动是否克制，全套测试是否全绿。
 审批通过后一键合入主干，所有人即刻受惠！
+
+---
+
+> **非 RFC 的长期待办**见 [`BACKLOG-execution-layer.md`](BACKLOG-execution-layer.md)：执行层最终自建，Trellis 只是当前插件。该文件只登记能力，不授权实现；落地仍须走本目录的 RFC 流程。
+
+> **编号规则（2026-10-26，D154 批补）**：`RFC-YYYYMMDD-NN` 与 `REVIEW-YYYYMMDD-NN` 两列号**各自独立递增**；并行会话同日撞号（先例：2026-10-26 两个 06）⇒ 保留先落盘者，后到者在文件名主题段加主题后缀区分（当日先例 = `-batch-a-implementation` / `-weakness-family-heldout-validation`），并在实际裁决行点名自己引用哪一份。

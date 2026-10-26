@@ -593,6 +593,7 @@ check "共享内核（node 运行器判据）" "$ATLAS_DEST/_support/pw_runner.p
 check "共享内核（base query 转发）" "$ATLAS_DEST/_support/url_merge.py"
 check "共享内核（审查策略单源）" "$ATLAS_DEST/_support/review_policy.py"
 check "共享内核（布局解析）" "$ATLAS_DEST/_support/layout.py"
+check "共享内核（维度解析）" "$ATLAS_DEST/_support/ac_coverage.py"
 check "pi 宿主扩展" "$ATLAS_DEST/extensions/pi.ts"
 check "结构模板" "$ATLAS_DEST/templates/structure/_meta.json"
 check "PRD 模板" "$ATLAS_DEST/templates/prd/domain.md"

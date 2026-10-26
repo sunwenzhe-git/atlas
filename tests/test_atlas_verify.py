@@ -19,6 +19,21 @@ from pathlib import Path
 PKG_ROOT = Path(__file__).resolve().parents[1]
 VERIFY = PKG_ROOT / "scripts" / "atlas_verify.py"
 
+
+def _load_verify():
+    spec = importlib.util.spec_from_file_location("atlas_verify", VERIFY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
+def test_parse_rows_accepts_na() -> None:
+    """D153：atlas_check 的整门 N/A 行不得在执行器留档中消失。"""
+    mod = _load_verify()
+    rows = mod._parse_rows("N/A validate_adr 不适用\nok foo PASS\n")
+    assert rows[0]["status"] == "N/A", rows
+    assert rows[0]["name"] == "validate_adr"
+
 FAKE_PREPARE = """import fs from 'fs';
 const cnt = '.verify-prep-count';
 let n = 0; try { n = parseInt(fs.readFileSync(cnt, 'utf8') || '0', 10) || 0; } catch (e) {}
