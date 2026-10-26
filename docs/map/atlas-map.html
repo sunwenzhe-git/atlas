@@ -218,10 +218,14 @@ apply: {
   ],
   edges:[
     {from:'a-req',to:'a-m1'},
-    {from:'a-fact',to:'a-imp',route:'ring'},
-    {from:'a-m1',to:'a-gate'},{from:'a-m2',to:'a-gate'},{from:'a-m3',to:'a-gate'},{from:'a-m4',to:'a-gate'},
-    {from:'a-imp',to:'a-inc',route:'hv'},
-    {from:'a-gate',to:'a-inc'},
+    /* 四模式→三问门:各自独立竖道 + 错峰入点,防四线并成一根 */
+    {from:'a-m1',to:'a-gate',mx:452,ty:165},{from:'a-m2',to:'a-gate',mx:469,ty:178},
+    {from:'a-m3',to:'a-gate',mx:486,ty:191},{from:'a-m4',to:'a-gate',mx:503,ty:204},
+    /* 结构事实+图谱绕底回边:rx/ty 避开与邻居共锚共道 */
+    {from:'a-fact',to:'a-imp',route:'ring',rx:714,ty:121},
+    /* 影响/门 → 增量落笔:两条竖道分开、入点上下错开,不再绕顶 */
+    {from:'a-imp',to:'a-inc',mx:721,ty:113},
+    {from:'a-gate',to:'a-inc',mx:741,ty:141},
     {from:'a-inc',to:'a-rep',route:'v'},
   ],
 },
@@ -252,9 +256,12 @@ gates: {
       tip:{sum:'注入坏输入 ⇒ 门必红 ⇒ 还原逐字节一致 ⇒ 复绿;报告须含注入 diff。',files:[['scripts/mutation_proof.py','变异证明工具:注入→红→逐字节还原→复绿']]}},
   ],
   edges:[
-    {from:'g-chk',to:'g-val'},{from:'g-chk',to:'g-rows'},
+    /* 共源/共宿边显式拆道:出口锚 sy、入点 ty、竖道 mx */
+    {from:'g-chk',to:'g-val',sy:183,mx:225},{from:'g-chk',to:'g-rows',sy:211},
     {from:'g-book',to:'g-val',dash:1,label:'注册义务',route:'hv'},
-    {from:'g-val',to:'g-ok'},{from:'g-val',to:'g-fail'},{from:'g-rows',to:'g-fail'},
+    {from:'g-val',to:'g-ok',sy:90,mx:531},
+    {from:'g-val',to:'g-fail',sy:116,mx:501,ty:244},
+    {from:'g-rows',to:'g-fail',sy:211,mx:487,ty:270},
     {from:'g-test',to:'g-mut',route:'v'},
     {from:'g-mut',to:'g-rows',dash:1,label:'M 钉钉住'},
   ],
@@ -287,9 +294,9 @@ graph: {
   ],
   edges:[
     {from:'r-code',to:'r-acl',label:'索引'},
-    {from:'r-cfg',to:'r-acl',dash:1,route:'hv'},
-    {from:'r-cgc',to:'r-acl',route:'hv'},
-    {from:'r-acl',to:'r-fresh'},{from:'r-acl',to:'r-q',route:'v'},
+    {from:'r-cfg',to:'r-acl',dash:1,route:'hv',mx:300,tx:347},
+    {from:'r-cgc',to:'r-acl',route:'hvb',mx:326},
+    {from:'r-acl',to:'r-fresh'},{from:'r-acl',to:'r-q',route:'vUp'},
     {from:'r-q',to:'r-rep'},
     {from:'r-rep',to:'r-rec',route:'v',label:'收口'},
   ],
@@ -329,8 +336,8 @@ adapt: {
     {from:'ad-prof',to:'ad-routes',dash:1,route:'hv',mx:253,label:'声明启用'},
     {from:'ad-routes',to:'ad-out'},
     {from:'ad-out',to:'ad-refresh',route:'v',label:'消费产物'},
-    {from:'ad-refresh',to:'ad-facts'},
-    {from:'ad-refresh',to:'ad-drift',label:'键级漂移'},
+    {from:'ad-refresh',to:'ad-facts',sy:264,mx:775},
+    {from:'ad-refresh',to:'ad-drift',sy:290,mx:789,label:'键级漂移'},
   ],
 },
 e2egen: {
@@ -366,12 +373,12 @@ e2egen: {
       tip:{sum:'评审指纹 head_sha+scripts_hash 防旧账本挂新执行;失败构件只在失败轮落盘。',files:[]}},
   ],
   edges:[
-    {from:'e2-cases',to:'e2-parse',label:'用例块'},
-    {from:'e2-index',to:'e2-parse',dash:1},
+    {from:'e2-cases',to:'e2-parse',label:'用例块',sy:113,ty:90},
+    {from:'e2-index',to:'e2-parse',dash:1,sy:291,mx:262},
     {from:'e2-parse',to:'e2-verbs',route:'v'},
-    {from:'e2-verbs',to:'e2-spec'},
-    {from:'e2-login',to:'e2-spec'},
-    {from:'e2-mock',to:'e2-spec'},
+    {from:'e2-verbs',to:'e2-spec',mx:487,ty:244},
+    {from:'e2-login',to:'e2-spec',mx:507},
+    {from:'e2-mock',to:'e2-spec',mx:527,ty:270},
     {from:'e2-review',to:'e2-spec',route:'v',label:'Critical 拒写盘'},
     {from:'e2-spec',to:'e2-runner'},
     {from:'e2-runner',to:'e2-console',route:'v'},
@@ -405,12 +412,12 @@ cli: {
       tip:{sum:'锚点式版本化补丁(块指纹 sha256 前 8 位):plan-apply / project-wiring(五触点)/ root-cause / skill-routing。',files:[['patches/project-wiring/','项目接线补丁:五触点幂等写入用户仓库']]}},
   ],
   edges:[
-    {from:'c-cli',to:'c-install',label:'装配'},
-    {from:'c-install',to:'c-ver'},
-    {from:'c-install',to:'c-man'},
-    {from:'c-man',to:'c-ver',dash:1,route:'v'},
-    {from:'c-digest',to:'c-man',dash:1,route:'v',label:'单源摘要'},
-    {from:'c-cli',to:'c-patch'},
+    {from:'c-cli',to:'c-install',label:'装配',sy:183},
+    {from:'c-install',to:'c-ver',sy:114},
+    {from:'c-install',to:'c-man',sy:140,mx:504},
+    {from:'c-man',to:'c-ver',dash:1,route:'vUp'},
+    {from:'c-digest',to:'c-man',dash:1,route:'vUp',label:'单源摘要'},
+    {from:'c-cli',to:'c-patch',sy:211},
     {from:'c-man',to:'c-back',label:'副本⇄源包'},
   ],
 },
@@ -447,7 +454,7 @@ review: {
     {from:'rv-input',to:'rv-agent',route:'v'},
     {from:'rv-agent',to:'rv-conv',route:'v'},
     {from:'rv-conv',to:'rv-val',label:'N/M 对账'},
-    {from:'rv-pol',to:'rv-val',dash:1,route:'v'},
+    {from:'rv-pol',to:'rv-val',dash:1,route:'vUp'},
     {from:'rv-close',to:'rv-derive',route:'ring'},
     {from:'rv-derive',to:'rv-steps',route:'v'},
   ],
@@ -564,12 +571,21 @@ function edgePath(v,e){
   const a=nbox(v,e.from), b=nbox(v,e.to);
   if(e.route==='v'){const ax=a.x+a.w/2, ay=a.y+a.h, bx=b.x+b.w/2, by=b.y;
     const my=(ay+by)/2; return `M${ax},${ay} V${my} H${bx} V${by}`;}
+  if(e.route==='vUp'){const ax=a.x+a.w/2, bx=b.x+b.w/2; const my=(a.y+b.y+b.h)/2;
+    return `M${ax},${a.y} V${my} H${bx} V${b.y+b.h}`;}
   if(e.route==='leftU'){const ay=a.y+a.h/2, by=b.y+b.h/2;
     return `M${a.x},${ay} H${a.x-14} V${by} H${b.x}`;}
   if(e.route==='ring'){const ay=a.y+a.h/2, by=b.y+b.h/2;
     const ry=Math.max(...v.zones.map(z=>z.y+z.h))+18;
-    return `M${a.x},${ay} H${a.x-14} V${ry} H${b.x+b.w+14} V${by} H${b.x+b.w}`;}
-  const ay=a.y+a.h/2, by=b.y+b.h/2;
+    /* rx=回边右转道(缺省贴目标右侧),ty=入目标右缘的锚高(缺省中线)——拆与邻边的共道/共锚 */
+    return `M${a.x},${ay} H${a.x-14} V${ry} H${e.rx||b.x+b.w+14} V${e.ty||by} H${b.x+b.w}`;}
+/**
+ * 合线高维两种路由:hvb = 源右缘出、目标底缘入(竖直上行);
+ * sy = 源右缘出口锚高(共源边拆锚用);缺省中线。—— 拆共道/共锚/共口
+ */
+  if(e.route==='hvb'){const ay=(e.sy!=null?e.sy:a.y+a.h/2);
+    return `M${a.x+a.w},${ay} H${e.mx} V${b.y+b.h}`;}
+  const ay=(e.sy!=null?e.sy:a.y+a.h/2), by=b.y+b.h/2;
   if(e.route==='hv'){const ax=a.x+a.w, mx=e.mx||Math.max(ax+16,(a.x+a.w+b.x+b.w)/2);
     return `M${ax},${ay} H${mx} V${b.y-12} H${e.tx||b.x+b.w/2} V${b.y}`;}
   const ax=a.x+a.w, bx=b.x;
@@ -656,9 +672,11 @@ function showDetail(id){
   if(d.files&&d.files.length)h+=`<h3>关键文件</h3><div class="files">${d.files.map(fileEntry).join('')}</div>`;
   if(d.blind)h+=`<h3>显式盲区</h3><div class="blind">${d.blind}</div>`;
   if(d.doc){
-    /* 本地(file:,与 md 同目录)用相对 .md;站点(http)用 cleanUrls 路径 */
-    const href=(location.protocol==='file:')?d.doc:'/atlas/map/'+d.doc.replace(/\.md$/,'');
-    h+=`<h3>完整 L1 文档</h3><a class="doclink" href="${href}">📄 docs/map/${d.doc}</a>`;
+    /* 本地(file:)走 vscode://file 通编辑器——与关键文件行同一套仓根推导,浏览器裸 .md 难受;
+       站点(http)仍用 cleanUrls 路径 */
+    const root=(location.protocol==='file:')?location.href.split('/docs/map/')[0].replace(/^file:\/\//,'').replace(/\/$/,''):'';
+    const href=(location.protocol==='file:')?'vscode://file'+root+'/docs/map/'+d.doc:'/atlas/map/'+d.doc.replace(/\.md$/,'');
+    h+=`<h3>完整 L1 文档</h3><a class="doclink" href="${href}" target="_blank" rel="noopener">📄 docs/map/${d.doc}</a>`;
   }
   div.innerHTML=h;
   cv.appendChild(div);

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-/* atlas-map.html 六项断言检查器(2026-10-25 落盘,防每会话重建口径漂移)
+/* atlas-map.html 七项断言检查器(2026-10-25 落盘,防每会话重建口径漂移;2026-10-26 升:
+   7 连线共道——两边的共线段重叠会让并行流看不出谁是哪条,apply 子图曾四线并一)
    断言:节点重叠 / 连线穿卡 / 标签牌互撞 / 标签牌压卡 / 标签牌越界 / 分区标签压卡
    数据与几何函数直接从 atlas-map.html 抽取求值,不复制坐标,防双源漂移。
    口径:连线穿卡只判非首尾卡(端点按边界贴合设计);其余五项全量。
@@ -91,9 +92,32 @@ for (const vid in VIEWS) {
   // 6 分区标签压卡
   for (const Z of zlabels) for (const nd of nodes)
     if (hit(Z, nd)) bad.push(['分区标签压卡', Z.id + ' 压 ' + nd.id]);
+  // 7 连线共道:竖/横共线段重叠 >6px(允许同一 x/y 的相接与垂直交叉,禁的是看不出是两条线的并行重合)
+  {
+    const segs = v.edges.map(ed => {
+      const pts = pathPts(edgePath(v, ed)); const out = [];
+      for (let i = 0; i + 1 < pts.length; i++) out.push({ id: ed.from + '→' + ed.to, a: pts[i], b: pts[i + 1] });
+      return out;
+    }).flat();
+    for (let i = 0; i < segs.length; i++) for (let j = i + 1; j < segs.length; j++) {
+      const s1 = segs[i], s2 = segs[j];
+      if (s1.id === s2.id) continue;
+      let overlap = 0;
+      if (s1.a[1] === s1.b[1] && s2.a[1] === s2.b[1] && s1.a[1] === s2.a[1]) {          // 同 y 横线
+        const lo = Math.max(Math.min(s1.a[0], s1.b[0]), Math.min(s2.a[0], s2.b[0]));
+        const hi = Math.min(Math.max(s1.a[0], s1.b[0]), Math.max(s2.a[0], s2.b[0]));
+        overlap = hi - lo;
+      } else if (s1.a[0] === s1.b[0] && s2.a[0] === s2.b[0] && s1.a[0] === s2.a[0]) {   // 同 x 竖线
+        const lo = Math.max(Math.min(s1.a[1], s1.b[1]), Math.min(s2.a[1], s2.b[1]));
+        const hi = Math.min(Math.max(s1.a[1], s1.b[1]), Math.max(s2.a[1], s2.b[1]));
+        overlap = hi - lo;
+      }
+      if (overlap > 6) bad.push(['连线共道', s1.id + ' × ' + s2.id + ' 重叠 ' + overlap.toFixed(0) + 'px']);
+    }
+  }
   console.log('== ' + vid + ' vb=' + v.vb + ' ==');
   if (bad.length) { total += bad.length; bad.forEach(b => console.log('  ✗ ' + b[0] + ': ' + b[1])); }
-  else console.log('  六项断言全过');
+  else console.log('  七项断言全过');
 }
-console.log(total ? ('共 ' + total + ' 处违例') : '全部视图六项断言通过');
+console.log(total ? ('共 ' + total + ' 处违例') : '全部视图七项断言通过');
 process.exit(total ? 1 : 0);
