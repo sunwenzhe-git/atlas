@@ -16,15 +16,16 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 
 const EXTENSION_NAME = "atlasharness";
 
 /**
  * 开户态（2026-10-15 补）：**装配 ≠ 开户**。
  *
- * `atlas init` 只装配线束（`.atlas/` / `product/` 骨架 / AGENTS.md 指针 / Trellis 接线）；
+ * `atlas init` 只装配线束（`.atlas/` / 资产根骨架（默认 `product/`） / AGENTS.md 指针 / Trellis 接线）；
  * 「开户」另有产物，且只有该轮真产出才算数：
- *   * `product/prd/prd.md`                 —— 全局 PRD（`adopt` 最小必填集必产）
+ *   * `<资产根>/prd/prd.md`                 —— 全局 PRD（`adopt` 最小必填集必产；默认 `product/prd/prd.md`）
  *   * `.trellis/spec/structure/_meta.json` —— 域清单（`structure` 全量的机器视图）
  * 骨架期这两个文件都不存在（目录里只有 `.gitkeep`）⇒ **不能拿「目录非空」当信号**。
  * 「半开通」（只有其一）是常态：开户按产物存在与否**断点续跑**（`apply/reference.md` §1）。
@@ -43,15 +44,39 @@ interface AtlasProjectStatus {
   hasStackProfile: boolean;
   onboarding: Onboarding;
   version?: string;
+  stackProfileRel: string;
+  prdRel: string;
+  layoutNote?: string;
+}
+
+function layoutValue(cwd: string, key: string, absolute: boolean): string | null {
+  const script = join(cwd, ".atlas", "_support", "layout.py");
+  if (!existsSync(script)) return null;
+  const flag = absolute ? "--print-abs" : "--print";
+  const res = spawnSync("python3", [script, "--root", cwd, flag, key], { encoding: "utf8" });
+  if (res.status !== 0) return null;
+  const out = (res.stdout || "").trim();
+  return out || null;
 }
 
 function detectAtlasStatus(cwd: string): AtlasProjectStatus {
   const hasAtlasDir = existsSync(join(cwd, ".atlas"));
-  const hasStackProfile = existsSync(join(cwd, "product", "stack-profile.yaml"));
+  const hasConfig = existsSync(join(cwd, "atlas.config.yaml"));
+  const stackProfileAbs = layoutValue(cwd, "stack_profile", true)
+    ?? join(cwd, "product", "stack-profile.yaml");
+  const stackProfileRel = layoutValue(cwd, "stack_profile", false)
+    ?? "product/stack-profile.yaml";
+  const prdAbs = layoutValue(cwd, "prd", true) ?? join(cwd, "product", "prd");
+  const prdRel = layoutValue(cwd, "prd", false) ?? "product/prd";
+  const hasStackProfile = existsSync(stackProfileAbs);
   const hasTrellis = existsSync(join(cwd, ".trellis"));
+  const layoutReady = !hasConfig || layoutValue(cwd, "assets_root", false) !== null;
+  const layoutNote = hasConfig && !layoutReady
+    ? "自定义布局未解析（python3 缺席 / 旧装配 / 配置非法），按默认 product 判定"
+    : undefined;
 
   // 开户产物 = 上面 Onboarding 注里点名的两个文件
-  const hasPrd = existsSync(join(cwd, "product", "prd", "prd.md"));
+  const hasPrd = existsSync(join(prdAbs, "prd.md"));
   const hasStructureMeta = existsSync(
     join(cwd, ".trellis", "spec", "structure", "_meta.json"),
   );
@@ -74,6 +99,9 @@ function detectAtlasStatus(cwd: string): AtlasProjectStatus {
     hasStackProfile,
     onboarding,
     version,
+    stackProfileRel,
+    prdRel,
+    layoutNote,
   };
 }
 
@@ -106,14 +134,17 @@ export default function (pi: ExtensionAPI) {
             `  - Atlas 已装配: ${status.isAtlasProject ? `是 (版本: ${status.version || "dev"})` : "否"}`,
             `  - 开户态: ${ONBOARDING_LABEL[status.onboarding]}`,
             `  - Trellis 接入: ${status.hasTrellis ? "已接入" : "未检测到 (.trellis/ 缺失)"}`,
-            `  - 技术栈画像: ${status.hasStackProfile ? "已配置 (product/stack-profile.yaml)" : "未配置"}`,
+            `  - 技术栈画像: ${status.hasStackProfile ? `已配置 (${status.stackProfileRel})` : "未配置"}`,
           ];
+          if (status.layoutNote) {
+            lines.push(`  - 布局: ${status.layoutNote}`);
+          }
           if (!status.isAtlasProject) {
             lines.push(``, `提示: 当前项目尚未接入 Atlas。使用 \`/atlas init\` 即可一键装配。`);
           } else if (status.onboarding !== "done") {
             lines.push(
               ``,
-              `提示: **装配 ≠ 开户** —— 开户产物 = product/prd/prd.md 与 .trellis/spec/structure/_meta.json。`,
+              `提示: **装配 ≠ 开户** —— 开户产物 = ${status.prdRel}/prd.md 与 .trellis/spec/structure/_meta.json。`,
               `      现在${ONBOARDING_LABEL[status.onboarding]}；用户说「把项目接入 Atlas 工作流」时`,
               `      直接唤起技能 \`/atlas-apply adopt\`（存量：只登记既有基线 + 开户最小集，`,
               `      不重写老 PRD/用例）。开户按产物存在与否断点续跑，不吃掉已完成的部分。`,
@@ -216,11 +247,11 @@ export default function (pi: ExtensionAPI) {
         `\n\n# Atlas: 已装配但尚未开户（装配 ≠ 开户）\n` +
         `This project has the Atlas harness **assembled** but is **not onboarded** ` +
         `(onboarding state: ${status.onboarding}). Onboarding artifacts are ` +
-        `\`product/prd/prd.md\` and \`.trellis/spec/structure/_meta.json\` — both still missing.\n` +
+        `\`${status.prdRel}/prd.md\` and \`.trellis/spec/structure/_meta.json\` — both still missing.\n` +
         `When the user asks to 「把项目接入 Atlas 工作流」/「接入 Atlas」, run the skill ` +
         `\`atlas-apply adopt\` (existing project: register the baseline + minimal PRD only; ` +
         `do NOT rewrite old PRDs or invent legacy test cases). **Do not** conclude "already ` +
-        `onboarded" just because \`.atlas/\` or \`product/\` exist, and do not ask the user ` +
+        `onboarded" just because \`.atlas/\` or the asset root exist, and do not ask the user ` +
         `whether they already onboarded. Onboarding resumes by artifact presence.\n`;
       return { systemPrompt: prompt + onboardingNotice };
     }

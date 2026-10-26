@@ -3156,3 +3156,26 @@ def test_failure_evidence_has_no_override_switch() -> None:
 
 
 
+
+
+def test_generator_uses_configured_assets_root(tmp_path) -> None:
+    """RFC-20261026-01：`assets_root=docs` 时生成物不得回落到 product/e2e。"""
+    root = tmp_path
+    (root / "atlas.config.yaml").write_text(
+        "version: 1\nlayout:\n  assets_root: docs\n", encoding="utf-8")
+    (root / "docs" / "e2e" / "cases").mkdir(parents=True)
+    (root / "docs" / "stack-profile.yaml").write_text(
+        PROFILE.replace("product/e2e/", "docs/e2e/"), encoding="utf-8")
+    (root / "docs" / "e2e" / "cases" / "home.md").write_text(CASE, encoding="utf-8")
+    (root / "docs" / "e2e" / "e2e-index.md").write_text(INDEX, encoding="utf-8")
+    review = root / "docs" / "e2e" / "reviews" / "2026-01-01-fixture"
+    review.mkdir(parents=True)
+    (review / "review.json").write_text(json.dumps(
+        {"ok": True, "status": "PASS", "root": str(root), "scope": "fixture",
+         "checks": [], "other": []}, ensure_ascii=False), encoding="utf-8")
+    (review / "README.md").write_text("# 审查总结\n\n通过\n", encoding="utf-8")
+
+    r = run(root, "--apply")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert (root / "docs" / "e2e" / "scripts" / "home.spec.ts").is_file()
+    assert not (root / "product" / "e2e" / "scripts").exists()

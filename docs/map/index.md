@@ -34,7 +34,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 | # | 子系统 | 一句话职责 | 入口 | L1 页 |
 |---|---|---|---|---|
-| 0 | 共享内核 | 全包单源的解析/复用实现,禁止就地复制 | `_support/`(8 件) | — |
+| 0 | 共享内核 | 全包单源的解析/复用实现,禁止就地复制 | `_support/`(9 件) | — |
 | 1 | CLI 与装配 | 把 atlas 装进目标仓库并保持副本与源包对账 | `bin/atlas.js`、`install.sh` | [cli.md](cli.md) |
 | 2 | 共享契约层 | 一切规则的真相源(门册/全局规则/布局/单源) | `shared/`(7 份)、`templates/` | — |
 | 3 | 结构抽取适配器 | 从业务代码确定性抽取路由/API/模型/测试事实 | `adapters/`、`scripts/refresh_structure.py` | [adapters.md](adapters.md) |
@@ -50,12 +50,12 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 ### 0. 共享内核 `_support/`
 
-全包只准存在一处的实现:profile/用例块解析(`_support/stack_profile.py`、`case_block.py`)、Playwright 运行器探测与修复(`_support/pw_runner.py`)、审查策略(`_support/review_policy.py`)、URL 合并(`_support/url_merge.py`)、用例 ID 文法(`_support/case_id.py`)等 8 件。消费者经 `_support/siblings.py::load_module` 取用;`tests/test_shared_kernel.py` 守卫「同名实现全包唯一」。历史教训:就地复制导致判据分叉(双端同错 ⇒ 门恒绿),故有此层。
+全包只准存在一处的实现:profile/用例块解析(`_support/stack_profile.py`、`case_block.py`)、Playwright 运行器探测与修复(`_support/pw_runner.py`)、审查策略(`_support/review_policy.py`)、URL 合并(`_support/url_merge.py`)、用例 ID 文法(`_support/case_id.py`)、项目级资产根解析(`_support/layout.py`)等 9 件。消费者经 `_support/siblings.py::load_module` 取用;`tests/test_shared_kernel.py` 守卫「同名实现全包唯一」。历史教训:就地复制导致判据分叉(双端同错 ⇒ 门恒绿),故有此层。
 
 ### 1. CLI 与装配
 
-- `bin/atlas.js`(320 行):命令面 = `init / update / upgrade / check / console / report / version`。`init` 先探测 Trellis(`.trellis/` 缺失时自动 `trellis init`)再调装配器。
-- `install.sh`(580 行):装配器。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ tests/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`,落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 54 条 `check` 自检声明。
+- `bin/atlas.js`(358 行):命令面 = `init / update / upgrade / check / console / report / version`。`init` 先探测 Trellis(`.trellis/` 缺失时自动 `trellis init`)再调装配器。
+- `install.sh`(719 行):装配器。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ tests/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`,落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 55 条 `check` 自检声明。
 - `patches/`(4 族):`workflow-plan-apply`(apply 挂进 Trellis 工作流)、`project-wiring`(AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.adapter-out/` / pi 扩展五触点)、`workflow-root-cause`、`workflow-skill-routing`。锚点式版本化补丁,可重放。
 - 对账:`scripts/pkg_digest.py`(摘要算法单点)+ `scripts/backflow.py`(副本⇔源包三态回灌,SOURCE_ONLY 拒绝护栏)。
 
@@ -67,7 +67,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 - 适配器四件:`routes.py` / `api.py` / `models.py` / `tests.py`,由 `product/stack-profile.yaml` 的 `adapters` 段声明启用。统一契约:只读、幂等、失败非零且零部分产物、输出 JSON 形如 `{category, items, source_files, adapter_version}`,落 `.adapter-out/`(项目根,运行态不入库)。
 - `_lib.py` / `_scaffold.py` 是共享件;`_graph.py` 不是适配器(归子系统 4)。
-- `scripts/refresh_structure.py`(797 行)把适配器产物渲染进 `.trellis/spec/structure/` 的 `atlas:facts` 标记区:键级单元格重写、语义列保留、键级增删落漂移标记 `.adapter-out/_drift.json`(由「结构漂移」门消费)。
+- `scripts/refresh_structure.py`(818 行)把适配器产物渲染进 `.trellis/spec/structure/` 的 `atlas:facts` 标记区:键级单元格重写、语义列保留、键级增删落漂移标记 `.adapter-out/_drift.json`(由「结构漂移」门消费)。
 
 ### 4. 代码图谱 → [graph.md](graph.md)
 
@@ -79,9 +79,9 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 ### 7. E2E 生成与控制台
 
-- `scripts/gen_e2e_scripts.py`(2383 行,全仓最大单件):用例分片(中文 DSL)编译为 Playwright `.spec.ts`。动词值域封闭(`click/hover/type/dispatch/…`,第三词即中止——治旧副本静默吸收陌生动词);登录形态三态(real/fabricated/none);独立审查有 Critical 拒绝写盘;前置未声明 ⇒ exit 3 `not_ready`。
+- `scripts/gen_e2e_scripts.py`(2391 行,全仓最大单件):用例分片(中文 DSL)编译为 Playwright `.spec.ts`。动词值域封闭(`click/hover/type/dispatch/…`,第三词即中止——治旧副本静默吸收陌生动词);登录形态三态(real/fabricated/none);独立审查有 Critical 拒绝写盘;前置未声明 ⇒ exit 3 `not_ready`。
 - `scripts/gen_testid_stub.py`:老页面 testid 实然盘点薄桩(adopt 开户交尾件;缺失由 validate_testids 自愈)。
-- `scripts/e2e_console.py`(1084 行):纯标准库 SSE 评审控制台(默认 `127.0.0.1:4190`),500ms 慢动作回放、逐用例三值走查、提交即解锁人工 Review、快照带评审指纹(prov: head_sha/scripts_hash)防旧账本挂新执行。
+- `scripts/e2e_console.py`(1107 行):纯标准库 SSE 评审控制台(默认 `127.0.0.1:4190`),500ms 慢动作回放、逐用例三值走查、提交即解锁人工 Review、快照带评审指纹(prov: head_sha/scripts_hash)防旧账本挂新执行。
 - 配套内核:`_support/pw_runner.py`(运行器可解析性判据 + 全局兜底 + 浏览器就绪探针)、`_support/url_merge.py`(base query 转发)、`_support/case_block.py` / `case_id.py` / `manual_block.py`。
 
 ### 8. 门禁与校验 → [gates.md](gates.md)
@@ -103,14 +103,14 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 | 量 | 值 | 出处 |
 |---|---|---|
 | 校验器 | 10(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py:52` |
-| 编排门行 | 8 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:816`) |
-| 出厂测试文件 | 39 | `tests/` |
+| 编排门行 | 8 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:835`) |
+| 出厂测试文件 | 40 | `tests/` |
 | skills | 8(含 frontend-design) | `skills/` |
 | 环 | 3(structure / prd / e2e;原型环 E1 已退役) | `rings/` |
 | 共享契约 | 7 份 | `shared/` |
-| 共享内核 | 8 件 | `_support/` |
-| install.sh 自检声明 | 54 条 | `install.sh` |
-| 最大单件 | `scripts/gen_e2e_scripts.py` 2383 行 | — |
+| 共享内核 | 9 件 | `_support/` |
+| install.sh 自检声明 | 55 条 | `install.sh` |
+| 最大单件 | `scripts/gen_e2e_scripts.py` 2391 行 | — |
 
 ## L1 铺设计划(2026-10-25 定稿)
 

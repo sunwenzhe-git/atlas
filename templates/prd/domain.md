@@ -12,7 +12,7 @@ depends_on: []
 # [必填：域中文名] — 域级 PRD
 
 > 本文件是**应然**文档，不挂实现状态。
-> 对应 structure 模块与页面见 `product/prd/README.md` 的追溯总表。
+> 对应 structure 模块与页面见 `<资产根>/prd/README.md`（默认 `product/prd/README.md`）的追溯总表。
 >
 > **两种形态（契约 §4）**：`origin: adopt` 的**首轮开户**用**开户最小集**——只写 一 域概述 / 二 功能清单 /
 > 四 业务规则 / 五 验收标准 四节，**三 功能详细说明（六件套）与 六 Assumptions & Defaults 整节不出现**，
@@ -150,7 +150,7 @@ flowchart TD
 
 ## 八、用户旅程走查
 
-> **确认门（硬）**：本节须用户显式确认（保留下方「已确认」行）后才进 E2E 环；仅「改变应然 UI」的需求需要本节（`rings/e2e/reference.md` §6.2）。派生规则与覆盖判据见 `rings/prd/reference.md` §4·八。确认前对照 `product/design.md`（存在时）视觉方向一致性。
+> **确认门（硬）**：本节须用户显式确认（保留下方「已确认」行）后才进 E2E 环；仅「改变应然 UI」的需求需要本节（`rings/e2e/reference.md` §6.2）。派生规则与覆盖判据见 `rings/prd/reference.md` §4·八。确认前对照 `<资产根>/design.md`（默认 `product/design.md`，存在时）视觉方向一致性。
 
 > [初稿无「已确认」行 = 未确认；重派生本节时必须删除旧的「已确认」行待重确认]
 

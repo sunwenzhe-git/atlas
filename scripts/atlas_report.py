@@ -30,6 +30,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.layout import LayoutError, load_layout  # noqa: E402
+
 DEFAULT_REPO = "sunwenzhe-git/atlas"
 KINDS = ("design-conflict", "rule-friction", "tool-semantic", "bug")
 
@@ -94,7 +98,7 @@ def format_markdown(title: str, kind: str, conflict: str, shape: str, proposal: 
 
 
 def save_offline(root: Path, title: str, body: str) -> Path:
-    out_dir = root / "product" / "atlas-reports"
+    out_dir = load_layout(root).reports_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     slug = re.sub(r"[^\w\-]+", "-", title.lower()).strip("-")[:40] or "report"
     date_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -152,7 +156,11 @@ def main() -> int:
             print(f"⚠️ 云端上报遇到网络或鉴权问题 ({e})，正在自动保存至本地离线暂存队列...", file=sys.stderr)
 
     # 离线降级
-    saved_path = save_offline(Path(args.root), args.title, body)
+    try:
+        saved_path = save_offline(Path(args.root), args.title, body)
+    except LayoutError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
     print(f"📁 已自动沉淀至本地离线暂存队列: {saved_path}")
     print("   （配置 GITHUB_TOKEN 后重新运行即可自动推送）")
     return 0

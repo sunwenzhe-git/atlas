@@ -13,7 +13,7 @@
 
 | 文件 | 行数 | 角色 |
 |---|---|---|
-| `adapters/_graph.py` | 392 | ACL 本体:profile 声明解析 / 后端探测 / 新鲜度与索引 / 四个查询接口 |
+| `adapters/_graph.py` | 397 | ACL 本体:profile 声明解析 / 后端探测 / 新鲜度与索引 / 四个查询接口 |
 | `scripts/impact_report.py` | 224 | 消费者①:按需求出影响面预测报告(BFS 分层) |
 | `scripts/impact_reconcile.py` | 149 | 消费者②:收口时预测集 ⇔ 实际 diff 双向对账 |
 
@@ -23,7 +23,7 @@
 
 ### 1. 声明:stack-profile 的 graph 段
 
-`product/stack-profile.yaml` 可选段,`load_graph_config`(`adapters/_graph.py:104`)解析:
+`product/stack-profile.yaml` 可选段,`load_graph_config`(`adapters/_graph.py:109`)解析:
 
 ```yaml
 graph:
@@ -35,11 +35,11 @@ graph:
 
 ### 2. 后端探测与降级纪律
 
-`detect()`(`adapters/_graph.py:143`):找 `cgc` 可执行 + 解析版本号;不可用 ⇒ 返回 None,由**调用方**决定响亮降级——适配器显式 WARN + 回退正则、报告器显式 `not_ready`。本层绝不静默(`_graph.py:27-29`)。子命令超时三档:VERSION 15s / QUERY 120s / INDEX 900s(`_graph.py:57-59`)——「宁可响亮超时,不可无限等待」。
+`detect()`(`adapters/_graph.py:28`):找 `cgc` 可执行 + 解析版本号;不可用 ⇒ 返回 None,由**调用方**决定响亮降级——适配器显式 WARN + 回退正则、报告器显式 `not_ready`。本层绝不静默(`_graph.py:27-29`)。子命令超时三档:VERSION 15s / QUERY 120s / INDEX 900s(`_graph.py:57-59`)——「宁可响亮超时,不可无限等待」。
 
 ### 3. 用前现刷(freshness)——本子系统最核心的设计
 
-`freshness_key()`(`adapters/_graph.py:181`)算**代码态指纹 = sha1(HEAD + 脏文件集)**,排掉 `.adapter-out` 自身(否则「写标记 ⇒ 键变 ⇒ 再索引」自激振荡)。`ensure_index()`(`adapters/_graph.py:226`)消费前先比对:
+`freshness_key()`(`adapters/_graph.py:186`)算**代码态指纹 = sha1(HEAD + 脏文件集)**,排掉 `.adapter-out` 自身(否则「写标记 ⇒ 键变 ⇒ 再索引」自激振荡)。`ensure_index()`(`adapters/_graph.py:8`)消费前先比对:
 
 - 键一致 ⇒ 微秒级直接返回(fresh);
 - 不一致 ⇒ `cgc index --force` **全量重建**,成功后写标记 `.adapter-out/_graph_index.json`;
@@ -49,7 +49,7 @@ graph:
 
 ### 4. 查询接口(4 个,全部确定性)
 
-`adapters/_graph.py:299-392`:`query`(裸 Cypher,调用方负责 ORDER BY)、`file_paths`、`symbols_in_files`、`callers`(一跳直接调用方)。纪律:接触面只走 CLI 不走 Python import;`COLUMNS=20000` 防 rich 渲染硬换行 JSON(`_graph.py:274`);根外路径丢弃(cgc 全局库可能跨仓,不得污染);Python 侧再排一次序兜底(`_graph.py:391`)。
+`adapters/_graph.py:304-397`:`query`(裸 Cypher,调用方负责 ORDER BY)、`file_paths`、`symbols_in_files`、`callers`(一跳直接调用方)。纪律:接触面只走 CLI 不走 Python import;`COLUMNS=20000` 防 rich 渲染硬换行 JSON(`_graph.py:278`);根外路径丢弃(cgc 全局库可能跨仓,不得污染);Python 侧再排一次序兜底(`_graph.py:391`)。
 
 ### 5. 消费者①:影响面报告 `impact_report.py`
 

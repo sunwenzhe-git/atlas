@@ -27,8 +27,8 @@ description: "方案评审员（独立审查的第 3 类实例）：把「独立
 ## 怎么做（祈使句）
 
 1. 读骨架与 `§8`，确认本次属**低风险**还是 **§7 高风险**（决定「一致可否自动通过」）。
-2. 产**输入清单**：`python3 .atlas/scripts/make_review_inputs.py --out product/reviews/<日期>-design-review-<主题>/inputs`（指针化，不拷副本）。
+2. 产**输入清单**：`python3 .atlas/scripts/make_review_inputs.py --out <资产根>/reviews/<日期>-design-review-<主题>/inputs`（默认 `product/reviews/...`；指针化，不拷副本）。
 3. **先独立得出**该轮每条主张的结论（不看推荐），再比对；**不一致一律人工**。
 4. 按 `§3` 出**双份**留痕（`README.md` + `review.json`）；每条 finding 带结论与理由；替代方案**必须带代价说明**，且**不得自行采纳**。
-5. 低风险侧按 `§7` 的校准环记 `product/reviews/calibration.jsonl`；**§7 高风险不记**。
-6. **自动落盘长效决策（ADR）**：若本轮审查定稿了跨需求、长效技术架构决策（如存储选型、通信协议、系统红线）并获用户确认，**Agent 必须读取 `templates/adr/template.md`，自动按已有文件递增编号（NNNN），直接写下 `product/adr/NNNN-<slug>.md`**，人类仅负责审核确认，严禁要求人类手写模板。
+5. 低风险侧按 `§7` 的校准环记 `<资产根>/reviews/calibration.jsonl`（默认 `product/reviews/calibration.jsonl`）；**§7 高风险不记**。
+6. **自动落盘长效决策（ADR）**：若本轮审查定稿了跨需求、长效技术架构决策（如存储选型、通信协议、系统红线）并获用户确认，**Agent 必须读取 `templates/adr/template.md`，自动按已有文件递增编号（NNNN），直接写下 `<资产根>/adr/NNNN-<slug>.md`**（默认 `product/adr/NNNN-<slug>.md`；ADR 根按 `atlas.config.yaml` 的 `layout.adr` 解析），人类仅负责审核确认，严禁要求人类手写模板。

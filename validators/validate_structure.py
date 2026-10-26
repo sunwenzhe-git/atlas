@@ -22,6 +22,7 @@ from pathlib import Path
 if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _support.siblings import load_module  # noqa: E402
+from _support.layout import LayoutError, load_layout  # noqa: E402
 
 _sp_profile = load_module("stack_profile")
 
@@ -257,6 +258,11 @@ def _pointer_declared(t: str) -> bool:
 
 def validate(root: Path) -> Result:
     res = Result()
+    try:
+        lay = load_layout(root)
+    except LayoutError as exc:
+        res.add("项目布局配置", False, str(exc))
+        return res
     spec = root / ".trellis" / "spec" / "structure"
 
     if not spec.is_dir():
@@ -395,7 +401,7 @@ def validate(root: Path) -> Result:
     # 三态纪律：profile 不存在 / adapters.api 未声明 ⇒ 不产行（profile 缺失由
     # `validate_stack_profile` 独立响亮 FAIL，本器不重复告警）。
     api_decl: object = None
-    prof_path = root / "product" / "stack-profile.yaml"
+    prof_path = lay.stack_profile
     if prof_path.is_file():
         _prof = _sp_profile.parse_profile(prof_path.read_text(encoding="utf-8"))
         adapters_decl = _prof.get("adapters")

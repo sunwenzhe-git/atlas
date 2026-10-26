@@ -1177,3 +1177,23 @@ def test_serial_execution_gate_bites_on_parallel_config() -> None:
         # 否则「两判据同破」的夹具会让任意一条判据被摘掉时仍绿（门钉失效）。
         assert gate("export default defineConfig({ workers: 4, fullyParallel: false });\n") == "FAIL"
         assert gate("export default defineConfig({ workers: 1, fullyParallel: true });\n") == "FAIL"
+
+
+def test_layout_config_drives_preconditions_and_fails_loud(tmp_path) -> None:
+    """RFC-20261026-01：前置路径随布局配置；非法配置 ⇒ 单行 FAIL。"""
+    mod = _load_check()
+    (tmp_path / "atlas.config.yaml").write_text(
+        "version: 1\nlayout:\n  assets_root: docs\n", encoding="utf-8")
+    pre = mod._gate_preconditions(tmp_path)
+    assert pre["validate_stack_profile"][0] == "docs/stack-profile.yaml"
+    assert pre["validate_adr"][0] == "docs/adr"
+    rows = mod.Row()
+    assert mod.check_layout(tmp_path, rows)
+    assert not rows.failed
+
+    (tmp_path / "atlas.config.yaml").write_text(
+        "version: 1\nlayout:\n  assets_root: ../escape\n", encoding="utf-8")
+    rows = mod.Row()
+    assert not mod.check_layout(tmp_path, rows)
+    assert rows.failed
+    assert rows.rows[0]["name"] == "项目布局配置"

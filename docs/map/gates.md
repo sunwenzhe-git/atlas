@@ -13,7 +13,7 @@
 
 | 文件 | 角色 |
 |---|---|
-| `scripts/atlas_check.py`(903 行) | 统一检查入口 / 编排器(**只聚合,不改判据**) |
+| `scripts/atlas_check.py`(924 行) | 统一检查入口 / 编排器(**只聚合,不改判据**) |
 | `validators/`(10 器) | 判据本体,每器一行输出 |
 | `shared/gates.md`(146 行) | 门登记总账:六列(门 / 对账平面 / 查什么 / **不查什么** / 预算 / 假绿测试等级) |
 | `scripts/mutation_proof.py`(155 行) | 变异证明工具:把缺陷放回去看门红不红,还原须逐字节一致 + 报告须含注入 diff |
@@ -66,7 +66,7 @@
 
 同族的「可执行性判据本体」纪律(D101/DR4):可执行/可用类前置判据必须 ① 真跑一次功能性探针 ② 有反面包(「东西在但用不了」必须红) ③ 失败原因不被吞。同族复发两轮才立此行(#1 恒绿门 / #24 路径存在当充要)。
 
-## 三态前置表 `_GATE_PRECONDITIONS`(`scripts/atlas_check.py:66`)
+## 三态前置表 `_GATE_PRECONDITIONS`(`scripts/atlas_check.py:240`)
 
 7 个校验器声明了「前置文件缺失 ⇒ SKIP」:stack_profile(无 profile)/ structure(结构环未跑)/ design_exemptions(无设计档案)/ e2e_mocks(无用例资产)/ ac_alignment(无 PRD)/ adr(无 ADR 目录)。**SKIP 是合法降级不是放行**——文案必须带「未就绪,非失败」与出路。
 

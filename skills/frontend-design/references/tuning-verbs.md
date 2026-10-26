@@ -2,7 +2,7 @@
 
 触发条件：brief 是对**既有界面的微调**（更醒目 / 更收敛 / 精简 / 加固 / 修字体 / 加颜色），而不是新建页面。
 
-前置动作：先读设计档案 `product/design.md`（SKILL.md 1.E）拿当前旋钮值与设计系统。缺档案时先按 1.E 补一份再动手。
+前置动作：先读设计档案（Atlas 项目按 `atlas.config.yaml` 的资产根解析，默认 `product/design.md`；非 Atlas 项目为 `product/design.md`）（SKILL.md 1.E）拿当前旋钮值与设计系统。缺档案时先按 1.E 补一份再动手。
 
 ## 动词表
 

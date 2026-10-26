@@ -606,3 +606,18 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def test_clean_exempt_prefixes_follow_layout(tmp_path) -> None:
+    """RFC-20261026-01：自定义资产根下的 Atlas 写盘不得被判成「产品侧脏」。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("rs_layout_exempt", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    (tmp_path / "atlas.config.yaml").write_text(
+        "version: 1\nlayout:\n  assets_root: docs\n", encoding="utf-8")
+    prefixes = mod.clean_exempt_prefixes(tmp_path)
+    assert "docs/" in prefixes
+    assert "product/" not in prefixes
+    assert ".atlas/" in prefixes and ".adapter-out/" in prefixes

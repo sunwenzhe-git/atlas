@@ -126,7 +126,7 @@ design read 之后，设定三个旋钮。下文所有版面、动效、密度�
 
 ### 1.E 项目设计档案（跨会话持久）
 
-判读与旋钮设定完成后，**设计档案**固定落 `product/design.md`（相对项目根，目录不存在则创建），无论项目是否走 atlas 工作流——atlas 项目这正是产物归属里项目级应然（产品长什么样）的位置，非 atlas 项目统一同一落点。不叫 `DESIGN.md`：那个名字在 atlas 体系是源包操作契约。
+判读与旋钮设定完成后，**设计档案**固定落「资产根/design.md」：Atlas 项目按项目根 `atlas.config.yaml` 的 `layout.assets_root` 解析（默认 `product/design.md`），非 atlas 项目统一落 `product/design.md`（相对项目根，目录不存在则创建）。atlas 项目这正是产物归属里项目级应然（产品长什么样）的位置。不叫 `DESIGN.md`：那个名字在 atlas 体系是源包操作契约。
 
 * 设计档案已存在 → **先读它并沿用**。除非本次 brief 明确要求改方向或用户口头覆盖，不重新判读、不默默改值；用户在对话里覆盖了旋钮，同步更新设计档案。
 * 设计档案不存在 → 把本次判读结果写入设计档案（一次性 demo / 临时页除外）。只记事实不记过程，五行即可：
@@ -386,7 +386,7 @@ padding 与 margin 在数学上一致，不留位置尴尬的漂浮元素。**�
 - [ ] 已按范围路由判定表面类型；若是应用表面，视觉设计已交给官方设计系统，同时 Section 6 仍然生效
 - [ ] 设计系统已从 Section 2 选定，一个项目一套，没有混用；若走的是一种审美而非系统，已诚实标注为审美（`references/design-system-map.md`）
 - [ ] 若为改版，已识别模式并完成审计（`references/redesign-protocol.md`）
-- [ ] 设计档案（`product/design.md`，1.E）已读取或已写入；已有档案时本次判读与之一致，或用户明确要求变更
+- [ ] 设计档案（Atlas 项目为资产根/design.md，默认 `product/design.md`；非 Atlas 为 `product/design.md`，1.E）已读取或已写入；已有档案时本次判读与之一致，或用户明确要求变更
 - [ ] ≥ 5 section 的营销页已输出 section 计划（1.F），4.7 机械规则在计划上即满足
 
 **品味**

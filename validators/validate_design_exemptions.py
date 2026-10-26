@@ -3,7 +3,8 @@
 
 守一件事（机器对账取代 prose 约定）：
 
-  `product/design.md`（视觉设计档案，frontend-design skill 写、atlas 只读）里
+  `资产根/design.md`（资产根默认 `product/`，由项目根 `atlas.config.yaml` 解析；
+  视觉设计档案，frontend-design skill 写、atlas 只读）里
   「已有豁免」中的 detect 类豁免写作 `detect:<rule-id>`；同一组 rule id 必须
   出现在项目根 `.impeccable/config.json` 的 `detector.ignoreRules` —— **双向
   集合相等**。
@@ -13,7 +14,7 @@
   单侧缺失 = 报警关了没人知道为什么（缺台账），或台账说关了其实没关（缺配置）。
 
 判定（三态，`§B120`）：
-  - 无 `product/design.md` ⇒ **SKIP**（档案未建 = 未就绪，不是失败）。
+  - 无 `资产根/design.md` ⇒ **SKIP**（档案未建 = 未就绪，不是失败）。
   - 档案 `detect:<id>` 集合 ⇔ 配置 `detector.ignoreRules` 集合相等 ⇒ PASS
     （两侧皆空是合法退化态）。
   - 任一侧多出 ⇒ FAIL，双向差集指名。
@@ -38,7 +39,10 @@ import re
 import sys
 from pathlib import Path
 
-DESIGN_RELPATH = Path("product") / "design.md"
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.layout import LayoutError, load_layout  # noqa: E402
+
 CONFIG_RELPATH = Path(".impeccable") / "config.json"
 DETECT_TOKEN = re.compile(r"detect:([A-Za-z0-9][A-Za-z0-9_-]*)")
 
@@ -87,12 +91,17 @@ def config_ignore_rules(cfg_path: Path) -> set[str]:
 
 def run(root: Path) -> Result:
     res = Result()
-    design = root / DESIGN_RELPATH
+    try:
+        lay = load_layout(root)
+    except LayoutError as exc:
+        res.add("项目布局配置", "FAIL", str(exc))
+        return res
+    design = lay.design
     if not design.is_file():
         res.add("设计档案存在", "SKIP",
-                "无 product/design.md（档案未建，未就绪非失败）")
+                f"无 {lay.print_value('design')}（档案未建，未就绪非失败）")
         return res
-    res.add("设计档案存在", "PASS", DESIGN_RELPATH.as_posix())
+    res.add("设计档案存在", "PASS", lay.print_value("design"))
 
     ids = design_detect_ids(design.read_text(encoding="utf-8", errors="replace"))
     cfg = root / CONFIG_RELPATH

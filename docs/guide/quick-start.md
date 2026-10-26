@@ -29,7 +29,12 @@ cd your-project
 
 # 一键初始化并装配 Atlas 工作流（自动探测平台、下发 Skills 与契约）
 atlas init
+
+# 如项目已有自己的文档规范（例如产品文档在 docs/），首次装配时指定资产根
+atlas init --assets-root docs
 ```
+
+首次 `atlas init` 会询问**项目级资产根**（回车 = 默认 `product/`），也可用 `--assets-root` / `--adr-dir` 非交互指定；选择写入项目根 `atlas.config.yaml`（git 跟踪）。`atlas update` 只读该配置，不重新询问或换根。
 
 ### `atlas init` 会自动为你完成什么？
 
@@ -40,7 +45,7 @@ atlas init
 3. **注入工作流补丁组**：向 `.trellis/` 注入补丁组（Phase 1.6 资产更新挂载、阶段技能路由、根因分析优先红用例）与项目接线——对准模板里的稳定标记定位、用带指纹的标记包住，幂等可重放（Trellis 升级重写该文件后，重跑 `install.sh` 即自动对齐）；
 4. **三处接线 + 只读审查 Agent**：`.trellis/config.yaml` 加 `after_finish` hook（每次任务收口后自动刷新结构事实）、项目 `AGENTS.md` 加一段指针、*（pi 宿主）*`.pi/` 下落地并登记 `/atlas` 控制台扩展（`/atlas status` 报**开户态**——「装配 ≠ 开户」，非 pi 项目不创建 `.pi/`），并下发 `atlas-reviewer` 只读审查者配置（工具集不含写文件与 bash）。
 
-**两步卫生件**：清理历史遗留 / 已退役的 skill；建 `product/` 骨架（已有内容永不覆盖）。
+**两步卫生件**：清理历史遗留 / 已退役的 skill；建资产根骨架（默认 `product/`；由 `atlas.config.yaml` 解析，已有内容永不覆盖）。
 
 ### 升级与更新机制（Update & Upgrade）
 
@@ -61,11 +66,11 @@ atlas init
    atlas update               # 安全刷新当前项目工程线束与平台 Skills
    atlas update --dry-run     # 预览更新改动，不实际写入
    ```
-   > 🛡️ **安全保证**：`atlas update` 会刷新 `.atlas/` 核心契约、校验器、模板、项目接线与平台 Skills 瘦桩，并重新对账生成 `.atlas/VERSION` 版本戳；你的业务资产（如 `product/stack-profile.yaml`、已编写的 E2E 用例与领域规格等）受到严格保护，绝不覆盖。
+   > 🛡️ **安全保证**：`atlas update` 会刷新 `.atlas/` 核心契约、校验器、模板、项目接线与平台 Skills 瘦桩，并重新对账生成 `.atlas/VERSION` 版本戳；你的业务资产（如 `<资产根>/stack-profile.yaml`（默认 `product/stack-profile.yaml`）、已编写的 E2E 用例与领域规格等）受到严格保护，绝不覆盖。
 
 ---
 
-## 3. 核对技术栈画像 (`product/stack-profile.yaml`)
+## 3. 核对技术栈画像 (`<资产根>/stack-profile.yaml`，默认 `product/stack-profile.yaml`)
 
 安装完成后，项目根目录会生成一份技术栈画像草稿。**不用你手改**：首跑开户时 Agent 会带着你逐项核对（`origin` / `apps` / `role` / `adapters`）后落盘。出厂草稿含占位符，未替换占位符前 `atlas check` 必有门禁 FAIL —— 这是 fail-closed 的预期行为，不是装坏了：
 
@@ -120,7 +125,7 @@ Atlas 完全做到了**“日常全自动，低频全靠大白话”**：
 ```
 无论哪种入口，Agent 都会逆向扫描现有代码拓扑，建立应然资产起点（不瞎猜老业务用例，只登记基线），并在开户前与你核对画像草稿、把占位符换成真实路径。
 
-> ⚠️ **装配 ≠ 开户**：`atlas init` 只装配线束（`.atlas/`、`product/` 骨架、AGENTS.md 指针）。**开户产物是 `product/prd/` 与 `.trellis/spec/structure/` 的内容**——两者为空就是尚未开户。所以「已经装过 atlas」不代表已接入：若 Agent 回你「已接入」或反问「是不是接过了」，直接敲 `/atlas-apply adopt`（开户按产物存在与否断点续跑）。
+> ⚠️ **装配 ≠ 开户**：`atlas init` 只装配线束（`.atlas/`、资产根骨架（默认 `product/`）、AGENTS.md 指针）。**开户产物是 `<资产根>/prd/` 与 `.trellis/spec/structure/` 的内容**——两者为空就是尚未开户。所以「已经装过 atlas」不代表已接入：若 Agent 回你「已接入」或反问「是不是接过了」，直接敲 `/atlas-apply adopt`（开户按产物存在与否断点续跑）。
 
 > 完整流程、为什么存量页面不会把门禁刷红、后端项目的补充配置，见 [存量项目接入指南 (adopt)](/guide/legacy-adoption)。
 

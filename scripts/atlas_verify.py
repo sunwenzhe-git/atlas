@@ -44,13 +44,15 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.layout import LayoutError, load_layout  # noqa: E402
+
 PRE_TIMEOUT_S = 180
 BATCH_CASE_ID = "verify-batch"  # RFC-20261025-02 批级语义:显式批标识,非用例 ID(D121)
 # 附录 B v2(D151):backfill 的 claim task 名(写面残留行/冲突报告里的「在办任务」)。
 # 固定值 = 机器批可指认;`verify-batch` 一物两用是批标识/留档标记,**不是**索引词表值。
 BACKFILL_TASK = "verify-backfill"
-BACKFILL_INDEX_RELPATH = "product/e2e/e2e-index.md"
-LEDGER_RELPATH = Path("product") / "e2e" / "reviews" / "console" / "events.jsonl"
 
 
 def _prep_env(root: Path) -> dict:
@@ -64,7 +66,7 @@ def _prep_env(root: Path) -> dict:
 
 def step_pre(root: Path) -> dict:
     """项目数据准备钩子;缺 ⇒ SKIP,失败/超时 ⇒ 失败(停环)。"""
-    prep = root / "product" / "e2e" / "scripts" / "atlas-prepare.mjs"
+    prep = load_layout(root).e2e_scripts_dir / "atlas-prepare.mjs"
     started = time.perf_counter()
     if not prep.is_file():
         return {"name": "pre", "status": "SKIP",
@@ -120,7 +122,7 @@ def step_run(root: Path, py: str) -> dict:
 
 
 def _evidence_paths(root: Path) -> list[str]:
-    d = root / "product" / "e2e" / "scripts" / ".atlas-run"
+    d = load_layout(root).e2e_run_dir
     if not d.is_dir():
         return []
     hits = [str(p.relative_to(root)) for p in sorted(d.rglob("*"))
@@ -129,7 +131,7 @@ def _evidence_paths(root: Path) -> list[str]:
 
 
 def archive_dir(root: Path) -> Path:
-    return root / "product" / "e2e" / "reviews" / f"{datetime.now().date().isoformat()}-verify"
+    return load_layout(root).e2e_reviews_dir / f"{datetime.now().date().isoformat()}-verify"
 
 
 # -------------------------------------------------------------- backfill(附录 B v2 / D151)
@@ -194,7 +196,7 @@ def _ledger_signature(root: Path) -> dict:
     submit 是唯一写索引的账本事件 ⇒ 尾 submit 变 = 撞窗;字节/行数变而尾 submit 不变 =
     区间漂移(非 submit 事件写入,索引未被竞写)。
     """
-    f = root / LEDGER_RELPATH
+    f = load_layout(root).console_ledger
     if not f.is_file():
         return {"bytes": -1, "lines": -1, "last_submit": None}
     raw = f.read_bytes()
@@ -212,10 +214,11 @@ def _ledger_signature(root: Path) -> dict:
     return {"bytes": len(raw), "lines": len(raw.splitlines()), "last_submit": last}
 
 
-def _index_case_ids(root: Path) -> set[str]:
+def _index_case_ids(root: Path, index: Path | None = None) -> set[str]:
     """e2e-index.md 主表的用例 ID 集(B4 断言①的比对源;形态与 `e2e_console.writeback` 同源)。"""
+    index = index or load_layout(root).e2e_index
     ids: set[str] = set()
-    for line in (root / BACKFILL_INDEX_RELPATH).read_text(encoding="utf-8").splitlines():
+    for line in index.read_text(encoding="utf-8").splitlines():
         if line.lstrip().startswith("| E2E-"):
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
             if cells and cells[0].startswith("E2E-"):
@@ -223,8 +226,9 @@ def _index_case_ids(root: Path) -> set[str]:
     return ids
 
 
-def _index_state_of(root: Path, cid: str) -> str | None:
-    for line in (root / BACKFILL_INDEX_RELPATH).read_text(encoding="utf-8").splitlines():
+def _index_state_of(root: Path, cid: str, index: Path | None = None) -> str | None:
+    index = index or load_layout(root).e2e_index
+    for line in index.read_text(encoding="utf-8").splitlines():
         if line.lstrip().startswith(f"| {cid} ") or line.lstrip().startswith(f"| {cid}|"):
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
             return cells[6] if len(cells) > 6 else None
@@ -243,7 +247,9 @@ def step_backfill(root: Path) -> dict:
     """backfill(附录 B v2):断言(B4)→ claim(B3)→ 基线 → 复用 console writeback 同函数
     回填(B1)→ 复检 → release。红批不进本步(停环);索引/results 缺 ⇒ SKIP(合法态)。"""
     started = time.perf_counter()
-    index = root / BACKFILL_INDEX_RELPATH
+    lay = load_layout(root)
+    index = lay.e2e_index
+    index_rel = lay.print_value("e2e_index")
     if not index.is_file():
         return {"name": "backfill", "status": "SKIP",
                 "detail": "无 e2e-index.md(合法态:无索引即无回填面)", "duration_ms": 0}
@@ -253,7 +259,7 @@ def step_backfill(root: Path) -> dict:
         return {"name": "backfill", "status": "FAIL",
                 "detail": f"e2e_console/write_claim 不可导入(装配残缺?):{type(e).__name__}: {e}",
                 "duration_ms": int((time.perf_counter() - started) * 1000)}
-    draft = _draft_from_results(root / "product" / "e2e" / "scripts" / ".atlas-run")
+    draft = _draft_from_results(lay.e2e_run_dir)
     if draft is None:
         return {"name": "backfill", "status": "SKIP",
                 "detail": "无 results.json(合法态:无可解析执行结果,不回填)",
@@ -265,7 +271,7 @@ def step_backfill(root: Path) -> dict:
 
     # ---- B4 断言①(写前):draft 键集 ⊆ 索引行 ID 集。writeback 对未知键静默丢弃,
     #      必须执行器自己数;未知 ID ⇒ 整批拒绝(exit 非 0,不部分写)。
-    ids = _index_case_ids(root)
+    ids = _index_case_ids(root, index)
     unknown = sorted(set(draft) - ids)
     if unknown:
         return _fail_step(f"B4 断言①失败:draft 含索引不存在用例 {unknown[:5]}"
@@ -273,7 +279,7 @@ def step_backfill(root: Path) -> dict:
 
     # ---- B3:claim take → 基线 → 回填 → 复检 → release(失败路径也 release,不产残留)。
     try:
-        claim_mod.take(root, BACKFILL_INDEX_RELPATH, BACKFILL_TASK)
+        claim_mod.take(root, index_rel, BACKFILL_TASK)
     except Exception as e:
         return _fail_step(f"claim take 失败:{e}——§5.1 停下报告,不得抢占")
     release_note = ""
@@ -288,12 +294,12 @@ def step_backfill(root: Path) -> dict:
         return _fail_step(f"{e};claim 已释放(.atlas/runs/write-claims/ 应无残留)")
     finally:
         try:
-            claim_mod.release(root, BACKFILL_INDEX_RELPATH, BACKFILL_TASK)
+            claim_mod.release(root, index_rel, BACKFILL_TASK)
         except Exception as rel_err:
             release_note = f"(release 异常:{rel_err}——人工核对 .atlas/runs/write-claims/)"
 
     # ---- B4 断言②:留档逐用例表键集 == 索引改动集键集(按构造成立,断言兜底)。
-    chapter = {"verify_batch": True, "file": BACKFILL_INDEX_RELPATH, "task": BACKFILL_TASK,
+    chapter = {"verify_batch": True, "file": index_rel, "task": BACKFILL_TASK,
                "cases": {c["id"]: {"ok": draft[c["id"]]["ok"], "from": c["from"],
                                    "to": c["to"]} for c in res.get("changes", [])},
                "changed": res.get("changed", 0),
@@ -311,7 +317,7 @@ def step_backfill(root: Path) -> dict:
         current_rows = []
         for cid in sorted(changed_ids):
             current_rows.append({"id": cid, "intended": chapter["cases"].get(cid, {}).get("to"),
-                                 "current": _index_state_of(root, cid)})
+                                 "current": _index_state_of(root, cid, index)})
         detail = (f"与人批撞窗:回填窗口内 events.jsonl 尾 submit 被顶掉(ts={collided.get('ts')})——"
                   f"本次回填作废性报告:意图改动 {sorted(changed_ids)};"
                   f"写后索引现值 vs 意图值 = {current_rows};"
@@ -357,6 +363,11 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).resolve()
     if not root.is_dir():
         print("ERROR: --root 不是目录", file=sys.stderr)
+        return 2
+    try:
+        load_layout(root)
+    except LayoutError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
     # 留档在 ⇒ 整批短路(已成功的批不重跑)

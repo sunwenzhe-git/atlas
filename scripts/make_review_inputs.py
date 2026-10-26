@@ -9,10 +9,10 @@
 审查者按清单读**当前**文件；要冻结某次审查的基线时，用 sha256 而非拷贝。
 
 用法：
-    python3 .atlas/scripts/make_review_inputs.py --out product/e2e/reviews/<日期>-<主题>/inputs
+    python3 .atlas/scripts/make_review_inputs.py --out <资产根>/e2e/reviews/<日期>-<主题>/inputs
 
-- 默认收录：`product/e2e/e2e-index.md`、`product/e2e/cases/*.md`、`product/prd/*.md`、
-  `product/e2e/cases/*.md`；可用 `--include` 追加 glob、`--exclude` 排除。
+- 默认收录：`<资产根>/e2e/e2e-index.md`、`<资产根>/e2e/cases/*.md`、`<资产根>/prd/*.md`
+  （资产根默认 `product/`，由项目根 `atlas.config.yaml` 解析）；可用 `--include` 追加 glob、`--exclude` 排除。
 - 输出 `MANIFEST.json`（机器读）+ 一行摘要（人读）。
 - 纯标准库、框架无关。
 """
@@ -25,8 +25,18 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-DEFAULTS = ("product/e2e/e2e-index.md", "product/e2e/cases/*.md", "product/prd/*.md",
-            "product/e2e/cases/*.md")
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.layout import LayoutError, load_layout  # noqa: E402
+
+
+def defaults_for(root: Path) -> tuple[str, ...]:
+    lay = load_layout(root)
+    return (
+        lay.print_value("e2e_index"),
+        f"{lay.print_value('e2e_cases')}/*.md",
+        f"{lay.print_value('prd')}/*.md",
+    )
 
 
 def sha256(p: Path) -> str:
@@ -61,7 +71,11 @@ def main() -> int:
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
     root = Path(args.root).resolve()
-    pats = list(DEFAULTS) + args.include
+    try:
+        pats = list(defaults_for(root)) + args.include
+    except LayoutError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
     files = collect(root, pats)
     for ex in args.exclude:
         files = [f for f in files if ex not in f["path"]]

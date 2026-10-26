@@ -31,7 +31,7 @@
 - [三、快速开始（Quick Start）](#三快速开始quick-start)
   - [1. 依赖准备](#1-依赖准备)
   - [2. 全局安装 CLI 与项目初始化](#2-全局安装-cli-与项目初始化)
-  - [3. 核对技术栈画像 (`product/stack-profile.yaml`)](#3-核对技术栈画像-productstack-profileyaml)
+  - [3. 核对技术栈画像 (`stack-profile.yaml`)](#3-核对技术栈画像-stack-profileyaml)
   - [4. 怎么快速使用？（大白话为主，确定性入口兜底）](#4-怎么快速使用大白话为主确定性入口兜底)
 - [四、创新设计：E2E 用例评审控制台（人机协同终验）](#四创新设计e2e-用例评审控制台人机协同终验)
 - [五、技术纵深：代码图谱（Code Graph）优化逆向抽取](#五技术纵深代码图谱code-graph优化逆向抽取)
@@ -119,7 +119,7 @@ NBER（美国国家经济研究局）2026 年工作论文 35275 追踪了超过 
 ```
 
 ### 1. 两层正交模型（项目级平面 🆚 需求级平面）
-1. **项目级（应然资产层）**：定义“这个系统是什么、长什么样、怎么算做对”。包含**结构事实**（适配器 AST / 正则逆向抽取；图谱为可选文件枚举增强）、**项目级 PRD**（业务规则单源）、**E2E 验收用例**（真实靶场可证伪用例），以及跨需求生效的**架构决策记录**（`product/adr/NNNN-<slug>.md`）。
+1. **项目级（应然资产层）**：定义“这个系统是什么、长什么样、怎么算做对”。包含**结构事实**（适配器 AST / 正则逆向抽取；图谱为可选文件枚举增强）、**项目级 PRD**（业务规则单源）、**E2E 验收用例**（真实靶场可证伪用例），以及跨需求生效的**架构决策记录**（`<资产根>/adr/NNNN-<slug>.md`，默认 `product/adr/...`）。
 2. **需求级（小需求执行层）**：定义“这次改动改什么、怎么写代码”。由内置的 **Trellis** 任务系统承担，Atlas 本身**不侵入业务代码实现**。
 3. **`apply` 单向衔接**：需求在进入实现前，先由 Agent 唤起 `atlas-apply <需求ID>` 技能将需求增量合并入项目级应然资产，坚决杜绝“先写代码、事后补文档”的失控循环。
 
@@ -130,8 +130,8 @@ Atlas 的核心由 **三环（Rings）** 构筑成不可逾越的应然防线：
 | 构件 | 角色 | 产物位置 | 核心机制 |
 |---|---|---|---|
 | **Ring 1: 结构基线** (`atlas-structure`) | **实然事实** | `.trellis/spec/structure/` | 适配器（AST / 正则）逆向提取代码事实（路由、数据模型、API、测试现状）。事实区由机器刷新，语义区由规范治理，双份维护（`current` / `legacy`）。 |
-| **Ring 2: 项目级 PRD** (`atlas-prd`) | **业务应然** | `product/prd/` | 业务叙事单一真相源（SSOT）。双向强制追踪链：`功能 ──► 业务规则 ──► 验收准则(AC) ──► E2E 用例`。不挂实现状态，保持应然纯粹性。 |
-| **Ring 3: 验收用例** (`atlas-e2e`) | **验证应然** | `product/e2e/` | 真实应用单段执行（Playwright）。总索引唯一入口，一例一片（页面分片），以 `data-testid` 为唯一硬锚，严禁将瞬时反馈（Toast）当终态。 |
+| **Ring 2: 项目级 PRD** (`atlas-prd`) | **业务应然** | `<资产根>/prd/`（默认 `product/prd/`） | 业务叙事单一真相源（SSOT）。双向强制追踪链：`功能 ──► 业务规则 ──► 验收准则(AC) ──► E2E 用例`。不挂实现状态，保持应然纯粹性。 |
+| **Ring 3: 验收用例** (`atlas-e2e`) | **验证应然** | `<资产根>/e2e/`（默认 `product/e2e/`） | 真实应用单段执行（Playwright）。总索引唯一入口，一例一片（页面分片），以 `data-testid` 为唯一硬锚，严禁将瞬时反馈（Toast）当终态。 |
 
 ### 3. 唯一单向编排件（atlas-apply 会话技能）
 
@@ -163,7 +163,12 @@ cd your-project
 
 # 一键初始化并装配 Atlas 工作流（自动探测平台、下发 Skills 与契约）
 atlas init
+
+# 如项目已有自己的文档规范（例如产品文档在 docs/），首次装配时指定资产根
+atlas init --assets-root docs
 ```
+
+首次 `atlas init` 会询问**项目级资产根**（直接回车 = 默认 `product/`），也可用 `--assets-root` / `--adr-dir` 非交互指定；选择写入项目根 `atlas.config.yaml`（git 跟踪）。`atlas update` 只读该配置，**不会重新询问或换根**；未配置的存量项目继续按 `product/` 工作。
 
 装配命令将自动完成：
 1. 将核心契约、校验器、模板整包镜像至目标项目 `.atlas/`；
@@ -176,7 +181,7 @@ atlas init
 > - **全局 CLI 自身升级**：运行 `atlas upgrade`（自动通过 npm 拉取最新全局包，支持 `--tag beta` 或 `--dry-run`）。
 > - **项目内工程线束刷新**：在项目目录下运行 `atlas update`（安全刷新 `.atlas/` 资产与平台 Skills 瘦桩，版本戳对账更新，业务配置严格保护不覆盖）。
 
-### 3. 核对技术栈画像 (`product/stack-profile.yaml`)
+### 3. 核对技术栈画像 (`stack-profile.yaml`，默认在 `product/`)
 这份草稿**不用你手改**：首跑开户时 Agent 会带着你逐项核对（`origin` / `apps` / `role` / `adapters`）后落盘。出厂草稿含占位符，未替换真实字段前 `atlas check` 必有门禁 FAIL —— 这是 fail-closed 的预期行为，不是装坏了：
 ```yaml
 product: MyAwesomeApp
@@ -227,7 +232,7 @@ Atlas 完全做到了**“日常全自动，低频全靠大白话”**：
 ```
 无论哪种入口，Agent 都会逆向扫描现有代码拓扑，建立应然资产起点（不瞎猜老业务用例，只登记基线），并在开户前与你核对画像草稿、把占位符换成真实路径。
 
-> ⚠️ **装配 ≠ 开户**：`atlas init` 只装配线束（`.atlas/`、`product/` 骨架、AGENTS.md 指针）。**开户产物是 `product/prd/` 与 `.trellis/spec/structure/` 的内容**——两者为空就是尚未开户。所以「已经装过 atlas」不代表已接入：此时若 Agent 回你「已接入」或反问你「是不是接过了」，直接敲 `/atlas-apply adopt` 即可（开户按产物存在与否断点续跑）。
+> ⚠️ **装配 ≠ 开户**：`atlas init` 只装配线束（`.atlas/`、资产根骨架（默认 `product/`）、AGENTS.md 指针）。**开户产物是 `<资产根>/prd/` 与 `.trellis/spec/structure/` 的内容**——两者为空就是尚未开户。所以「已经装过 atlas」不代表已接入：此时若 Agent 回你「已接入」或反问你「是不是接过了」，直接敲 `/atlas-apply adopt` 即可（开户按产物存在与否断点续跑）。
 
 > 完整流程、为什么存量页面不会把门禁刷红、后端项目的补充配置，见 [存量项目接入指南 (adopt)](https://sunwenzhe-git.github.io/atlas/guide/legacy-adoption)。
 
@@ -303,9 +308,9 @@ Atlas 随包自带了一个**纯 Python 标准库编写的本地轻量级可视�
 4. **单写者架构与提交落盘（Append-Only Ledger）**：
    * 页面上的每一次执行和打勾先且仅保存在浏览器本地（`localStorage`，刷新不丢）；
    * 只有人类审视完毕、点击全局**「提交」**按钮时，才**一次性原子写入**：
-     * 向 `product/e2e/reviews/console/events.jsonl` 追加一条不可篡改的事件快照；
+     * 向 `<资产根>/e2e/reviews/console/events.jsonl`（默认 `product/e2e/reviews/console/events.jsonl`）追加一条不可篡改的事件快照；
      * 派生人读的 `ledger.md` 评审账本；
-     * 原子回写总索引 `product/e2e/e2e-index.md` 的状态列。
+     * 原子回写总索引 `<资产根>/e2e/e2e-index.md`（默认 `product/e2e/e2e-index.md`）的状态列。
 5. **评审指纹与陈旧度（代码一变，勾就作废）**：
    * 每条提交事件与逐用例快照都绑定工作区指纹 `prov = {head_sha, scripts_hash, git_dirty, actor_type}`——**人审的到底是哪一版，账本自己说得出**；
    * `scripts_hash` 只对源码脚本与数据准备钩子敏感，**对运行期产物免疫**（`test-results/`、trace、截图一律不入指纹），不会跑一轮就假漂移；
@@ -436,7 +441,7 @@ Atlas 坚持**变异证明（Mutation Proving / M 系列钉子测试）**原则�
 6. **装配版本完整性门 (`.atlas/VERSION`)**：
    * 目标项目中的装配态与 Atlas 源包内容哈希实时对账，源码更新未重新同步时明确报警。
 7. **架构决策记录对账门 (`validate_adr.py`)**：
-   * 项目级长效架构决策唯一落 `product/adr/NNNN-<slug>.md`；校验编号唯一、状态枚举合法、演进链闭环（`superseded` 必指有效后继）、核心章节（Context / Decision / Consequences）完整，杜绝决策散落多处或私自改写。
+   * 项目级长效架构决策唯一落 `<资产根>/adr/NNNN-<slug>.md`（默认 `product/adr/NNNN-<slug>.md`）；校验编号唯一、状态枚举合法、演进链闭环（`superseded` 必指有效后继）、核心章节（Context / Decision / Consequences）完整，杜绝决策散落多处或私自改写。
 8. **独立审查报告形态与处置门 (`validate_review_report.py` + 单源内核 `_support/review_policy.py`)**：
    * `review.json` v2 契约：finding 级 `fingerprint`（剥掉行号的稳定哈希，同一问题跨轮不得重复刷分）/ `pre_existing`（存量代码缺陷降为 WARN 下限、不阻断本次收口，但仍可见）/ `disposition`（`fixed`、`false_positive` 必须带签字人与取证才生效）/ `verification`；
    * **轮次收敛**：第 4 轮起必须登记 `escalation`（升级到人/架构复议），杜绝「Agent 作者 ⇔ Agent 评审」互相忙到天亮的死循环；

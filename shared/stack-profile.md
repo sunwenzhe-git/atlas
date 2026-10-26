@@ -1,11 +1,11 @@
 # atlas 共享契约 — stack-profile 与适配器
 
-> atlas 核心只读 `product/stack-profile.yaml` 来认识项目；本文件是它的**字段契约**与**适配器契约**的唯一正文。
+> atlas 核心只读 `<资产根>/stack-profile.yaml`（默认 `product/stack-profile.yaml`，由项目根 `atlas.config.yaml` 解析）来认识项目；本文件是它的**字段契约**与**适配器契约**的唯一正文。
 > 各环按路径引用 `.atlas/shared/stack-profile.md`。
 
 ## 1. 位置与生成
 
-- 路径：`<项目根>/product/stack-profile.yaml`。
+- 路径：`<项目根>/<资产根>/stack-profile.yaml`（默认 `product/stack-profile.yaml`；资产根由 `atlas.config.yaml` 的 `layout.assets_root` 解析）。
 - 由 atlas 与用户确认后生成；**生成或改写必须过用户确认门**（见 `global-rules.md` §7）。
 - 字段缺失会让对应能力降级，降级行为见各环契约。
 

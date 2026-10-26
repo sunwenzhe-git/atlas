@@ -29,6 +29,10 @@ import re
 import sys
 from pathlib import Path
 
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.layout import load_layout  # noqa: E402
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _lib import strip_js_comments  # noqa: E402  # 同包共用工具（引号感知的注释剥离）
 
@@ -61,7 +65,7 @@ def iter_py(root: Path, app_path: str | None):
 
 
 def load_apps(root: Path) -> list[dict]:
-    p = root / "product" / "stack-profile.yaml"
+    p = load_layout(root).stack_profile
     if not p.is_file():
         return []
     apps: list[dict] = []

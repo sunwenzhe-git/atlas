@@ -68,6 +68,7 @@ from pathlib import Path
 if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _support.siblings import load_module  # noqa: E402
+from _support.layout import LayoutError, load_layout  # noqa: E402
 
 _sp = load_module("stack_profile")
 parse_profile = _sp.parse_profile  # 单源别名（原实现已并入 `_support/stack_profile.py`）
@@ -249,7 +250,7 @@ def tid_locator(raw_tid: str) -> str:
 parse_block = load_module("case_block").parse_block
 
 
-def gather_cases(cases: Path) -> dict[str, list[dict]]:
+def gather_cases(cases: Path, shard_prefix: str) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {}
     for md in sorted(cases.glob("*.md")):
         text = md.read_text(encoding="utf-8")
@@ -263,7 +264,7 @@ def gather_cases(cases: Path) -> dict[str, list[dict]]:
             d = parse_block(block)
             if d.get("id"):
                 d["_title"] = titles.get(d["id"], "")
-                d["_shard"] = f"product/e2e/cases/{md.name}"
+                d["_shard"] = f"{shard_prefix}/{md.name}"
                 items.append(d)
         out[md.stem] = items
     return out
@@ -1235,11 +1236,12 @@ def review_report_status(reports_dir: Path) -> tuple[str, str]:
     return "ok", f"{d.name} status={status}"
 
 
-def auto_heal_review_report(root: Path, scope: str = "auto-baseline", expected_count: int = 1) -> Path:
+def auto_heal_review_report(root: Path, scope: str = "auto-baseline",
+                            expected_count: int = 1, lay=None) -> Path:
     """自愈生成符合 `shared/independent-review.md` §3 规范的基线审查报告三件套（v0.1.0-beta.14）。"""
     today = time.strftime("%Y-%m-%d")
     dirname = f"{today}-{scope}"
-    d = root / "product" / "e2e" / REVIEW_DIRNAME / dirname
+    d = (lay or load_layout(root)).e2e_reviews_dir / dirname
     d.mkdir(parents=True, exist_ok=True)
     rj = d / "review.json"
     if not rj.is_file():
@@ -1290,7 +1292,7 @@ def auto_heal_review_report(root: Path, scope: str = "auto-baseline", expected_c
     return d
 
 
-def review_gate(root: Path, prof: dict | None = None) -> tuple[bool, list[str], bool]:
+def review_gate(root: Path, prof: dict | None = None, lay=None) -> tuple[bool, list[str], bool]:
     """独立审查门（契约 `rings/e2e/reference.md` §12.6 + `§7.1`；E1：只验本环报告）。
 
     判据 = **报告存在 + 无 Critical**；
@@ -1303,7 +1305,8 @@ def review_gate(root: Path, prof: dict | None = None) -> tuple[bool, list[str], 
     返回 `(gate_ok, reasons, auto_heal)`。
     """
     reasons: list[str] = []
-    level, detail = review_report_status(root / "product" / "e2e" / REVIEW_DIRNAME)
+    lay = lay or load_layout(root)
+    level, detail = review_report_status(lay.e2e_reviews_dir)
     origin = prof.get("origin") if prof else None
     e2e = prof.get("e2e") if prof else {}
     rev = e2e.get("review") if isinstance(e2e, dict) else None
@@ -1348,25 +1351,31 @@ def main() -> int:
                     help="输出机器可读的独立审查任务包 JSON（rings/e2e §12.6）并退出")
     args = ap.parse_args()
     root = Path(args.root).resolve()
+    try:
+        lay = load_layout(root)
+    except LayoutError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
     esm_project = project_is_esm(root)
 
-    prof_path = root / "product" / "stack-profile.yaml"
+    prof_path = lay.stack_profile
     if not prof_path.is_file():
         print(f"ERROR: 缺 {prof_path}", file=sys.stderr)
         return 2
     prof = parse_profile(prof_path.read_text(encoding="utf-8"))
     e2e = prof.get("e2e") or {}
+    cases_dir = root / (e2e.get("cases_dir") or lay.print_value("e2e_cases"))
+    cases_prefix = lay.print_value("e2e_cases")
 
     if args.bootstrap_review:
-        cases_dir = root / (e2e.get("cases_dir") or "product/e2e/cases")
-        cases_map = gather_cases(cases_dir) if cases_dir.is_dir() else {}
+        cases_map = gather_cases(cases_dir, cases_prefix) if cases_dir.is_dir() else {}
         shards = []
         for p, items in sorted(cases_map.items()):
             shards.append({
                 "page": p,
                 "case_count": len(items),
                 "case_ids": [c.get("id") for c in items],
-                "shard_file": f"product/e2e/cases/{p}.md",
+                "shard_file": f"{cases_prefix}/{p}.md",
             })
         task_package = {
             "kind": "atlas-bootstrap-review-package",
@@ -1374,7 +1383,7 @@ def main() -> int:
             "expected_shards": len(shards),
             "shards": shards,
             "dimensions_reference": ".atlas/rings/e2e/reference.md §12.2 (D1-D10)",
-            "output_target": f"product/e2e/reviews/{time.strftime('%Y-%m-%d')}-<scope>/review.json",
+            "output_target": f"{lay.print_value('e2e_reviews')}/{time.strftime('%Y-%m-%d')}-<scope>/review.json",
             "rules": [
                 "fresh-context: 审查者必须使用干净会话，不得与用例生成者共享上下文",
                 "档位分级: 第一轮强档 (D1-D6)，第二轮与全局中档 (D9-D10)",
@@ -1388,7 +1397,7 @@ def main() -> int:
         print(f"ERROR: 未知 e2e.runner={runner!r}（允许 {sorted(RUNNERS)}）", file=sys.stderr)
         return 2
     ext = RUNNERS[runner]
-    scripts_dir = root / (e2e.get("scripts_dir") or "product/e2e/scripts")
+    scripts_dir = root / (e2e.get("scripts_dir") or lay.print_value("e2e_scripts"))
     # 契约 §5.7：`auth: none` = describe 内 test.use 覆盖 storageState 为干净 context（node 单轨）。
 
     base = e2e.get("app_base_url")
@@ -1470,7 +1479,7 @@ def main() -> int:
               f"得 {mock_prefix!r}（契约 §5.8）", file=sys.stderr)
         return 2
 
-    cases = gather_cases(root / "product" / "e2e" / "cases")
+    cases = gather_cases(cases_dir, cases_prefix)
     # 响亮原则：用例写了 `seed:` 但没声明通道 ⇒ 生成期就 WARN（否则只能等运行期才发現）。
     # declare 模式下无运行期播种面 ⇒ 不发此 WARN（改发 hook 无用警告）。
     if seed_hook is None and seed_mode == "enforce":
@@ -1500,7 +1509,7 @@ def main() -> int:
             print(f"  - {cid}", file=sys.stderr)
         print(f"  共 {len(mock_lines_present)} 条用例", file=sys.stderr)
         return 2
-    e2e_root = (root / (e2e.get("cases_dir") or "product/e2e/cases")).parent
+    e2e_root = cases_dir.parent
     custom_fdir = mock_cfg.get("fixtures_dir")
     if custom_fdir:
         fixtures_root = Path(custom_fdir)
@@ -1728,7 +1737,7 @@ def main() -> int:
             print(f"  - {b}", file=sys.stderr)
         print(f"  共 {len(bad_upload)} 条", file=sys.stderr)
         return 2
-    idx_path = root / (e2e.get("index") or "product/e2e/e2e-index.md")
+    idx_path = root / (e2e.get("index") or lay.print_value("e2e_index"))
     urls = page_urls(idx_path.read_text(encoding="utf-8")) if idx_path.is_file() else {}
     if not cases:
         print("no cases（门控态或未建用例）；不生成脚本。")
@@ -1740,7 +1749,7 @@ def main() -> int:
         return 2
 
     # 独立审查门（契约 §12.6 / §7.1）：存在性挂在**写盘动作**上；dry-run 只报状态。
-    gate_ok, gate_reasons, will_auto_heal = review_gate(root, prof)
+    gate_ok, gate_reasons, will_auto_heal = review_gate(root, prof, lay)
     if not gate_ok and args.apply:
         print("ERROR: 独立审查门未通过（rings/e2e/reference.md §12.6），拒绝写盘：", file=sys.stderr)
         for r in gate_reasons:
@@ -1769,7 +1778,7 @@ def main() -> int:
     # 审查报告自愈（AI-Native 模式，v0.1.0-beta.14）：动词等校验全部通过后再写盘自愈基线
     if gate_ok and will_auto_heal and args.apply:
         scope = "adopt-baseline" if (prof.get("origin") == "adopt") else "auto-baseline"
-        auto_heal_review_report(root, scope=scope, expected_count=len(cases))
+        auto_heal_review_report(root, scope=scope, expected_count=len(cases), lay=lay)
         print("NOTICE: 审查报告缺失或损坏，处于 adopt 模式或 review 免阻断通道，已自动自愈生成基线审查报告并放行写盘。", file=sys.stderr)
 
     results: list[dict] = []
@@ -2345,7 +2354,6 @@ def main() -> int:
         write(gitignore, ".atlas-auth/\n.atlas-run/\n", args.apply, results)
 
     # 索引的 `## 页面 ↔ 用例` 反向视图：100% 派生 ⇒ 由生成器重写（3509 §B64）。
-    idx_path = root / "product" / "e2e" / "e2e-index.md"
     if idx_path.is_file():
         rebuilt = render_reverse_view(idx_path.read_text(encoding="utf-8"), cases)
         if rebuilt is not None:

@@ -47,6 +47,10 @@ import re
 import sys
 from pathlib import Path
 
+if str(Path(__file__).resolve().parents[2]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from _support.layout import LayoutError, load_layout  # noqa: E402
+
 PKG_ROOT = Path(__file__).resolve().parent
 POINTER_SNIPPET = PKG_ROOT / "agent-pointer.md"
 
@@ -204,7 +208,7 @@ def is_python_project(target: Path) -> bool:
     `python` 字样 / `framework: pytest` / `backend_test:` 段（最后一个是本兜底所服务的
     AC 标记特性的**契约 opt-in 段**，`shared/stack-profile.md` §2）。
     """
-    prof_path = target / "product" / "stack-profile.yaml"
+    prof_path = load_layout(target).stack_profile
     if prof_path.is_file():
         text = prof_path.read_text(encoding="utf-8", errors="ignore")
         declared = "\n".join(RE_COMMENT.sub("", ln) for ln in text.splitlines()).lower()
@@ -427,6 +431,11 @@ def main() -> int:
 
     write = bool(args.apply) and not bool(args.dry_run)
     target = Path(args.target).resolve()
+    try:
+        load_layout(target)
+    except LayoutError as exc:
+        print(f"[FAIL] {exc}", file=sys.stderr)
+        return 2
 
     results = [wire_agents(target), wire_config(target), wire_python_scaffold(target),
                wire_gitignore(target)]

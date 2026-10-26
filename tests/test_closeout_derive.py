@@ -252,3 +252,13 @@ def test_non_git_project_fails_with_short_message(tmp_path, capsys) -> None:
     err = capsys.readouterr().err
     assert "不是 git 仓库" in err
     assert "usage:" not in err.lower()
+
+
+def test_event_path_tokens_follow_layout(tmp_path) -> None:
+    """RFC-20261026-01：ADR / 审查报告前缀随资产根；布局配置本身归「契约」事件。"""
+    (tmp_path / "atlas.config.yaml").write_text(
+        "version: 1\nlayout:\n  assets_root: docs\n", encoding="utf-8")
+    tokens = dict(MOD.event_path_tokens(tmp_path))
+    assert tokens["ADR"] == ("docs/adr/",)
+    assert tokens["独立审查报告"] == ("docs/reviews/", "docs/e2e/reviews/")
+    assert "atlas.config.yaml" in tokens["契约"]

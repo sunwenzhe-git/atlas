@@ -38,6 +38,10 @@ import sys
 import time
 from pathlib import Path
 
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.layout import LayoutError, load_layout  # noqa: E402
+
 BEGIN = "<!-- atlas:facts:begin -->"
 END = "<!-- atlas:facts:end -->"
 DEFAULT_MAX_TOTAL = 9500
@@ -48,7 +52,18 @@ DEFAULT_MAX_SPEC = 9400
 # `.adapter-out/` 必须在内（2026-10-15，issue #8 移动落点后暴露）：它此前位于 `.trellis/`
 # 之下、被 `.trellis/` 顺带豁免；移到项目根后若仍不豁免，atlas 自己写的中间目录就会被读成
 # 「产品侧有未提交改动」⇒ **基线自进永久冻结**（比原缺陷更难察觉：门不报错，只是再也不前进）。
-CLEAN_EXEMPT_PREFIXES = (".atlas/", ".trellis/", "product/", ".adapter-out/")
+def clean_exempt_prefixes(root: Path) -> tuple[str, ...]:
+    """「产品侧干净」判据的豁免前缀（F26 基线自进前置④）。
+
+    随配置资产根派生：``.atlas/`` / ``.trellis/`` / ``.adapter-out/`` + 所有资产目录；
+    默认布局下与旧常量（含 ``product/``）逐字等价。
+    """
+    lay = load_layout(root)
+    prefixes = {".atlas/", ".trellis/", ".adapter-out/"}
+    for p in (lay.assets_root, lay.adr_dir, lay.prd_dir, lay.e2e_dir,
+              lay.reviews_dir, lay.reports_dir):
+        prefixes.add(p.relative_to(root).as_posix() + "/")
+    return tuple(sorted(prefixes))
 # 适配器四类目（shared/stack-profile.md §3.3）：routes 全局跑一次，域级按 app 各跑一次
 ADAPTER_CATEGORIES = ("routes", "api", "models", "tests")
 # `.adapter-out/` 的**单一位点 = 项目根**（2026-10-15 统一，issue #8）。
@@ -515,7 +530,7 @@ def load_adapters_profile(root: Path) -> dict[str, str | None]:
 
     与 `_lib.load_apps` 同一手写行级解析口径（不引第三方 YAML）；键闭集 = ADAPTER_CATEGORIES。
     """
-    p = root / "product" / "stack-profile.yaml"
+    p = load_layout(root).stack_profile
     out: dict[str, str | None] = {}
     if not p.is_file():
         return out
@@ -621,6 +636,7 @@ def maybe_advance_baseline(root: Path, meta: dict, fact_results: list[dict],
     ok2, porcelain = _git(root, "status", "--porcelain")
     if ok2:
         dirty = []
+        prefixes = clean_exempt_prefixes(root)
         for line in porcelain.splitlines():
             # v1 格式 `XY path`：_git 的 .strip() 会吃掉首行前导空格 ⇒ 不能盲切 [3:]，
             # 按状态字符扫描到 path 起点（行首空格跳2位即可见 path）。
@@ -631,7 +647,7 @@ def maybe_advance_baseline(root: Path, meta: dict, fact_results: list[dict],
             while i < len(line) and line[i] == " ":
                 i += 1
             rest = line[i:]
-            if rest and not rest.startswith(CLEAN_EXEMPT_PREFIXES):
+            if rest and not rest.startswith(prefixes):
                 dirty.append(rest)
         if dirty:
             log(f"  baseline: 产品侧工作树有未提交改动（{dirty[:3]}…）⇒ 不推进（不给未审定代码背书）")
@@ -665,6 +681,11 @@ def main() -> int:
                     help="显式越过漂移冻结推进 baseline（F26 人工通道；默认仅 --chain 自动推进）")
     args = ap.parse_args()
     root = Path(args.root).resolve()
+    try:
+        load_layout(root)
+    except LayoutError as exc:
+        log(f"FAIL: {exc}")
+        return 2
     meta = load_meta(root)
     if meta is None:
         log("SKIP: 缺少 .trellis/spec/structure/_meta.json（结构环尚未首建，跳过结构事实刷新）")

@@ -82,6 +82,7 @@ if str(HERE.parent) not in sys.path:
     sys.path.insert(0, str(HERE.parent))
 from _support.siblings import load_module  # noqa: E402
 from _support.manual_block import parse_manual  # noqa: E402
+from _support.layout import LayoutError, load_layout  # noqa: E402
 
 # 用例 ID 文法体单源（正文归 rings/e2e/reference.md §5.3）；锚点在使用处自留。
 case_id = load_module("case_id")
@@ -120,7 +121,7 @@ def scripts_hash(root: Path) -> str | None:
     严格排除运行时产物（test-results/、playwright-report/、.atlas-auth/、node_modules/、trace、png 等），
     确保执行产物不导致指纹假漂移。
     """
-    s_dir = root / "product" / "e2e" / "scripts"
+    s_dir = load_layout(root).e2e_scripts_dir
     if not s_dir.is_dir():
         return None
     h = hashlib.sha256()
@@ -231,7 +232,7 @@ def read_manual(root: Path) -> list[dict]:
     兼容旧单行格式与 D143 `atlas-manual` 结构化块（解析单源 `_support/manual_block.py`）；
     执行 = 开浏览器到对应页面，其余人工。文件缺失 = 空清单（手工面是可选增强）。
     """
-    path = root / "product" / "e2e" / "manual.md"
+    path = load_layout(root).e2e_manual
     if not path.is_file():
         return []
     return parse_manual(path.read_text(encoding="utf-8"))
@@ -250,7 +251,7 @@ def manual_open_url(root: Path, route: str) -> str:
 
 def page_routes(root: Path) -> dict:
     """页面表（页 ↔ 路由唯一真相源）解析：供手工项「打开」跳转。"""
-    path = root / "product" / "e2e" / "e2e-index.md"
+    path = load_layout(root).e2e_index
     routes: dict[str, str] = {}
     if not path.is_file():
         return routes
@@ -280,7 +281,7 @@ def _e2e_section(prof: dict) -> dict:
 
 def read_sources(root: Path) -> dict:
     """唯一来源（靶场，E1 单段）与它的 baseURL。地址的唯一来源是 stack-profile.yaml。"""
-    profile = root / "product" / "stack-profile.yaml"
+    profile = load_layout(root).stack_profile
     prof = load_profile_parser(root).parse_profile(profile.read_text(encoding="utf-8"))
     app = _e2e_section(prof).get("app_base_url")
     return {
@@ -298,11 +299,15 @@ def snapshot(root: Path) -> dict:
     前端只看到「未启动：索引里没有 E2E-LOGIN-002」，真因（列头与契约不一致）完全不可见。
     """
     mod = load_validator(root)
-    e2e = root / "product" / "e2e"
-    index = e2e / "e2e-index.md"
+    try:
+        lay = load_layout(root)
+    except LayoutError as exc:
+        raise SnapshotError(str(exc)) from exc
+    e2e = lay.e2e_dir
+    index = lay.e2e_index
     if not index.is_file():
         raise SnapshotError(
-            f"索引文件缺失: {index} 不存在。请先准备 product/e2e/e2e-index.md 再启动控制台。")
+            f"索引文件缺失: {index} 不存在。请先准备 {lay.print_value('e2e')}/e2e-index.md 再启动控制台。")
     blocks, _pages = mod.gather_shards(e2e / "cases")
 
     rows: list[dict] = []
@@ -317,7 +322,7 @@ def snapshot(root: Path) -> dict:
         raise SnapshotError(
             "索引主表列头与契约不一致，无法读取用例："
             f"实际={heads[0] if heads else '(无表格)'}；期望={mod.MAIN_COLUMNS}。"
-            "先对齐 product/e2e/e2e-index.md；改过契约 / 校验器后必须重启本控制台。")
+            "先对齐 " + lay.print_value("e2e_index") + "；改过契约 / 校验器后必须重启本控制台。")
     idx = {name: i for i, name in enumerate(header)}
 
     cases = []
@@ -378,9 +383,10 @@ def resolve_pw(root: Path, *, repair: bool = False) -> tuple[Path | None, Path |
     `note` = 运行器来自全局兜底时的标准说明（**每次都给**——「用了机器全局状态」是跑的前提事实），
     **调用方必须输出**。
     """
-    profile = root / "product" / "stack-profile.yaml"
+    lay = load_layout(root)
+    profile = lay.stack_profile
     if not profile.is_file():
-        return None, None, "无 product/stack-profile.yaml", ""
+        return None, None, f"无 {lay.print_value('stack_profile')}", ""
     prof = load_profile_parser(root).parse_profile(profile.read_text(encoding="utf-8"))
     nm = _e2e_section(prof).get("node_modules")
     pw_bin, nm_dir, source, why = pw_runner.resolve(root, str(nm) if nm else None)
@@ -388,7 +394,7 @@ def resolve_pw(root: Path, *, repair: bool = False) -> tuple[Path | None, Path |
         return None, None, why, ""
     if not repair:
         return pw_bin, nm_dir, "", ""
-    scripts = root / "product" / "e2e" / "scripts"
+    scripts = lay.e2e_scripts_dir
     status, detail, note = pw_runner.ensure_resolvable(
         scripts, pw_runner.resolution_root(scripts, root), source=source, nm_dir=nm_dir)
     if status == "fail":
@@ -401,7 +407,8 @@ def resolve_pw(root: Path, *, repair: bool = False) -> tuple[Path | None, Path |
 
 class Ledger:
     def __init__(self, root: Path, actor: str):
-        self.dir = root / "product" / "e2e" / "reviews" / "console"
+        self.layout = load_layout(root)
+        self.dir = self.layout.console_dir
         self.events = self.dir / "events.jsonl"
         self.ledger = self.dir / "ledger.md"
         self.actor = actor
@@ -530,6 +537,7 @@ class Ledger:
 class Runner:
     def __init__(self, root: Path, ledger: Ledger, timeout: int, head: bool, keep_open: bool = True):
         self.root = root
+        self.layout = load_layout(root)
         self.ledger = ledger
         self.timeout = timeout
         self.head = head
@@ -556,7 +564,7 @@ class Runner:
         # 浏览器就绪判据（issue #38，`DESIGN.md` D124）：与「E2E 真跑」门同一内核（`probe_browser`），
         # 不造第二份——模块可解析 ≠ launch 可成（npm 装包不自动下载浏览器）；缺 ⇒ 起跑前诚实拒绝，
         # 不起注定 launch 失败的子进程；`ATLAS_PLAYWRIGHT_CHANNEL` 已设 ⇒ 旁路（系统通道浏览器）。
-        br_ok, br_detail = pw_runner.probe_browser(self.root / "product" / "e2e" / "scripts")
+        br_ok, br_detail = pw_runner.probe_browser(self.layout.e2e_scripts_dir)
         if not br_ok:
             return False, f"浏览器未就绪：{br_detail}——判据与 atlas_check「E2E 真跑」门一致"
         with self.cond:
@@ -605,7 +613,7 @@ class Runner:
 
     def _run(self, case: dict, nodeid: str, slowmo: int, source: str, base_url: str,
              pw_bin: Path, nm_dir: Path) -> None:
-        scripts = self.root / "product" / "e2e" / "scripts"
+        scripts = self.layout.e2e_scripts_dir
         # 用例执行前的项目数据准备钩子（v3 现场实证移植，duty-review/bugs.md 005/006 链 companion）：
         # 共享型靶场是有状态环境（SPA + 服务端态），用例 precondition 属文档性声明、运行器不自动
         # 归零 ⇒ 残留实体会让 count 类断言系统性偏移。项目自带 product/e2e/scripts/atlas-prepare.mjs
@@ -810,7 +818,7 @@ def writeback(root: Path, draft: dict, apply: bool, source: str = "app") -> dict
 
     只改一列：`状态`（契约 §5.4 E1 单段：通过 → `green`，失败 → `red`）。
     """
-    index = root / "product" / "e2e" / "e2e-index.md"
+    index = load_layout(root).e2e_index
     lines = index.read_text(encoding="utf-8").splitlines()
     changes: list[dict] = []
     out: list[str] = []
@@ -846,6 +854,7 @@ def writeback(root: Path, draft: dict, apply: bool, source: str = "app") -> dict
 class App:
     def __init__(self, root: Path, port: int, slowmo: int, timeout: int, head: bool, keep_open: bool = True):
         self.root = root
+        self.layout = load_layout(root)
         self.port = port
         self.slowmo = slowmo
         self.actor = f"{os.environ.get('USER', 'local')}·控制台"
@@ -859,7 +868,7 @@ class App:
         except SnapshotError as exc:
             return {"source": source, "sources": read_sources(self.root), "problem": str(exc),
                     "slowmo": self.slowmo, "timeout": self.runner.timeout, "head": self.runner.head,
-                    "ledger": "product/e2e/reviews/console/events.jsonl", "cases": [], "nodeids": {},
+                    "ledger": self.layout.print_value("console_ledger"), "cases": [], "nodeids": {},
                     "committed": {"ts": None, "actor": None, "cases": {}},
                     "provenance": current_prov}
         committed = self.ledger.committed_snapshot(source, current_prov)
@@ -872,11 +881,11 @@ class App:
             "head": self.runner.head,
             "keep_open": self.runner.keep_open,
             "held_case": self.runner.held_case,
-            "ledger": "product/e2e/reviews/console/events.jsonl",
+            "ledger": self.layout.print_value("console_ledger"),
             "cases": snap["cases"],
             "manual": read_manual(self.root),
             "manual_state": ("created"
-                             if (self.root / "product" / "e2e" / "manual.md").is_file()
+                             if self.layout.e2e_manual.is_file()
                              else "missing"),
             # manual_state（RFC-20261015-01，issue #10）：「没有」与「忘了」不得同形——
             # missing ⇒ 前端显式披露「未创建」，不静默空栏；评估留痕另落域收口走查 README
@@ -909,7 +918,16 @@ class Handler(BaseHTTPRequestHandler):
         if not path.is_file() or ASSETS not in path.parents:
             self.send_error(404)
             return
-        body = path.read_bytes()
+        if path.suffix in (".js", ".html"):
+            text = path.read_text(encoding="utf-8")
+            text = (text
+                    .replace("{{ATLAS_E2E_MANUAL}}", self.app.layout.print_value("e2e_manual"))
+                    .replace("{{ATLAS_E2E_INDEX}}", self.app.layout.print_value("e2e_index"))
+                    .replace("{{ATLAS_CONSOLE_LEDGER}}",
+                             self.app.layout.print_value("console_ledger")))
+            body = text.encode("utf-8")
+        else:
+            body = path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", CONTENT_TYPES.get(path.suffix, "application/octet-stream"))
         self.send_header("Content-Length", str(len(body)))
@@ -1064,6 +1082,11 @@ def main() -> int:
     args = ap.parse_args()
 
     root = Path(args.root).resolve()
+    try:
+        load_layout(root)
+    except LayoutError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
     app = App(root, args.port, args.slowmo, args.timeout, not args.no_head,
               (not args.auto_close) and (not args.no_head))
     Handler.app = app

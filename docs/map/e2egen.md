@@ -13,8 +13,8 @@
 
 | 文件 | 行数 | 角色 |
 |---|---|---|
-| `scripts/gen_e2e_scripts.py` | 2383 | 生成器本体(全仓最大单件):分片 DSL → `.spec.ts` |
-| `scripts/e2e_console.py` | 1084 | 评审控制台:纯标准库 SSE 服务(默认 127.0.0.1:4190) |
+| `scripts/gen_e2e_scripts.py` | 2391 | 生成器本体(全仓最大单件):分片 DSL → `.spec.ts` |
+| `scripts/e2e_console.py` | 1107 | 评审控制台:纯标准库 SSE 服务(默认 127.0.0.1:4190) |
 | `scripts/gen_testid_stub.py` | — | testid 实然盘点薄桩生成器(adopt 开户交尾件) |
 | `_support/pw_runner.py` | — | 运行器单源内核:可解析性判据 / 全局兜底修复 / 浏览器就绪探针 |
 | `_support/case_block.py` / `case_id.py` / `manual_block.py` | — | 用例块解析 / 用例 ID 文法 / 手工块(共享内核件) |
@@ -51,7 +51,7 @@ Playwright 配置层 `trace` / `screenshot` 两轨(`scripts/gen_e2e_scripts.py:2
 
 ### 8. 评审控制台(`scripts/e2e_console.py`)
 
-`snapshot`(`scripts/e2e_console.py:293`)聚合现场;`repo_provenance`(`scripts/e2e_console.py:153`)产评审指纹(head_sha + scripts_hash)防旧账本挂新执行;`Ledger`(`scripts/e2e_console.py:402`)落评审台账;`Runner`(`scripts/e2e_console.py:530`)做 500ms 慢动作回放 + 逐用例三值走查(pass/fail/skip),提交即解锁人工 Review;`resolve_pw`(`scripts/e2e_console.py:370`)复用运行器判据与全局兜底。
+`snapshot`(`scripts/e2e_console.py:293`)聚合现场;`repo_provenance`(`scripts/e2e_console.py:153`)产评审指纹(head_sha + scripts_hash)防旧账本挂新执行;`Ledger`(`scripts/e2e_console.py:402`)落评审台账;`Runner`(`scripts/e2e_console.py:408`)做 500ms 慢动作回放 + 逐用例三值走查(pass/fail/skip),提交即解锁人工 Review;`resolve_pw`(`scripts/e2e_console.py:375`)复用运行器判据与全局兜底。
 
 ## 对外接口(谁咬它)
 

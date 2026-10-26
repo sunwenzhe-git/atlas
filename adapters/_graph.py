@@ -28,7 +28,8 @@
 未安装 / 不可达时 `detect()` 返回 None，由调用方决定响亮降级（适配器显式 WARN +
 回退正则；报告器显式 not_ready），本层绝不静默。
 
-声明：`product/stack-profile.yaml` 的可选 `graph` 段（契约见 `shared/stack-profile.md` §2）：
+声明：资产根/stack-profile.yaml 的可选 `graph` 段（资产根默认 `product/`；
+契约见 `shared/stack-profile.md` §2）：
 
     graph:
       backend: cgc       # 枚举见 GRAPH_BACKENDS；缺省整个段 = 不用图谱
@@ -46,6 +47,10 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.layout import load_layout  # noqa: E402
 
 ADAPTER = "graph"
 
@@ -106,7 +111,7 @@ def load_graph_config(root: Path) -> dict | None:
 
     graph 段不要求是文件末段：遇下一个顶层段即结束收集，已收集内容保留
     （2026-10-05 实测咬出：早版在段尾重置时把已收集的配置一并丢弃）。"""
-    p = Path(root) / "product" / "stack-profile.yaml"
+    p = load_layout(root).stack_profile
     if not p.is_file():
         return None
     found: dict | None = None

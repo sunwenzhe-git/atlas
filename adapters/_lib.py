@@ -12,6 +12,10 @@ import re
 import sys
 from pathlib import Path
 
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.layout import load_layout  # noqa: E402
+
 IGNORE_DIRS = {
     ".git", "node_modules", "__pycache__", "site-packages", "dist", "build",
     ".next", ".turbo", ".mypy_cache", ".pytest_cache", ".pyxle-build",
@@ -40,8 +44,8 @@ def iter_files(root: Path, suffixes: tuple[str, ...], app_path: str | None = Non
 
 
 def load_apps(root: Path) -> list[dict]:
-    """读 product/stack-profile.yaml 的 apps（name / path / role）。"""
-    p = root / "product" / "stack-profile.yaml"
+    """读资产根/stack-profile.yaml 的 apps（name / path / role）。"""
+    p = load_layout(root).stack_profile
     if not p.is_file():
         return []
     apps: list[dict] = []

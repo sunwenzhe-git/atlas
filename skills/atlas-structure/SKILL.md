@@ -10,6 +10,7 @@ description: "项目结构基线（逆向）：读代码产出结构事实，落
 ## 先读
 
 1. 共享契约（`.atlas/shared/`）：`global-rules.md`、`stack-profile.md`、`single-source.md`、`layout.md`。
+   - 路径约定：下文 `product/` 均为**默认资产根**示例；实际按项目根 `atlas.config.yaml` 的 `layout.assets_root` 解析（`shared/layout.md` §1.1）。
 2. 本环契约：`.atlas/rings/structure/reference.md`。
 
 ## 路径

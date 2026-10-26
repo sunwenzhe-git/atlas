@@ -20,7 +20,7 @@
       <span class="unit">ms</span>
     </label>
     <button id="closewin" class="btn" hidden title="关闭上一条用例保留的浏览器窗口（跑完不会自动关，留给你手动看）">关闭浏览器窗口</button>
-    <button id="submit" class="btn" title="把页面上的执行结果与勾选一次性提交：① 账本追加一条快照；② 回写 product/e2e/e2e-index.md 的「状态」一列（先给预览，确认后才写）">提交</button>
+    <button id="submit" class="btn" title="把页面上的执行结果与勾选一次性提交：① 账本追加一条快照；② 回写 {{ATLAS_E2E_INDEX}} 的「状态」一列（先给预览，确认后才写）">提交</button>
     <button id="reload" class="btn">重新加载用例</button>
   </div>
 </header>
@@ -65,7 +65,7 @@
 </table>
 
 <footer class="foot">
-  <span>执行结果与评审留痕写 <code>product/e2e/reviews/console/events.jsonl</code>（append-only 唯一真相源）。</span>
+  <span>执行结果与评审留痕写 <code>{{ATLAS_CONSOLE_LEDGER}}</code>（append-only 唯一真相源）。</span>
   <span>索引的 <code>状态</code> 只经「提交」显式回写。</span>
 </footer>
 

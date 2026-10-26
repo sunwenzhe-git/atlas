@@ -13,23 +13,23 @@
 
 | 文件 | 行数 | 角色 |
 |---|---|---|
-| `adapters/routes.py` | 781 | 路由适配器:文件式路由 + `pyxle_route`(`adapters/routes.py:120`)的 JSX `<Route>` 两种形态,`load_apps`(`adapters/routes.py:71`)解析 apps 段并合成挂载前缀 |
+| `adapters/routes.py` | 785 | 路由适配器:文件式路由 + `pyxle_route`(`adapters/routes.py:124`)的 JSX `<Route>` 两种形态,`load_apps`(`adapters/routes.py:75`)解析 apps 段并合成挂载前缀 |
 | `adapters/api.py` | 248 | API 适配器:OpenAPI/Swagger 描述文件(`DESCRIPTOR_FILES`,`adapters/api.py:41`)+ FastAPI/JS 路由装饰器正则双通道 |
-| `adapters/models.py` | 616 | 模型适配器:AST 解析(`_index_columns`,`adapters/models.py:134`),SQLModel 式含继承字段合并 |
+| `adapters/models.py` | 620 | 模型适配器:AST 解析(`_index_columns`,`adapters/models.py:138`),SQLModel 式含继承字段合并 |
 | `adapters/tests.py` | 179 | 测试盘点适配器:`PY_TEST_RE` / `JS_TEST_RE`(`adapters/tests.py:38`)识别 pytest / Playwright / vitest 与各自配置、运行命令 |
-| `adapters/_lib.py` | 132 | 适配器共享件:文件遍历 / apps 解析 / `write_json`(`adapters/_lib.py:84`)落盘约定 |
+| `adapters/_lib.py` | 136 | 适配器共享件:文件遍历 / apps 解析 / `write_json`(`adapters/_lib.py:88`)落盘约定 |
 | `adapters/_scaffold.py` | 80 | 新适配器脚手架:`CATEGORY`(`adapters/_scaffold.py:25`)占位待改 |
-| `scripts/refresh_structure.py` | 797 | 事实渲染器:适配器产物 → `atlas:facts` 标记区 |
+| `scripts/refresh_structure.py` | 818 | 事实渲染器:适配器产物 → `atlas:facts` 标记区 |
 
 ## 核心机制
 
 ### 1. 统一适配器契约
 
-每件适配器声明 `ADAPTER` / `VERSION`(`adapters/routes.py:35`),输出 JSON 一律 `{category, items, source_files, adapter_version}`;失败非零退出且零部分产物。启用由 `product/stack-profile.yaml` 的 `adapters` 段声明,未声明 = 不启用(不是失败)。
+每件适配器声明 `ADAPTER` / `VERSION`(`adapters/routes.py:39`),输出 JSON 一律 `{category, items, source_files, adapter_version}`;失败非零退出且零部分产物。启用由 `product/stack-profile.yaml` 的 `adapters` 段声明,未声明 = 不启用(不是失败)。
 
 ### 2. 事实渲染:标记区内键级重写(`scripts/refresh_structure.py`)
 
-`BEGIN` / `END`(`scripts/refresh_structure.py:41`)框出 `atlas:facts` 标记区:区内键级单元格按适配器产物重写,区外语义内容原样保留;旧行按行键对齐(`old_rows_by_key`,`scripts/refresh_structure.py:280`),三张表头(`ROUTES_HEADER`,`scripts/refresh_structure.py:202`)对 routes / api / models 各定义列序。默认 dry-run,`--apply` 写盘;预算按每域 L1+L2 ≤ `DEFAULT_MAX_TOTAL`(`scripts/refresh_structure.py:43`,9500 字符)校验。单遍化(F27):事实区先行落盘、指针层后拼装,首遍 `--apply` 即完整。
+`BEGIN` / `END`(`scripts/refresh_structure.py:45`)框出 `atlas:facts` 标记区:区内键级单元格按适配器产物重写,区外语义内容原样保留;旧行按行键对齐(`old_rows_by_key`,`scripts/refresh_structure.py:226`),三张表头(`ROUTES_HEADER`,`scripts/refresh_structure.py:217`)对 routes / api / models 各定义列序。默认 dry-run,`--apply` 写盘;预算按每域 L1+L2 ≤ `DEFAULT_MAX_TOTAL`(`scripts/refresh_structure.py:43`,9500 字符)校验。单遍化(F27):事实区先行落盘、指针层后拼装,首遍 `--apply` 即完整。
 
 ### 3. 键级漂移检测
 

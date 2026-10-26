@@ -26,6 +26,7 @@ PKG_ROOT = Path(__file__).resolve().parents[1]
 if str(PKG_ROOT) not in sys.path:
     sys.path.insert(0, str(PKG_ROOT))
 from _support.siblings import load_module  # noqa: E402
+from _support.layout import LayoutError, load_layout  # noqa: E402
 
 vt = load_module("validate_testids")
 
@@ -39,7 +40,7 @@ IMPERATIVE = ("实现按**第一块（分片应然）**命名 `data-testid`，**
 
 def render(root: Path, globs: list[str]) -> tuple[str, int]:
     per_page, _counts, sources = vt.collect_testids(root, globs)
-    cases = root / "product" / "e2e" / "cases"
+    cases = load_layout(root).e2e_cases_dir
     _attr_pages = sorted((set(per_page) - {""}) | {m.stem for m in cases.glob("*.md")})
     want = vt.shard_testids(cases, _attr_pages) if cases.is_dir() else {}
     paths = [f"{g}/**" for g in globs] or ["**"]
@@ -102,8 +103,12 @@ def main() -> int:
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
     root = Path(args.root).resolve()
-    globs = vt.app_globs(root)
-    text, n = render(root, globs)
+    try:
+        globs = vt.app_globs(root)
+        text, n = render(root, globs)
+    except LayoutError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
     out = root / STUB_REL
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")

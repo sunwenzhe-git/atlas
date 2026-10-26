@@ -1,6 +1,8 @@
 # atlas 共享契约 — 单一真相源登记
 
 > 每类信息的**唯一权威落点**。各环只能引用，不得在别处复制正文。
+>
+> 路径约定：下表 `product/` 均为**默认资产根**示例；实际按项目根 `atlas.config.yaml` 的 `layout.assets_root` / `layout.adr` 解析（见 `shared/layout.md` §1.1）。
 
 ## 1. 登记表
 

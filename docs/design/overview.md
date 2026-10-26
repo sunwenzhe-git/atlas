@@ -19,7 +19,7 @@ Atlas 不重造执行与测试引擎，而是站在三件成熟基础设施之�
 2. **Playwright（验收基础设施）**：承担真实靶场的交互验证与端到端回归。现已**单轨定型为 Node-Playwright**（`@playwright/test`），python-playwright 整体退役。
 3. **CGC（CodeGraphContext，MIT）代码拓扑基础设施**：承担全仓 AST 代码知识图谱构建与**有限的双消费面**（routes 文件枚举通道 + advisory 影响面基准）；事实抽取与域聚类**均不走图谱**（域 = 多信号投票，`rings/structure/reference.md` §2.1）——边界定形见 `DESIGN.md` D77/D78；用前现刷新鲜度防线与 impact 影响面对账照常承担。
 
-> 三者在仓库里的落点：执行契约 `.trellis/`、验收产物 `product/e2e/`、图谱隔离层 `.atlas/adapters/_graph.py`。
+> 三者在仓库里的落点：执行契约 `.trellis/`、验收产物 `<资产根>/e2e/`（默认 `product/e2e/`）、图谱隔离层 `.atlas/adapters/_graph.py`。
 
 ---
 
@@ -49,7 +49,7 @@ Atlas 的核心结构是**两层正交**（也常被称作**双线束模型**：
 - **Plan 步骤锚点补丁 → `.trellis/workflow.md`**：在 Phase 1 末尾插入 `#### 1.6 项目级资产更新`，让每条需求在进实现前必须先跑 `atlas apply`。补丁对准 Trellis 模板里的稳定标记插入，用带指纹的开始/结束标记包住，幂等可重放。
 - **两处接线**：`.trellis/config.yaml` 加 `after_finish` hook（任务收口后自动刷新结构事实，刷新前强制用前现刷）；项目 `AGENTS.md` 加一段指针，agent 一进场就知道 atlas 在哪、入口是什么。
 
-装完后**唯一要人做的**：填 `product/stack-profile.yaml`——它是 Atlas 认识这个项目的唯一入口档案，核心只读它，契约与模板里都不写死任何具体框架名。
+装完后**唯一要人做的**：填 `<资产根>/stack-profile.yaml`（默认 `product/stack-profile.yaml`）——它是 Atlas 认识这个项目的唯一入口档案，核心只读它，契约与模板里都不写死任何具体框架名。
 
 | 项目形态 | 起点 | 启动顺序 |
 |---|---|---|
@@ -103,7 +103,7 @@ Trellis 开需求卡（.trellis/tasks/<需求ID>/prd.md；ID = task 目录名，
 | **prd 产品环** | **应然**业务叙事与验收基准（全局 + 域级）；定稿域边界；AC 用 GWT 三列形态 | Agent 撰写 + 走查单确认门 | Trellis Spec 原语 |
 | **e2e 验收环** | 页面分片用例先行；唯一总索引；testid 锚点先行；真实靶场回归 | 生成器派生脚本 + 控制台走查 | **Node-Playwright**（单轨） |
 
-三环之上，`apply` 是**唯一的跨环编排件**：把一条需求精确、可重放、带门禁地编译并灌入项目级资产。此外还有 `product/adr/` 承载**架构决策记录**（编号化、由 Agent 自动撰写），把「为什么这么架构」沉淀为可追溯资产。
+三环之上，`apply` 是**唯一的跨环编排件**：把一条需求精确、可重放、带门禁地编译并灌入项目级资产。此外还有 `<资产根>/adr/`（默认 `product/adr/`）承载**架构决策记录**（编号化、由 Agent 自动撰写），把「为什么这么架构」沉淀为可追溯资产。
 
 ---
 

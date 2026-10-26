@@ -2,11 +2,12 @@
 """atlas 校验器 —— 架构决策记录（ADR）长效资产守卫（2026-10-13）。
 
 守一件事：
-  项目级长效架构决策唯一落地于 `product/adr/NNNN-<slug>.md`。
+  项目级长效架构决策唯一落地于 `资产根/adr/NNNN-<slug>.md`（资产根默认 `product/`，
+  由项目根 `atlas.config.yaml` 的 `layout.assets_root` 解析）。
   规范文档形态，保障状态合法性、决策确定性与版本演进追溯。
 
 判定（三态 + WARN）：
-  - 无 `product/adr/` 目录或目录为空 ⇒ SKIP（尚未创建任何 ADR，非失败）。
+  - 无 `资产根/adr/` 目录或目录为空 ⇒ SKIP（尚未创建任何 ADR，非失败）。
   - 有 ADR 文件：
       * 编号唯一：无同号异名冲突（0001-foo ⇔ 0001-bar）。
       * Frontmatter 合法：status 必须属于 {proposed, accepted, superseded, deprecated}。
@@ -30,7 +31,10 @@ import re
 import sys
 from pathlib import Path
 
-ADR_DIR_RELPATH = Path("product") / "adr"
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.layout import LayoutError, load_layout  # noqa: E402
+
 ADR_FILENAME_PATTERN = re.compile(r"^(\d{4})-[a-z0-9_-]+\.md$", re.IGNORECASE)
 VALID_STATUSES = {"proposed", "accepted", "superseded", "deprecated"}
 
@@ -89,10 +93,16 @@ def extract_section(text: str, section_kw: str) -> str | None:
 
 def validate_adr(root: Path) -> Result:
     res = Result()
-    adr_dir = root / ADR_DIR_RELPATH
+    try:
+        lay = load_layout(root)
+    except LayoutError as exc:
+        res.add("项目布局配置", "FAIL", str(exc))
+        return res
+    adr_dir = lay.adr_dir
 
     if not adr_dir.exists() or not adr_dir.is_dir():
-        res.add("adr_dir_exists", "SKIP", f"前置未声明（未就绪，非失败）：无 {ADR_DIR_RELPATH}/")
+        res.add("adr_dir_exists", "SKIP",
+                f"前置未声明（未就绪，非失败）：无 {lay.print_value('adr')}/")
         return res
 
     files = [f for f in adr_dir.iterdir() if f.is_file() and not f.name.startswith(".")]

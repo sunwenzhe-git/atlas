@@ -41,7 +41,7 @@ bash atlas/install.sh --target <项目根> --dry-run   # 先看计划（本工�
 bash atlas/install.sh --target <项目根>             # 实装
 ```
 
-装：整包 → `<项目根>/.atlas/`；5 个 skill 瘦桩（`atlas-{structure,prd,e2e,apply,design-review}`）→ `.claude/skills/` 与 `.agents/skills/`；`product/` 骨架（三环，**不建**已退役的 `product/prototype/`）；**Plan 挂载补丁打进 `.trellis/workflow.md`**（锚点幂等；`--no-patch` 可跳过）；**项目接线**——`AGENTS.md` 的 atlas 指针段 + `.trellis/config.yaml` 的 `after_finish` hook（幂等；`--no-wiring` 可跳过）；并**清理历史单入口 `atlas` skill 与源包已退役的 `atlas-*` 瘦桩**（实例：E1 退役的 `atlas-prototype`）。
+装：整包 → `<项目根>/.atlas/`；5 个 skill 瘦桩（`atlas-{structure,prd,e2e,apply,design-review}`）→ `.claude/skills/` 与 `.agents/skills/`；资产根骨架（默认 `product/`，由 `atlas.config.yaml` 解析；**不建**已退役的 `product/prototype/`）；**Plan 挂载补丁打进 `.trellis/workflow.md`**（锚点幂等；`--no-patch` 可跳过）；**项目接线**——`AGENTS.md` 的 atlas 指针段 + `.trellis/config.yaml` 的 `after_finish` hook（幂等；`--no-wiring` 可跳过）；并**清理历史单入口 `atlas` skill 与源包已退役的 `atlas-*` 瘦桩**（实例：E1 退役的 `atlas-prototype`）。
 
 - 已装配过的目标默认**硬停**（`ATLAS_ALLOW_OVERWRITE=1` 显式越过）——防分歧窗口内旧源包覆盖副本侧改动；新项目开户与 `--dry-run` 不受限。
 

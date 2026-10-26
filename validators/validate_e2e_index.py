@@ -40,6 +40,10 @@ import re
 import sys
 from pathlib import Path
 
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.layout import LayoutError, load_layout  # noqa: E402
+
 
 def _format_list(items: list[str], max_show: int = 20) -> str:
     if not items:
@@ -264,10 +268,11 @@ def seed_models_check(root: Path, blocks: dict[str, dict]) -> tuple[str, str]:
         ("PASS", f"{len(seeds)} 条用例的 seed 与 {len(models)} 个表/模型对账通过")
 
 
-def upload_fixture_check(root: Path, blocks: dict[str, dict]) -> tuple[str, str]:
+def upload_fixture_check(root: Path, blocks: dict[str, dict], lay=None) -> tuple[str, str]:
     """`upload` 行的 fixture 引用闭环（契约 §5.5，B201-1，2026-10-12）。
 
-    值 = 相对 `product/e2e/fixtures/` 的文件路径（与 §5.8 mock 同基线、同一 fixtures 树）。
+    值 = 相对 `<资产根>/e2e/fixtures/` 的文件路径（资产根默认 `product/`；
+    与 §5.8 mock 同基线、同一 fixtures 树）。
     判据（结构门）：**值形态**（非空 / 非绝对路径 / 无 `..` 段）+ **文件存在**。无用例声明
     `upload` ⇒ PASS（空集合法，N/A 不是通过的反面——空集就是合法形态）。生成器侧生成期
     同款检查（缺 ⇒ exit 2 列明）——两侧同步，防「校验器放行、生成器认不得」的半通状态。
@@ -280,7 +285,7 @@ def upload_fixture_check(root: Path, blocks: dict[str, dict]) -> tuple[str, str]
                 uploads.append((cid, parts[2].strip() if len(parts) > 2 else ""))
     if not uploads:
         return "PASS", "无用例声明 `upload`（可选动作词）"
-    fixtures = root / "product" / "e2e" / "fixtures"
+    fixtures = (lay or load_layout(root)).e2e_fixtures_dir
     bad: list[str] = []
     for cid, rel in uploads:
         if not rel:
@@ -334,7 +339,12 @@ def _route_hit(p: str, page_routes) -> bool:
 
 def validate(root: Path) -> Result:
     res = Result()
-    e2e = root / "product" / "e2e"
+    try:
+        lay = load_layout(root)
+    except LayoutError as exc:
+        res.add("项目布局配置", "FAIL", str(exc))
+        return res
+    e2e = lay.e2e_dir
     index = e2e / "e2e-index.md"
     cases = e2e / "cases"
     shard_files = sorted(cases.glob("*.md")) if cases.is_dir() else []
@@ -444,7 +454,7 @@ def validate(root: Path) -> Result:
         res.add("页面表合法", "PASS" if not page_bad2 else "FAIL",
                 f"路由非/开头或重复={page_bad2[:8]}" if page_bad2 else "")
     if known is None:
-        known = {md.stem for md in (root / "product" / "e2e" / "cases").glob("*.md")}
+        known = {md.stem for md in lay.e2e_cases_dir.glob("*.md")}
         res.add("页面表合法", "WARN", "索引无页面表（E1 起应有；暂按分片文件名推导页清单）")
     if known is not None and page_rows:
         miss = sorted({g["页面"] for g in grid} - known)
@@ -505,7 +515,7 @@ def validate(root: Path) -> Result:
     # 关联AC
     ac_bad = [g["用例ID"] for g in grid if not AC_RE.match(g["关联AC"])]
     res.add("关联AC 格式", "PASS" if not ac_bad else "FAIL", f"{ac_bad[:8]}")
-    prd_files = sorted((root / "product" / "prd").glob("*-prd.md")) if (root / "product" / "prd").is_dir() else []
+    prd_files = sorted(lay.prd_dir.glob("*-prd.md")) if lay.prd_dir.is_dir() else []
     if not prd_files:
         res.add("关联AC 可达", "N/A", "门控态：无域级 PRD")
     else:
@@ -697,7 +707,7 @@ def validate(root: Path) -> Result:
     # 段缺失 / keys 为空 ⇒ 该靶场不允许任何该类预设（用例出现对应行即 FAIL）。
     # `session_preset`（2026-10-16，issue #13）与 `query_preset`（2026-10-18，`DESIGN.md` D109）
     # 同族：同为**前提面**，两个载体各一段。
-    _prof_path = root / "product" / "stack-profile.yaml"
+    _prof_path = lay.stack_profile
 
     def _preset_keys(sub: str, field: str = "keys") -> set[str]:
         if not _prof_path.is_file():
@@ -1135,7 +1145,7 @@ def validate(root: Path) -> Result:
     _lvl, _det = seed_models_check(root, blocks)
     res.add("seed × models 对账", _lvl, _det)
     # 契约 §5.5（B201-1，2026-10-12）：upload 行的 fixture 引用存在（值形态 + 文件存在）
-    _lvl, _det = upload_fixture_check(root, blocks)
+    _lvl, _det = upload_fixture_check(root, blocks, lay)
     res.add("upload fixture 引用存在", _lvl, _det)
     # D143：manual.md 旧行 + `atlas-manual` 块（解析单源 `_support/manual_block.py`）
     manual_path = e2e / "manual.md"

@@ -79,7 +79,7 @@ async function load() {
   // 手工面存在性披露（RFC-20261015-01，issue #10）：「没有」与「忘了」不得同形——
   // missing ⇒ meta 行显式「未创建」，评测留痕另落域收口走查 README（契约 §5.4 末 / §10 纪律 5）
   const manualNote = (d.manual_state === 'missing')
-    ? ' · 手工项清单未创建（product/e2e/manual.md 不存在）'
+    ? ' · 手工项清单未创建（{{ATLAS_E2E_MANUAL}} 不存在）'
     : ` · 手工项 ${S.manualCount} 条`;
   S.sources = d.sources || {};
   S.cfg = { slowmo: d.slowmo, timeout: d.timeout, head: d.head };
@@ -364,7 +364,7 @@ async function preview() {
   const res = await api('api/submit', { draft: S.draft, apply: false, source: S.source });
   const k = counts();
   const summary = `<div><b>提交预览</b>（来源 ${esc(srcCfg().label || S.source)}）：账本会追加 <b>1 条快照</b>（${pendingCount()} 条用例 · 执行通过 ${k.pass}`
-    + ` · 已评审 ${k.reviewed}）；索引 <code>product/e2e/e2e-index.md</code> 将改 ${res.changed} 行。</div>`;
+    + ` · 已评审 ${k.reviewed}）；索引 <code>{{ATLAS_E2E_INDEX}}</code> 将改 ${res.changed} 行。</div>`;
   const body = res.changed ? `<div class="chg">${changeLines(res.changes)}</div>` : '';
   notifyHTML(summary + body
     + `<div class="wb-actions"><button class="btn btn-ok" data-wb="apply">确认提交</button>`

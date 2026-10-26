@@ -32,6 +32,10 @@ import re
 import sys
 from pathlib import Path
 
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.layout import load_layout  # noqa: E402
+
 ADAPTER = "routes"
 VERSION = "0.3.0"
 
@@ -69,8 +73,8 @@ def iter_files(root: Path, suffixes: tuple[str, ...], app_path: str | None = Non
 
 
 def load_apps(root: Path) -> list[dict]:
-    """从 product/stack-profile.yaml 读 apps（path / role），供状态标注与 --app 过滤。"""
-    p = root / "product" / "stack-profile.yaml"
+    """从资产根/stack-profile.yaml 读 apps（path / role），供状态标注与 --app 过滤。"""
+    p = load_layout(root).stack_profile
     if not p.is_file():
         return []
     apps: list[dict] = []
@@ -731,7 +735,7 @@ def main() -> int:
     if backend == "auto":
         backend = "graph" if cfg else "regex"
     elif backend == "graph" and cfg is None:
-        die("--backend graph 但 profile 未声明 graph 段（先在 product/stack-profile.yaml 声明）")
+        die("--backend graph 但 profile 未声明 graph 段（先在资产根/stack-profile.yaml 声明）")
     relpaths, backend_used, fallback = resolve_relpaths(root, app_path, backend, cfg,
                                                         explicit=args.backend != "auto")
 

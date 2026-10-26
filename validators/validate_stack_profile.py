@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """atlas 校验器 —— stack-profile 合法性与适配器可解析。
 
-按 `shared/stack-profile.md` §2/§3.3 校验 `<项目根>/product/stack-profile.yaml`：
+按 `shared/stack-profile.md` §2/§3.3 校验 `<项目根>/<资产根>/stack-profile.yaml`
+（资产根默认 `product/`，由 `atlas.config.yaml` 解析）：
 字段契约、`origin` 来源形态枚举、`apps[]` 枚举与路径、`adapters` 名字能否解析到脚本。
 
 - **框架无关**：本文件不得出现任何具体框架名。
@@ -26,6 +27,7 @@ from pathlib import Path
 if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _support.siblings import load_module  # noqa: E402
+from _support.layout import LayoutError, load_layout  # noqa: E402
 
 _sp = load_module("stack_profile")
 # 保名兼容（出厂测试引用 `vsp.parse_profile` / `vsp.strip_inline_comment` / `vsp.yaml_scalar`）
@@ -107,9 +109,14 @@ def resolvable(root: Path, name: str) -> bool:
 
 def validate(root: Path) -> Result:
     res = Result()
-    p = root / "product" / "stack-profile.yaml"
+    try:
+        lay = load_layout(root)
+    except LayoutError as exc:
+        res.add("项目布局配置", "FAIL", str(exc))
+        return res
+    p = lay.stack_profile
     if not p.is_file():
-        res.add("stack-profile 存在", "FAIL", str(p))
+        res.add("stack-profile 存在", "FAIL", lay.print_value("stack_profile"))
         return res
     prof = parse_profile(p.read_text(encoding="utf-8"))
 

@@ -25,6 +25,10 @@ import re
 import sys
 from pathlib import Path
 
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.layout import LayoutError, load_layout  # noqa: E402
+
 FORBIDDEN = ["TODO", "待补充", "TBD", "待定", "视情况而定", "后续补充", "[FIELD:]",
              "[必填", "[条件必填"]
 EXT_RE = re.compile(r"\.[A-Za-z0-9]{1,6}$")
@@ -178,9 +182,9 @@ def pending_gate(text: str) -> bool:
     return bool(GATE_ROW.search(section))
 
 
-def read_origin(root: Path) -> str:
-    """读 `product/stack-profile.yaml` 顶层的 `origin:`（缺省 = greenfield，保持既有行为）。"""
-    p = root / "product" / "stack-profile.yaml"
+def read_origin(root: Path, lay=None) -> str:
+    """读 `资产根/stack-profile.yaml` 顶层的 `origin:`（缺省 = greenfield，保持既有行为）。"""
+    p = (lay or load_layout(root)).stack_profile
     if not p.is_file():
         return DEFAULT_ORIGIN
     for raw in p.read_text(encoding="utf-8").splitlines():
@@ -282,20 +286,26 @@ def ac_id_collisions(domains: list[Path]) -> list[str]:
 
 def validate(root: Path) -> Result:
     res = Result()
-    prd_dir = root / "product" / "prd"
+    try:
+        lay = load_layout(root)
+    except LayoutError as exc:
+        res.add("项目布局配置", "FAIL", str(exc))
+        return res
+    prd_dir = lay.prd_dir
     prd = prd_dir / "prd.md"
     readme = prd_dir / "README.md"
     domains = sorted(p for p in prd_dir.glob("*-prd.md"))
 
     if not prd.is_file():
-        if read_origin(root) == "adopt":
+        if read_origin(root, lay) == "adopt":
             # `origin: adopt` 且**尚未开户**：不是失败，是「还没有可校验的资产」——
             # 旧项目接入的入场形态就是「资产为空、从第一条需求长起」（`apply/reference.md` §1 的 `adopt`）。
-            res.add("门控态", "NA", "origin=adopt 且尚未开户（无 product/prd/）—— "
-                                   "跑 `apply adopt` 开户后再校验")
+            res.add("门控态", "NA",
+                    f"origin=adopt 且尚未开户（无 {lay.print_value('prd')}/）—— "
+                    "跑 `apply adopt` 开户后再校验")
             res.add("总判定", "NA", "origin=adopt 尚未开户")
             return res
-        res.add("参数1 文档头完整", "FAIL", f"缺 {prd}")
+        res.add("参数1 文档头完整", "FAIL", f"缺 {lay.print_value('prd')}/prd.md")
         return res
 
     prd_text = prd.read_text(encoding="utf-8")
@@ -312,7 +322,7 @@ def validate(root: Path) -> Result:
                 illegal.append(f"非标准文件:{item.name}")
     if illegal:
         res.add("参数0 目录规范", "FAIL",
-                f"发现非契约目录层级或非标准文件：{illegal}（契约 rings/prd/reference.md §2 规定 PRD 必须为平铺目录 product/prd/prd.md 与 *-prd.md，严禁子目录）")
+                f"发现非契约目录层级或非标准文件：{illegal}（契约 rings/prd/reference.md §2 规定 PRD 必须为平铺目录 {lay.print_value('prd')}/prd.md 与 *-prd.md，严禁子目录）")
     else:
         res.add("参数0 目录规范", "PASS", "")
 
@@ -629,14 +639,14 @@ def validate(root: Path) -> Result:
 
         # 追溯总表计数对账（契约 §7 参数 4 ⑤；2026-09-28 补，`3509 §B109`）：表里的数字是人
         # 维护的，没有判据就会静默过期（实测七域全过期）。口径 = 按该域 `domain_code` 去重。
-        trace = root / "product" / "prd" / "README.md"
+        trace = lay.prd_dir / "README.md"
         if trace.is_file():
             tr_text = trace.read_text(encoding="utf-8")
             mism = []
             for m in TRACE_ROW.finditer(tr_text):
                 fname = m.group(1)
                 nf, nr, na = int(m.group(2)), int(m.group(3)), int(m.group(4))
-                p = root / "product" / "prd" / fname
+                p = lay.prd_dir / fname
                 if not p.is_file():
                     continue
                 dt = p.read_text(encoding="utf-8")
@@ -676,7 +686,7 @@ def validate(root: Path) -> Result:
         md = re.search(r"^depends_on:\s*\[([^\]]*)\]", dt, re.M)
         dep[slug] = {x.strip().strip("\"'“”") for x in (md.group(1).split(",") if md else [])
                      if x.strip()}
-    gfile = root / "product" / "prd" / "prd.md"
+    gfile = lay.prd_dir / "prd.md"
     gtext = gfile.read_text(encoding="utf-8") if gfile.is_file() else ""
     gsec = re.search(r"^##\s*五、功能架构\s*$(.*?)(?=^##\s|\Z)", gtext, re.S | re.M)
     gmer = re.search(r"```mermaid(.*?)```", gsec.group(1), re.S) if gsec else None

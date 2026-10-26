@@ -535,3 +535,71 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def test_layout_config_first_install_docs_and_update_readonly() -> None:
+    """RFC-20261026-01：首装写配置 / 模板渲染 / update 只读 / 非法配置零写 / 双根拒绝。"""
+    import subprocess
+    import tempfile
+
+    if not INSTALL.is_file():
+        import pytest
+        pytest.skip("包内无 install.sh（副本态）")
+
+    def run(*a: str):
+        r = subprocess.run(
+            a, capture_output=True,
+            env={"PATH": "/usr/bin:/bin:/opt/homebrew/bin", "LANG": "C.UTF-8"},
+        )
+        return r.returncode, r.stdout.decode("utf-8", errors="replace") + r.stderr.decode("utf-8", errors="replace")
+
+    def first(target: Path, *extra: str):
+        (target / ".trellis").mkdir(parents=True)
+        return run("bash", str(INSTALL), "--force", "--target", str(target),
+                   "--no-skill", "--no-patch", "--no-wiring", *extra)
+
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        root = base / "default"
+        root.mkdir()
+        rc, out = first(root)
+        assert rc == 0, out
+        assert "assets_root: product" in (root / "atlas.config.yaml").read_text(encoding="utf-8")
+        profile = (root / "product" / "stack-profile.yaml").read_text(encoding="utf-8")
+        assert "cases_dir: product/e2e/cases" in profile, profile
+
+        docs = base / "docs"
+        docs.mkdir()
+        rc, out = first(docs, "--assets-root", "docs")
+        assert rc == 0, out
+        assert "assets_root: docs" in (docs / "atlas.config.yaml").read_text(encoding="utf-8")
+        assert (docs / "docs" / "stack-profile.yaml").is_file()
+        assert not (docs / "product").exists()
+        assert "cases_dir: docs/e2e/cases" in (docs / "docs" / "stack-profile.yaml").read_text(encoding="utf-8")
+
+        before = (docs / "atlas.config.yaml").read_bytes()
+        rc, out = run("bash", str(INSTALL), "--update", "--target", str(docs),
+                      "--no-skill", "--no-patch", "--no-wiring")
+        assert rc == 0, out
+        assert (docs / "atlas.config.yaml").read_bytes() == before
+        assert (docs / "docs" / "stack-profile.yaml").is_file()
+
+        bad = base / "bad"
+        bad.mkdir()
+        rc, out = first(bad)
+        assert rc == 0, out
+        (bad / "atlas.config.yaml").write_text(
+            "version: 1\nlayout:\n  assets_root: ../escape\n", encoding="utf-8")
+        n_before = len(list((bad / ".atlas").rglob("*")))
+        rc, out = run("bash", str(INSTALL), "--update", "--target", str(bad),
+                      "--no-skill", "--no-patch", "--no-wiring")
+        assert rc == 2, out
+        assert len(list((bad / ".atlas").rglob("*"))) == n_before
+
+        double = base / "double"
+        double.mkdir()
+        (double / "product" / "prd").mkdir(parents=True)
+        rc, out = first(double, "--assets-root", "docs")
+        assert rc == 2, out
+        assert not (double / "atlas.config.yaml").exists()
+        assert not (double / ".atlas").exists()

@@ -32,6 +32,7 @@ from typing import Any
 if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _support.siblings import load_module  # noqa: E402
+from _support.layout import LayoutError, load_layout  # noqa: E402
 
 _sp = load_module("stack_profile")
 
@@ -60,25 +61,27 @@ class Result:
         return "PASS"
 
 
-def load_stack_profile(root: Path) -> dict[str, Any]:
+def load_stack_profile(root: Path, lay=None) -> dict[str, Any]:
     """经随包内核读取 stack-profile（单源口径，2026-10-12 单源批）。
 
     原为本文件自持的轻量扁平解析（第三份副本，B209-1 批引入时未收敛）——已改走
     `_support/stack_profile.py` 唯一实现（`_support.siblings.load_module` 引导）。
     """
-    path = root / "product" / "stack-profile.yaml"
+    lay = lay or load_layout(root)
+    path = lay.stack_profile
     if not path.is_file():
         return {}
     return _sp.parse_profile(path.read_text(encoding="utf-8"))
 
 
-def collect_prd_acs(root: Path) -> dict[str, set[str]]:
-    """收集 product/prd/ 目录下所有已声明的 AC ID。返回 {文件名: {AC_ID, ...}}。
+def collect_prd_acs(root: Path, lay=None) -> dict[str, set[str]]:
+    """收集资产根/prd/ 目录下所有已声明的 AC ID。返回 {文件名: {AC_ID, ...}}。
 
     契约（rings/prd/reference.md §2）：仅扫平铺规范文件（prd.md 与 *-prd.md），
     显式排除 reviews/ 等子目录及 README.md，避免历史评审或说明文档中残留的旧 AC 污染。
     """
-    prd_dir = root / "product" / "prd"
+    lay = lay or load_layout(root)
+    prd_dir = lay.prd_dir
     if not prd_dir.is_dir():
         return {}
     acs_by_file: dict[str, set[str]] = {}
@@ -221,7 +224,12 @@ def scan_backend_tests(test_dir: Path, root: Path) -> list[dict[str, Any]]:
 
 def validate_ac_alignment(root: Path) -> Result:
     res = Result()
-    profile = load_stack_profile(root)
+    try:
+        lay = load_layout(root)
+    except LayoutError as exc:
+        res.add("项目布局配置", "FAIL", str(exc))
+        return res
+    profile = load_stack_profile(root, lay)
     backend_test_cfg = profile.get("backend_test") or {}
     if not isinstance(backend_test_cfg, dict):
         backend_test_cfg = {}
@@ -230,7 +238,7 @@ def validate_ac_alignment(root: Path) -> Result:
     test_dir = root / test_dir_str
 
     # 1. 收集已声明的合法 AC 集合
-    prd_acs_map = collect_prd_acs(root)
+    prd_acs_map = collect_prd_acs(root, lay)
     all_declared_acs: set[str] = set()
     for acs in prd_acs_map.values():
         all_declared_acs.update(acs)
@@ -264,7 +272,7 @@ def validate_ac_alignment(root: Path) -> Result:
         res.add(
             "无主AC拦截",
             "FAIL",
-            f"测试中引用的 AC ID 未在任何 product/prd/*.md 中声明：{sorted(dangling_acs)}"
+            f"测试中引用的 AC ID 未在任何 {lay.print_value('prd')}/*.md 中声明：{sorted(dangling_acs)}"
         )
     else:
         res.add("无主AC拦截", "PASS", f"测试中引用的 {len(all_cited_acs)} 个 AC 均有合法 PRD 声明")

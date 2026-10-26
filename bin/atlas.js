@@ -2,6 +2,7 @@
 const { spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const readline = require('readline');
 
 const PKG_ROOT = path.resolve(__dirname, '..');
 const args = process.argv.slice(2);
@@ -27,6 +28,7 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
 示例:
   atlas init                  # 在当前项目初始化装配
   atlas init --target /path   # 在指定项目初始化装配
+  atlas init --assets-root docs  # 首次装配指定项目级资产根（默认 product）
   atlas update                # 刷新当前项目的工程线束与资产
   atlas update --dry-run      # 预览项目更新改动
   atlas upgrade               # 升级全局 CLI 至最新发布版
@@ -41,7 +43,7 @@ switch (command) {
   case 'init': {
     const installScript = path.join(PKG_ROOT, 'install.sh');
     const passthroughArgs = args.slice(1);
-    
+
     // 如果没有指定 --target，默认使用当前工作目录
     let hasTarget = false;
     let targetDir = process.cwd();
@@ -52,36 +54,72 @@ switch (command) {
         break;
       }
     }
-    const finalArgs = hasTarget ? passthroughArgs : ['--target', targetDir, ...passthroughArgs];
-    
-    // Trellis 环境检测与自动初始化引导
-    const trellisDir = path.join(targetDir, '.trellis');
-    if (!fs.existsSync(trellisDir)) {
-      const hasTrellis = spawnSync('which', ['trellis']).status === 0;
-      if (hasTrellis) {
-        console.log('\n[Atlas] 检测到目标项目尚未初始化 Trellis (.trellis/ 缺失)。');
-        console.log('[Atlas] 正在自动运行 trellis init 初始化状态机骨架...');
-        const initRes = spawnSync('trellis', ['init'], {
-          cwd: targetDir,
-          stdio: 'inherit',
-          env: process.env,
-        });
-        if (initRes.status !== 0) {
-          console.warn('[Atlas] ⚠️ 警告: trellis init 执行异常，继续执行 Atlas 装配...');
+
+    const hasAssetsRoot = passthroughArgs.includes('--assets-root');
+    const hasConfig = fs.existsSync(path.join(targetDir, 'atlas.config.yaml'));
+    const hasAtlas = fs.existsSync(path.join(targetDir, '.atlas'));
+    const shouldPrompt = !hasAssetsRoot && !hasConfig && !hasAtlas
+      && process.stdin.isTTY && process.stdout.isTTY;
+
+    function runInstall(extraArgs) {
+      const baseArgs = hasTarget ? passthroughArgs : ['--target', targetDir, ...passthroughArgs];
+      const finalArgs = [...baseArgs, ...extraArgs];
+
+      // Trellis 环境检测与自动初始化引导
+      const trellisDir = path.join(targetDir, '.trellis');
+      if (!fs.existsSync(trellisDir)) {
+        const hasTrellis = spawnSync('which', ['trellis']).status === 0;
+        if (hasTrellis) {
+          console.log('\n[Atlas] 检测到目标项目尚未初始化 Trellis (.trellis/ 缺失)。');
+          console.log('[Atlas] 正在自动运行 trellis init 初始化状态机骨架...');
+          const initRes = spawnSync('trellis', ['init'], {
+            cwd: targetDir,
+            stdio: 'inherit',
+            env: process.env,
+          });
+          if (initRes.status !== 0) {
+            console.warn('[Atlas] ⚠️ 警告: trellis init 执行异常，继续执行 Atlas 装配...');
+          }
+        } else {
+          console.warn('\n[Atlas] ⚠️ 提示: 未检测到 Trellis CLI。');
+          console.warn('[Atlas] Atlas 需求级执行依赖 Trellis，建议稍后安装:');
+          console.warn('        npm install -g @mindfoldhq/trellis\n');
         }
-      } else {
-        console.warn('\n[Atlas] ⚠️ 提示: 未检测到 Trellis CLI。');
-        console.warn('[Atlas] Atlas 需求级执行依赖 Trellis，建议稍后安装:');
-        console.warn('        npm install -g @mindfoldhq/trellis\n');
       }
+
+      const res = spawnSync('bash', [installScript, ...finalArgs], {
+        stdio: 'inherit',
+        env: process.env,
+      });
+      process.exit(res.status || 0);
     }
 
-    const res = spawnSync('bash', [installScript, ...finalArgs], {
-      stdio: 'inherit',
-      env: process.env,
-    });
+    if (shouldPrompt) {
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      rl.question(
+        '\nAtlas 项目级资产根目录（PRD / E2E / ADR 等）[product]: ',
+        (answer) => {
+          rl.close();
+          const value = (answer || '').trim() || 'product';
+          const validation = spawnSync(
+            'python3',
+            [path.join(PKG_ROOT, '_support', 'layout.py'),
+             '--root', targetDir, '--validate-value', 'assets_root', value],
+            { encoding: 'utf8' },
+          );
+          if (validation.status !== 0) {
+            console.error('[Atlas] 无效资产根：' + (validation.stderr || '').trim());
+            process.exit(2);
+          }
+          console.log('[Atlas] 资产根 = ' + value
+            + '（Atlas 资产会放在此目录；已有文件不会被覆盖）');
+          runInstall(['--assets-root', value]);
+        },
+      );
+      break;
+    }
 
-    process.exit(res.status || 0);
+    runInstall([]);
     break;
   }
 
@@ -107,7 +145,7 @@ Atlas update — 安全刷新当前项目中的 .atlas/ 工程线束与平台 Sk
 说明:
   atlas update 会安全刷新当前项目中的 .atlas/ 契约、校验器、模板、脚本以及各平台
   Skills 瘦桩，并重新对账生成 .atlas/VERSION 装配版本戳。
-  项目原有的业务资产（product/stack-profile.yaml、product/e2e/cases/ 等）将严格保留。
+  项目原有的业务资产（默认资产根下的 stack-profile.yaml、e2e/cases/ 等）将严格保留。
 `);
       process.exit(0);
     }
@@ -300,7 +338,7 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
   1. 在 Agent 会话中直接输入大白话，例如:
      - "帮我把这个项目接入 Atlas 工作流" (意图 = adopt 存量开户)
      - "跑一下三环全量构建，建立应然基线" (意图 = all 全量构建)
-     注意「装配 ≠ 开户」：开户产物是 product/prd/ 与 .trellis/spec/structure/ 的内容。
+     注意「装配 ≠ 开户」：开户产物是资产根/prd/ 与 .trellis/spec/structure/ 的内容。
      若 Agent 因 .atlas/ 已存在而回你「已接入」，改用下面第 2 种（确定性入口）。
   2. 或在支持 Slash Command 的平台中唤起技能:
      /atlas-apply ${sub}

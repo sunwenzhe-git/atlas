@@ -14,8 +14,8 @@
   - task 记录缺失 / 不可解析 ⇒ 该任务 **SKIP + 原因**（响亮，不假红）。
 
 判据（四态出口，评审 P1-1）：
-  - 第 2 问 =「是」⇒ 受影响域级 PRD（`product/prd/<domain>-prd.md`，域由
-    `atlas-apply.md` 内的路径引用解析）的走查节须有确认行；缺失 / 形态非法 ⇒ **FAIL**
+  - 第 2 问 =「是」⇒ 受影响域级 PRD（`资产根/prd/<domain>-prd.md`，资产根默认
+    `product/`；域由 `atlas-apply.md` 内的路径引用解析）的走查节须有确认行；缺失 / 形态非法 ⇒ **FAIL**
     指名域与文件。
   - 三问小节在、但第 2 问**不可解析** ⇒ **WARN** 指名 + 要求人工核对
     （不可解析 ≠ 未走到：防「写歪措辞静默旁路」）。
@@ -39,6 +39,10 @@ import json
 import re
 import sys
 from pathlib import Path
+
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.layout import LayoutError, load_layout  # noqa: E402
 
 TASKS_RELPATH = Path(".trellis") / "tasks"
 APPLY_RECORD = "atlas-apply.md"
@@ -64,8 +68,9 @@ CONFIRM_LINE_RE = re.compile(r"^\s*>\s*已确认\s*[：:]")
 CONFIRM_VALUE_RE = re.compile(r"^\s*>\s*已确认\s*[：:]\s*(\S+)\s*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
-# 受影响域：报告里对域级 PRD 的路径引用（`product/prd/<domain>-prd.md`）
-DOMAIN_PRD_RE = re.compile(r"(?:^|[^\w./-])(?:product/)?prd/([A-Za-z0-9][A-Za-z0-9_-]*)-prd\.md")
+# 受影响域：报告里对域级 PRD 的路径引用（`<资产根>/prd/<domain>-prd.md`；默认 product/）
+DOMAIN_PRD_RE = re.compile(
+    r"(?:^|[^\w./-])(?:[A-Za-z0-9_.-]+/)*prd/([A-Za-z0-9][A-Za-z0-9_-]*)-prd\.md")
 
 
 class Result:
@@ -170,7 +175,7 @@ def affected_domains(apply_text: str) -> list[str]:
     return sorted(set(DOMAIN_PRD_RE.findall(apply_text)))
 
 
-def check_task(root: Path, res: Result, task_dir: Path) -> None:
+def check_task(root: Path, res: Result, task_dir: Path, lay) -> None:
     name = task_dir.name
     status, why = parse_task_status(task_dir)
     if status is None:
@@ -217,12 +222,12 @@ def check_task(root: Path, res: Result, task_dir: Path) -> None:
     domains = affected_domains(apply_text)
     if not domains:
         res.add(f"task:{name}", "WARN",
-                "第 2 问＝是，但报告里未引用任何 `product/prd/<domain>-prd.md`"
+                f"第 2 问＝是，但报告里未引用任何 `{lay.print_value('prd')}/<domain>-prd.md`"
                 "（受影响域不可解析）——请人工核对")
         return
     for domain in domains:
-        rel = Path("product") / "prd" / f"{domain}-prd.md"
-        prd = root / rel
+        rel = lay.prd_dir.relative_to(root) / f"{domain}-prd.md"
+        prd = lay.prd_dir / f"{domain}-prd.md"
         label = f"task:{name} / {domain}"
         if not prd.is_file():
             res.add(label, "FAIL", f"第 2 问＝是，但受影响域级 PRD 不存在：{rel.as_posix()}")
@@ -243,6 +248,11 @@ def check_task(root: Path, res: Result, task_dir: Path) -> None:
 
 def run(root: Path) -> Result:
     res = Result()
+    try:
+        lay = load_layout(root)
+    except LayoutError as exc:
+        res.add("项目布局配置", "FAIL", str(exc))
+        return res
     tasks_root = root / TASKS_RELPATH
     if not tasks_root.is_dir():
         res.add("时空域", "SKIP",
@@ -255,7 +265,7 @@ def run(root: Path) -> Result:
         return res
 
     for task_dir in task_dirs:
-        check_task(root, res, task_dir)
+        check_task(root, res, task_dir, lay)
 
     if not res.checks:
         # 零行 ≠ PASS：全部任务都在时空域外（已归档）必须显式可见跳过

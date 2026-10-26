@@ -4,14 +4,15 @@
 #
 # 用法：
 #   bash install.sh [--target <项目根>] [--update] [--force] [--dry-run] [--no-skill] [--no-patch] [--no-wiring]
+#                   [--assets-root <dir>] [--adr-dir <dir>]
 #
 # 装配行为：
 #   1. 整包装配到 <目标>/.atlas/（shared / rings / apply / templates / adapters /
-#      validators / patches / tests）。.atlas/ 属包产物：白名单子目录默认刷新，
+#      validators / patches / tests / _support / extensions）。.atlas/ 属包产物：白名单子目录默认刷新，
 #      `.atlas/runs/`（运行态：E2E 汇总 / check 事件 / write-claims）保留不删。
 #   2. 每个 skills/atlas-*/ 以一个瘦桩 SKILL.md 装到各平台 skill 目录。
 #   3. 清理历史遗留的单入口 skill（<平台>/skills/atlas）。
-#   4. 建 product/ 骨架（已有内容永不覆盖）。
+#   4. 建资产根骨架（默认 product/；已有内容永不覆盖）。
 #   5. 应用 .trellis/workflow.md 的 Plan 挂载补丁（atlas apply；锚点幂等，
 #      用 --no-patch 跳过）。
 #   6. 项目接线：AGENTS.md 的 atlas 指针段 + .trellis/config.yaml 的 after_finish
@@ -20,11 +21,13 @@
 #
 # 模式：
 #   --update: 刷新已有项目的 .atlas/ 资产与平台 Skills 瘦桩（要求目标已初始化 .atlas/）。
+#   --assets-root / --adr-dir: 首次安装选择项目级资产根（默认 product/）与可选 ADR 根；
+#      写入项目根 atlas.config.yaml（git 跟踪）。--update 只读配置，不重新选择。
 #   --update 的触点守卫：已跟踪触点存在未提交改动 ⇒ 拒（--force 越过）；触点整目录
 #   未跟踪（如 .atlas/ 不入库）⇒ WARN 放行、不消费 --force（覆盖自负，先回灌更稳）。
 #
 # 幂等：.atlas/ 与 skill 瘦桩默认刷新（属包下发物，用 --no-skill 跳过 skill）；
-#       product/ 下的既有内容永不覆盖；workflow.md 补丁只做锚点插入、重跑即恢复；
+#       资产根下的既有内容永不覆盖；workflow.md 补丁只做锚点插入、重跑即恢复；
 #       AGENTS.md 指针段与 config.yaml hook 就地更新、重跑即恢复。
 #
 set -euo pipefail
@@ -38,6 +41,8 @@ DRY_RUN=0
 INSTALL_SKILL=1
 INSTALL_PATCH=1
 INSTALL_WIRING=1
+ASSETS_ROOT_ARG=""
+ADR_DIR_ARG=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -48,8 +53,10 @@ while [ $# -gt 0 ]; do
     --no-skill) INSTALL_SKILL=0; shift ;;
     --no-patch) INSTALL_PATCH=0; shift ;;
     --no-wiring) INSTALL_WIRING=0; shift ;;
+    --assets-root) ASSETS_ROOT_ARG="${2:-}"; shift 2 ;;
+    --adr-dir) ADR_DIR_ARG="${2:-}"; shift 2 ;;
     -h|--help)
-      sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 2 ;;
   esac
@@ -194,6 +201,127 @@ if [ "${#PLATFORM_DIRS[@]}" -eq 0 ]; then
   PLATFORM_DIRS=(".agents/skills")
 fi
 
+# ---------------------------------------------------------------- 布局配置
+
+# 布局锚点 = 项目根 atlas.config.yaml（git 跟踪）；首次安装由本脚本写，--update 只读。
+# 配置缺失 ⇒ 默认 product/（存量项目零变化）。
+CONFIG_FILE="$TARGET/atlas.config.yaml"
+LAYOUT_PY="$SCRIPT_DIR/_support/layout.py"
+if [ ! -f "$LAYOUT_PY" ]; then
+  say "错误：源包缺少 _support/layout.py，无法解析项目级资产根。"
+  exit 1
+fi
+
+layout_print() { python3 "$LAYOUT_PY" --root "$TARGET" --print "$1"; }
+layout_validate() { python3 "$LAYOUT_PY" --root "$TARGET" --validate >/dev/null; }
+
+if [ "$IS_UPDATE" -eq 1 ]; then
+  if ! layout_validate; then
+    say "错误：布局配置非法（${CONFIG_FILE}）；先修正再 update。"
+    python3 "$LAYOUT_PY" --root "$TARGET" --validate || true
+    exit 2
+  fi
+  ASSETS_ROOT="$(layout_print assets_root)" || exit 2
+  ADR_DIR_REL="$(layout_print adr)" || exit 2
+  if [ -n "$ASSETS_ROOT_ARG" ] && [ "$ASSETS_ROOT_ARG" != "$ASSETS_ROOT" ]; then
+    say "错误：--assets-root=$ASSETS_ROOT_ARG 与现有配置（${ASSETS_ROOT}）不一致；update 不换根。"
+    exit 2
+  fi
+  if [ -n "$ADR_DIR_ARG" ] && [ "$ADR_DIR_ARG" != "$ADR_DIR_REL" ]; then
+    say "错误：--adr-dir=$ADR_DIR_ARG 与现有配置（${ADR_DIR_REL}）不一致；update 不换根。"
+    exit 2
+  fi
+elif [ -f "$CONFIG_FILE" ]; then
+  if ! layout_validate; then
+    say "错误：布局配置非法（${CONFIG_FILE}）。"
+    python3 "$LAYOUT_PY" --root "$TARGET" --validate || true
+    exit 2
+  fi
+  ASSETS_ROOT="$(layout_print assets_root)" || exit 2
+  ADR_DIR_REL="$(layout_print adr)" || exit 2
+  if [ -n "$ASSETS_ROOT_ARG" ] && [ "$ASSETS_ROOT_ARG" != "$ASSETS_ROOT" ]; then
+    say "错误：--assets-root=$ASSETS_ROOT_ARG 与现有配置（${ASSETS_ROOT}）不一致。"
+    exit 2
+  fi
+  if [ -n "$ADR_DIR_ARG" ] && [ "$ADR_DIR_ARG" != "$ADR_DIR_REL" ]; then
+    say "错误：--adr-dir=$ADR_DIR_ARG 与现有配置（${ADR_DIR_REL}）不一致。"
+    exit 2
+  fi
+else
+  NEW_ASSETS_ROOT="${ASSETS_ROOT_ARG:-product}"
+  NEW_ADR_DIR="${ADR_DIR_ARG:-}"
+  python3 "$LAYOUT_PY" --root "$TARGET" --validate-value assets_root "$NEW_ASSETS_ROOT" || exit 2
+  if [ -n "$NEW_ADR_DIR" ]; then
+    python3 "$LAYOUT_PY" --root "$TARGET" --validate-value adr "$NEW_ADR_DIR" || exit 2
+  fi
+  if [ "$NEW_ASSETS_ROOT" != "product" ]; then
+    for p in stack-profile.yaml prd e2e adr design.md reviews atlas-reports; do
+      if [ -e "$TARGET/product/$p" ]; then
+        say "错误：所选资产根 $NEW_ASSETS_ROOT 不是默认 product，但 product/$p 已存在（双根风险）。"
+        say "      先手工迁移既有资产到 $NEW_ASSETS_ROOT/，或明确改用 --assets-root product。"
+        exit 2
+      fi
+    done
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    say "      [dry-run] + atlas.config.yaml（assets_root: ${NEW_ASSETS_ROOT}）"
+    [ -n "$NEW_ADR_DIR" ] && say "                      adr: $NEW_ADR_DIR"
+    ASSETS_ROOT="$NEW_ASSETS_ROOT"
+    ADR_DIR_REL="${NEW_ADR_DIR:-$ASSETS_ROOT/adr}"
+    STACK_PROFILE_REL="$ASSETS_ROOT/stack-profile.yaml"
+    PRD_DIR_REL="$ASSETS_ROOT/prd"
+    E2E_DIR_REL="$ASSETS_ROOT/e2e"
+    E2E_CASES_REL="$E2E_DIR_REL/cases"
+    E2E_SCRIPTS_REL="$E2E_DIR_REL/scripts"
+    E2E_INDEX_REL="$E2E_DIR_REL/e2e-index.md"
+    E2E_REVIEWS_REL="$E2E_DIR_REL/reviews"
+    CONSOLE_LEDGER_REL="$E2E_REVIEWS_REL/console/events.jsonl"
+  else
+    WRITE_ARGS=(--root "$TARGET" --write --assets-root "$NEW_ASSETS_ROOT")
+    [ -n "$NEW_ADR_DIR" ] && WRITE_ARGS+=(--adr "$NEW_ADR_DIR")
+    python3 "$LAYOUT_PY" "${WRITE_ARGS[@]}" >/dev/null || exit 2
+    say "      + atlas.config.yaml（assets_root: ${NEW_ASSETS_ROOT}）"
+    [ -n "$NEW_ADR_DIR" ] && say "                      adr: $NEW_ADR_DIR"
+    ASSETS_ROOT="$(layout_print assets_root)" || exit 2
+    ADR_DIR_REL="$(layout_print adr)" || exit 2
+    STACK_PROFILE_REL="$(layout_print stack_profile)" || exit 2
+    PRD_DIR_REL="$(layout_print prd)" || exit 2
+    E2E_DIR_REL="$(layout_print e2e)" || exit 2
+    E2E_CASES_REL="$(layout_print e2e_cases)" || exit 2
+    E2E_SCRIPTS_REL="$(layout_print e2e_scripts)" || exit 2
+    E2E_INDEX_REL="$(layout_print e2e_index)" || exit 2
+    E2E_REVIEWS_REL="$(layout_print e2e_reviews)" || exit 2
+    CONSOLE_LEDGER_REL="$(layout_print console_ledger)" || exit 2
+  fi
+fi
+
+if [ "$IS_UPDATE" -eq 0 ] && [ -f "$CONFIG_FILE" ]; then
+  STACK_PROFILE_REL="$(layout_print stack_profile)" || exit 2
+  PRD_DIR_REL="$(layout_print prd)" || exit 2
+  E2E_DIR_REL="$(layout_print e2e)" || exit 2
+  E2E_CASES_REL="$(layout_print e2e_cases)" || exit 2
+  E2E_SCRIPTS_REL="$(layout_print e2e_scripts)" || exit 2
+  E2E_INDEX_REL="$(layout_print e2e_index)" || exit 2
+  E2E_REVIEWS_REL="$(layout_print e2e_reviews)" || exit 2
+  CONSOLE_LEDGER_REL="$(layout_print console_ledger)" || exit 2
+fi
+if [ "$IS_UPDATE" -eq 1 ]; then
+  STACK_PROFILE_REL="$(layout_print stack_profile)" || exit 2
+  PRD_DIR_REL="$(layout_print prd)" || exit 2
+  E2E_DIR_REL="$(layout_print e2e)" || exit 2
+  E2E_CASES_REL="$(layout_print e2e_cases)" || exit 2
+  E2E_SCRIPTS_REL="$(layout_print e2e_scripts)" || exit 2
+  E2E_INDEX_REL="$(layout_print e2e_index)" || exit 2
+  E2E_REVIEWS_REL="$(layout_print e2e_reviews)" || exit 2
+  CONSOLE_LEDGER_REL="$(layout_print console_ledger)" || exit 2
+fi
+
+STACK_PROFILE="$TARGET/$STACK_PROFILE_REL"
+E2E_CASES_DIR="$TARGET/$E2E_CASES_REL"
+say "  资产根   : $ASSETS_ROOT"
+say "  ADR 根   : $ADR_DIR_REL"
+say ""
+
 # ---------------------------------------------------------------- 1. 整包 → .atlas/
 
 say "[1/6] 装配 atlas 包到 .atlas/"
@@ -279,17 +407,27 @@ say "[4/6] 建立骨架"
 for d in \
   ".trellis/spec/structure/domains" \
   ".trellis/spec/structure/global" \
-  "product/e2e/cases"
+  "$E2E_CASES_REL"
 do
   run mkdir -p "$TARGET/$d"
   [ -f "$TARGET/$d/.gitkeep" ] || run touch "$TARGET/$d/.gitkeep"
 done
 
-if [ -f "$TARGET/product/stack-profile.yaml" ]; then
-  say "      = product/stack-profile.yaml 已存在，保留"
+if [ -f "$STACK_PROFILE" ]; then
+  say "      = $STACK_PROFILE_REL 已存在，保留"
 else
-  run cp "$SCRIPT_DIR/templates/stack-profile.yaml" "$TARGET/product/stack-profile.yaml"
-  say "      + product/stack-profile.yaml（草稿，需人工确认）"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    say "      [dry-run] + ${STACK_PROFILE_REL}（由模板按资产根渲染）"
+  else
+    mkdir -p "$(dirname "$STACK_PROFILE")"
+    python3 - "$SCRIPT_DIR/templates/stack-profile.yaml" "$STACK_PROFILE" "$ASSETS_ROOT" <<'PY'
+import sys
+src, dst, assets_root = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(src, encoding="utf-8").read().replace("{{ASSETS_ROOT}}", assets_root)
+open(dst, "w", encoding="utf-8").write(text)
+PY
+    say "      + ${STACK_PROFILE_REL}（草稿，需人工确认）"
+  fi
 fi
 
 # ---------------------------------------------------------------- 5. Trellis workflow 补丁（遍历 patches/*/）
@@ -367,8 +505,8 @@ fi
 
 # profile 声明了 graph.backend ⇒ 探测 cgc（缺 = 显式 WARN，不阻断——可选能力，
 # 图谱消费者运行时按「not_ready / 响亮降级」三态处理；契约见 shared/stack-profile.md §2）。
-if [ -f "$TARGET/product/stack-profile.yaml" ] && [ "$DRY_RUN" -eq 0 ]; then
-  GRAPH_BACKEND="$(python3 - "$TARGET/product/stack-profile.yaml" <<'PY'
+if [ -f "$STACK_PROFILE" ] && [ "$DRY_RUN" -eq 0 ]; then
+  GRAPH_BACKEND="$(python3 - "$STACK_PROFILE" <<'PY'
 import re, sys
 sec = None
 for raw in open(sys.argv[1], encoding="utf-8"):
@@ -454,15 +592,16 @@ check "共享内核（用例 ID 文法）" "$ATLAS_DEST/_support/case_id.py"
 check "共享内核（node 运行器判据）" "$ATLAS_DEST/_support/pw_runner.py"
 check "共享内核（base query 转发）" "$ATLAS_DEST/_support/url_merge.py"
 check "共享内核（审查策略单源）" "$ATLAS_DEST/_support/review_policy.py"
+check "共享内核（布局解析）" "$ATLAS_DEST/_support/layout.py"
 check "pi 宿主扩展" "$ATLAS_DEST/extensions/pi.ts"
 check "结构模板" "$ATLAS_DEST/templates/structure/_meta.json"
 check "PRD 模板" "$ATLAS_DEST/templates/prd/domain.md"
 check "E2E 模板" "$ATLAS_DEST/templates/e2e/e2e-index.md"
 check "ADR 模板" "$ATLAS_DEST/templates/adr/template.md"
 check "审查指引模板" "$ATLAS_DEST/templates/reviews/README.md"
-check "product/stack-profile" "$TARGET/product/stack-profile.yaml"
+check "stack-profile（资产根）" "$STACK_PROFILE"
 check "structure spec 根" "$TARGET/.trellis/spec/structure"
-check "e2e 用例分片目录" "$TARGET/product/e2e/cases"
+check "e2e 用例分片目录" "$E2E_CASES_DIR"
 
 if [ "$INSTALL_PATCH" -eq 1 ] && [ "$DRY_RUN" -ne 1 ] && [ -f "$TARGET/.trellis/workflow.md" ]; then
   if grep -q "atlas:apply:plan-step-1-6" "$TARGET/.trellis/workflow.md"; then
@@ -575,6 +714,6 @@ else
   else
     say "（未检测到既有源码：看起来是后者；也可以只说「跑一下三环全量构建，建立应然基线」）"
   fi
-  say "Agent 会先带你核对 product/stack-profile.yaml（origin / apps / role / adapters）"
+  say "Agent 会先带你核对 ${STACK_PROFILE_REL}（origin / apps / role / adapters）"
   say "再落盘；占位符替换前 atlas check 判 FAIL 属预期，不是装坏了。"
 fi

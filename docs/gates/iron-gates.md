@@ -83,7 +83,7 @@
 * 源包升级或本地改动脱节时，自动亮出 `WARN`，防止跨项目版本漂移。
 
 ### 7. 架构决策记录对账门 (`validate_adr.py`)
-* 项目级长效架构决策唯一落 `product/adr/NNNN-<slug>.md`；校验编号唯一、状态枚举合法、演进链闭环（`superseded` 必指有效后继）、核心章节（Context / Decision / Consequences）完整，杜绝决策散落多处或私自改写。
+* 项目级长效架构决策唯一落 `<资产根>/adr/NNNN-<slug>.md`（默认 `product/adr/NNNN-<slug>.md`，ADR 根可由 `atlas.config.yaml` 的 `layout.adr` 覆盖）；校验编号唯一、状态枚举合法、演进链闭环（`superseded` 必指有效后继）、核心章节（Context / Decision / Consequences）完整，杜绝决策散落多处或私自改写。
 
 ### 8. 独立审查报告形态与处置门 (`validate_review_report.py` + `_support/review_policy.py`)
 * **形态对账**：`review.json` 与 `README.md` 双份留痕、必备键类型、分级闭集、每条 finding 带非空回退环、应审 N / 实审 M 对账；

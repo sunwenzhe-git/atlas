@@ -39,6 +39,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE.parent) not in sys.path:
     sys.path.insert(0, str(HERE.parent))
 from _support.siblings import load_module  # noqa: E402
+from _support.layout import LayoutError, load_layout  # noqa: E402
 
 
 class Result:
@@ -152,15 +153,21 @@ def mock_after_step_violations(text: str, case_block_re, list_keys: set[str]) ->
 
 def validate(root: Path) -> Result:
     res = Result()
-    e2e_dir = root / "product" / "e2e"
+    try:
+        lay = load_layout(root)
+    except LayoutError as exc:
+        res.add("项目布局配置", "FAIL", str(exc))
+        return res
+    e2e_dir = lay.e2e_dir
     cases_dir = e2e_dir / "cases"
     index = e2e_dir / "e2e-index.md"
     if not index.is_file() or not cases_dir.is_dir():
-        res.add("mock 门前置", "N/A", "E2E 用例资产未建（缺 product/e2e/e2e-index.md 或 cases/）")
+        res.add("mock 门前置", "N/A",
+                f"E2E 用例资产未建（缺 {lay.print_value('e2e')}/e2e-index.md 或 cases/）")
         return res
 
     gen = load_generator()
-    prof_path = root / "product" / "stack-profile.yaml"
+    prof_path = lay.stack_profile
     e2e_cfg: dict = {}
     if prof_path.is_file():
         e2e_cfg = gen.parse_profile(prof_path.read_text(encoding="utf-8")).get("e2e") or {}
@@ -175,7 +182,7 @@ def validate(root: Path) -> Result:
     raw_prefix = mock_cfg.get("api_prefix")
     prefix = raw_prefix if raw_prefix is not None else ("/" if mode in ("on", "auto") else None)
 
-    shards = gen.gather_cases(cases_dir)
+    shards = gen.gather_cases(cases_dir, lay.print_value("e2e_cases"))
     mock_pages = sorted(p for p, items in shards.items() if any(c.get("mock") for c in items))
     mock_case_ids = [c["id"] for items in shards.values() for c in items if c.get("mock")]
 
@@ -237,7 +244,7 @@ def validate(root: Path) -> Result:
 
     missing = sorted({r for r in refs if not _resolve_fixture(r).is_file()})
     res.add("fixture 引用存在", "PASS" if not missing else "FAIL",
-            f"缺={missing[:8]}（引用相对 product/e2e/，须以 fixtures/ 开头）")
+            f"缺={missing[:8]}（引用相对 {lay.print_value('e2e')}/，须以 fixtures/ 开头）")
     if fixtures_root.is_dir():
         on_disk = sorted("fixtures/" + p.relative_to(fixtures_root).as_posix()
                          for p in fixtures_root.glob("**/*.json"))

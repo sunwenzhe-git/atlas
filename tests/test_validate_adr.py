@@ -153,3 +153,27 @@ def test_validate_adr_warn_cycle_detected(tmp_path: Path):
     assert "演进链存在循环引用环路: 0001->0002->0003->0001" in cycle_checks[0]["detail"], cycle_checks
     # F36（R8 收束）：WARN 必须随身携带**机器可读修复指令**（superseded_by 移出环外）。
     assert "superseded_by" in cycle_checks[0]["detail"] and "移出环外" in cycle_checks[0]["detail"], cycle_checks
+
+
+def test_validate_adr_override_docs_root(tmp_path: Path):
+    """RFC-20261026-01：`layout.assets_root=docs` + `layout.adr=docs/decisions` 生效。"""
+    (tmp_path / "atlas.config.yaml").write_text(
+        "version: 1\nlayout:\n  assets_root: docs\n  adr: docs/decisions\n",
+        encoding="utf-8",
+    )
+    d = tmp_path / "docs" / "decisions"
+    d.mkdir(parents=True)
+    (d / "0001-ffmpeg-audio.md").write_text(VALID_ADR_SAMPLE, encoding="utf-8")
+
+    res = MOD.validate_adr(tmp_path)
+    assert res.status == "PASS", res.checks
+    assert not (tmp_path / "product").exists()
+
+
+def test_validate_adr_invalid_layout_fails_loud(tmp_path: Path):
+    """RFC-20261026-01：非法布局配置 ⇒ 单行 FAIL，不回落到 product/adr。"""
+    (tmp_path / "atlas.config.yaml").write_text(
+        "version: 1\nlayout:\n  assets_root: ../escape\n", encoding="utf-8")
+    res = MOD.validate_adr(tmp_path)
+    assert res.status == "FAIL"
+    assert res.checks[0]["check"] == "项目布局配置"

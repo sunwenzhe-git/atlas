@@ -39,6 +39,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.layout import LayoutError, load_layout  # noqa: E402
+
 CONTRACT_CANDIDATES = (
     Path(".atlas") / "shared" / "closeout.md",
     Path("shared") / "closeout.md",
@@ -58,22 +62,26 @@ AUTOMATED_STEPS = frozenset({1, 2})
 # `任一工作单元` 是**无条件触发行**：它恒贡献步骤，但不算「某个文件命中了触发行」
 # （否则每个文件都会被它「救下」，未命中告警永远不响）。
 UNCONDITIONAL_TOKEN = "任一工作单元"
-EVENT_PATH_TOKENS = (
-    ("DESIGN.md", ("DESIGN.md",)),
-    ("模板", ("templates/",)),
-    ("校验器", ("validators/",)),
-    # `tests/` 归「脚本」族：回归钉随包走，改测试与改脚本属同一条触发行。
-    # 若不并进来，`tests/` 在告警宇宙里却永无触发行 ⇒ 每次改测试都 WARN（假信号）。
-    ("脚本", ("scripts/", "tests/")),
-    ("skill", ("skills/",)),
-    ("独立审查报告", ("product/reviews/", "product/e2e/reviews/")),
-    ("影响面报告", ("impact.json",)),
-    ("ADR", ("product/adr/",)),
-    ("结构环", (".trellis/spec/structure/",)),
-    ("CI", (".github/",)),
-    ("依赖", ("package.json", "bun.lock", "pnpm-lock.yaml", "package-lock.json", "go.mod")),
-    ("契约", ("shared/", "rings/", "apply/")),
-)
+def event_path_tokens(root: Path) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """事件关键词 ⇒ 路径前缀；资产前缀随项目布局配置解析。"""
+    lay = load_layout(root)
+    return (
+        ("DESIGN.md", ("DESIGN.md",)),
+        ("模板", ("templates/",)),
+        ("校验器", ("validators/",)),
+        # `tests/` 归「脚本」族：回归钉随包走，改测试与改脚本属同一条触发行。
+        # 若不并进来，`tests/` 在告警宇宙里却永无触发行 ⇒ 每次改测试都 WARN（假信号）。
+        ("脚本", ("scripts/", "tests/")),
+        ("skill", ("skills/",)),
+        ("独立审查报告", (f"{lay.print_value('reviews')}/",
+                          f"{lay.print_value('e2e_reviews')}/")),
+        ("影响面报告", ("impact.json",)),
+        ("ADR", (f"{lay.print_value('adr')}/",)),
+        ("结构环", (".trellis/spec/structure/",)),
+        ("CI", (".github/",)),
+        ("依赖", ("package.json", "bun.lock", "pnpm-lock.yaml", "package-lock.json", "go.mod")),
+        ("契约", ("shared/", "rings/", "apply/", "atlas.config.yaml")),
+    )
 
 TABLE_HEADER_CELLS = {"事件", "必跑步骤"}
 STEP_HEADING_RE = re.compile(r"^###\s*步骤\s*(\d+)\s*[—\-–]", re.M)
@@ -181,8 +189,8 @@ def git_changed_files(root: Path, diff_base: str) -> list[str]:
     return list(dict.fromkeys(changed))
 
 
-def _event_matches_path(event: str, path: str) -> bool:
-    for token, prefixes in EVENT_PATH_TOKENS:
+def _event_matches_path(event: str, path: str, tokens) -> bool:
+    for token, prefixes in tokens:
         if token not in event:
             continue
         for pref in prefixes:
@@ -194,7 +202,7 @@ def _event_matches_path(event: str, path: str) -> bool:
     return False
 
 
-def derive(rows: list[dict], changed: list[str]) -> tuple[dict[int, list[str]], list[str], int]:
+def derive(rows: list[dict], changed: list[str], tokens) -> tuple[dict[int, list[str]], list[str], int]:
     """→ (步骤号 → 触发行列表, 未命中的 atlas 自有面文件, 业务面文件数)。"""
     trigger_map: dict[int, list[str]] = {}
     owned_unmatched: list[str] = []
@@ -211,7 +219,7 @@ def derive(rows: list[dict], changed: list[str]) -> tuple[dict[int, list[str]], 
     for row in unconditional:
         _add(row)
     for path in changed:
-        hits = [row for row in conditional if _event_matches_path(row["event"], path)]
+        hits = [row for row in conditional if _event_matches_path(row["event"], path, tokens)]
         owned = path.startswith(ATLAS_OWNED_PREFIXES) or path in ATLAS_OWNED_FILES
         if hits:
             for row in hits:
@@ -248,7 +256,11 @@ def run(root: Path, diff_base: str) -> dict:
     existing = parse_existing_steps(text)
     validate_step_references(rows, existing)
     changed = git_changed_files(root, diff_base)
-    trigger_map, owned_unmatched, business = derive(rows, changed)
+    try:
+        tokens = event_path_tokens(root)
+    except LayoutError as exc:
+        raise DeriveError(str(exc)) from exc
+    trigger_map, owned_unmatched, business = derive(rows, changed, tokens)
     return {
         "ok": True,
         "contract": str(contract),

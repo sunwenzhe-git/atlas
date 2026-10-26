@@ -38,6 +38,7 @@ from pathlib import Path
 if str(Path(__file__).resolve().parent.parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from _support.siblings import load_module  # noqa: E402
+from _support.layout import LayoutError, load_layout  # noqa: E402
 
 # node 运行器单源内核（二进制解析 / **可解析性判据** / 全局兜底修复；issue #24，`DESIGN.md` D101）。
 # 本文件此前与 `scripts/e2e_console.py` 各存一份解析实现（含 `_is_node_playwright` 两份拷贝）。
@@ -63,32 +64,35 @@ VALIDATORS = (
 )  # E1：validate_prototype 随原型环退役；§B120：stack_profile / structure 纳入；#182：design_exemptions 纳入；§5.8：e2e_mocks 纳入；B209-1（3507 BT）：validate_ac_alignment 纳入；2026-10-13：validate_adr 纳入（架构决策资产门）；2026-10-14：validate_ledger 随知识库/台账子系统退役（AC 号唯一判据归位 validate_prd）；2026-10-23：validate_walkthrough 纳入（M1 走查锁，RFC-20261022-01）
 
 # §B120：三态前置 —— 前置未声明 ⇒ SKIP（不是通过，且必须带原因）；标记存在才真正跑。
-_GATE_PRECONDITIONS = {
-    # 项目未接 atlas（无 stack-profile）/ atlas 自身设计场景（工作区无 product/）⇒ 未走到这一步
-    "validate_stack_profile": (
-        "product/stack-profile.yaml",
-        "前置未声明（未就绪，非失败）：无 product/stack-profile.yaml（项目未接 atlas）"),
-    # 结构环未跑 ⇒ 结构事实区未生成
-    "validate_structure": (
-        ".trellis/spec/structure/_meta.json",
-        "前置未声明（未就绪，非失败）：结构环未跑（无 .trellis/spec/structure/_meta.json）"),
-    # 设计档案未建（frontend-design skill 首次判读时才落盘）⇒ 未走到这一步（#182）
-    "validate_design_exemptions": (
-        "product/design.md",
-        "前置未声明（未就绪，非失败）：无 product/design.md（设计档案未建）"),
-    # E2E 用例资产未建 ⇒ 打桩门无输入面（§5.8，2026-10-12）
-    "validate_e2e_mocks": (
-        "product/e2e/e2e-index.md",
-        "前置未声明（未就绪，非失败）：E2E 用例资产未建（无 product/e2e/e2e-index.md）"),
-    # PRD 资产未建 ⇒ AC 对账门无输入面（B209-1，2026-10-12）
-    "validate_ac_alignment": (
-        "product/prd/prd.md",
-        "前置未声明（未就绪，非失败）：PRD 资产未建（无 product/prd/prd.md）"),
-    # 架构决策资产未建 ⇒ 未走到这一步（2026-10-13）
-    "validate_adr": (
-        "product/adr",
-        "前置未声明（未就绪，非失败）：无 product/adr/（尚未创建任何 ADR）"),
-}
+# 路径随 `atlas.config.yaml` 的资产根解析；配置缺失 ⇒ 默认 product/。
+def _gate_preconditions(root: Path) -> dict[str, tuple[str, str]]:
+    lay = load_layout(root)
+    return {
+        # 项目未接 atlas（无 stack-profile）/ atlas 自身设计场景（工作区无资产根）⇒ 未走到这一步
+        "validate_stack_profile": (
+            lay.print_value("stack_profile"),
+            f"前置未声明（未就绪，非失败）：无 {lay.print_value('stack_profile')}（项目未接 atlas）"),
+        # 结构环未跑 ⇒ 结构事实区未生成
+        "validate_structure": (
+            ".trellis/spec/structure/_meta.json",
+            "前置未声明（未就绪，非失败）：结构环未跑（无 .trellis/spec/structure/_meta.json）"),
+        # 设计档案未建（frontend-design skill 首次判读时才落盘）⇒ 未走到这一步（#182）
+        "validate_design_exemptions": (
+            lay.print_value("design"),
+            f"前置未声明（未就绪，非失败）：无 {lay.print_value('design')}（设计档案未建）"),
+        # E2E 用例资产未建 ⇒ 打桩门无输入面（§5.8，2026-10-12）
+        "validate_e2e_mocks": (
+            lay.print_value("e2e_index"),
+            f"前置未声明（未就绪，非失败）：E2E 用例资产未建（无 {lay.print_value('e2e_index')}）"),
+        # PRD 资产未建 ⇒ AC 对账门无输入面（B209-1，2026-10-12）
+        "validate_ac_alignment": (
+            f"{lay.print_value('prd')}/prd.md",
+            f"前置未声明（未就绪，非失败）：PRD 资产未建（无 {lay.print_value('prd')}/prd.md）"),
+        # 架构决策资产未建 ⇒ 未走到这一步（2026-10-13）
+        "validate_adr": (
+            lay.print_value("adr"),
+            f"前置未声明（未就绪，非失败）：无 {lay.print_value('adr')}/（尚未创建任何 ADR）"),
+    }
 
 GEN_NOT_READY = 3
 
@@ -184,13 +188,25 @@ def _elapsed_ms(start: float) -> int:
     return int((time.perf_counter() - start) * 1000)
 
 
+def check_layout(root: Path, rows: Row) -> bool:
+    """布局配置是全部资产门的共同前置；非法 ⇒ 单行 FAIL，依赖门不重复报红。"""
+    try:
+        lay = load_layout(root)
+    except LayoutError as exc:
+        rows.add("项目布局配置", "FAIL", str(exc))
+        return False
+    for warning in lay.warnings():
+        rows.add(f"布局提示（{warning['code']}）", "WARN", warning["detail"])
+    return True
+
+
 def check_validators(root: Path, rows: Row, py: str) -> None:
     for v in VALIDATORS:
         script = root / ".atlas" / "validators" / f"{v}.py"
         if not script.is_file():
             rows.add(v, "SKIP", "校验器不存在")
             continue
-        pre = _GATE_PRECONDITIONS.get(v)
+        pre = _gate_preconditions(root).get(v)
         if pre is not None and not (root / pre[0]).exists():
             rows.add(v, "SKIP", pre[1])
             continue
@@ -250,9 +266,10 @@ def check_serial_execution(root: Path, rows: Row) -> None:
     同域用例必须按序串行（零步基线先于改态用例）；并行调度会打乱定义序 ⇒ 恒真误报 / 前提被前序污染。
     手改配置或封装运行方式注入并行 ⇒ **FAIL**（正确性纪律，不是「过期」的新鲜度问题 ⇒ 不降 WARN）。
     """
-    cfg = root / "product" / "e2e" / "scripts" / "playwright.config.ts"
+    cfg = load_layout(root).e2e_scripts_dir / "playwright.config.ts"
     if not cfg.is_file():
-        rows.add("执行串行", "SKIP", "无 product/e2e/scripts/playwright.config.ts（E2E 资产未建）")
+        rows.add("执行串行", "SKIP",
+                 f"无 {load_layout(root).print_value('e2e_scripts')}/playwright.config.ts（E2E 资产未建）")
         return
     started = time.perf_counter()
     text = cfg.read_text(encoding="utf-8", errors="ignore")
@@ -336,9 +353,10 @@ def check_review_report(root: Path, rows: Row) -> None:
     - 形态门通过：ok
     - 形态门失败（如手写假桩缺字段、映射自相矛盾）：FAIL 揭发伪造证据
     """
-    reviews_dir = root / "product" / "e2e" / "reviews"
+    lay = load_layout(root)
+    reviews_dir = lay.e2e_reviews_dir
     if not reviews_dir.is_dir():
-        rows.add("审查报告形态", "SKIP", "无 product/e2e/reviews 目录")
+        rows.add("审查报告形态", "SKIP", f"无 {lay.print_value('e2e_reviews')} 目录")
         return
     review_re = re.compile(r"^(\d{4}-\d{2}-\d{2})-(.+)$")
     candidates = [p for p in reviews_dir.iterdir() if p.is_dir() and review_re.match(p.name)]
@@ -590,12 +608,13 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     # 整门 wall time：含 reset / TCP 探测 / runner / browser probe / 真跑；
     # 早退 SKIP 行没有执行段，duration_ms 保持 None。
     started_gate = time.perf_counter()
-    prof = root / "product" / "stack-profile.yaml"
+    lay = load_layout(root)
+    prof = lay.stack_profile
     text = prof.read_text(encoding="utf-8") if prof.is_file() else ""
     # 值抽取正则只用 `[^\S\n]`（同行空白），不得用 `\s`——`\s` 会跨行匹配，把下一行的
     # 键名当成值（2026-10-04 门禁负向用例 #2：`app_base_url:` 空值后跟 `reset:` ⇒ 被误读成已声明）。
     m = re.search(r"^[^\S\n]*cases_dir:[^\S\n]*(\S+)", text, re.M)
-    scripts = root / "product" / "e2e" / "scripts"
+    scripts = lay.e2e_scripts_dir
     if not scripts.is_dir():
         rows.add("E2E 真跑", "SKIP", "无脚本目录（门控态）")
         return
@@ -634,7 +653,7 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
                      duration_ms=_elapsed_ms(started_gate))
             return
     # node 单轨（3507 BO）：运行器解析 + **可解析性判据**（issue #24，`DESIGN.md` D101）。
-    # 判据本体 = 「从 `product/e2e/scripts/` 出发 `@playwright/test` 可解析」——
+    # 判据本体 = 「从 `资产根/e2e/scripts/` 出发 `@playwright/test` 可解析」——
     # 即 `gates.md` 2.2 本行早写明的「按**依赖可导入性**，不按路径存在」；
     # 二进制存在只是必要条件（此前把它当充要条件 ⇒ ESM 项目上「找得到 bin、解析不到模块」半生效，
     # 错误落到运行期并被计成「跑失败 / 无结果」）。解析/探针/修复全走单源内核 `_support/pw_runner.py`。
@@ -822,17 +841,19 @@ def main() -> int:
     args = ap.parse_args()
     root = Path(args.root).resolve()
     rows = Row()
-    check_validators(root, rows, sys.executable)
-    if not args.fast:
-        check_factory(root, rows, sys.executable)
-    check_generated(root, rows, sys.executable)
-    check_review_report(root, rows)
-    check_serial_execution(root, rows)
-    check_drift(root, rows)
-    check_version(root, rows)
-    check_write_claims(root, rows)
-    if not args.fast:
-        check_e2e(root, rows, args.page)
+    layout_ok = check_layout(root, rows)
+    if layout_ok:
+        check_validators(root, rows, sys.executable)
+        if not args.fast:
+            check_factory(root, rows, sys.executable)
+        check_generated(root, rows, sys.executable)
+        check_review_report(root, rows)
+        check_serial_execution(root, rows)
+        check_drift(root, rows)
+        check_version(root, rows)
+        check_write_claims(root, rows)
+        if not args.fast:
+            check_e2e(root, rows, args.page)
 
     _write_check_event(root, rows, fast=args.fast, page=args.page)
 

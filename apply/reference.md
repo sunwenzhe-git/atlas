@@ -2,6 +2,7 @@
 
 > 本环为 atlas 独立 skill `atlas-apply` 的执行契约，位于 `.atlas/apply/reference.md`。
 > 执行前先读共享契约：`.atlas/shared/global-rules.md`、`stack-profile.md`、`single-source.md`、`layout.md`。
+> 路径约定：本文 `product/` 均为**默认资产根**示例；实际按项目根 `atlas.config.yaml` 的 `layout.assets_root` 解析（见 `shared/layout.md` §1.1）。
 > 本环**跨四环**，是 atlas 里唯一的编排件：它只做「按需求跨环增量」与「按序全量」两件事，环内逻辑一律引用各环自己的契约，不在此复制正文。
 
 ## 0. 一句话
