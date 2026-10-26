@@ -4,6 +4,14 @@
 
 ---
 
+## [v0.2.0-beta.12] - 2026-10-26
+
+### 项目级资产根可配置（D152 / issue #42）
+
+- **能力**：项目根 `atlas.config.yaml` 声明 `layout.assets_root`（默认 `product`）与可选 `layout.adr`（默认 `<assets_root>/adr`）；机器门 / 脚本 / 适配器 / 模板 / pi 扩展经 `_support/layout.py` 单源解析，存量项目无配置零变化。
+- **装配**：`atlas init` 首次 TTY 询问或 `--assets-root` / `--adr-dir`；首装渲染 `stack-profile.yaml` 的 e2e 三路径；`atlas update` 只读不换根；非法配置 FAIL / 零写；双根与路径漂移首版 WARN。
+- **契约与钉**：`shared/layout.md` §1.1；`tests/test_layout.py` 33 条 + 消费者 override；全量 704 passed / 4 skipped；变异 M-layout-1..5。
+
 ## [v0.2.0-beta.7] - 2026-10-25
 
 ### 🏃 真跑日批：D80② 升档兑现（D149）+ 真跑日协议（D148）+ D108 落点勘误
