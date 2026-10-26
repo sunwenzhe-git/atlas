@@ -120,7 +120,7 @@ function visible(c) {
   if (f.page !== 'all' && c.page !== f.page) return false;
   if (f.unreviewed && isReviewed(c.id)) return false;   // 按**人工 review** 状态筛（与顶栏「待评审」同口径）
   if (f.q) {
-    const hay = `${c.id} ${c.title} ${c.intent} ${c.page} ${c.testid.join(' ')}`.toLowerCase();
+    const hay = `${c.id} ${c.title} ${c.intent} ${c.page} ${(c.testid || []).join(' ')}`.toLowerCase();
     if (!hay.includes(f.q.toLowerCase())) return false;
   }
   return true;
