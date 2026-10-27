@@ -4,6 +4,41 @@
 
 ---
 
+## [v0.2.0-beta.15] - 2026-10-27
+
+### 🩹 发版口径修复：补齐 beta.13/14 条目与镜像
+
+- **背景**：beta.13/14 两次 chore(release) 只动版本戳、未写 CHANGELOG 条目（2026-10-27 巡检发现）；本版补录两节并同步本文档镜像。同批入库当轮巡检台账。
+
+## [v0.2.0-beta.13] - 2026-10-27
+
+### 🧾 后端通道 AC × 覆盖维度对账（D153，RFC-20261026-02 Batch A）
+
+- **能力**：PRD 表新增第 5 列 `后端适用覆盖维度` + 测试侧 `@pytest.mark.ac(..., dims=[...])`；`validate_ac_alignment.py` AST 提取；后端门**只 WARN 不 FAIL**（`mode: enforce` 不升级）；E2E 第 4 列原样不动，两个门各查各的。
+- **单源解析**：`_support/ac_coverage.py`（区间展开 / CJK 邻接 / 与 `validate_e2e_index.tables()` 逐 parity），E2E 校验器改纯提取复用；`Result.status` 闭集扩 `N/A`。
+- **钉**：假绿测试 +55；全量 743 passed / 4 skipped；变异 **M156a–f**。附带 `proposals/BACKLOG-execution-layer.md`（EL-01..EL-16）。
+
+### 📒 bug 台账条目级机器字段（D154，RFC-20261026-04）
+
+- **能力**：`duty-review/families.py` 分层日期来源 + 运行面坏形状 WARN + 「精确病案数」显示列；判据三项与案数上界计量不动（评审必修 1 采 (i)）；新条目必带〔日期｜状态｜族｜证〕尾缀；claude-code 钩子条撤案；console 搜索面空值兜底。
+- **钉**：test_duty_bug_families 4→11（含现行库冻结对照）；变异 **M157a/M157b**；合流全量 750 passed / 4 skipped。
+
+### 🗺 map doclink + 连线拆道解耦
+
+- 「完整 L1 文档」走 `vscode://file` 通道；五张子图连线共源拆锚（gates/graph/adapt/e2egen/cli），灭 v 路由反向穿卡线；`atlas-map.check.js` 新增第七项「连线共道」断言，首跑咬出存量 21 处修完归零。
+
+### 🧪 台账日期越界校验 + 留出验证制度化（D155 / D156，RFC-20261026-03）
+
+- **D155**：台账字段日期补日历关 + 未来关，走坏形状出口（WARN + 回退）；留出验证归零路径钉分列。
+- **D156**：gates §2.5 流程门（146→147）、proposals §4.5、duty-review 闭族三态、触发 (b) 检查项；指针钉 18→19；收尾登记秒表实测（19 钉 0.41s / pre 0.73s / fast 0.10s / 全量 200.6s）。
+
+## [v0.2.0-beta.14] - 2026-10-27
+
+### 🚀 GitHub Release 跟随 tag 自动补建 + 状态落差可见
+
+- **能力**：推 tag 后按 prerelease 语义自动补建 Release（正文取 CHANGELOG 段，缺失退化相邻基线 notes；幂等，失败只告警不阻断 npm）；token 三级回退；`--status` 新增落差行；显式版本号补 semver 校验。
+- **钉**：test_tools +8；SKILL 增第 7 条纪律。
+
 ## [v0.2.0-beta.12] - 2026-10-26
 
 ### 项目级资产根可配置（D152 / issue #42）

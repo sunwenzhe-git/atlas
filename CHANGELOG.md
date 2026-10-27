@@ -4,6 +4,47 @@
 
 ---
 
+## [v0.2.0-beta.15] - 2026-10-27
+
+### 🩹 发版口径修复：补齐 beta.13/14 条目与镜像
+
+* **背景**：beta.13/14 两次 chore(release) 只动版本戳（README / config.mts / map / package.json），未写 CHANGELOG 条目（2026-10-27 巡检发现，bugs.md「安装与装配」段在案）；本版补录上述两节，并把 `docs/guide/changelog.md` 镜像同步为同源基础。
+* **同批入库**：当轮巡检台账（QUEUE.md 状态行 + bugs.md「发版口径回归」条目）。
+
+## [v0.2.0-beta.13] - 2026-10-27
+
+### 🧾 后端通道 AC × 覆盖维度对账（D153，RFC-20261026-02 Batch A）
+
+* **能力**：PRD 表新增第 5 列 `后端适用覆盖维度` + 测试侧 `@pytest.mark.ac(..., dims=[...])`；`validate_ac_alignment.py` AST 提取（decorator / parametrize / class+module `pytestmark`，docstring AC 兜底记 weak-only）；后端门**只 WARN 不 FAIL**（`mode: enforce` 不升级，不在观测面未收口时钉死用户）；E2E 第 4 列原样不动，两个门各查各的。
+* **单源解析**：`_support/ac_coverage.py`（区间展开 / CJK 邻接 / 精确 token / 表切分与 `validate_e2e_index.tables()` 逐 parity），E2E 校验器改纯提取复用；`Result.status` 闭集扩 `N/A`，atlas_check / detail 面同步。
+* **钉**：出厂假绿测试 +55（ac_alignment / shared kernel / atlas_check 等）；全量 743 passed / 4 skipped；变异 **M156a–f**。附带 `proposals/BACKLOG-execution-layer.md`（EL-01..EL-16 执行层待办）。
+
+### 📒 bug 台账条目级机器字段（D154，RFC-20261026-04）
+
+* **能力**：`duty-review/families.py` 分层日期来源 + 运行面坏形状 WARN + 「精确病案数」显示列；判据三项与「案数上界」计量不动（评审必修 1 采 (i)）；新条目必带〔日期(必填)｜状态｜族(仅记录)｜证(D 行>M 钉>留档)〕尾缀。
+* **同场**：claude-code 钩子条撤案（D110/D124/D150 已 fail-closed 三面，外证互证）；console 搜索面 `c.testid` 空值兜底。
+* **钉**：test_duty_bug_families 4→11（含现行库基线冻结对照）；变异 **M157a/M157b**；与 D153 拆分后合流全量 750 passed / 4 skipped。
+
+### 🗺 map doclink + 连线拆道解耦
+
+* 「完整 L1 文档」链接 file: 环境走 `vscode://file` 通道（与关键文件行同仓根推导），不再跳浏览器裸文本。
+* 连线拆道：apply 四模式→三问门四线并一、绕底回边共锚共道、五张子图同病同修（gates/graph/adapt/e2egen/cli）；灭 v 路由反向穿卡线。
+* **钉**：`atlas-map.check.js` 新增第七项「连线共道」断言（共线段重叠 >6px 红），首跑咬出存量 21 处，修完归零。
+
+### 🧪 台账日期越界校验 + 留出验证制度化（D155 / D156，RFC-20261026-03）
+
+* **D155**：台账字段日期补日历关 + 未来关（形态过正则 ≠ 可用日期），走既有坏形状出口（WARN + 回退）；留出验证 = 归零路径（判别钉 T/T+1 + 送达钉 CLI 分列）。
+* **D156**：试点通过后制度化——gates §2.5 流程门（146→147）、proposals §4.5、duty-review 闭族三态、independent-review 触发 (b) 检查项；指针行形状钉 18→19。
+* **收尾登记**（D156 补，`1f8656c`）：可复算命令秒表入库（19 钉 0.41s / pre 0.73s / fast 0.10s / 全量 200.6s，人时不可回溯如实标注）；「散文日期不校两关」观察行挂 QUEUE 观察室；触发 (b) 维持人侧落点（closeout 步骤 3 + §9 互引）。
+
+## [v0.2.0-beta.14] - 2026-10-27
+
+### 🚀 GitHub Release 跟随 tag 自动补建 + 状态落差可见
+
+* **能力**：tag 推送后按 prerelease 语义自动补建 Release——正文取 CHANGELOG 对应段；缺失时以相邻 tag 为对比基线生成 notes；同 tag 已存在幂等跳过，失败只告警不阻断 npm 发布。
+* **配套**：token 三级回退（GITHUB_TOKEN/GH_TOKEN/GITHUB_PAT → gh auth token → git 凭据）；`--status` 新增 Release 与最新 tag 落差行；显式版本号补 semver 白名单校验（此前未校验即拼进 shell 命令与 URL）。
+* **钉**：test_tools +8（prerelease / 正文回退 / 基线 / 幂等 / 无 token / 失败不抛 / 草稿过滤 / 非法版本）；SKILL 增第 7 条纪律。
+
 ## [v0.2.0-beta.12] - 2026-10-26
 
 ### 项目级资产根可配置（D152 / issue #42）
