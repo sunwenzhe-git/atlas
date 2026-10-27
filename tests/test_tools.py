@@ -26,6 +26,7 @@ def load(name: str, rel: str):
 
 mp = load("mutation_proof", "scripts/mutation_proof.py")
 stub = load("gen_testid_stub", "scripts/gen_testid_stub.py")
+rel = load("release_tool", "scripts/release.py")
 
 
 # ---------------------------------------------------------------- B87 变异证明工具
@@ -560,3 +561,95 @@ def test_f47_npm_files_cover_assembly_list() -> None:
     assert not missing, (
         f"install.sh 会拷 {missing}，但 package.json.files 不发布它们 ⇒ 经 npm 装配的项目副本"
         "缺这些目录（issue #17：`.atlas/tests` 恒缺 ⇒ 包自检门恒红，而源包态跑不出来）")
+
+
+# ---------------------------------------------------------------- release.py：GitHub Release 跟随 tag
+
+def _stub_github(monkeypatch, responses):
+    """按调用顺序返回预设 (status, body)，并记录 (method, path, payload)。"""
+    calls = []
+
+    def fake_api(method, path, token, payload=None, timeout=30):
+        calls.append((method, path, payload))
+        return responses[min(len(calls), len(responses)) - 1]
+
+    monkeypatch.setattr(rel, "get_github_token", lambda: "t")
+    monkeypatch.setattr(rel, "get_repo_slug", lambda: "o/r")
+    monkeypatch.setattr(rel, "github_api", fake_api)
+    return calls
+
+
+def test_release_creates_prerelease_with_changelog_body(monkeypatch) -> None:
+    calls = _stub_github(monkeypatch, [(404, {}), (201, {"html_url": "u"})])
+    monkeypatch.setattr(rel, "changelog_section", lambda v: "- 变更")
+
+    assert rel.create_github_release("v0.2.0-beta.13", "0.2.0-beta.13") is True
+    assert [c[0] for c in calls] == ["GET", "POST"]
+    assert calls[0][1] == "/repos/o/r/releases/tags/v0.2.0-beta.13"
+    assert calls[1][1] == "/repos/o/r/releases"
+    payload = calls[-1][2]
+    assert payload["tag_name"] == "v0.2.0-beta.13"
+    assert payload["prerelease"] is True
+    assert payload["body"] == "- 变更"
+    assert payload["generate_release_notes"] is False
+
+
+def test_release_non_beta_is_not_prerelease(monkeypatch) -> None:
+    calls = _stub_github(monkeypatch, [(404, {}), (201, {})])
+    monkeypatch.setattr(rel, "changelog_section", lambda v: "")
+    monkeypatch.setattr(rel, "get_previous_tag", lambda t: "v0.9.0")
+
+    assert rel.create_github_release("v1.0.0", "1.0.0") is True
+    payload = calls[-1][2]
+    assert payload["prerelease"] is False
+    assert payload["generate_release_notes"] is True
+    assert payload["previous_tag_name"] == "v0.9.0"  # 自动 notes 不得以上一个 Release 为基线
+    assert "body" not in payload
+
+
+def test_release_skips_existing_release(monkeypatch) -> None:
+    calls = _stub_github(monkeypatch, [(200, {"tag_name": "v0.2.0-beta.13"})])
+    assert rel.create_github_release("v0.2.0-beta.13", "0.2.0-beta.13") is True
+    assert [c[0] for c in calls] == ["GET"]  # 已存在 ⇒ 不重复创建
+    assert calls[0][1] == "/repos/o/r/releases/tags/v0.2.0-beta.13"
+
+
+def test_release_without_token_skips_without_api_call(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(rel, "get_github_token", lambda: "")
+    monkeypatch.setattr(rel, "github_api", lambda *a, **k: calls.append(1) or (0, {}))
+    assert rel.create_github_release("v1.0.0", "1.0.0") is False
+    assert calls == []
+
+
+def test_release_api_error_returns_false(monkeypatch) -> None:
+    calls = _stub_github(monkeypatch, [(500, {"message": "boom"})])
+    assert rel.create_github_release("v1.0.0", "1.0.0") is False
+    assert [c[0] for c in calls] == ["GET"]
+
+
+def test_extract_changelog_section_stops_at_next_heading() -> None:
+    text = (
+        "# 更新日志\n\n"
+        "## [v0.2.0-beta.12] - 2026-10-26\n\n- A\n\n"
+        "## [v0.2.0-beta.7] - 2026-10-25\n\n- B\n"
+    )
+    assert rel.extract_changelog_section(text, "0.2.0-beta.12") == "- A"
+    assert rel.extract_changelog_section(text, "9.9.9") == ""
+
+
+def test_github_latest_release_skips_drafts(monkeypatch) -> None:
+    monkeypatch.setattr(rel, "get_github_token", lambda: "t")
+    monkeypatch.setattr(rel, "get_repo_slug", lambda: "o/r")
+    monkeypatch.setattr(rel, "github_api", lambda *a, **k: (
+        200,
+        [{"draft": True, "tag_name": "v0.3.0-beta.1"}, {"draft": False, "tag_name": "v0.2.0-beta.13"}],
+    ))
+    assert rel.get_github_latest_release() == (True, "v0.2.0-beta.13")
+
+
+def test_release_rejects_invalid_explicit_version() -> None:
+    import pytest
+
+    with pytest.raises(SystemExit):
+        rel.compute_next_beta_version("0.2.0-beta.14; touch /tmp/pwned")

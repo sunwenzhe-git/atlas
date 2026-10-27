@@ -539,11 +539,11 @@ cli: {sum:'命令面(atlas init/update/upgrade/check/console/report)+ 装配器:
          ['patches/project-wiring/','项目接线补丁:五触点幂等写入用户仓库']],
   blind:'npm 升级链显式不支持(B-1 否决);wiring 五触点单向无退役对称;存量副本不自动升级(咬合点 = install.sh --update)',doc:'cli.md',sub:'cli'},
 ops: {sum:'每日巡检(五信号源)+ §15 自感知上报 + 发版流程。',
-  points:['duty-review:README 协议 + QUEUE 三区队列 + bugs.md 按环分类存量库;duty_signals.sh 只读收集','巡检对象 = 「决定/悬案」流水(五信号源),非代码审查;报告只报拍板事,无事「今日无事」','atlas report 四段式零业务上下文;--trigger user 不冒充自动感知','发版:版本串四处落点 + npm prerelease --tag beta;CHANGELOG 判号以 npm dist-tags + git tag 为准'],
+  points:['duty-review:README 协议 + QUEUE 三区队列 + bugs.md 按环分类存量库;duty_signals.sh 只读收集','巡检对象 = 「决定/悬案」流水(五信号源),非代码审查;报告只报拍板事,无事「今日无事」','atlas report 四段式零业务上下文;--trigger user 不冒充自动感知','发版:版本串多处落点 + npm prerelease --tag beta;CHANGELOG 判号以 npm dist-tags + git tag 为准'],
   files:[['duty-review/','每日巡检件:QUEUE 三区队列 + bugs.md 存量库 + families.py 分型'],
          ['scripts/atlas_report.py','§15 自感知上报 CLI:四段式、零业务上下文、可 GitHub 直推'],
          ['scripts/duty_signals.sh','巡检信号只读收集脚本(五信号源)'],
-         ['scripts/release.py','发版流程脚本:版本串四处落点核验 + npm prerelease tag']],blind:null},
+         ['scripts/release.py','发版流程脚本:版本串多处落点核验 + npm prerelease tag + GitHub Release 跟随']],blind:null},
 };
 
 

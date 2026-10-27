@@ -1,6 +1,6 @@
 ---
 name: atlas-release
-description: "Atlas 仓库专用自动化发布与推送技能。全自动处理网络代理（7897）、全量测试门禁、版本推导防跳号、四处版本落点同步、Git 提交打标推送、NPM prerelease 发布与 registry 轮询验证。"
+description: "Atlas 仓库专用自动化发布与推送技能。全自动处理网络代理（7897）、全量测试门禁、版本推导防跳号、多处版本落点同步、Git 提交打标推送、GitHub Release 补建、NPM prerelease 发布与 registry 轮询验证。"
 ---
 
 # Atlas 自动化发版与推送技能 (Atlas Release Skill)
@@ -34,7 +34,7 @@ python3 scripts/release.py --auto
 
 ## 📋 核心发版纪律与关键落点（严防踩坑）
 
-如果需要人工或逐步介入，必须严格遵循以下 **6 大纪律**：
+如果需要人工或逐步介入，必须严格遵循以下 **7 大纪律**：
 
 ### 1. 网络代理（必须走 7897 端口）
 - **现象**：本机直连 GitHub 443 必超时（`Failed to connect to github.com port 443 after 75s`）。
@@ -97,6 +97,12 @@ pytest tests/ -q
   ```
   确认 `beta` 和 `latest` 双双指向目标版本。
 
+### 7. GitHub Release 跟随 tag（自动补建）
+- **现象**：GitHub Releases 页只读 Release 对象，不跟 tag。只推 tag 不建 Release，页面会停在最后一次手工发布（2026-10 实测：停在 `v0.1.0-beta.19`，其后的 tag 全部缺席）。
+- **规则**：`release.py` 在 tag 推送成功后调 GitHub REST API 补建 Release——`beta` 打 `prerelease`，正文取 `CHANGELOG.md` 对应 `## [vX]` 段（缺失则用 GitHub 自动生成 notes，以相邻 tag 为对比基线）；同 tag 已有 Release 则跳过（幂等）。
+- **token 来源**：`GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_PAT` → `gh auth token` → git 凭据（`git credential fill`，即 HTTPS 推送用的 PAT），无需额外配置。
+- **失败语义**：只告警不阻断——此时 tag 已推送、版本号已占用，继续发 npm 优于留下半态；`--status` 会显示 GitHub Release 与最新 tag 的落差。
+
 ---
 
 ## 🛠️ 标准发版执行流模板
@@ -114,7 +120,7 @@ pytest tests/ -q
    python3 scripts/release.py --auto
    ```
 4. **第四步：报结果**
-   汇报最终 Git 提交 hash、Tag、NPM 生效版本，并提示用户在采纳仓更新：
+   汇报最终 Git 提交 hash、Tag、GitHub Release 链接、NPM 生效版本，并提示用户在采纳仓更新：
    ```bash
    atlas upgrade && atlas update
    ```

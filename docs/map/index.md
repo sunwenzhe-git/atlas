@@ -96,7 +96,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 - `duty-review/`:每日巡检(README 协议 + QUEUE 三区队列 + `bugs.md` 按环分类存量库 + `families.py` 分型);`scripts/duty_signals.sh` 只读收集五信号源。
 - `scripts/atlas_report.py`:§15 自感知上报(四段式零业务上下文,`--trigger user` 不冒充自动感知)。
-- `scripts/release.py` + `skills/atlas-release`:发版流程(版本串四处落点 + npm prerelease tag 纪律)。
+- `scripts/release.py` + `skills/atlas-release`:发版流程(版本串多处落点 + npm prerelease tag 纪律 + GitHub Release 跟随 tag)。
 
 ## 数字快照(v0.2.0-beta.13)
 

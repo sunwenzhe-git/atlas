@@ -5,8 +5,8 @@
 1. 代理检查：默认检测并应用 7897 本地代理，保证 GitHub 联通；
 2. 真实版本推导：以 npm registry dist-tags + git tag 为唯一真相源，杜绝跳号事故；
 3. 测试门禁：发版前严格执行全量 pytest 校验；
-4. 四处版本落点同步：package.json, README.md(双连字符), docs config, CHANGELOG(两份)；
-5. Git 提交、打 Tag、推送与 NPM 发布（--tag beta + latest dist-tag）；
+4. 多处版本落点同步：package.json, README.md(双连字符), docs config, CHANGELOG(两份)；
+5. Git 提交、打 Tag、推送、GitHub Release 补建与 NPM 发布（--tag beta + latest dist-tag）；
 6. 轮询并验证 npm registry 异步生效状态。
 
 用法：
@@ -24,15 +24,19 @@ import datetime
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 PKG_NAME = "atlas-project-harness"
 DEFAULT_PROXY_PORT = 7897
 PROXY_URL = f"http://127.0.0.1:{DEFAULT_PROXY_PORT}"
+DEFAULT_REPO_SLUG = "sunwenzhe-git/atlas"
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -140,6 +144,8 @@ def compute_next_beta_version(explicit_version: str | None = None) -> str:
     """严格以 npm 和 git tag 为基准计算顺延的下一个 beta 版本号。"""
     if explicit_version:
         clean = explicit_version.lstrip("v")
+        if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[a-zA-Z]+\.\d+)?", clean):
+            raise SystemExit(f"非法版本号：{explicit_version}（期望 vX.Y.Z 或 vX.Y.Z-beta.N）")
         return clean
 
     dist_tags = get_npm_dist_tags()
@@ -202,7 +208,7 @@ def compute_next_beta_version(explicit_version: str | None = None) -> str:
 
 
 def sync_version_files(new_version: str, dry_run: bool = False) -> list[str]:
-    """同步全部四处版本号落点。"""
+    """同步全部多处版本号落点。"""
     modified = []
     today_str = datetime.date.today().isoformat()
 
@@ -338,6 +344,152 @@ def verify_npm_live(version: str, max_wait_sec: int = 180) -> bool:
     return False
 
 
+def get_repo_slug() -> str:
+    """从 origin 远端解析 owner/repo，失败时回落到本仓常量。"""
+    res = run_cmd("git remote get-url origin", check=False)
+    m = re.search(r"github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?$", res.stdout.strip()) if res.returncode == 0 else None
+    return f"{m.group(1)}/{m.group(2)}" if m else DEFAULT_REPO_SLUG
+
+
+def get_github_token() -> str:
+    """三级取 token：环境变量 → gh CLI → git 凭据（HTTPS 推送用的 PAT）。"""
+    for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PAT"):
+        val = os.environ.get(key, "").strip()
+        if val:
+            return val
+    if shutil.which("gh"):
+        res = run_cmd("gh auth token", check=False)
+        if res.returncode == 0 and res.stdout.strip():
+            return res.stdout.strip()
+    try:
+        res = subprocess.run(
+            ["git", "credential", "fill"],
+            input="protocol=https\nhost=github.com\n\n",
+            text=True,
+            capture_output=True,
+            timeout=15,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+        if res.returncode == 0:
+            for line in res.stdout.splitlines():
+                if line.startswith("password="):
+                    return line[len("password="):].strip()
+    except Exception:
+        pass
+    return ""
+
+
+def github_api(
+    method: str,
+    path: str,
+    token: str,
+    payload: dict | None = None,
+    timeout: int = 30,
+) -> tuple[int, dict | list]:
+    """调 GitHub REST API；返回 (HTTP 状态码, 响应体)；网络错误返回 (0, {...})。"""
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(f"https://api.github.com{path}", data=data, method=method)
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Accept", "application/vnd.github+json")
+    req.add_header("X-GitHub-Api-Version", "2022-11-28")
+    req.add_header("User-Agent", "atlas-release")
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    handlers = [urllib.request.ProxyHandler({"http": PROXY_URL, "https": PROXY_URL})] if is_proxy_alive(DEFAULT_PROXY_PORT) else []
+    opener = urllib.request.build_opener(*handlers)
+    try:
+        with opener.open(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            return resp.status, (json.loads(raw) if raw.strip() else {})
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", errors="replace")
+        try:
+            return e.code, json.loads(raw)
+        except Exception:
+            return e.code, {"message": raw[:300]}
+    except Exception as e:
+        return 0, {"message": str(e)}
+
+
+def extract_changelog_section(text: str, version: str) -> str:
+    """取出 CHANGELOG 中 `## [vX]` 段正文（到下一个 `## [` 为止）。"""
+    m = re.search(
+        rf"^## \[v{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|\Z)",
+        text,
+        re.M | re.S,
+    )
+    return m.group(1).strip() if m else ""
+
+
+def changelog_section(version: str) -> str:
+    p = ROOT_DIR / "CHANGELOG.md"
+    if not p.is_file():
+        return ""
+    return extract_changelog_section(p.read_text(encoding="utf-8"), version)
+
+
+def get_previous_tag(tag_name: str) -> str:
+    """沿提交图取目标 tag 之前最近的 tag（自动 notes 的对比基线）。"""
+    res = run_cmd(["git", "describe", "--tags", "--abbrev=0", f"{tag_name}^"], check=False)
+    return res.stdout.strip() if res.returncode == 0 else ""
+
+
+def get_github_latest_release() -> tuple[bool, str]:
+    """返回 (查询是否可用, 最新非草稿 Release 的 tag)。
+
+    不用 `/releases/latest`：它只认最新非 prerelease，存在稳定版时会对后续 beta 误报落后。
+    """
+    token = get_github_token()
+    if not token:
+        return False, ""
+    code, data = github_api("GET", f"/repos/{get_repo_slug()}/releases?per_page=5", token, timeout=10)
+    if code == 200:
+        releases = [r for r in data if isinstance(r, dict) and not r.get("draft")] if isinstance(data, list) else []
+        return True, (releases[0].get("tag_name", "") if releases else "")
+    return False, ""
+
+
+def create_github_release(tag_name: str, version: str) -> bool:
+    """按已推送的 tag 补建 GitHub Release：beta ⇒ prerelease，正文取 CHANGELOG 段。
+
+    幂等：同 tag 的 Release 已存在则跳过。失败只告警不抛错——调用点已推 tag 并即将发 npm，
+    此处阻断只会留下「tag 已占号但未发布」的半态。
+    """
+    token = get_github_token()
+    if not token:
+        print("  ⚠️ 未取得 GitHub token（GITHUB_TOKEN / GH_TOKEN / git 凭据），跳过 Release 创建")
+        return False
+    slug = get_repo_slug()
+    code, data = github_api("GET", f"/repos/{slug}/releases/tags/{tag_name}", token)
+    if code == 200:
+        print(f"  ℹ️ GitHub Release {tag_name} 已存在，跳过创建")
+        return True
+    if code != 404:
+        print(f"  ⚠️ 查询 GitHub Release 失败 (HTTP {code})：{data.get('message', '')}")
+        return False
+    body = changelog_section(version)
+    payload: dict[str, object] = {
+        "tag_name": tag_name,
+        "name": tag_name,
+        "draft": False,
+        "prerelease": bool(parse_semver(version)[3]),
+        "generate_release_notes": not body,
+    }
+    if body:
+        payload["body"] = body
+    else:
+        # 不传则以「上一个 Release」为基线——Release 缺席时基线会跨过多个 tag
+        previous_tag = get_previous_tag(tag_name)
+        if previous_tag:
+            payload["previous_tag_name"] = previous_tag
+    code, data = github_api("POST", f"/repos/{slug}/releases", token, payload)
+    if code == 201:
+        print(f"  ✅ GitHub Release 已创建：{data.get('html_url', tag_name)}")
+        return True
+    print(f"  ⚠️ GitHub Release 创建失败 (HTTP {code})：{data.get('message', '')}")
+    return False
+
+
 def cmd_status() -> None:
     """只读状态诊断。"""
     print("=" * 60)
@@ -360,6 +512,16 @@ def cmd_status() -> None:
     print(f"📦 package.json 版本   : {pkg_ver}")
     print(f"🏷️  最新 Git Tag       : {git_state['latest_git_tag']}")
     print(f"🚀 NPM 当前发布版本   : latest={dist_tags.get('latest', 'none')}, beta={dist_tags.get('beta', 'none')}")
+    rel_ok, rel_tag = get_github_latest_release()
+    if not rel_ok:
+        rel_line = "查询不可用（无 token / 网络受阻）"
+    elif not rel_tag:
+        rel_line = "无（下次发版自动创建）"
+    elif rel_tag != git_state["latest_git_tag"]:
+        rel_line = f"{rel_tag} ⚠️ 落后最新 tag（下次发版自动补建）"
+    else:
+        rel_line = rel_tag
+    print(f"🐙 GitHub 最新 Release : {rel_line}")
     print(f"⏭️  推导下一个发版版本 : v{next_ver}")
 
     if git_state["dirty"]:
@@ -445,13 +607,20 @@ def cmd_release(target_version: str | None = None, auto: bool = False, dry_run: 
     run_cmd(f"git push -f origin {tag_name}", use_proxy=True)
     print("  ✅ Git 提交与 Tag 推送成功！")
 
-    # 7. NPM 发布
+    # 7. GitHub Release（跟随 tag；失败只告警，不阻断 npm）
+    print("\n🐙 正在创建 GitHub Release...")
+    try:
+        create_github_release(tag_name, next_ver)
+    except Exception as e:
+        print(f"  ⚠️ GitHub Release 创建异常（不阻断发版）：{e}")
+
+    # 8. NPM 发布
     print(f"\n📦 正在发布 NPM 包 {PKG_NAME}@{next_ver} (--tag beta)...")
     run_cmd("npm publish --tag beta")
     print(f"🔖 更新 NPM dist-tag latest -> {next_ver}...")
     run_cmd(f"npm dist-tag add {PKG_NAME}@{next_ver} latest")
 
-    # 8. 轮询验证
+    # 9. 轮询验证
     ok = verify_npm_live(next_ver)
     if ok:
         print(f"\n🎉 恭喜！{PKG_NAME}@{next_ver} 已正式在 NPM 生效！")
