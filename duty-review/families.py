@@ -7,11 +7,13 @@ r"""DR4 **口径 B** —— `bugs.md` 同根段聚类（族规模 × 活跃窗�
 `tests/test_duty_bug_families.py`（形状钉 + 喂坏输入钉）——**不造第二份**（本仓
 `shared/single-source.md` §2）。
 
-**条目字段制式**（D154 落地）：条目行尾允许一个全角尾缀块 `〔…〕`，键以 `｜` 分隔，闭集键 =
+**条目字段制式**（D154 落地，D155 补全校验）：条目行尾允许一个全角尾缀块 `〔…〕`，键以 `｜` 分隔，闭集键 =
 `日期`（必填，`20\d\d-\d\d-\d\d`）/ `状态`（`开放`｜`已修·待复验`｜`已出库`）/ `族`（跨段族标识，
 **只解析记录、不参与判据**）/ `证`（D131 证明件锚；优先级 = DESIGN.md D 决策行 > M 变异号/
-钉名 > 留档路径辅注）。坏形状（未知键 / 重复键 / 值空 / 值域外 / 日期形态非法 / 缺必填 / 尾缀
-不闭合）⇒ **运行面 WARN + 按无字段回退**，不静默（对齐「静默吸收」教训族）。
+钉名 > 留档路径辅注）。坏形状（未知键 / 重复键 / 值空 / 值域外 / 日期形态非法 / **日期日历非法** /
+**日期晚于当日（越界）** / 缺必填 / 尾缀不闭合）⇒ **运行面 WARN + 按无字段回退**，不静默（对齐
+「静默吸收」教训族）。日期只过形态正则不够——`2026-13-40` 满足形态却不是可用日期，`2027-01-01`
+更会把段判成永久活跃（「判据可被形态满足」族，D155 / `RFC-20261026-05`）。
 
 **日期来源分层**（判据三项与「案数上界」计量基准不变——`duty-review/README.md` §2 DR4 /
 `DESIGN.md` D102；活跃窗语义不变，只改日期取数面）：带字段条目 ⇒ 字段日期；无字段条目行 ⇒
@@ -24,7 +26,8 @@ r"""DR4 **口径 B** —— `bugs.md` 同根段聚类（族规模 × 活跃窗�
 铁则：**全程只读**（不落任何文件 —— 巡检铁则，`README.md` §1）；纯标准库。
 
 变异证明 **M91**（计数正则退行首 ⇒ 上界塌 ≤1 ⇒ 钉红）、**M157a**（摘分层日期来源 ⇒ 回全行
-散文日期 ⇒「陈旧说明不抬窗」正向钉红）、**M157b**（摘坏形状 WARN ⇒ 钉红）。
+散文日期 ⇒「陈旧说明不抬窗」正向钉红）、**M157b**（摘坏形状 WARN ⇒ 钉红）、
+**M158a**（摘日历关 ⇒ `2026-13-40` 当合法 ⇒ 越界钉红）、**M158b**（摘未来关 ⇒ 未来日期抬窗 ⇒ 钉红）。
 """
 from __future__ import annotations
 
@@ -46,8 +49,8 @@ FIELD_KEYS = ("日期", "状态", "族", "证")
 STATUS_VALUES = ("开放", "已修·待复验", "已出库")
 
 
-def _tail_fields(line: str) -> tuple[str, dict[str, str], str, str]:
-    """拆条目行尾缀字段块（D154 制式）。
+def _tail_fields(line: str, today: datetime.date | None = None) -> tuple[str, dict[str, str], str, str]:
+    """拆条目行尾缀字段块（D154 制式，D155 补全日期越界校验）。
 
     返回 `(state, fields, reason, body)`：
     * `none` —— 行无尾缀；`body` = 原行（散文日期来源）；
@@ -55,6 +58,10 @@ def _tail_fields(line: str) -> tuple[str, dict[str, str], str, str]:
       该行散文日期**不再**参与活跃窗——字段日期是唯一来源）；
     * `bad` —— 形状坏（WARN 源，按无字段回退）；`body` = 摘尾后的文本（散文日期回退源；
       坏尾缀内的内容不参与任何取数）。
+
+    `today` 在场才校「晚于当日」（`families()` 恒传运行日；直接调 `parse_sections` 的消费者
+    可不传 ⇒ 只校日历合法性）。形态过正则但日历非法（`2026-13-40`）同样归坏形状——
+    **形态满足 ≠ 可用日期**。
     """
     if BRACKET_OPEN not in line:
         return "none", {}, "", line
@@ -80,12 +87,18 @@ def _tail_fields(line: str) -> tuple[str, dict[str, str], str, str]:
         return "bad", {}, "缺必填字段「日期」", head
     if not TAIL_DATE_RE.fullmatch(fields["日期"]):
         return "bad", {}, f"「日期」形态非法：{fields['日期']}", head
+    try:
+        parsed = datetime.date.fromisoformat(fields["日期"])
+    except ValueError:
+        return "bad", {}, f"「日期」日历非法（形态过但非可用日期）：{fields['日期']}", head
+    if today is not None and parsed > today:
+        return "bad", {}, f"「日期」晚于当日（越界）：{fields['日期']}", head
     if "状态" in fields and fields["状态"] not in STATUS_VALUES:
         return "bad", {}, f"「状态」值域外：{fields['状态']}", head
     return "ok", fields, "", head
 
 
-def parse_sections(text: str) -> list[dict]:
+def parse_sections(text: str, today: datetime.date | None = None) -> list[dict]:
     """按 `## ` 分段；每段收 `#NN` 去重集与**分层**日期取证。
 
     * `ids` —— 段内出现的 `#NN` 去重集（**上界近似**，判据计量基准不变：条目、同根归纳行、
@@ -93,6 +106,8 @@ def parse_sections(text: str) -> list[dict]:
     * `has_root` —— 段内是否有「同根归纳」行（族锚；**实现是段内任意位置**，非段首）
     * `last_date` —— **分层来源**最大日期（D154）：带字段条目只用字段日期；无字段条目行用
       行内日期；其余行（段头 / 归纳行 / 收尾说明 / 正文）不再参与。无 ⇒ 空串。
+    * `today` —— **省略时未来关不生效**（只校日历合法性）；`families()` 恒透传运行日，
+      故 CLI / 巡检轨两关皆在。直接调本函数而不传 `today` 的消费者 = 已知降级面（D155）。
     * `exact_ids` —— 带字段条目自身病案 id 去重集（`render` 显示列输入；**不参与判据**——
       计量升格须按 DR1 另案，`RFC-20261026-04` §2.2）
     * `warns` —— 坏形状条目摘录（运行面 WARN 源；`render` 打印，不静默）
@@ -116,7 +131,7 @@ def parse_sections(text: str) -> list[dict]:
         stripped = line.lstrip()
         if not stripped.startswith("- "):
             continue
-        state, fields, reason, body = _tail_fields(stripped)
+        state, fields, reason, body = _tail_fields(stripped, today)
         if state == "bad":
             cur["warns"].append(f"{reason}（已按无字段回退）")
         elif state == "ok":
@@ -137,7 +152,7 @@ def families(text: str, today: datetime.date | None = None) -> list[dict]:
     day = today or datetime.date.today()
     cutoff = (day - datetime.timedelta(days=WINDOW_DAYS)).isoformat()
     out = []
-    for s in parse_sections(text):
+    for s in parse_sections(text, day):
         n = len(s["ids"])
         active = bool(s["last_date"]) and s["last_date"] >= cutoff
         if not s["has_root"]:
