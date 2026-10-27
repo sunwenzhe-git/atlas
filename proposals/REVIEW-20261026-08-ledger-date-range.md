@@ -155,7 +155,8 @@ CLI 轨相对 15 条进程内钉只新增 `main()` 的 argv / 读文件 / `print
 | B1 | `DESIGN.md` D155 决策行残缺：仅悬空 ④⑤ 片段，无行头与①②③（「插入未回抄锚点行」第四次复发）；D155②/③ 引用全部落空 | §12 表内补全整行（①②③ 重写 + 悬空段并入同表行） |
 | M1 | 「两条判据级留出」半数不成立 ⇒ 降格口径 | RFC-05 头注/§4.2/§4.5/§4.6、tests docstring、RFC-03 §2.1.4 括注、D155④⑤ |
 | M2 | 触发 (b) 路径交叉检查未真实执行（试点未覆盖项） | 轮 3 补做：`closeout_derive --diff-base 439b3c2` 触发步骤 1/2/5/7；映射 = `families.py` + `tests/test_duty_bug_families.py` ↔ 自感知上报锚（`bugs.md:60`，比对锚 gates §2.5）；误报 0；(a) 在场 ⇒ 不可逃。落 RFC-05 §4.5 末 |
-| Minor | 墙钟未计量（如实登记，Observe；Phase 1 批用 `time` 实测）；QUEUE 未挂散文盲区行（非 blocker，载体 = README §2 ③ 在场，Observe）；REVIEW-08 自身 MA2 曾把 REVIEW-06 列入「四处改条目区」（REVIEW-06 从未写过该句） | 如实留档，不改 |
+| Minor | 墙钟未计量（已补可复算秒表 + 如实标注人时不可回溯：§8.5）；QUEUE 未挂散文盲区行（已挂：`duty-review/QUEUE.md` 观察室 2026-10-27 行）；REVIEW-08 自身 MA2 曾把 REVIEW-06 列入「四处改条目区」（REVIEW-06 从未写过该句） | 如实留档，不改 |
+| 触发 (b) 不可机判 | 语义映射无机器判据 ⇒ 不改判为可机判；补**人侧落点** = `shared/closeout.md` 步骤 3 定档必附交叉检查结论 + `duty-review/README.md` §4 巡检 grep（2026-10-27） | 已落 |
 
 ### 8.3 轮 3 当场复算为真
 
@@ -170,3 +171,4 @@ CLI 轨相对 15 条进程内钉只新增 `main()` 的 argv / 读文件 / `print
 **落盘文件（5）**：`DESIGN.md`（D155 行补全 + ④⑤ 并入同表行 + 轮 3 状态改写）；`tests/test_duty_bug_families.py`（模块 docstring 留出口径）；`proposals/RFC-20261026-05…md`（头注 2 处 + §4.2 两处 + §4.5 + §4.6 + §4.5 末 M2 段）；`proposals/RFC-20261026-03…md`（§2.1.4 规则替换为三条判据）；`proposals/REVIEW-20261026-08…md`（头注轮 3 结论 + §7.1/§7.4 + 本 §8）。**未触碰**：`duty-review/` 全部、`shared/gates.md`、`CHANGELOG.md`、`docs/map/*`（另一会话改动）、`proposals/README.md` / `TEMPLATE.md`（Phase 1 面，未获拍板不动）。
 
 **复跑**：`pytest tests/test_duty_bug_families.py tests/test_canonical_consistency.py tests/test_map_anchors.py tests/test_suite_hygiene.py -q` ⇒ **35 passed**；`scripts/atlas_check.py --fast` ⇒ **OK**；真实库 CLI md5 复验 `7a461f99`（零扰动不变）。全量 `pytest tests/` 于提交前由维护会话复跑（轮 3 落盘仅动文档与 docstring，判据面零变更）。
+**墙钟（2026-10-27 终件复测，`/usr/bin/time -p`）**：19 钉 `0.41s` / pre 版三条留出复现 `0.73s` / `atlas_check --fast` `0.10s` / 真实库 CLI `0.03s` / 全量 `200.6s`（758 passed）；设计 / 评审人时未留机器计时，不补造（详见 `RFC-20261026-05` §4.6）。

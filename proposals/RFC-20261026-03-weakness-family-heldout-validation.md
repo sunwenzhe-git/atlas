@@ -100,7 +100,7 @@
    * (a) RFC §1 引用一个子族锚（`bugs.md` 同根归纳）或 ≥3 条独立审查重复 finding；
    * (b) RFC 改动门 / 校验器 / 契约判据，且 `git diff --name-only` 落在已有 DR4 段级锚的路径族内；
    * 不触发：一次性 bug 修复、纯文档、无复发声明的新功能、纯重构。
-   * **防逃**：独立评审必须做 (b) 的路径交叉检查；不能以「§1 没写族锚」为由跳过。Phase 0 先用 `git diff --name-only` + `scripts/closeout_derive.py` 现有路径族表手工对照，记录「锚 → 路径族」映射与误报；Phase 1 再决定是否接线，不先造脚本。
+   * **防逃**：独立评审必须做 (b) 的路径交叉检查；不能以「§1 没写族锚」为由跳过。Phase 0 先用 `git diff --name-only` + `scripts/closeout_derive.py` 现有路径族表手工对照，记录「锚 → 路径族」映射与误报；Phase 1 再决定是否接线，不先造脚本。**Phase 1 落点（2026-10-27）**：作者侧 = `shared/closeout.md` 步骤 3 定档附交叉检查结论；评审侧 = `shared/independent-review.md` §9；流程门 = `shared/gates.md` §2.5。
 4. **留出集定义（可操作版）**：
    * Atlas 自身门：另一个环的同类判据、另一个 fixture 族、另一个 stack profile、另一条运行器轨、另一种装配态（npm 全局 / 本地源包 / 干跑）；
    * 采纳项目：另一个任务卡 / 域且措辞不同、未参与 §1 探针的冻结历史批次；

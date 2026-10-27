@@ -71,6 +71,7 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
   4. 根级包依赖（`package.json / bun.lock / pnpm-lock / go.mod`）；
   5. atlas / Trellis 核心共享契约（`shared/*.md / rings/*/reference.md`）。
 - **审批主体纪律**：Agent 生成的审查通过（即使带 status=PASS）**永远不算人工审批名额**；审查必须由具备最终交付责任的人类开发者执行或确认。
+- **系统性修复的留出验证定档（2026-10-27，D156）**：改门 / 校验器 / 契约判据的批次，定档时必须附**触发 (b) 路径交叉检查**结论——`git diff --name-only` + `scripts/closeout_derive.py` 输出 ↔ DR4 段级锚路径族（`bugs.md` 同根归纳段）手工对照，记「锚 → 路径族」映射与误报；命中 ⇒ 该 RFC §4.5 必须走留出验证三态（`闭族` / `未闭族` / `单案修复（无留出集）`）。触发 (a) = RFC §1 引子族锚或 ≥3 条独立审查重复 finding。**盲区明写**：语义映射不可机判，本步是纪律面（触发靠自述、可被逃）；评审侧对称检查 = `shared/independent-review.md` §9，流程门登记 = `shared/gates.md` §2.5。
 
 ### 步骤 4 — 缺陷修复验证（7 检查点，2026-10-21，D131）
 
