@@ -25,10 +25,11 @@ description: 项目级 PRD = 全局 + 域级两级，只写应然不挂状态；
 product/prd/
 ├── README.md                 追溯总表 + 索引（域 ↔ structure 模块 ↔ 页面 ↔ Rule Set ↔ AC）
 ├── prd.md                    全局（唯一）
-└── <domain>-prd.md           域级（每域一份）
+├── <domain>-prd.md           域级（每域一份）
+└── reviews/                  独立审查报告留痕（唯一允许的子目录）
 ```
 
-**域**按**产品功能域**划分（不是代码模块），并在 `README.md` 里映射到 structure 的模块与页面。理由：**产品域在重写前后保持不变，代码模块会变**。域级 PRD **平铺**在 `product/prd/` 下，**严禁建 `domains/` 子目录**（目录规范门）。
+**域**按**产品功能域**划分（不是代码模块），并在 `README.md` 里映射到 structure 的模块与页面。理由：**产品域在重写前后保持不变，代码模块会变**。域级 PRD **平铺**在 `product/prd/` 下，**除独立审查报告留痕 `reviews/` 外严禁子目录**（如 `domains/`；目录规范门）。
 
 **编号**：功能 `FN-<DOMAIN>-NNN`、规则 `<DOMAIN>-R-NNN`、AC `AC-<DOMAIN>-NNN`。
 

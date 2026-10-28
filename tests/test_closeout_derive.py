@@ -260,5 +260,5 @@ def test_event_path_tokens_follow_layout(tmp_path) -> None:
         "version: 1\nlayout:\n  assets_root: docs\n", encoding="utf-8")
     tokens = dict(MOD.event_path_tokens(tmp_path))
     assert tokens["ADR"] == ("docs/adr/",)
-    assert tokens["独立审查报告"] == ("docs/reviews/", "docs/e2e/reviews/")
+    assert tokens["独立审查报告"] == ("docs/reviews/", "docs/prd/reviews/", "docs/e2e/reviews/")
     assert "atlas.config.yaml" in tokens["契约"]

@@ -35,8 +35,11 @@
 product/prd/
 ├── README.md                 追溯总表 + 索引（域 ↔ structure 模块 ↔ 页面 ↔ Rule Set ↔ AC）
 ├── prd.md                    全局（唯一）
-└── <domain>-prd.md           域级（每域一份）
+├── <domain>-prd.md           域级（每域一份）
+└── reviews/                  独立审查报告留痕（唯一允许的子目录；<日期>-<范围>/ + README.md/review.json）
 ```
+
+**目录规范**：`reviews/` 是唯一允许的子目录（独立审查报告留痕，§8）；其余子目录与散落非标准 markdown 一律 FAIL（参数 0 目录规范门）。
 
 **域 slug**：ASCII kebab-case（如 `dubbing-config`、`prompt-management`）；文档内保留中文显示名。
 

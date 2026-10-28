@@ -3785,7 +3785,8 @@ def test_prd_unverifiable_list_ghost_fails() -> None:
 
 def test_prd_illegal_nested_directories_fails() -> None:
     """契约 rings/prd/reference.md §2（平铺规范）：
-    product/prd/ 严禁子目录（如 domains/）或散落非标准 markdown 文件。
+    product/prd/ 除独立审查报告留痕 reviews/ 外严禁子目录（如 domains/）或散落非标准
+    markdown 文件；reviews/ 是唯一保留子目录（issue #43）。
     存在非法子目录或非标准文件时，参数0 目录规范门必须 FAIL（防静默穿透门控）。
     """
     with tempfile.TemporaryDirectory() as td:
@@ -3799,6 +3800,15 @@ def test_prd_illegal_nested_directories_fails() -> None:
         res = vpr.validate(root)
         row0 = [c for c in res.checks if c["check"] == "参数0 目录规范"][0]
         assert row0["status"] == "PASS"
+
+        # reviews/ 是唯一保留子目录（独立审查报告留痕，issue #43）：PASS
+        reviews = root / "product" / "prd" / "reviews" / "2026-10-28-x"
+        reviews.mkdir(parents=True)
+        (reviews / "README.md").write_text("# review\n", encoding="utf-8")
+        (reviews / "review.json").write_text("{}", encoding="utf-8")
+        res_reviews = vpr.validate(root)
+        row0_reviews = [c for c in res_reviews.checks if c["check"] == "参数0 目录规范"][0]
+        assert row0_reviews["status"] == "PASS", row0_reviews
 
         # 变异注入：创建非法子目录 domains/ 并放置 markdown
         nested_dir = root / "product" / "prd" / "domains"

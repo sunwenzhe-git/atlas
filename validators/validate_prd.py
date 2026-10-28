@@ -112,6 +112,8 @@ COVERS = ("全量", "增量起步")
 ALL_SECTIONS = ("一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一")
 MIN_SECTIONS = ("五", "六", "七")
 DOMAIN_SLUG = re.compile(r"`([a-z0-9][a-z0-9-]+)`")
+# 独立审查报告留痕（rings/prd/reference.md §2 / §8；issue #43）：平铺目录的唯一例外。
+ALLOWED_PRD_SUBDIRS = {"reviews"}
 RULE_ROW = re.compile(r"^\|\s*`?([A-Z][A-Z0-9]+-R-\d+)`?\s*\|", re.M)
 # 规则 → 所属功能（契约 §4「所属功能」列；2026-09-28 补，`3509 §B109`）：功能 → 规则 → AC 链路的前一环。
 RULE_FUNC_COL = "所属功能"
@@ -316,13 +318,14 @@ def validate(root: Path) -> Result:
         if item.name.startswith("."):
             continue
         if item.is_dir():
-            illegal.append(f"子目录:{item.name}/")
+            if item.name not in ALLOWED_PRD_SUBDIRS:
+                illegal.append(f"子目录:{item.name}/")
         elif item.is_file():
             if item.suffix == ".md" and item.name not in ("prd.md", "README.md") and not item.name.endswith("-prd.md"):
                 illegal.append(f"非标准文件:{item.name}")
     if illegal:
         res.add("参数0 目录规范", "FAIL",
-                f"发现非契约目录层级或非标准文件：{illegal}（契约 rings/prd/reference.md §2 规定 PRD 必须为平铺目录 {lay.print_value('prd')}/prd.md 与 *-prd.md，严禁子目录）")
+                f"发现非契约目录层级或非标准文件：{illegal}（契约 rings/prd/reference.md §2 规定 PRD 必须为平铺目录 {lay.print_value('prd')}/prd.md 与 *-prd.md；{lay.print_value('prd')}/reviews/ 是独立审查报告留痕的唯一保留子目录，其余子目录严禁）")
     else:
         res.add("参数0 目录规范", "PASS", "")
 

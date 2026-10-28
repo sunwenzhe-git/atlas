@@ -74,6 +74,7 @@ def event_path_tokens(root: Path) -> tuple[tuple[str, tuple[str, ...]], ...]:
         ("脚本", ("scripts/", "tests/")),
         ("skill", ("skills/",)),
         ("独立审查报告", (f"{lay.print_value('reviews')}/",
+                          f"{lay.print_value('prd')}/reviews/",
                           f"{lay.print_value('e2e_reviews')}/")),
         ("影响面报告", ("impact.json",)),
         ("ADR", (f"{lay.print_value('adr')}/",)),
