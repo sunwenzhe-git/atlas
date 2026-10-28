@@ -75,7 +75,7 @@ layout:
     │   └── reviews/                # <日期>-<范围>/ 独立审查报告（README.md + review.json + inputs/）
     # （prototype/ 已退役 E1 且于 2026-09-30 删除——新项目与存量均不再有此目录）
     └── e2e/                        # e2e-index.md + cases/<page>.md + scripts/<page>.<ext>
-        └── reviews/                # 同上（E2E 环独立审查）+ console/（人工评审账本，append-only）
+        └── reviews/                # 同上 + console/（人工评审账本）+ <日期>-acceptance-<域>/ / <日期>-first-run/ / <日期>-verify/（留痕，非审查报告）
 ```
 
 ## 3. role 语义

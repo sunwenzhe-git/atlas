@@ -1175,11 +1175,19 @@ def write(path: Path, content: str, apply: bool, results: list[dict]) -> None:
 REVIEW_DIRNAME = "reviews"
 # 审查报告目录形态：`<YYYY-MM-DD>-<范围>`（契约 `shared/independent-review.md` §1 末注）。
 REVIEW_DIR_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-(.+)$")
+# 留痕保留名：与审查报告共用 `reviews/` 父目录，但不是报告（issue #44）。
+# 契约 `rings/e2e/reference.md` §5.4（验收 / 首跑）+ §12.6（执行器留档）。
+TRACE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-(?:acceptance-.+|first-run|verify)$")
 REVIEW_LEVELS = {"PASS", "WARN", "FAIL"}
 
 
 def latest_review_report(reports_dir: Path) -> Path | None:
     """取**目录名日期前缀最大**的那份报告目录（契约 §4「报告定位」）。
+
+    留痕目录（`acceptance-*` / `first-run` / `verify`）不是报告：**仅在目录内没有
+    `review.json` 时跳过**；保留名里出现 `review.json` ⇒ 按报告处理（响亮，不静默跳过，
+    防改名绕过审查）。非保留名目录缺 `review.json` 仍是候选 ⇒ 由状态侧判 `invalid`
+    （缺报告 = 未审，**不回退**旧报告）。
     同日内真审报告优先于基线报告（通过探测 review.json 中的 basis 键，M4 排序消歧）。
     """
     if not reports_dir.is_dir():
@@ -1189,18 +1197,22 @@ def latest_review_report(reports_dir: Path) -> Path | None:
         if not p.is_dir():
             continue
         m = REVIEW_DIR_RE.match(p.name)
-        if m:
-            is_baseline = 0
-            rj = p / "review.json"
-            if rj.is_file():
-                try:
-                    data = json.loads(rj.read_text(encoding="utf-8"))
-                    if data.get("basis") == "auto-baseline":
-                        is_baseline = 1
-                except Exception:
-                    pass
-            # 排序元组：(日期, 是否非基线, 目录名, 路径) -> is_baseline 0 优于 1
-            dated.append((m.group(1), -is_baseline, p.name, p))
+        if not m:
+            continue
+        rj = p / "review.json"
+        has_report = rj.is_file()
+        if TRACE_DIR_RE.match(p.name) and not has_report:
+            continue
+        is_baseline = 0
+        if has_report:
+            try:
+                data = json.loads(rj.read_text(encoding="utf-8"))
+                if data.get("basis") == "auto-baseline":
+                    is_baseline = 1
+            except Exception:
+                pass
+        # 排序元组：(日期, 是否非基线, 目录名, 路径) -> is_baseline 0 优于 1
+        dated.append((m.group(1), -is_baseline, p.name, p))
     if not dated:
         return None
     dated.sort()

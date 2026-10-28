@@ -2684,6 +2684,60 @@ def test_f21_baseline_shape_lock_and_sort_precedence() -> None:
         assert chosen == real_dir, f"挑中={chosen}, 预期={real_dir}"
 
 
+def test_latest_review_report_skips_trace_dirs_and_treats_reserved_report() -> None:
+    """#44：acceptance / first-run / verify 留痕不参与报告定位；保留名带 review.json 仍按报告判。"""
+    spec = importlib.util.spec_from_file_location("gen_e2e", GEN)
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        rdir = root / "product" / "e2e" / "reviews"
+        rdir.mkdir(parents=True)
+
+        real = rdir / "2026-10-15-real-review"
+        real.mkdir()
+        (real / "review.json").write_text(json.dumps({
+            "ok": True, "status": "PASS", "unit": "e2e", "round": 1,
+            "expected": 1, "reviewed": 1, "checks": [],
+        }), encoding="utf-8")
+
+        for name in ("2026-10-16-acceptance-home", "2026-10-17-first-run", "2026-10-18-verify"):
+            d = rdir / name
+            d.mkdir()
+            (d / "README.md").write_text("# 留痕\n", encoding="utf-8")
+        (rdir / "2026-10-18-verify" / "report.json").write_text("{}", encoding="utf-8")
+
+        assert gen.latest_review_report(rdir) == real
+        level, detail = gen.review_report_status(rdir)
+        assert level == "ok" and "2026-10-15-real-review" in detail, (level, detail)
+
+        # 非保留名新目录缺 review.json ⇒ 仍是候选（不回退旧报告）
+        broken = rdir / "2026-10-19-broken"
+        broken.mkdir()
+        assert gen.latest_review_report(rdir) == broken
+        level, detail = gen.review_report_status(rdir)
+        assert level == "invalid" and "review.json" in detail, (level, detail)
+
+        # 保留名带 review.json ⇒ 不是留痕，按报告判（Critical 必须被看见）
+        reserved = rdir / "2026-10-20-acceptance-with-report"
+        reserved.mkdir()
+        (reserved / "review.json").write_text(json.dumps({
+            "ok": False, "status": "FAIL",
+            "checks": [{"level": "Critical", "check": "保留名里藏报告"}],
+        }), encoding="utf-8")
+        assert gen.latest_review_report(rdir) == reserved
+        level, detail = gen.review_report_status(rdir)
+        assert level == "critical", (level, detail)
+
+        # 只剩留痕 ⇒ missing（不拿留痕顶替报告）
+        for p in (real, broken, reserved):
+            shutil.rmtree(p)
+        assert gen.latest_review_report(rdir) is None
+        level, detail = gen.review_report_status(rdir)
+        assert level == "missing", (level, detail)
+
+
 def test_f21_bootstrap_review_cli() -> None:
     """F21: --bootstrap-review 输出机器可读任务包。"""
     with tempfile.TemporaryDirectory() as td:

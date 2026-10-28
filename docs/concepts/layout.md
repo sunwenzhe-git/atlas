@@ -27,7 +27,7 @@ product/
 ├── prd/                        # README.md 追溯总表 + prd.md + <domain>-prd.md
 │   └── reviews/                # 独立审查报告（README.md + review.json + inputs/）
 └── e2e/                        # e2e-index.md + cases/<page>.md + scripts/<page>.<ext>
-    └── reviews/                # 独立审查报告 + console/ 人工评审账本（append-only）
+    └── reviews/                # 独立审查报告 + console/ 人工评审账本（append-only）+ <日期>-acceptance-<域>/ / <日期>-first-run/ / <日期>-verify/ 留痕（非报告）
 ```
 
 结构事实落 `.trellis/spec/structure/` —— 它既是项目级事实，又能被 Trellis 任务**原生注入**消费：

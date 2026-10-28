@@ -360,22 +360,29 @@ def check_review_report(root: Path, rows: Row) -> None:
     - 基线兜底报告（N/0）：WARN 随行披露（诚实降级，揭发未审状态）
     - 形态门通过：ok
     - 形态门失败（如手写假桩缺字段、映射自相矛盾）：FAIL 揭发伪造证据
+
+    报告定位走生成器同一个 `latest_review_report()`（单源，issue #44）：验收 / 首跑 /
+    执行器留痕不再被误当报告；同日基线消歧口径也随之统一。
     """
     lay = load_layout(root)
     reviews_dir = lay.e2e_reviews_dir
     if not reviews_dir.is_dir():
         rows.add("审查报告形态", "SKIP", f"无 {lay.print_value('e2e_reviews')} 目录")
         return
-    review_re = re.compile(r"^(\d{4}-\d{2}-\d{2})-(.+)$")
-    candidates = [p for p in reviews_dir.iterdir() if p.is_dir() and review_re.match(p.name)]
-    if not candidates:
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        from gen_e2e_scripts import latest_review_report  # noqa: E402
+    except Exception as exc:  # noqa: BLE001 — 装配缺件可能抛 FileNotFoundError，不得让巡检崩溃
+        rows.add("审查报告形态", "SKIP",
+                 f"无法加载 scripts/gen_e2e_scripts.py（{type(exc).__name__}）")
+        return
+    latest = latest_review_report(reviews_dir)
+    if latest is None:
         rows.add("审查报告形态", "SKIP", "无符合命名规范的审查报告目录")
         return
-    candidates.sort(key=lambda p: p.name)
-    latest = candidates[-1]
 
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
         from validate_review_report import validate_report  # noqa: E402
     except ImportError:
         rows.add("审查报告形态", "SKIP", "无 scripts/validate_review_report.py")

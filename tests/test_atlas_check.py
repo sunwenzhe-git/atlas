@@ -1151,6 +1151,106 @@ def test_check_review_report_exposes_fake_stub_and_warns_baseline() -> None:
 
 
 
+def test_check_review_report_skips_trace_dirs() -> None:
+    """#44：acceptance / first-run / verify 留痕与报告共用 reviews/，不得被当成报告。"""
+    spec = importlib.util.spec_from_file_location("atlas_check", CK)
+    ac = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ac)
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        rdir = root / "product" / "e2e" / "reviews"
+        rdir.mkdir(parents=True)
+
+        base_dir = rdir / "2026-10-15-adopt-baseline"
+        base_dir.mkdir()
+        (base_dir / "review.json").write_text(json.dumps({
+            "ok": True,
+            "status": "WARN",
+            "basis": "auto-baseline",
+            "root": str(root),
+            "scope": "adopt-baseline",
+            "unit": "e2e",
+            "round": 1,
+            "expected": 1,
+            "reviewed": 0,
+            "budget_exceeded": False,
+            "checks": [],
+            "other": ["基线兜底"],
+        }), encoding="utf-8")
+        (base_dir / "README.md").write_text("# 审查总结\n- 状态：WARN\n", encoding="utf-8")
+        (base_dir / "inputs").mkdir()
+        (base_dir / "inputs" / "MANIFEST.json").write_text("{}", encoding="utf-8")
+
+        for name in ("2026-10-16-acceptance-home", "2026-10-17-first-run", "2026-10-18-verify"):
+            d = rdir / name
+            d.mkdir()
+            (d / "README.md").write_text("# 留痕\n", encoding="utf-8")
+        (rdir / "2026-10-18-verify" / "report.json").write_text("{}", encoding="utf-8")
+
+        rows = ac.Row()
+        ac.check_review_report(root, rows)
+        row = next(r for r in rows.rows if r["name"] == "审查报告形态")
+        assert row["status"] == "WARN", row
+        assert "2026-10-15-adopt-baseline" in row["detail"], row
+
+        shutil.rmtree(base_dir)
+        rows2 = ac.Row()
+        ac.check_review_report(root, rows2)
+        row2 = next(r for r in rows2.rows if r["name"] == "审查报告形态")
+        assert row2["status"] == "SKIP", row2
+
+
+def test_check_review_report_no_fallback_and_reserved_report_not_skipped() -> None:
+    """#44：缺 review.json 的非留痕目录不回退旧报告；保留名带 review.json 仍按报告判。"""
+    spec = importlib.util.spec_from_file_location("atlas_check", CK)
+    ac = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ac)
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        rdir = root / "product" / "e2e" / "reviews"
+        rdir.mkdir(parents=True)
+
+        base_dir = rdir / "2026-10-15-adopt-baseline"
+        base_dir.mkdir()
+        (base_dir / "review.json").write_text(json.dumps({
+            "ok": True,
+            "status": "WARN",
+            "basis": "auto-baseline",
+            "root": str(root),
+            "scope": "adopt-baseline",
+            "unit": "e2e",
+            "round": 1,
+            "expected": 1,
+            "reviewed": 0,
+            "budget_exceeded": False,
+            "checks": [],
+            "other": ["基线兜底"],
+        }), encoding="utf-8")
+        (base_dir / "README.md").write_text("# 审查总结\n- 状态：WARN\n", encoding="utf-8")
+        (base_dir / "inputs").mkdir()
+        (base_dir / "inputs" / "MANIFEST.json").write_text("{}", encoding="utf-8")
+
+        broken = rdir / "2026-10-16-broken"
+        broken.mkdir()
+        rows = ac.Row()
+        ac.check_review_report(root, rows)
+        row = next(r for r in rows.rows if r["name"] == "审查报告形态")
+        assert row["status"] == "FAIL", row
+        assert "2026-10-16-broken" in row["detail"], row
+
+        reserved = rdir / "2026-10-17-acceptance-report"
+        reserved.mkdir()
+        (reserved / "review.json").write_text(
+            json.dumps({"ok": True, "status": "PASS"}), encoding="utf-8")
+        rows2 = ac.Row()
+        ac.check_review_report(root, rows2)
+        row2 = next(r for r in rows2.rows if r["name"] == "审查报告形态")
+        assert row2["status"] == "FAIL", row2
+        assert "2026-10-17-acceptance-report" in row2["detail"], row2
+
+
 def test_serial_execution_gate_bites_on_parallel_config() -> None:
     """契约 §7.1（`DESIGN` D115）：手改运行器配置成并行 ⇒「执行串行」门 **FAIL**（不是 WARN）。
 
