@@ -13,7 +13,7 @@
 
 | 文件 | 角色 |
 |---|---|
-| `scripts/atlas_check.py`(932 行) | 统一检查入口 / 编排器(**只聚合,不改判据**) |
+| `scripts/atlas_check.py`(939 行) | 统一检查入口 / 编排器(**只聚合,不改判据**) |
 | `validators/`(10 器) | 判据本体,每器一行输出 |
 | `shared/gates.md`(147 行) | 门登记总账:六列(门 / 对账平面 / 查什么 / **不查什么** / 预算 / 假绿测试等级) |
 | `scripts/mutation_proof.py`(155 行) | 变异证明工具:把缺陷放回去看门红不红,还原须逐字节一致 + 报告须含注入 diff |
@@ -27,14 +27,14 @@
 
 `SKIP` = 未走到 / 前置未声明(**不是通过也不是失败**,必须带原因)≠ `WARN`(过期/提醒,不置红)≠ `FAIL`(硬阻断)≠ `ok`。生成物门三态:未就绪(SKIP)≠ 生成物过期(WARN)≠ 生成失败(FAIL)。
 
-### 门行全景(`main()`,`scripts/atlas_check.py:843`)
+### 门行全景(`main()`,`scripts/atlas_check.py:850`)
 
 | 门行 | 实现 | 一句话判据 |
 |---|---|---|
 | 10 个 validate_* | `check_validators` :203 | 逐器调用,一门一行;前置文件缺失 ⇒ SKIP(`_gate_preconditions` :68 定义 7 器的三态前置) |
 | 对齐测试(.atlas/tests) | `check_factory` :244 | 装配副本跑 pytest;目录不存在 = 装配未含测试(F53 三形态 SKIP) |
 | 生成物最新 | `check_generated` :275 | gen_e2e_scripts 干跑 diff;exit 3 = not_ready SKIP |
-| 审查报告形态 | `check_review_report` :331 | 最新 E2E 审查报告复算(validate_review_report 单源) |
+| 审查报告形态 | `check_review_report` :356 | 最新 E2E 审查报告复算(validate_review_report 单源) |
 | 执行串行 | `check_serial_execution` :246 | 运行器配置必须 `workers: 1` + `fullyParallel: false`(D115) |
 | 结构漂移 | `check_drift` :373 | 只读 `.adapter-out/_drift.json` 标记,不做二次判定 |
 | 装配版本 | `check_version` :435 | `.atlas/VERSION` 摘要戳 + `.atlas/MANIFEST.json` 逐文件基线 ⇔ 当前源包重算(D145);历史坏戳单列根因级 WARN |

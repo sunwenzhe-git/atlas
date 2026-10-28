@@ -13,7 +13,7 @@
 
 | 文件 | 行数 | 角色 |
 |---|---|---|
-| `scripts/gen_e2e_scripts.py` | 2465 | 生成器本体(全仓最大单件):分片 DSL → `.spec.ts` |
+| `scripts/gen_e2e_scripts.py` | 2477 | 生成器本体(全仓最大单件):分片 DSL → `.spec.ts` |
 | `scripts/e2e_console.py` | 1107 | 评审控制台:纯标准库 SSE 服务(默认 127.0.0.1:4190) |
 | `scripts/gen_testid_stub.py` | — | testid 实然盘点薄桩生成器(adopt 开户交尾件) |
 | `_support/pw_runner.py` | — | 运行器单源内核:可解析性判据 / 全局兜底修复 / 浏览器就绪探针 |
@@ -39,11 +39,11 @@
 
 ### 5. 双前置门:独立审查 + 就绪
 
-`review_gate`(`scripts/gen_e2e_scripts.py:1306`)读最新审查报告(`REVIEW_LEVELS`,`scripts/gen_e2e_scripts.py:1178`),有 Critical 拒绝写盘;`NOT_READY`(`scripts/gen_e2e_scripts.py:84`,exit 3)= 前置未声明的显式跳过,不是失败。
+`review_gate`(`scripts/gen_e2e_scripts.py:1318`)读最新审查报告(`REVIEW_LEVELS`,`scripts/gen_e2e_scripts.py:1178`),有 Critical 拒绝写盘;`NOT_READY`(`scripts/gen_e2e_scripts.py:84`,exit 3)= 前置未声明的显式跳过,不是失败。
 
 ### 6. 失败留证(D108/D142)
 
-Playwright 配置层 `trace` / `screenshot` 两轨(`scripts/gen_e2e_scripts.py:2119`):retain-on-failure + only-on-failure——全绿轮零构件,失败即有现场。含 `request` 断言的用例单独成文件(`D142`,`scripts/gen_e2e_scripts.py:190`),顶层 `test.use` 单独控制其 trace。
+Playwright 配置层 `trace` / `screenshot` 两轨(`scripts/gen_e2e_scripts.py:2215`):retain-on-failure + only-on-failure——全绿轮零构件,失败即有现场。含 `request` 断言的用例单独成文件(`D142`,`scripts/gen_e2e_scripts.py:190`),顶层 `test.use` 单独控制其 trace。
 
 ### 7. 参数通道(D109)与 base query 转发(D104)
 

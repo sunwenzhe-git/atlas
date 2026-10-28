@@ -2,6 +2,20 @@
 
 本文档记录了 **Atlas** 每个版本的重要特性变更、架构治理与问题修复。遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范。
 
+## [Unreleased]
+
+### 🐛 审查报告定位与记录类留痕分家（D161 / #44 / #43）
+
+* **修复（#44）**：`acceptance-*` / `first-run` / `verify` 三类留痕不再被「日期前缀最大」的报告定位误当审查报告。判定 = 保留名且无 `review.json` ⇒ 跳过；保留名带 `review.json` ⇒ 按报告校验（防改名绕过）；非保留名缺 `review.json` ⇒ 仍候选，缺报告 = 未审、不回退旧报告。
+* **单源**：`atlas_check` 的「审查报告形态」门改为复用 `gen_e2e_scripts.latest_review_report()`，同日基线消歧口径随之统一。
+* **修复（#43）**：`validate_prd` 参数 0 把 `product/prd/reviews/` 列为唯一保留子目录（独立审查报告留痕），其余子目录仍 FAIL；`closeout_derive` 审查报告路径 token 补 `<资产根>/prd/reviews/`。
+* **同步面**：`shared/independent-review.md` §4、`rings/e2e/reference.md` §5.4/§7.1/§12.6、`rings/prd/reference.md` §2、`shared/layout.md`、`docs/concepts/layout.md`、`docs/design/prd-ring.md`。
+
+### 🐛 走查门相对 root 崩溃（D162 / #45）
+
+* **修复**：`validate_walkthrough.run()` 在布局解析后统一 `root = lay.root`，消除 `lay.prd_dir.relative_to(root)` 的绝对/相对混用；`atlas_check --root .` 首次触达「第 2 问=是 + 域级 PRD」不再抛 `ValueError`。
+* **测试**：`tests/test_validate_walkthrough.py` 新增相对 root 回归钉（`chdir` + `run(Path("."))` + `main(["--root","."])`）。
+
 ## [v0.2.0-beta.18] - 2026-10-28
 
 ### 🔌 项目接线：结构事实刷新钩子改挂 `after_archive`（D159）

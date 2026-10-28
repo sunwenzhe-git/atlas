@@ -79,7 +79,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 ### 7. E2E 生成与控制台
 
-- `scripts/gen_e2e_scripts.py`(2465 行,全仓最大单件):用例分片(中文 DSL)编译为 Playwright `.spec.ts`。动词值域封闭(`click/hover/type/dispatch/…`,第三词即中止——治旧副本静默吸收陌生动词);登录形态三态(real/fabricated/none);独立审查有 Critical 拒绝写盘;前置未声明 ⇒ exit 3 `not_ready`。
+- `scripts/gen_e2e_scripts.py`(2477 行,全仓最大单件):用例分片(中文 DSL)编译为 Playwright `.spec.ts`。动词值域封闭(`click/hover/type/dispatch/…`,第三词即中止——治旧副本静默吸收陌生动词);登录形态三态(real/fabricated/none);独立审查有 Critical 拒绝写盘;前置未声明 ⇒ exit 3 `not_ready`。
 - `scripts/gen_testid_stub.py`:老页面 testid 实然盘点薄桩(adopt 开户交尾件;缺失由 validate_testids 自愈)。
 - `scripts/e2e_console.py`(1107 行):纯标准库 SSE 评审控制台(默认 `127.0.0.1:4190`),500ms 慢动作回放、逐用例三值走查、提交即解锁人工 Review、快照带评审指纹(prov: head_sha/scripts_hash)防旧账本挂新执行。
 - 配套内核:`_support/pw_runner.py`(运行器可解析性判据 + 全局兜底 + 浏览器就绪探针)、`_support/url_merge.py`(base query 转发)、`_support/case_block.py` / `case_id.py` / `manual_block.py`。
@@ -103,14 +103,14 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 | 量 | 值 | 出处 |
 |---|---|---|
 | 校验器 | 10(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py:52` |
-| 编排门行 | 8 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:843`) |
+| 编排门行 | 8 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:850`) |
 | 出厂测试文件 | 40 | `tests/` |
 | skills | 8(含 frontend-design) | `skills/` |
 | 环 | 3(structure / prd / e2e;原型环 E1 已退役) | `rings/` |
 | 共享契约 | 7 份 | `shared/` |
 | 共享内核 | 10 件 | `_support/` |
 | install.sh 自检声明 | 56 条 | `install.sh` |
-| 最大单件 | `scripts/gen_e2e_scripts.py` 2465 行 | — |
+| 最大单件 | `scripts/gen_e2e_scripts.py` 2477 行 | — |
 
 ## L1 铺设计划(2026-10-25 定稿)
 

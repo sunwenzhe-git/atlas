@@ -123,6 +123,17 @@ def test_main_exit_zero_and_json(tmp_path, capsys) -> None:
     assert payload["ok"] is True and payload["status"] == "PASS"
 
 
+def test_relative_root_does_not_crash(tmp_path, monkeypatch) -> None:
+    """issue #45：atlas_check 以 `--root .` 调用；入口必须先归一为绝对根再 relative_to。"""
+    d = _task(tmp_path)
+    _apply(d, APPLY_YES)
+    _prd(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    res = MOD.run(Path("."))
+    assert res.status == "PASS", _checks(res)
+    assert MOD.main(["--root", ".", "--json"]) == 0
+
+
 # ---------------------------------------------------------------- 坏输入（必红）
 
 

@@ -253,6 +253,8 @@ def run(root: Path) -> Result:
     except LayoutError as exc:
         res.add("项目布局配置", "FAIL", str(exc))
         return res
+    # 布局解析后 root 为绝对路径，lay.* 同基；混用相对 root 会在 relative_to 崩（issue #45）
+    root = lay.root
     tasks_root = root / TASKS_RELPATH
     if not tasks_root.is_dir():
         res.add("时空域", "SKIP",
