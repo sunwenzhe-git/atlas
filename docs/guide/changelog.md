@@ -2,7 +2,7 @@
 
 本文档记录了 **Atlas** 每个版本的重要特性变更、架构治理与问题修复。遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范。
 
-## [Unreleased]
+## [v0.2.0-beta.19] - 2026-10-28
 
 ### 🐛 审查报告定位与记录类留痕分家（D161 / #44 / #43）
 
