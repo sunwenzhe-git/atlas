@@ -44,9 +44,8 @@
 
 ## 安装与装配（install.sh / adopt 守卫 / 包自检 / 发版口径）
 
-- **发版口径回归（2026-10-27 巡检发现）**：`ca2ba1d`（beta.13）/ `4544518`（beta.14）两次 chore(release) 只动版本戳（README / config.mts / map 两处 / package.json），**未写 CHANGELOG 条目**；其覆盖的五个批提交（`ec9bf18` D153 AC×覆盖对账 / `439b3c2` D154 台账机器字段 / `4b6bd14` D155–D156 建修验证 / `d5c204e` map doclink / `012f950` GitHub Release 自动补建）逐个 `git show --stat` 核实**均未触碰 `CHANGELOG.md` 与 `docs/guide/changelog.md` 镜像**。基线参照 = beta.21→beta.12 每版均有条目；同族史 = beta.17→19 跳号事故（发版口径类）。**状态：开放**——机械修复口径清晰（补两节 + 镜像），归下一次交互会话或其并行批；巡检只记不动契约文档。
 
-- 同根归纳：三案同属「装配态的残留物与守卫语义未分层」；npm 升级链路是主场景，动守卫先想升级链会不会被迫 `--force`。
+- 同根归纳：三案同属「装配态的残留物与守卫语义未分层」；npm 升级链路是主场景，动守卫先想升级链会不会被迫 `--force`。 **发版口径族**（beta.17→19 跳号事故 / beta.13–14 无 CHANGELOG 条目 10-27 入档 → 当日补录 `c73f8a0` 出库）：release chore 与批提交都须写 changelog 条目 + `docs/guide/changelog.md` 镜像两落点。
 - #17 `.atlas/tests` 缺失 ⇒ 包自检门恒红（旧发行版装配态 / 源包开发态两态恒红，红灯训练成噪声）—— 已修 `d7d8699`（D86 三表同步 + D91 前置 SKIP，M76），全量绿
 - #21 `--dry-run` 真写装配版本戳 + 干跑首装残留 `.atlas/` 卡真首装 —— 已修 beta.20 批 `2913c4e`（D92/F54 挂 DRY_RUN 闸，M77），全量绿
 - #22 `.atlas/` 整目录未跟踪被 porcelain 折叠 ⇒ 守卫恒拒，`--force` 仪式化 —— 已修同批（D93/F55 状态列分两桶 + 双摘要可见化，M78），全量绿
