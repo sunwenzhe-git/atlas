@@ -4046,3 +4046,100 @@ def test_testids_scan_skips_runtime_artifact_dirs() -> None:
         files = {str(f.relative_to(root)) for f in vtid_._scan_files([root])}
         assert not any(f.startswith((".atlas-run/", "test-results/")) for f in files), \
             sorted(f for f in files if f.startswith((".atlas-run/", "test-results/")))
+
+
+# ── D157（2026-10-27）：`靶场:` 具名靶场闭集门 + 路径门放行已登记靶场 ─────────────
+_TARGET_PROFILE = "e2e:\n  targets:\n    kb: /kb-canvas\n"
+_TARGET_CASE = CASE_GOOD.replace("step:", "靶场: kb\nstep:", 1)
+
+
+def test_named_target_in_registry_passes() -> None:
+    """正向（D157）：`靶场: kb` 且 `e2e.targets` 已登记该名 ⇒ 「靶场 取值合法」PASS。"""
+    rows = _ve_rows(_TARGET_CASE, _TARGET_PROFILE)
+    assert rows["靶场 取值合法"]["level"] == "PASS", rows["靶场 取值合法"]
+
+
+def test_named_target_without_registry_fails() -> None:
+    """坏输入 1（D157）：项目未声明 `e2e.targets` 而用例钉名 ⇒ FAIL（不猜）。"""
+    rows = _ve_rows(_TARGET_CASE)
+    assert rows["靶场 取值合法"]["level"] == "FAIL", rows["靶场 取值合法"]
+
+
+def test_named_target_unknown_name_fails() -> None:
+    """坏输入 2（D157）：钉名不在闭集内（白名单只放了别的名）⇒ FAIL。"""
+    rows = _ve_rows(_TARGET_CASE, "e2e:\n  targets:\n    other: /other-canvas\n")
+    assert rows["靶场 取值合法"]["level"] == "FAIL", rows["靶场 取值合法"]
+
+
+def _ve_rows_with_page_table(case: str, profile_extra: str = "") -> dict:
+    """`_ve_rows` + 带页面表的索引（路径门需要非空 `page_routes` 才启用）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        if profile_extra:
+            p = root / "product" / "stack-profile.yaml"
+            p.write_text(p.read_text(encoding="utf-8") + profile_extra, encoding="utf-8")
+        mk_cases(root, case)
+        mk_index(root, _with_page_table("已实现"))
+        return {c["check"]: c for c in ve.validate(root).checks}
+
+
+def test_named_target_route_accepted_by_goto_and_guard_gates() -> None:
+    """正向（D157）：`goto`/`守卫` 显式路径命中**已登记靶场路由** ⇒ 两道路径门放行。"""
+    body = _TARGET_CASE.replace(
+        "- click home-cta-btn",
+        "- goto /kb-canvas").replace(
+        "靶场: kb\n", "靶场: kb\n守卫: /kb-canvas\n", 1)
+    rows = _ve_rows_with_page_table(body, _TARGET_PROFILE)
+    assert rows["goto 路径 ∈ 页面表"]["level"] == "PASS", rows["goto 路径 ∈ 页面表"]
+    assert rows["守卫 路径 ∈ 页面表"]["level"] == "PASS", rows["守卫 路径 ∈ 页面表"]
+
+
+def test_unregistered_route_still_fails_gates() -> None:
+    """反向（D157）：路径门放行的只有**登记表内**路由——自由路径仍 FAIL（单源不破）。"""
+    body = CASE_GOOD.replace("- click home-cta-btn", "- goto /free-canvas")
+    rows = _ve_rows_with_page_table(body, _TARGET_PROFILE)
+    assert rows["goto 路径 ∈ 页面表"]["level"] == "FAIL", rows["goto 路径 ∈ 页面表"]
+    body2 = CASE_GOOD.replace("step:", "守卫: /free-canvas\nstep:", 1)
+    rows2 = _ve_rows_with_page_table(body2, _TARGET_PROFILE)
+    assert rows2["守卫 路径 ∈ 页面表"]["level"] == "FAIL", rows2["守卫 路径 ∈ 页面表"]
+
+
+# ── D157（2026-10-27）：`e2e.targets` 形状门（stack-profile 校验器）───────────────
+def test_stack_profile_targets_shape_pass() -> None:
+    """正向（D157）：合法 `targets` 登记 ⇒ 「e2e.targets 形态」PASS。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_profile(root, PROFILE_BASE.format(origin="greenfield")
+                   + "  targets:\n    kb: /kb-canvas\n")
+        res = vsp.validate(root)
+        assert _sp_check(res, "e2e.targets 形态")["level"] == "PASS", \
+            [(c["check"], c["level"], c["detail"]) for c in res.checks]
+
+
+def test_stack_profile_targets_bad_shape_fails() -> None:
+    """坏输入（D157）：路由不以 / 开头 ⇒ FAIL；名字含非法字符 ⇒ FAIL。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_profile(root, PROFILE_BASE.format(origin="greenfield")
+                   + "  targets:\n    kb: kb-canvas\n")
+        res = vsp.validate(root)
+        assert _sp_check(res, "e2e.targets 形态")["level"] == "FAIL", \
+            [(c["check"], c["level"], c["detail"]) for c in res.checks]
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_profile(root, PROFILE_BASE.format(origin="greenfield")
+                   + "  targets:\n    Bad_Name: /kb-canvas\n")
+        res = vsp.validate(root)
+        assert _sp_check(res, "e2e.targets 形态")["level"] == "FAIL", \
+            [(c["check"], c["level"], c["detail"]) for c in res.checks]
+
+
+def test_stack_profile_targets_absent_pass() -> None:
+    """零变化承诺（D157）：未声明 `targets` ⇒ 可选段 PASS（单靶场现行为）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_profile(root, PROFILE_BASE.format(origin="greenfield"))
+        res = vsp.validate(root)
+        assert _sp_check(res, "e2e.targets（可选段）")["level"] == "PASS", \
+            [(c["check"], c["level"], c["detail"]) for c in res.checks]

@@ -3179,3 +3179,98 @@ def test_generator_uses_configured_assets_root(tmp_path) -> None:
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert (root / "docs" / "e2e" / "scripts" / "home.spec.ts").is_file()
     assert not (root / "product" / "e2e" / "scripts").exists()
+
+
+# ── D157（2026-10-27）：`靶场:` 具名靶场 —— 用例级 URL + 基线分组 ───────────────
+PROFILE_TARGETS = PROFILE + "  targets:\n    kb: /kb-canvas\n"
+TARGET_CASE = CASE.replace("step:", "靶场: kb\nstep:", 1)
+
+
+def test_named_target_route_used_for_guard_and_baseline() -> None:
+    """正向（D157）：`靶场: kb` ⇒ 该用例守卫导航与所属基线组 URL = `e2e.targets.kb`。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=PROFILE_TARGETS, case=TARGET_CASE)
+        assert run(root, "--apply").returncode == 0
+        spec = spec_of(root)
+        assert "/kb-canvas" in spec, spec[:600]
+        # 具名组基线：`__kb` 后缀，且 URL 指向具名靶场
+        assert "test_home__zero_step_baseline__kb" in spec, spec[:600]
+        m = re.search(r"const ATLAS_ZS_home__kb = (\{.*?\});\n", spec, re.S)
+        assert m, spec[:800]
+        assert json.loads(m.group(1))["url"] == "/kb-canvas"
+
+
+def test_default_group_keeps_canonical_baseline_name() -> None:
+    """正向（D157）：default 组基线保持现名，且与具名组各自只收本组探针。"""
+    mixed = CASE + "\n" + CASE.replace("E2E-HOME-001", "E2E-HOME-002").replace(
+        "home-cta-btn", "home-cta-btn2").replace("home-title", "home-title2").replace(
+        "step:", "靶场: kb\nstep:", 1)
+    idx = INDEX.replace(
+        "| E2E-HOME-001 | home | 首页主操作可见 | smoke | AC-HOME-001 | | red | |",
+        "| E2E-HOME-001 | home | 首页主操作可见 | smoke | AC-HOME-001 | | red | |\n"
+        "| E2E-HOME-002 | home | 具名靶场用例 | smoke | AC-HOME-001 | | red | |")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=PROFILE_TARGETS, case=mixed, index=idx)
+        assert run(root, "--apply").returncode == 0
+        spec = spec_of(root)
+        assert "test_home__zero_step_baseline'" in spec, spec[:400]
+        assert "test_home__zero_step_baseline__kb" in spec, spec[:400]
+        d = re.search(r"const ATLAS_ZS_home = (\{.*?\});\n", spec, re.S)
+        dk = re.search(r"const ATLAS_ZS_home__kb = (\{.*?\});\n", spec, re.S)
+        assert d and dk, spec[:400]
+        # default 组只收 default 用例探针；具名组只收具名用例探针
+        assert all(p["label"].startswith("E2E-HOME-001") for p in json.loads(d.group(1))["probes"])
+        assert all(p["label"].startswith("E2E-HOME-002") for p in json.loads(dk.group(1))["probes"])
+
+
+def test_named_target_without_targets_declaration_aborts() -> None:
+    """坏输入 1（D157）：项目未声明 `e2e.targets` 而用例钉名 ⇒ 生成器中止（退出码 2）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=TARGET_CASE)
+        proc = run(root)
+        assert proc.returncode == 2, proc.stderr
+        assert "靶场" in proc.stderr, proc.stderr
+
+
+def test_named_target_unknown_name_aborts() -> None:
+    """坏输入 2（D157）：钉名不在 `e2e.targets` 闭集内 ⇒ 生成器中止（双保险的另一面）。"""
+    profile = PROFILE + "  targets:\n    other: /other-canvas\n"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=profile, case=TARGET_CASE)
+        proc = run(root)
+        assert proc.returncode == 2, proc.stderr
+        assert "闭集" in proc.stderr, proc.stderr
+
+
+def test_bad_targets_shape_aborts() -> None:
+    """坏输入 3（D157）：`targets` 路由不以 / 开头 ⇒ 形状门中止（与 profile 校验器双保险）。"""
+    profile = PROFILE + "  targets:\n    kb: kb-canvas\n"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=profile, case=TARGET_CASE)
+        proc = run(root)
+        assert proc.returncode == 2, proc.stderr
+        assert "e2e.targets" in proc.stderr, proc.stderr
+
+
+def test_no_targets_byte_identical_with_legacy() -> None:
+    """**零变化承诺**（D157）：未声明 `targets` 且无用例钉名 ⇒ 生成物与 beta.15 逐字节一致。
+
+    证法：同一用例在「旧版 profile（无 targets）」与「新版 profile（targets 空段）」下
+    各生成一次，产物逐字节一致；再用「带 targets 但用例不钉名」第三对照，仍逐字节一致。
+    """
+    case_kb_declared = PROFILE + "  targets: {}\n"
+    with tempfile.TemporaryDirectory() as t1, tempfile.TemporaryDirectory() as t2, \
+            tempfile.TemporaryDirectory() as t3:
+        r1, r2, r3 = Path(t1), Path(t2), Path(t3)
+        make(r1, profile=PROFILE, case=CASE)
+        make(r2, profile=case_kb_declared, case=CASE)
+        make(r3, profile=PROFILE_TARGETS, case=CASE)   # targets 有 kb，但用例不钉名
+        assert run(r1, "--apply").returncode == 0
+        assert run(r2, "--apply").returncode == 0
+        assert run(r3, "--apply").returncode == 0
+        assert spec_of(r1) == spec_of(r2) == spec_of(r3)

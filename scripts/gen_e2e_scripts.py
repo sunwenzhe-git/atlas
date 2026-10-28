@@ -1076,7 +1076,8 @@ def ts_mock_helpers(api_prefix: str, mode: str = "on") -> str:
     )
 
 
-def ts_zero_step_baseline(page: str, url: str, cases: list[dict], mock_vacuous: bool = False) -> str:
+def ts_zero_step_baseline(page: str, url: str, cases: list[dict], mock_vacuous: bool = False,
+                          target: str = "") -> str:
     """TS 版零步基线（契约 §5.6 R9；与 py_zero_step_baseline **同构**）。
 
     同一设计：断言清单落 `_data/zero_step_<page>.json`（label/expr/kind/sampling），
@@ -1084,6 +1085,8 @@ def ts_zero_step_baseline(page: str, url: str, cases: list[dict], mock_vacuous: 
     的 awaitable 串——与用例断言**同源渲染**，两条路径语义不可能漂。
     `mock_vacuous`（契约 §5.8，2026-10-12）：本页含 `mock:` 行 ⇒ 基线不挂桩，
     无后端环境下探针全 null = **空转守卫**——生成物显式注释标记（validate_e2e_mocks 侧 WARN）。
+    `target`（契约 §5.5，多靶场 beta.16）：具名靶场组 ⇒ 函数名加 `__<名>` 后缀
+    （default 组不带后缀 = 未用多靶场的项目逐字节不变）；URL 由调用方按组解析。
     """
     probes: list[dict] = []
     mock_exempt_cases: list[str] = []
@@ -1137,7 +1140,11 @@ def ts_zero_step_baseline(page: str, url: str, cases: list[dict], mock_vacuous: 
             })
     if not probes and not mock_vacuous:
         return ""
-    fn = re.sub(r"[^0-9a-zA-Z]+", "_", page).strip("_")
+    page_fn = re.sub(r"[^0-9a-zA-Z]+", "_", page).strip("_")
+    # 契约 §5.5（多靶场，beta.16）：具名靶场组 —— 数据变量名带后缀保唯一，测试名后缀在末尾
+    # （`test_<页>__zero_step_baseline__<名>`，与契约正文/出厂测试同一形态；default 组不带后缀）。
+    fn = page_fn + (f"__{re.sub(r'[^0-9a-zA-Z-]+', '_', target)}" if target else "")
+    test_name = f"test_{page_fn}__zero_step_baseline" + (f"__{target}" if target else "")
     data = json.dumps({"url": url, "probes": probes}, ensure_ascii=False, separators=(",", ":"))
     vacuous = ("  // 契约 §5.8：本页含 mock: 用例 —— 基线不挂桩，无后端环境下探针全 null = 空转守卫"
                "（validate_e2e_mocks 记 WARN；恒真守卫失效为知悉项）\n" if mock_vacuous else "")
@@ -1145,7 +1152,7 @@ def ts_zero_step_baseline(page: str, url: str, cases: list[dict], mock_vacuous: 
                   if mock_exempt_cases else "")
     return (
         f"const ATLAS_ZS_{fn} = {data};\n"
-        f"test('test_{fn}__zero_step_baseline', async ({{ page }}) => {{\n"
+        f"test('{test_name}', async ({{ page }}) => {{\n"
         f"{vacuous}"
         f"{exempt_cmt}"
         f"  await atlasZeroStepBaseline(page, ATLAS_ZS_{fn});\n"
@@ -1408,6 +1415,25 @@ def main() -> int:
                              ensure_ascii=False, indent=2))
         print(f"NOT_READY: {msg}", file=sys.stderr)
         return NOT_READY
+
+    # 契约 §5.4/§5.5（多靶场，beta.16）：具名靶场登记表 `e2e.targets`（可选；闭集）。
+    # 名字进生成测试名（`__<名>` 后缀）⇒ 只允 `[a-z0-9-]+`；路由形态同页面表 `路由` 列（`/` 开头）。
+    targets_raw = e2e.get("targets") if isinstance(e2e.get("targets"), dict) else {}
+    targets: dict[str, str] = {}
+    bad_targets: list[str] = []
+    for _t_name, _t_route in targets_raw.items():
+        _t_name = str(_t_name).strip()
+        _t_route = str(_t_route or "").strip()
+        if not re.fullmatch(r"[a-z0-9-]+", _t_name) or not _t_route.startswith("/"):
+            bad_targets.append(f"{_t_name}:{_t_route}")
+        else:
+            targets[_t_name] = _t_route
+    if bad_targets:
+        print("ERROR: e2e.targets 形状非法（名字应为 [a-z0-9-]+，路由应以 / 开头，契约 rings/e2e/reference.md §5.5）：",
+              file=sys.stderr)
+        for b in bad_targets[:20]:
+            print(f"  - {b}", file=sys.stderr)
+        return 2
 
     app_login = e2e.get("app_login") or None
     if app_login is None:
@@ -1748,6 +1774,21 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
+    # 契约 §5.5（多靶场，beta.16）：`靶场:` 取值闭集 —— 名字必须 ∈ `e2e.targets`；
+    # 整段未声明而用例钉名 ⇒ 中止（不猜、不静默降级；与 validate_e2e_index 文本期门双保险）。
+    bad_target_ref: list[str] = []
+    for _page, items in cases.items():
+        for c in items:
+            _t_name = str(c.get("靶场") or "").strip()
+            if _t_name and _t_name not in targets:
+                bad_target_ref.append(f"{c['id']}:{_t_name}")
+    if bad_target_ref:
+        print("ERROR: 用例 `靶场:` 不在 `e2e.targets` 闭集内（契约 rings/e2e/reference.md §5.5）：",
+              file=sys.stderr)
+        for b in bad_target_ref[:20]:
+            print(f"  - {b}", file=sys.stderr)
+        return 2
+
     # 独立审查门（契约 §12.6 / §7.1）：存在性挂在**写盘动作**上；dry-run 只报状态。
     gate_ok, gate_reasons, will_auto_heal = review_gate(root, prof, lay)
     if not gate_ok and args.apply:
@@ -1789,9 +1830,38 @@ def main() -> int:
         # 宿主注入型 base query（issue #27 / D104）：页面级 URL 先合并 ⇒ 零步基线 `data.url`
         # （**第三处**发射面：`atlasZeroStepBaseline` 内 `page.goto(data.url)`）与 `守卫:` 缺省值同享。
         url = url_merge.merge_base_query(urls[page], base or "")
+
+        # 契约 §5.4/§5.5（多靶场，beta.16）：用例级 `靶场:` ⇒ URL = `e2e.targets[<名>]`（闭集已验）；
+        # 缺省 = 页面表路由。零步基线按「解析后的靶场 URL」分组：default 组保持现名
+        # `test_<page>__zero_step_baseline`（未用多靶场的项目逐字节不变），具名组加 `__<名>` 后缀
+        # （R9 语义不缩水：每个靶场各验各的初始态；blocked/skipped 用例本就不进探针，不分组影响）。
+        def _case_target_name(c: dict) -> str:
+            return str(c.get("靶场") or "").strip()
+
+        def _case_url(c: dict) -> str:
+            t_name = _case_target_name(c)
+            if not t_name:
+                return url
+            return url_merge.merge_base_query(targets[t_name], base or "")
+
         for c in items:
             st = case_states.get(c.get("id", ""), ("", ""))
             c["_state"], c["_state_reason"] = st[0], st[1]
+
+        # 基线分组必须在 `_state` 回填**之后**计算（blocked/skipped 用例不进探针的判据读它）。
+        baseline_groups: dict[str, tuple[str, list]] = {}
+        for c in items:
+            t_name = _case_target_name(c)
+            if t_name not in baseline_groups:
+                baseline_groups[t_name] = (_case_url(c), [])
+            baseline_groups[t_name][1].append(c)
+        baseline_text = "".join(
+            ts_zero_step_baseline(page, g_url, g_items,
+                                  mock_vacuous=any(c.get("_mock") for c in g_items),
+                                  target=t_name)
+            + "\n"
+            for t_name, (g_url, g_items) in baseline_groups.items()
+        )
         # 契约 §5.5（B201-1）：`resolve` 导入**仅 upload 页**出现（零变化承诺——
         # 未使用 upload 的项目生成物逐字节不变）。
         page_uses_upload = any(
@@ -2045,8 +2115,8 @@ def main() -> int:
         request_cases = [c for c in items if case_uses_request(c)]
         body = (
             header
-            + ts_zero_step_baseline(page, url, items, mock_vacuous=page_has_mocks) + "\n"
-            + "\n".join(ts_case(c, url, base or "", esm_project) for c in normal_cases)
+            + baseline_text
+            + "\n".join(ts_case(c, _case_url(c), base or "", esm_project) for c in normal_cases)
         )
         write(scripts_dir / f"{page}{ext}", body, args.apply, results)
         request_path = scripts_dir / f"{page}.request{ext}"
@@ -2054,7 +2124,7 @@ def main() -> int:
             request_body = (
                 header
                 + "test.use({ trace: process.env.ATLAS_REQUEST_TRACE === '1' ? 'retain-on-failure' : 'off' });\n\n"
-                + "\n".join(ts_case(c, url, base or "", esm_project) for c in request_cases)
+                + "\n".join(ts_case(c, _case_url(c), base or "", esm_project) for c in request_cases)
             )
             write(request_path, request_body, args.apply, results)
         elif request_path.is_file():

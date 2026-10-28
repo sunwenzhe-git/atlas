@@ -26,7 +26,9 @@ _DICT_SECTIONS = ("graph", "backend_test")
 # `e2e` 下「缩进 2 且值为空」开子块的键（§2 e2e 表；`app_login` / `seed` / `mock` / `review`）
 # `query_preset`：宿主注入型 **URL 参数**白名单（2026-10-18，契约 §5.5 / `DESIGN.md` D109），
 # 与 `session_preset`（会话载体）对称：同为「前提面」而非「数据态面」。
-_E2E_SUBBLOCK_KEYS = ("app_login", "seed", "mock", "review", "session_preset", "query_preset")
+# `targets`（2026-10-27，多靶场）：具名靶场登记表（`名: 路由` 映射，闭集）；值非空的映射子块，
+# 走同一「缩进 2 开子块」通道（`cur = "targets"`），更深缩进的 `名: 路由` 逐条入子 dict。
+_E2E_SUBBLOCK_KEYS = ("app_login", "seed", "mock", "review", "session_preset", "query_preset", "targets")
 
 
 def strip_inline_comment(line: str) -> str:

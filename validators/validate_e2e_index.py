@@ -675,6 +675,7 @@ def validate(root: Path) -> Result:
     verb_bad, assert_bad, goto_param, contradict = [], [], [], []
     goto_path: list[str] = []
     auth_bad: list[str] = []
+    target_bad: list[str] = []   # `靶场:` 取值不在 `e2e.targets` 闭集内（多靶场，beta.16）
     guard_bad: list[str] = []
     session_bad: list[str] = []
     switch_bad: list[str] = []
@@ -706,6 +707,24 @@ def validate(root: Path) -> Result:
     _session_keys = _preset_keys("session_preset")
     _query_keys = _preset_keys("query_preset")
     _hash_query_keys = _preset_keys("query_preset", "hash_keys")
+
+    # 契约 §5.4/§5.5（多靶场，beta.16）：具名靶场登记表 `e2e.targets`（可选闭集）。
+    # 用例 `靶场:` 名字必须 ∈ 此表；表内路由与页面表路由同属「登记地址」——
+    # `goto` / `守卫` 路径门同样放行（地址仍单源于 stack-profile，不开放自由路径）。
+    def _named_targets() -> dict[str, str]:
+        if not _prof_path.is_file():
+            return {}
+        try:
+            cfg = stack_profile.parse_profile(_prof_path.read_text(encoding="utf-8")).get("e2e") or {}
+        except Exception:
+            return {}
+        t = cfg.get("targets") if isinstance(cfg, dict) else None
+        if not isinstance(t, dict):
+            return {}
+        return {str(k).strip(): str(v or "").strip() for k, v in t.items() if str(k).strip()}
+
+    _named_targets_map = _named_targets()
+    _target_routes = list(_named_targets_map.values())
     nested_prefix, unchanged_no_action = [], []
     initial_no_reason = []
     after_bad = []
@@ -850,7 +869,8 @@ def validate(root: Path) -> Result:
             p = parts[1].strip()
             # 契约 §5.5（2026-10-18，D109 / 2026-10-22 hash 查询）：`goto` 可带常规查询与
             # hash 查询 ⇒ 路径门按**去双查询后的路径形态**匹配（`_route_hit` 内部同口径）。
-            if _route_hit(p, page_routes):
+            # 契约 §5.4/§5.5（多靶场，beta.16）：已登记靶场路由同属「登记地址」，同门放行。
+            if _route_hit(p, page_routes) or _route_hit(p, _target_routes):
                 continue
             goto_path.append(f"{g['用例ID']}:{p}")
         # 契约 §5.7（2026-09-30 补）：`auth` 取值白名单（preset | none）——文本期挡住，
@@ -858,6 +878,11 @@ def validate(root: Path) -> Result:
         auth = d.get("auth", "preset")
         if auth not in ("preset", "none"):
             auth_bad.append(f"{g['用例ID']}:auth={auth}")
+        # 契约 §5.4/§5.5（多靶场，beta.16）：`靶场:` 取值闭集 —— 名字必须 ∈ `e2e.targets`；
+        # 整段未声明而用例钉名 ⇒ FAIL（与生成器中止双保险，不猜）。
+        _target_decl = d.get("靶场")
+        if isinstance(_target_decl, str) and _target_decl.strip() and _target_decl.strip() not in _named_targets_map:
+            target_bad.append(f"{g['用例ID']}:{_target_decl.strip()}")
         # 契约 §5.5（2026-10-16 补，issue #13）：`会话:` 行形态 + 键白名单。
         # 与生成器中止**双保险**（文本期挡 + 生成期中止）：白名单是项目级声明，
         # 防把「数据态」走私成会话参数（§5.7 禁令不破）。
@@ -891,7 +916,8 @@ def validate(root: Path) -> Result:
             # 出现绕过 `parse_block` 的带注释原始值（上游 F1 之后端到端已造不出污染值），
             # 本门也不把注释当路径。与 `goto` 门 / `会话` 门共用同一 `strip_inline_comment`。
             _guard_path = strip_inline_comment(_guard).strip()
-            if page_routes and not _route_hit(_guard_path, page_routes):
+            # 契约 §5.4/§5.5（多靶场，beta.16）：已登记靶场路由同属「登记地址」，同门放行。
+            if page_routes and not _route_hit(_guard_path, page_routes) and not _route_hit(_guard_path, _target_routes):
                 guard_bad.append(f"{g['用例ID']}:{_guard_path}")
 
         # 契约 §5.6 R7（2026-09-23 补；**2026-09-25 修正为真矛盾对**）：同一条用例内，对同一
@@ -1083,6 +1109,8 @@ def validate(root: Path) -> Result:
     res.add("守卫 路径 ∈ 页面表", "PASS" if not guard_bad else "FAIL",
             f"页面表外路径={_format_list(guard_bad)}（契约 §5.5：守卫导航用的具体路径也不得私藏于分片）" if guard_bad else "")
     res.add("auth 取值合法", "PASS" if not auth_bad else "FAIL", f"白名单外（允许 preset|none）={_format_list(auth_bad)}")
+    res.add("靶场 取值合法", "PASS" if not target_bad else "FAIL",
+            f"不在 `e2e.targets` 闭集内 / 未登记即钉名={_format_list(target_bad)}（契约 §5.4/§5.5：具名靶场必须先在 stack-profile 登记）" if target_bad else "")
     res.add("会话 取值合法", "PASS" if not session_bad else "FAIL",
             f"形态非法 / 白名单外={_format_list(session_bad)}（契约 §5.5：键须在 `e2e.session_preset.keys` 内）" if session_bad else "")
     res.add("参数 声明有效", "PASS" if not inject_bad else "FAIL",

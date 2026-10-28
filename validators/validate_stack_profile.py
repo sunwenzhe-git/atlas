@@ -217,6 +217,26 @@ def validate(root: Path) -> Result:
         res.add("e2e.session_preset（可选段）", "PASS",
                 "未声明 = 不允许任何会话预设（用例出现 `会话:` 行 ⇒ 校验器 FAIL + 生成器中止）")
 
+    # 契约 rings/e2e/reference.md §5.4/§5.5（多靶场，beta.16）：具名靶场登记表
+    # `e2e.targets`（可选；闭集）。名字进生成测试名（`__<名>` 后缀）⇒ `[a-z0-9-]+`；
+    # 路由形态同页面表 `路由` 列（`/` 开头）。未声明 = 单靶场（现行为，逐字节不变）。
+    targets = e2e_prof.get("targets") if isinstance(e2e_prof, dict) else None
+    if isinstance(targets, dict) and targets:
+        bad_targets: list[str] = []
+        for t_name, t_route in targets.items():
+            if not re.fullmatch(r"[a-z0-9-]+", str(t_name)):
+                bad_targets.append(f"{t_name}:名字应为[a-z0-9-]+")
+            if not str(t_route or "").strip().startswith("/"):
+                bad_targets.append(f"{t_name}:路由应以/开头")
+        res.add("e2e.targets 形态", "PASS" if not bad_targets else "FAIL",
+                f"非法条目={bad_targets[:8]}（名字 [a-z0-9-]+；路由以 / 开头）" if bad_targets
+                else f"{len(targets)} 个具名靶场已登记")
+    elif targets is not None:
+        res.add("e2e.targets 段形态", "FAIL", f"值={targets!r}（应为 `名: 路由` 映射或 null）")
+    else:
+        res.add("e2e.targets（可选段）", "PASS",
+                "未声明 = 单靶场（用例出现 `靶场:` 行 ⇒ 校验器 FAIL + 生成器中止）")
+
     app_login = e2e_prof.get("app_login") if isinstance(e2e_prof, dict) else None
     if isinstance(app_login, dict) and app_login:
         m = app_login.get("mode")
