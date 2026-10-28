@@ -3274,3 +3274,33 @@ def test_no_targets_byte_identical_with_legacy() -> None:
         assert run(r2, "--apply").returncode == 0
         assert run(r3, "--apply").returncode == 0
         assert spec_of(r1) == spec_of(r2) == spec_of(r3)
+
+
+# ── D158（2026-10-27）：`fill` 空串约定 —— 值 `""` / `(空)` = 清空输入 ────────────
+FILL_CLEAR_CASE = CASE.replace(
+    "  - click home-cta-btn          # 点击主操作按钮",
+    '  - fill home-title ""            # 清空标题输入').replace(
+    "  - text home-title 首页        # 页面标题文案为「首页」",
+    "  - value home-title \"\"           # 清空后为空")
+
+
+def test_fill_empty_string_clears_input() -> None:
+    """正向（D158）：`fill <tid> ""` ⇒ 发射 `fill("")`（清空），不是字面两个引号字符。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=FILL_CLEAR_CASE)
+        assert run(root, "--apply").returncode == 0
+        spec = spec_of(root)
+        assert '.fill("")' in spec, spec[:600]
+        assert 'fill("\\"\\"")' not in spec, spec[:600]
+
+
+def test_fill_plain_value_unchanged() -> None:
+    """零变化面（D158）：普通值 fill 与旧口径逐字节一致（不含空串特例形态）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=CASE.replace(
+            "  - click home-cta-btn          # 点击主操作按钮",
+            "  - fill home-title 新标题       # 填入新标题"))
+        assert run(root, "--apply").returncode == 0
+        assert 'await page.getByTestId(\'home-title\').first().fill("新标题");' in spec_of(root)

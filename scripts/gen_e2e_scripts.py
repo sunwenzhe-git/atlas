@@ -665,7 +665,11 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
                 f"await {tid_locator(tid)}.click("
                 f"{step_force_arg(verb, value, s, cid).strip()});")
         elif verb == "fill":
-            actions.append(f"await {tid_locator(tid)}.fill({json.dumps(value, ensure_ascii=False)});")
+            # 契约 §5.5（beta.17，D158）：`fill` 值 `""` / `(空)` = 清空输入（与 value 断言的 B173-1
+            # 空串约定对称）——Playwright fill('') 即先清后写；此前字面发射两个引号字符
+            # （现场：搜索框被填进 `""` 字面量 ⇒ 过滤恒不命中，用例无法表达「清空即恢复」判据）。
+            _fill_value = "" if value.strip() in ('""', "(空)") else value
+            actions.append(f"await {tid_locator(tid)}.fill({json.dumps(_fill_value, ensure_ascii=False)});")
         elif verb == "select":
             # 契约 §5.5（B173-1）：发射实现无关 helper，不再钉死原生 `<select>` ——
             # 语义 = 「选中 label 的那一项」，DOM 机制由 helper 按元素自适应。
