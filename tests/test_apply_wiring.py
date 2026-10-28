@@ -3,7 +3,7 @@
 
 覆盖：
   1. AGENTS.md atlas 指针块写入与幂等更新；
-  2. .trellis/config.yaml after_finish hook 登记与幂等；
+  2. .trellis/config.yaml after_archive hook 登记、幂等与 after_finish 迁移；
   3. Python 工程探测与 pytest 配置兜底（R6.2 对账定稿：pyproject.toml 优先承载、
      既有 ini 只补 marker、pythonpath 环境补丁随 F23 退役不再注入、非 Python 跳过）。
      探测**只认声明**：出厂模板的 `backend_test:` 是注释示例，按 raw 文本匹配会把纯前端
@@ -148,9 +148,9 @@ def test_wire_python_scaffold_keeps_user_edited_ini() -> None:
         assert (root / "pytest.ini").read_text(encoding="utf-8") == edited
 
 
-def test_wire_config_upgrades_legacy_apply_hook_in_place() -> None:
-    """C1（R7）：存量 `--apply` hook ⇒ 原位升级为 `--chain`；**不得**插入第二行
-    （否则旧+新双 hook 常驻，每次 finish refresh 跑两遍——R6 现场教训变体）。"""
+def test_wire_config_migrates_legacy_after_finish_hook() -> None:
+    """D159：收口事件是 after_archive（`task.py archive` 触发），旧形态 after_finish
+    （只清活动指针）会被迁移；存量 `--apply` 尾参一并升级为 `--chain`；**不得**双行常驻。"""
     wiring = load_wiring()
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -162,15 +162,90 @@ def test_wire_config_upgrades_legacy_apply_hook_in_place() -> None:
             '    - "python3 .atlas/scripts/refresh_structure.py --root . --apply"\n',
             encoding="utf-8")
         res = wiring.wire_config(root)
-        assert res["status"] == "applied" and "in-place" in res["detail"], res
+        assert res["status"] == "applied" and "migrated" in res["detail"], res
         new_text = res["_write"][1]
         res["_write"][0].write_text(new_text, encoding="utf-8")  # 应用写盘，再验幂等
         assert new_text.count("refresh_structure.py") == 1, new_text
-        assert "--chain" in new_text and "--apply" not in new_text
+        assert "after_archive:" in new_text and "--chain" in new_text
+        assert "--apply" not in new_text
+        assert "after_finish:" not in new_text, new_text  # 子块被搬空 ⇒ 键行一并清理
+        assert new_text.index("after_archive:") < new_text.index("refresh_structure.py")
 
-        # 幂等：已是 --chain ⇒ skipped
+        # 幂等：已在 after_archive ⇒ skipped
         res2 = wiring.wire_config(root)
         assert res2["status"] == "skipped", res2
+
+
+def test_wire_config_keeps_other_events_and_adds_archive() -> None:
+    """既有其它事件（after_create）保留；只补 after_archive。"""
+    wiring = load_wiring()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        cfg = root / ".trellis" / "config.yaml"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            "hooks:\n  after_create:\n    - \"echo created\"\n",
+            encoding="utf-8")
+        res = wiring.wire_config(root)
+        assert res["status"] == "applied", res
+        new_text = res["_write"][1]
+        assert "after_create:" in new_text and "echo created" in new_text
+        assert "after_archive:" in new_text
+        assert new_text.index("after_create:") < new_text.index("after_archive:")
+
+
+def test_wire_config_disables_auto_commit_by_default() -> None:
+    """D160：接线默认写 `session_auto_commit: false`（不让归档自动 commit）；重跑幂等。"""
+    wiring = load_wiring()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        cfg = root / ".trellis" / "config.yaml"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text('hooks:\n  after_archive:\n    - "echo archived"\n', encoding="utf-8")
+        res = wiring.wire_config(root)
+        assert res["status"] == "applied", res
+        text = res["_write"][1]
+        assert "session_auto_commit: false" in text, text
+        res["_write"][0].write_text(text, encoding="utf-8")
+
+        res2 = wiring.wire_config(root)
+        assert res2["status"] == "skipped", res2
+
+
+def test_wire_config_disables_auto_commit_at_template_comment() -> None:
+    """出厂模板把该键写成注释示例 ⇒ 原位替换为生效的 false，不新增第二个键。"""
+    wiring = load_wiring()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        cfg = root / ".trellis" / "config.yaml"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            "# session_auto_commit: true\n"
+            "hooks:\n  after_archive:\n    - \"echo archived\"\n",
+            encoding="utf-8")
+        res = wiring.wire_config(root)
+        assert res["status"] == "applied", res
+        text = res["_write"][1]
+        assert "session_auto_commit: false" in text
+        assert "# session_auto_commit: true" not in text
+        assert sum(1 for ln in text.splitlines() if ln.startswith("session_auto_commit:")) == 1
+
+
+def test_wire_config_respects_explicit_auto_commit() -> None:
+    """用户显式设置该键 ⇒ 尊重不动（true 也不强改）。"""
+    wiring = load_wiring()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        cfg = root / ".trellis" / "config.yaml"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            "session_auto_commit: true\n"
+            "hooks:\n  after_archive:\n"
+            '    - "python3 .atlas/scripts/refresh_structure.py --root . --chain"\n',
+            encoding="utf-8")
+        res = wiring.wire_config(root)
+        assert res["status"] == "skipped", res
+        assert "session_auto_commit: true" in cfg.read_text(encoding="utf-8")
 
 
 def test_wire_config_preserves_custom_hook_without_second_line() -> None:

@@ -47,7 +47,7 @@ Atlas 的核心结构是**两层正交**（也常被称作**双线束模型**：
 - **atlas 包本体 → 项目的 `.atlas/`**：全套契约（每个环的 `reference.md`）、模板、校验脚本、适配器（含图谱隔离层 `_graph.py` 与 `impact_report.py`）、`_support/` 内核整包复制。这是日后所有规则与机器校验的**唯一正本**，skill 与文档都指回这里，不存第二份。装配完成生成 `.atlas/VERSION` 装配版本戳（内容摘要比对）。
 - **skill 瘦桩 → 平台 skill 目录**：装一组轻量入口文件（`atlas-structure` / `atlas-prd` / `atlas-e2e` / `atlas-apply` / `atlas-design-review`）。**「桩」**是平台只有看到 SKILL.md 才能触发能力；**「瘦」**是文件本身不装规则，第一步就指回 `.atlas/` 正本，避免两处漂移。
 - **Plan 步骤锚点补丁 → `.trellis/workflow.md`**：在 Phase 1 末尾插入 `#### 1.6 项目级资产更新`，让每条需求在进实现前必须先跑 `atlas apply`。补丁对准 Trellis 模板里的稳定标记插入，用带指纹的开始/结束标记包住，幂等可重放。
-- **两处接线**：`.trellis/config.yaml` 加 `after_finish` hook（任务收口后自动刷新结构事实，刷新前强制用前现刷）；项目 `AGENTS.md` 加一段指针，agent 一进场就知道 atlas 在哪、入口是什么。
+- **两处接线**：`.trellis/config.yaml` 加 `after_archive` hook（任务收口后自动刷新结构事实，刷新前强制用前现刷）；项目 `AGENTS.md` 加一段指针，agent 一进场就知道 atlas 在哪、入口是什么。
 
 装完后**唯一要人做的**：填 `<资产根>/stack-profile.yaml`（默认 `product/stack-profile.yaml`）——它是 Atlas 认识这个项目的唯一入口档案，核心只读它，契约与模板里都不写死任何具体框架名。
 

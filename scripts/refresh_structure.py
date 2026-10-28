@@ -219,7 +219,7 @@ API_HEADER = ["方法", "路径", "用途", "请求要点", "响应要点", "来
 MODEL_HEADER = ["表/模型", "字段", "类型", "约束/默认", "关系", "枚举"]
 
 
-# ---- 单元格「写出 ⇒ 读回」不变式（2026-10-16，issue #16；RFC-20261016-01 D84）----
+# ---- 单元格「写出 ⇒ 读回」不变式（2026-10-16，issue #16；RFC-20261016-01 D85）----
 #
 # 病根：render_table 只转义裸 `|`，假定单元格单行；适配器给多行取值（类型字面量等）时该
 # 行在盘面断成多行 ⇒ parse_rows 丢掉首行（列数不符）、跳过续行（不以竖线开头）⇒① 事实
@@ -236,7 +236,7 @@ def cell_text(v) -> str:
 
 
 def _norm(s) -> str:
-    """行键归一化：`<br>` 与换行**等价**（D84；2026-10-16，issue #16）。
+    """行键归一化：`<br>` 与换行**等价**（D85；2026-10-16，issue #16）。
 
     缺了这条时：适配器原值（真换行）与盘面读回值（`<br>`）归一化后不等 ⇒ 键列含换行时
     `old_rows_by_key` 读不回 ⇒ 与写侧单行化要治的是同一族幻影漂移。
@@ -312,7 +312,7 @@ def render_table(header: list[str], rows: list[list[str]], *, where: str = "") -
     lines = ["| " + " | ".join(header) + " |", "|" + "|".join("---" for _ in header) + "|"]
     want: list[list[str]] = []
     for cells in rows:
-        # 单行化（D84）：多行取值不得把一行撑成多行——盘面断行就是丢行 + 幻影漂移
+        # 单行化（D85）：多行取值不得把一行撑成多行——盘面断行就是丢行 + 幻影漂移
         c = [cell_text(x) for x in (list(cells) + [""] * len(header))[: len(header)]]
         want.append([x.strip() for x in c])
         # 单元格内的裸 `|` 转义，保证「写出 ⇒ parse_rows 读回」往返一致（见 parse_rows 注）
@@ -322,7 +322,7 @@ def render_table(header: list[str], rows: list[list[str]], *, where: str = "") -
 
 
 def _selfcheck_round_trip(header: list[str], want: list[list[str]], lines: list[str], where: str) -> None:
-    """渲染即自校（D84 条 3）：对**渲染出的字符串**逐单元格比对，与是否写盘解耦
+    """渲染即自校（D85 条 3）：对**渲染出的字符串**逐单元格比对，与是否写盘解耦
 
     （dry-run 同样出品）。取 WARN 不取硬错：本脚本是 `after_finish` hook，契约规定
     hook 失败只告警、不阻塞任务（`rings/structure/reference.md` §8）。真正会咬的门是
@@ -345,7 +345,7 @@ def _selfcheck_round_trip(header: list[str], want: list[list[str]], lines: list[
                 break
     if bad:
         print(f"WARN[render_table] 「写出 ⇒ 读回」不变式不成立（{where or '未命名表'}）：{bad}"
-              " —— 事实区可能已损坏（丢行 / 幻影漂移）；见 RFC-20261016-01 D84", file=sys.stderr)
+              " —— 事实区可能已损坏（丢行 / 幻影漂移）；见 RFC-20261016-01 D85", file=sys.stderr)
 
 
 def write_facts(path: Path, body_lines: list[str], apply: bool, results: list[dict]) -> None:

@@ -4,6 +4,19 @@
 
 ---
 
+## [v0.2.0-beta.18] - 2026-10-28
+
+### 🔌 项目接线：结构事实刷新钩子改挂 `after_archive`（D159）
+
+* **修复**：Trellis 的 `after_finish` 只清活动任务指针、不搬目录；归档（`task.py archive`，也是 `/trellis-finish-work` 的实际动作）只触发 `after_archive`。原接线（D38 的 `after_finish`）在「收尾即归档」的流程里几乎不触发，收口时刻结构事实不刷新。
+* **变更**：`patches/project-wiring/apply-wiring.py` 改登记 `after_archive`；存量 `after_finish` 中的同一条 refresh 命令**迁移**过去（自定义尾参 hook 原样保留），同一任务只挂一处、避免双跑。
+* **注释勘误**：`scripts/refresh_structure.py` 与 `tests/test_refresh_facts.py` 把「写出 ⇒ 读回」不变式的决策号由 D84 更正为 **D85**（D84 是路由挂载前缀合成）。
+* **同步面**：`shared/gates.md`、`rings/structure/reference.md`、`apply/reference.md`、`patches/project-wiring/README.md`、`agent-pointer.md`、`patches/workflow-plan-apply/1.6-plan-apply.insert.md`、`install.sh` 自检文案、`docs/**`。
+* **测试**：`tests/test_apply_wiring.py` / `tests/test_project_wiring.py` 更新并新增迁移用例。
+* **新增（D160）**：接线默认写 `session_auto_commit: false`——Trellis 归档/记账不再自动 commit，提交由人 review；用户显式设置的键尊重不动。
+
+---
+
 ## [v0.2.0-beta.17] - 2026-10-27
 
 ### ✨ `fill` 空串约定：值 `""` / `(空)` = 清空输入（D158）

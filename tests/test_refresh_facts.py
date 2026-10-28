@@ -268,7 +268,7 @@ def test_pipe_in_cell_value_round_trips() -> None:
 
 
 def test_multiline_cell_value_round_trips() -> None:
-    """回归（2026-10-16，issue #16；RFC-20261016-01 D84）：适配器给**多行取值**时（对象 /
+    """回归（2026-10-16，issue #16；RFC-20261016-01 D85）：适配器给**多行取值**时（对象 /
     函数类型字面量等），原实现原样写进单元格 ⇒ 该行在盘面断成多行 ⇒ `parse_rows` 丢掉首行
     （列数不符）、跳过续行（不以竖线开头）⇒ ① 事实丢行；② 键读不回 ⇒ 每轮刷新都判「新增」
     ⇒ 漂移标记常驻、baseline 棘轮永不释放。写侧单行化（换行 → `<br>`）后必须往返一致。
@@ -291,7 +291,7 @@ def test_multiline_cell_value_round_trips() -> None:
         }, ensure_ascii=False), encoding="utf-8")
         r1 = run(root, "--apply")
         assert r1.returncode == 0, r1.stderr + r1.stdout
-        # 渲染即自校（D84 条 3）必须在不变式成立时静默
+        # 渲染即自校（D85 条 3）必须在不变式成立时静默
         assert "WARN[render_table]" not in r1.stderr, r1.stderr
         dm = (sd / "current" / "home" / "data-models.md").read_text(encoding="utf-8")
         # ① 行结构保留：换行变 `<br>`，不得被空格把两个成员粘平
@@ -310,7 +310,7 @@ def test_multiline_cell_value_round_trips() -> None:
 
 
 def test_key_column_with_newline_does_not_phantom_drift() -> None:
-    """D84 条 2（2026-10-16，评审 F3）：**行键列自身含换行**时，适配器原值（真换行）与
+    """D85 条 2（2026-10-16，评审 F3）：**行键列自身含换行**时，适配器原值（真换行）与
     盘面读回值（`<br>`）必须归一化等价，否则仍是同一族幻影漂移（键读不回 ⇒ 判「新增」）。
 
     变异：`_norm` 退回 `" ".join(str(s).split())` ⇒ 本用例红（第二轮报漂移）。

@@ -43,7 +43,7 @@ atlas init --assets-root docs
 1. **整包镜像**：把契约、环文档、校验器、模板、适配器整包复制到项目 `.atlas/`（日后所有规则与机器校验的唯一正本；skill 与文档都指回这里，不存第二份）；
 2. **下发专用 Skills 瘦桩**：按探测到的平台目录（`.agents/skills/`、`.claude/skills/`、`.codex/skills/`）各装一份轻量入口——`atlas-structure`、`atlas-prd`、`atlas-e2e`、`atlas-apply`、`atlas-grill`、`atlas-design-review`、`frontend-design`。桩本身不装规则，第一步就指回 `.atlas/`；
 3. **注入工作流补丁组**：向 `.trellis/` 注入补丁组（Phase 1.6 资产更新挂载、阶段技能路由、根因分析优先红用例）与项目接线——对准模板里的稳定标记定位、用带指纹的标记包住，幂等可重放（Trellis 升级重写该文件后，重跑 `install.sh` 即自动对齐）；
-4. **三处接线 + 只读审查 Agent**：`.trellis/config.yaml` 加 `after_finish` hook（每次任务收口后自动刷新结构事实）、项目 `AGENTS.md` 加一段指针、*（pi 宿主）*`.pi/` 下落地并登记 `/atlas` 控制台扩展（`/atlas status` 报**开户态**——「装配 ≠ 开户」，非 pi 项目不创建 `.pi/`），并下发 `atlas-reviewer` 只读审查者配置（工具集不含写文件与 bash）。
+4. **三处接线 + 只读审查 Agent**：`.trellis/config.yaml` 加 `after_archive` hook（每次任务收口后自动刷新结构事实）、项目 `AGENTS.md` 加一段指针、*（pi 宿主）*`.pi/` 下落地并登记 `/atlas` 控制台扩展（`/atlas status` 报**开户态**——「装配 ≠ 开户」，非 pi 项目不创建 `.pi/`），并下发 `atlas-reviewer` 只读审查者配置（工具集不含写文件与 bash）。
 
 **两步卫生件**：清理历史遗留 / 已退役的 skill；建资产根骨架（默认 `product/`；由 `atlas.config.yaml` 解析，已有内容永不覆盖）。
 

@@ -53,7 +53,7 @@
 
 ## 3. 参与环与顺序
 
-`apply <需求ID>` 按 **`prd → e2e`** 顺序处理；`structure` **不参与**该增量（它是 apply 的**输入**，不是产出——实然事实在实现后由 `after_finish` hook 与 `trellis-update-spec` 维护）。
+`apply <需求ID>` 按 **`prd → e2e`** 顺序处理；`structure` **不参与**该增量（它是 apply 的**输入**，不是产出——实然事实在实现后由 `after_archive` hook 与 `trellis-update-spec` 维护）。
 
 **唯一例外（有界）**：若本次 PRD 定稿**改变了域清单**（合并 / 拆分 / 改名），在 `prd` 之后追加一次 structure **re-key**（按 `rings/structure/reference.md` §2.2：按最终域重排 `.trellis/spec/structure/{current,legacy}/<domain>/` 目录并回写 `_meta.json.domains` / `tour.md`，**不重读代码**）。除该情形外，apply 不写结构事实。
 
@@ -71,14 +71,14 @@
 2. **这次是否需要人来确认应然 UI / 流程**？**是** ⇒ `prd` 六件套（用户流程 / 状态机 / 字段 / 文案 / 异常）落细 **+ 派生「用户旅程走查」并取得用户确认（`rings/prd/reference.md` §4·八；确认前不得进 `e2e` 环）**；应然 UI 的 testid 应然随用例分片产出（E1：原型环已移除）。
 3. **这次是否需要可重复的验收**（超出 lint / test / typecheck 的能力）？**是** ⇒ E2E 环参与。
 
-- **三问全否 ⇒ 只走 `structure` + Trellis**：atlas 三环记 `不适用`，报告里必须留一行 `本需求判定：纯加法 / 不启用三环` + 依据。**这是一条合法路径，不是绕过工作流**——结构事实仍由 `after_finish` hook 保鲜，实现任务照旧拿到路径注入的事实。
+- **三问全否 ⇒ 只走 `structure` + Trellis**：atlas 三环记 `不适用`，报告里必须留一行 `本需求判定：纯加法 / 不启用三环` + 依据。**这是一条合法路径，不是绕过工作流**——结构事实仍由 `after_archive` hook 保鲜，实现任务照旧拿到路径注入的事实。
 - **`prd` 不再恒参与**（原口径：任何需求至少在域级 PRD / 追溯总表留一条）。它在**资产为空的旧项目**上等于「第一个小需求就要写全套项目级 PRD」——成本炸弹，而且与 §2 输入表（要求资产已存在）自相矛盾。改为按上面的门判定；若判定「本需求不改任何应然资产」（纯内部重构且不影响产品定义），apply 报告 `no-op` 并写明依据，**不**强改资产。
 - **两条报告口径**并列**，可同段共存**（2026-09-27 补，`3509 §B91`）：① 三问全否 ⇒ 写 `本需求判定：纯加法 / 不启用三环` + 依据；② 本需求不改任何应然资产 ⇒ 写 `no-op` + 依据。一个需求可以**两条同时命中**（如「新增一个与产品无关的通用工具函数」：既三问全否，又不碰任何应然资产）——此种情形**两行都写**，不择一、也无优先序。
 - **门是语义判断，机器判不了**（与 `§8 末注` 同源）：所以要求把**判定 + 依据**写进 `atlas-apply.md`，让复核者一眼看出它有没有偷懒。
 - **E2E 首跑取证兜底（2026-10-16，`RFC-20261015-02` / issue #11）**：第 3 问判「是」且 `e2e.app_login` 仍未声明 ⇒ 向用户**追问一次**（`real` 四值 / `mode: none` / `fabricated` + `storage_key`，三选一必须显式），落 `product/stack-profile.yaml` 后再进 e2e 环。追问是 UX 加速器，不是判据——机器判据是生成器 `not_ready`（升档 = 下一次真跑准备日，`shared/gates.md`「E2E 真跑」行）；adopt 开户已问过（同批「靶场接入取证」）的项目此处自然不触发。
 - **环间人工门（E1 起；2026-09-29 重议 = `3507 AQ`，B124 结论）**：两道人侧门——① **走查单确认门（实现前，硬）**：改变应然 UI 的需求，域级 PRD 的「用户旅程走查」节须用户显式确认（节首 `已确认：<日期>`；`rings/prd/reference.md` §4·八，确认前对照 `product/design.md`（存在时）视觉方向，`3507 BE`），确认前 **`apply` 不得进 `e2e` 环**；② **验收走查门（收口前）**：该域 E2E 在真实应用全 green 后，用户按域级 PRD 功能清单逐条在真实应用上过一遍（可用 + 符合已确认走查单），确认后才算域收口；不符 ⇒ 差异登记且域不收口；真实应用不可用 ⇒ 与 E2E 同为 `blocked` 显式带原因（`rings/e2e/reference.md` §5.4 末）。`e2e` 用例另走独立审查门（`rings/e2e/reference.md` §12）+ 首跑分类协议（同文件 §5.4）。原型增量人工 review 门已随环退役（`3508 §92`）。
 - **走查单确认门的机器面（2026-10-23，`RFC-20261022-01` M1）**：`validators/validate_walkthrough.py` 读本报告（`atlas-apply.md`）第 2 问**已写下**的判定，与 `product/prd/<domain>-prd.md` 的 `> 已确认：YYYY-MM-DD` 行对账。因此报告里第 2 问的答句必须写成「是 / 否」开头；受影响域以报告内对 `product/prd/<domain>-prd.md` 的路径引用为准（解析不到 ⇒ WARN 要求人工核对）。本器只判「写下的『是』与确认行的对账」，不判三问语义对错（那仍归人）。
-- 结构事实的**实现后**回写不属于 apply：由 `after_finish` hook（`refresh_structure.py`，事实区）与 Finish 的 `trellis-update-spec`（语义区）负责（D38）。
+- 结构事实的**实现后**回写不属于 apply：由 `after_archive` hook（`refresh_structure.py`，事实区）与 Finish 的 `trellis-update-spec`（语义区）负责（D38）。
 
 `all` 模式的顺序固定为 **`structure → prd → e2e`**（含 structure 全量）。
 

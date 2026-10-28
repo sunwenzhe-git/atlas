@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """atlas 项目接线的回归测试。
 
-守护「install.sh 把 AGENTS.md 指针 + after_finish hook 幂等写进目标项目」：
+守护「install.sh 把 AGENTS.md 指针 + after_archive hook 幂等写进目标项目」：
   * AGENTS.md：插在 `<!-- TRELLIS:END -->` 之后；重跑幂等；缺文件创建；区块更新；标记不成对报错且不改。
-  * config.yaml：无 hooks 时新增；有 hooks 时并入；有 after_finish 时追加；重跑幂等。
+  * config.yaml：无 hooks 时新增；有 hooks 时并入；旧 after_finish 迁移到 after_archive；重跑幂等。
   * dry-run 不写。
 
 两种运行方式：
@@ -164,10 +164,12 @@ def test_config_insert_into_existing_hooks() -> None:
         text = f.read_text(encoding="utf-8")
         assert HOOK_CMD in text
         assert "after_create:" in text
+        assert "after_archive:" in text
         assert top_hooks_count(text) == 1
 
 
-def test_config_insert_after_existing_after_finish() -> None:
+def test_config_migrates_legacy_after_finish() -> None:
+    """D159：旧 after_finish 里的 refresh hook 迁移到 after_archive；自定义 hook 原样保留。"""
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         f = write(tmp, ".trellis/config.yaml", CONFIG_WITH_AFTER_FINISH)
@@ -176,7 +178,13 @@ def test_config_insert_after_existing_after_finish() -> None:
         text = f.read_text(encoding="utf-8")
         assert HOOK_CMD in text
         assert '"echo old"' in text
+        assert "after_archive:" in text
         assert top_hooks_count(text) == 1
+        # 旧的 after_finish 子块仍在（自定义 echo old），但不得再含 refresh 命令
+        finish_i = text.index("after_finish:")
+        archive_i = text.index("after_archive:")
+        cmd_i = text.index("refresh_structure.py")
+        assert finish_i < archive_i and cmd_i > archive_i, text
 
 
 def test_config_idempotent() -> None:
@@ -242,7 +250,7 @@ def main() -> int:
         test_agents_unbalanced_markers_error_without_writing,
         test_config_new_hooks_block,
         test_config_insert_into_existing_hooks,
-        test_config_insert_after_existing_after_finish,
+        test_config_migrates_legacy_after_finish,
         test_config_idempotent,
         test_dry_run_does_not_write,
         test_gitignore_fifth_touchpoint_appends_idempotently,

@@ -279,7 +279,7 @@
 | 通道 | 谁跑 | 何时 | 覆盖 |
 |---|---|---|---|
 | **语义** | `trellis-update-spec`（AI）/ 人工 | Finish 原生步骤 | 经验 / 规范 / 坑（标记外） |
-| **事实** | **刷新脚本**（`--chain`：读适配器 → 填 `atlas:facts` 区 → L2 指针单遍化；F26 基线自进——`--chain` 无漂移且四前置满足时自动推进 `_meta.json.baseline`，漂移冻结待终审，显式 `--apply` 零变化承诺永不推进，`--advance-baseline` 显式越过） | **`after_finish` hook**（`.trellis/config.yaml.hooks.after_finish`，R7 原位迁移为 `--chain`）或手动 | 表 / 字段 / 路由 / 接口 / token（标记内） |
+| **事实** | **刷新脚本**（`--chain`：读适配器 → 填 `atlas:facts` 区 → L2 指针单遍化；F26 基线自进——`--chain` 无漂移且四前置满足时自动推进 `_meta.json.baseline`，漂移冻结待终审，显式 `--apply` 零变化承诺永不推进，`--advance-baseline` 显式越过） | **`after_archive` hook**（`.trellis/config.yaml.hooks.after_archive`，D159：归档才是收口，`after_finish` 只清指针；R7 原位迁移为 `--chain`）或手动 | 表 / 字段 / 路由 / 接口 / token（标记内） |
 
 - 事实刷新是**纯脚本**，适合 shell hook；hook 失败只告警、不阻塞任务。
 - hook 用**单行登记**（官方扩展点），不改 `workflow.md` 结构——Trellis 升级时冲突最小。

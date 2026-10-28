@@ -11,9 +11,11 @@
      因此不被 `trellis update` 覆盖。已存在则整段按源更新（不新建重复段）。
      文件不存在时创建。
 
-  2. `<项目根>/.trellis/config.yaml`：登记 `after_finish` hook 跑
-     `refresh_structure.py`（结构事实刷新，决策 D38）；已有 `hooks:` 块则并入，
-     否则在文件末尾新增。
+  2. `<项目根>/.trellis/config.yaml`：登记 `after_archive` hook 跑
+     `refresh_structure.py`（结构事实刷新，决策 D159：归档才是任务收口；旧形态
+     `after_finish` 会被迁移）；已有 `hooks:` 块则并入，否则在文件末尾新增。
+     同一步把 `session_auto_commit` 默认写为 `false`（D160：提交由人 review，
+     不让归档自动 commit；用户显式设置的键尊重不动）。
 
   3. `<项目根>/pytest.ini`（仅 Python 工程）：补 `ac` marker 注册；非 Python 工程里
      若躺着本脚本误建的那一份，按退役对称清掉。
@@ -64,6 +66,8 @@ HOOK_CMD = "python3 .atlas/scripts/refresh_structure.py --root . --chain"
 # 子串等于旧命令会漏识别 `--apply` 旧形态 ⇒ 双 hook 常驻、refresh 跑两遍。
 HOOK_PREFIX = "python3 .atlas/scripts/refresh_structure.py --root ."
 CONFIG_REL = ".trellis/config.yaml"
+EVENT_ARCHIVE = "after_archive"
+EVENT_ORDER = ["after_finish", "after_start", "after_create", "after_archive"]
 
 RE_HOOKS = re.compile(r"^hooks:\s*(#.*)?$")
 RE_AFTER_FINISH = re.compile(r"^  after_finish:\s*(#.*)?$")
@@ -122,59 +126,136 @@ def wire_agents(target: Path) -> dict:
 
 # ----------------------------------------------------------------- .trellis/config.yaml
 
+RE_AUTO_COMMIT = re.compile(r"^session_auto_commit:\s*(.*)$")
+RE_AUTO_COMMIT_COMMENTED = re.compile(r"^#\s*session_auto_commit:.*$")
+
+
+def _wire_auto_commit(lines: list[str]) -> str:
+    """默认关闭 Trellis 的自动提交（D160）。
+
+    自动提交会把 journal / task 归档直接 commit 进用户仓库，绕过人工 review；
+    atlas 的接线口径是「提交由人决定」，故新项目默认写 `session_auto_commit: false`。
+    用户显式写了该键 ⇒ 尊重（true/false 都不改），只在报告里说明。
+    """
+    for ln in lines:
+        m = RE_AUTO_COMMIT.match(ln)
+        if not m:
+            continue
+        value = m.group(1).split("#")[0].strip().lower()
+        return "respected (already false)" if value in ("false", "no", "0", "off") else "respected (user override)"
+    for i, ln in enumerate(lines):
+        if RE_AUTO_COMMIT_COMMENTED.match(ln):
+            lines[i] = "# atlas 接线：默认关闭自动提交，提交由人 review 后手工执行（D160）\nsession_auto_commit: false\n"
+            return "applied (enabled-off at template comment)"
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    lines.append("\n# atlas 接线：默认关闭自动提交，提交由人 review 后手工执行（D160）\nsession_auto_commit: false\n")
+    return "applied (enabled-off appended)"
+
+
+def _hooks_range(lines: list[str]) -> tuple[int, int] | None:
+    """返回 hooks: 子块的行区间 [start, end)（end 为第一个顶层行）。"""
+    hi = next((i for i, ln in enumerate(lines) if RE_HOOKS.match(ln)), None)
+    if hi is None:
+        return None
+    end = len(lines)
+    for j in range(hi + 1, len(lines)):
+        if RE_TOP_LEVEL.match(lines[j]):
+            end = j
+            break
+    return (hi + 1, end)
+
+
+def _event_lines(lines: list[str], rng: tuple[int, int], event: str) -> tuple[int, list[int]] | None:
+    """返回某事件子块的 (键行下标, 命令行下标列表)；不存在返回 None。"""
+    start, end = rng
+    key_re = re.compile(rf"^  {re.escape(event)}:\s*(#.*)?$")
+    for i in range(start, end):
+        if not key_re.match(lines[i]):
+            continue
+        cmd_idx = []
+        j = i + 1
+        while j < end:
+            ln = lines[j]
+            if ln.strip() and not ln.startswith("    "):
+                break
+            if ln.lstrip().startswith("- "):
+                cmd_idx.append(j)
+            j += 1
+        return (i, cmd_idx)
+    return None
+
+
 def wire_config(target: Path) -> dict:
+    """接线 `.trellis/config.yaml` 的两件事（各自幂等）：
+
+    1. refresh hook 登记到 `after_archive`（D159）。归档（`task.py archive`，收尾命令
+       `/trellis-finish-work` 走的也是它）才是任务收口；`after_finish` 只清活动任务指针，
+       用它会在真收口时漏刷新。存量 `after_finish` 里的同一条命令会被**迁移**。
+    2. `session_auto_commit` 默认写 `false`（D160）：自动提交会把 journal / 任务归档直接
+       commit 进用户仓库，绕过人工 review；用户显式写了该键则尊重不动。
+    """
     path = target / CONFIG_REL
     if not path.exists():
         return {"file": CONFIG_REL, "status": "skipped",
                 "detail": "config.yaml 不存在（Trellis 未初始化？）"}
 
     text = path.read_text(encoding="utf-8")
-    if HOOK_CMD in text:
-        return {"file": CONFIG_REL, "status": "skipped", "detail": "after_finish hook 已登记"}
-
-    # C1 迁移分支（R7）：识别旧形态 `HOOK_PREFIX … --apply`（引号/裸命令皆），**原位替换**
-    # 为 --chain，而不是插入新行——否则旧+新双 hook 常驻，每次 finish 刷新跑两遍。
-    if HOOK_PREFIX in text and HOOK_CMD not in text:
-        tails = [m.group(1) for m in re.finditer(re.escape(HOOK_PREFIX) + r"([^\n\"\']*)", text)]
-        if any(t.strip() == "--apply" for t in tails):
-            new_text = re.sub(re.escape(HOOK_PREFIX) + r"\s+--apply", HOOK_CMD, text)
-            # 护栏：替换后同一文件内仍有 `HOOK_PREFIX --apply`（多 hook 场景不期）则拒绝
-            if "--apply" in new_text and HOOK_PREFIX in new_text:
-                return {"file": CONFIG_REL, "status": "error",
-                        "detail": "迁移护栏：替换后仍存在旧形态 --apply hook，不修改"}
-            return {"file": CONFIG_REL, "status": "applied",
-                    "detail": "hook upgraded in-place (--apply → --chain)", "_write": (path, new_text)}
-        if all(t.strip() not in ("--apply", "--chain") for t in tails):
-            # 前缀在但命令尾是自定义形态 ⇒ 尊重用户自定 hook，不插第二行（防双 hook 常驻）
-            return {"file": CONFIG_REL, "status": "skipped",
-                    "detail": "存在自定义 refresh hook（yellow 尾非 --apply/--chain），未改"}
-
     lines = text.splitlines(keepends=True)
+    rng = _hooks_range(lines)
 
-    hooks_i = next((i for i, ln in enumerate(lines) if RE_HOOKS.match(ln)), None)
+    hook_ready = False
+    if rng is not None:
+        archive = _event_lines(lines, rng, EVENT_ARCHIVE)
+        hook_ready = archive is not None and any(HOOK_CMD in lines[i] for i in archive[1])
 
-    if hooks_i is not None:
-        after_finish_i = None
-        for j in range(hooks_i + 1, len(lines)):
-            if RE_TOP_LEVEL.match(lines[j]):
-                break  # 离开 hooks 子块
-            if RE_AFTER_FINISH.match(lines[j]):
-                after_finish_i = j
-                break
-        if after_finish_i is not None:
-            lines.insert(after_finish_i + 1, f'    - "{HOOK_CMD}"\n')
-            detail = "applied (hook added to existing after_finish)"
+    detail = "after_archive hook already registered"
+    if not hook_ready:
+        # 找到别处（旧形态 after_finish / 其它事件）的同一条命令，准备迁移
+        legacy: list[tuple[str, int]] = []
+        if rng is not None:
+            for event in EVENT_ORDER:
+                found = _event_lines(lines, rng, event)
+                if found is None:
+                    continue
+                for i in found[1]:
+                    if HOOK_PREFIX in lines[i]:
+                        tail = lines[i].split(HOOK_PREFIX, 1)[1].strip().strip('"').strip("'").strip()
+                        if tail not in ("--apply", "--chain"):
+                            return {"file": CONFIG_REL, "status": "skipped",
+                                    "detail": "存在自定义 refresh hook（尾参非 --apply/--chain），未改"}
+                        legacy.append((event, i))
+
+        # 迁移：删除旧命令行；旧事件子块被删空时连键行一起去掉
+        for event, i in sorted(legacy, key=lambda x: -x[1]):
+            del lines[i]
+            found = _event_lines(lines, _hooks_range(lines) or (0, 0), event)
+            if found is not None and not found[1]:
+                del lines[found[0]]
+
+        rng = _hooks_range(lines)
+        if rng is None:
+            if text and not text.endswith("\n"):
+                lines.append("\n")
+            lines.append("\n# atlas structure refresh（D159）：任务归档后刷新结构事实指针层\n")
+            lines.append("hooks:\n")
+            lines.append("  after_archive:\n")
+            lines.append(f'    - "{HOOK_CMD}"\n')
+            detail = "applied (new hooks block at EOF)"
         else:
-            lines.insert(hooks_i + 1, f'  after_finish:\n    - "{HOOK_CMD}"\n')
-            detail = "applied (after_finish added to existing hooks)"
-    else:
-        if text and not text.endswith("\n"):
-            lines.append("\n")
-        lines.append("\n# atlas structure refresh（D38）：每个任务 Finish 后刷新结构事实指针层\n")
-        lines.append("hooks:\n")
-        lines.append("  after_finish:\n")
-        lines.append(f'    - "{HOOK_CMD}"\n')
-        detail = "applied (new hooks block at EOF)"
+            archive = _event_lines(lines, rng, EVENT_ARCHIVE)
+            if archive is None:
+                lines.insert(rng[1], f'  after_archive:\n    - "{HOOK_CMD}"\n')
+                detail = "applied (after_archive added to existing hooks)"
+            else:
+                lines.insert(archive[0] + 1, f'    - "{HOOK_CMD}"\n')
+                detail = "applied (hook added to existing after_archive)"
+            if legacy:
+                detail = detail.replace("applied", "applied (migrated from after_finish)")
+
+    commit_state = _wire_auto_commit(lines)
+    if commit_state.startswith("applied"):
+        detail = f"{detail}; session_auto_commit off"
 
     new_text = "".join(lines)
 
@@ -186,6 +267,10 @@ def wire_config(target: Path) -> dict:
     if HOOK_CMD not in new_text:
         return {"file": CONFIG_REL, "status": "error",
                 "detail": "YAML 护栏：hook 命令未写入，不修改"}
+    active_commit_keys = [ln for ln in new_text.splitlines() if RE_AUTO_COMMIT.match(ln)]
+    if len(active_commit_keys) > 1:
+        return {"file": CONFIG_REL, "status": "error",
+                "detail": f"YAML 护栏：session_auto_commit 出现 {len(active_commit_keys)} 次（期望 ≤1），不修改"}
 
     if new_text == text:
         return {"file": CONFIG_REL, "status": "skipped", "detail": "already current"}

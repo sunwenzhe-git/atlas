@@ -120,6 +120,6 @@ Atlas 把 **CGC（CodeGraphContext，MIT）** 作为**可选增强**集成（消
 | 通道 | 谁跑 | 何时 | 覆盖 |
 |---|---|---|---|
 | **语义** | `trellis update-spec`（AI）/ 人工 | Trellis Finish 原生步骤 | 经验 / 规范 / 坑（`atlas:facts` 标记**外**） |
-| **事实** | `refresh_structure.py`（读适配器 → 填 `atlas:facts` 区 → 推进基线） | `after_finish` hook 或手动 | 表 / 字段 / 路由 / 接口（标记**内**） |
+| **事实** | `refresh_structure.py`（读适配器 → 填 `atlas:facts` 区 → 推进基线） | `after_archive` hook 或手动 | 表 / 字段 / 路由 / 接口（标记**内**） |
 
 事实刷新是**纯脚本**，正好适合 hook 单行登记，不改 `workflow.md` 结构，升级冲突最小。语义区留给 AI，事实区由脚本保鲜。

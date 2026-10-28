@@ -15,7 +15,7 @@
 #   4. 建资产根骨架（默认 product/；已有内容永不覆盖）。
 #   5. 应用 .trellis/workflow.md 的 Plan 挂载补丁（atlas apply；锚点幂等，
 #      用 --no-patch 跳过）。
-#   6. 项目接线：AGENTS.md 的 atlas 指针段 + .trellis/config.yaml 的 after_finish
+#   6. 项目接线：AGENTS.md 的 atlas 指针段 + .trellis/config.yaml 的 after_archive
 #      hook（幂等，用 --no-wiring 跳过）。
 #      第 5、6 步属 global-rules §7 确认门动作，由本次显式安装触发。
 #
@@ -483,13 +483,13 @@ if [ ! -f "$WIRING_DIR/apply-wiring.py" ] && [ -f "$SCRIPT_DIR/patches/project-w
   WIRING_DIR="$SCRIPT_DIR/patches/project-wiring"
 fi
 if [ "$INSTALL_WIRING" -eq 1 ]; then
-  say "[6/6] 项目接线（AGENTS.md 指针 + after_finish hook）"
+  say "[6/6] 项目接线（AGENTS.md 指针 + after_archive hook）"
   if [ -f "$WIRING_DIR/apply-wiring.py" ]; then
     if [ "$DRY_RUN" -eq 1 ]; then
       run python3 "$WIRING_DIR/apply-wiring.py" --target "$TARGET"
     else
       if python3 "$WIRING_DIR/apply-wiring.py" --target "$TARGET" --apply; then
-        say "      -> AGENTS.md（atlas 指针段）+ .trellis/config.yaml（after_finish hook）"
+        say "      -> AGENTS.md（atlas 指针段）+ .trellis/config.yaml（after_archive hook + session_auto_commit: false）"
       else
         say "      ⚠ 接线存在 error——不阻断装配（见上）。"
       fi
@@ -619,9 +619,9 @@ if [ "$INSTALL_WIRING" -eq 1 ] && [ "$DRY_RUN" -ne 1 ]; then
     say "  [WARN] AGENTS.md atlas 指针段未生效（见 patches/project-wiring/README.md）"
   fi
   if [ -f "$TARGET/.trellis/config.yaml" ] && grep -q "refresh_structure.py" "$TARGET/.trellis/config.yaml"; then
-    say "  [OK]   after_finish hook（refresh_structure）"
+    say "  [OK]   after_archive hook（refresh_structure）"
   else
-    say "  [WARN] after_finish hook 未生效（见 patches/project-wiring/README.md）"
+    say "  [WARN] after_archive hook 未生效（见 patches/project-wiring/README.md）"
   fi
 fi
 
