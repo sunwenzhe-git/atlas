@@ -2,7 +2,7 @@
 
 本文档记录了 **Atlas** 每个版本的重要特性变更、架构治理与问题修复。遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范。
 
-## [Unreleased]
+## [v0.2.0-beta.21] - 2026-10-29
 
 ### 🐛 api 适配器运行时 schema 只认构造调用（D172 / #46）
 
