@@ -9,6 +9,10 @@
   `spec_entry`（真相源入口）+ `source_files`，**不产 items**；
 - **无描述** → 从源码抽取端点（`@action` 类 RPC、装饰器路由、**TS 的点分方法名调用**）。
 
+**Java/Spring 形态**（Batch D1）：`@RestController` / `@Controller` 类上的
+`@RequestMapping` 作 base path，方法级 `@GetMapping` / `@PostMapping` / … 组合；
+`@RequestMapping` 未声明动词时记 `ANY`（不猜）。
+
 **TS 的 RPC / action 形态**（2026-10-15 补）：首参是**点分方法名**字符串字面量，形如
 `request('zeldaEasy.platform-console.provider.addProvider', {...})` 或
 `mcpFetch<In, Out>('zeldaEasy.platform-infrastructure.mcp.create', params)`——正是 §3.5
@@ -36,7 +40,7 @@ from _lib import (  # noqa: E402
 )
 
 ADAPTER = "api"
-VERSION = "0.2.0"
+VERSION = "0.5.0"
 
 DESCRIPTOR_FILES = {"openapi.json", "openapi.yaml", "openapi.yml", "swagger.json", "swagger.yaml"}
 # 运行时自动生成 schema 的框架信号（框架知识仅允许在适配器出现）
@@ -155,6 +159,280 @@ def extract_ts_rpc(root: Path, f: Path) -> list[dict]:
     return items
 
 
+SPRING_VERB_ANN = {
+    "GetMapping": "GET",
+    "PostMapping": "POST",
+    "PutMapping": "PUT",
+    "DeleteMapping": "DELETE",
+    "PatchMapping": "PATCH",
+}
+SPRING_MAPPING_RE = re.compile(
+    r"@(GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)\b"
+)
+SPRING_CLASS_RE = re.compile(r"\b(?:class|interface|record|enum)\s+([A-Za-z_]\w*)")
+
+
+def _strip_java_comments(text: str) -> str:
+    out: list[str] = []
+    i, n = 0, len(text)
+    quote = ""
+    in_line = False
+    in_block = False
+    while i < n:
+        if in_line:
+            if text[i] == "\n":
+                in_line = False
+                out.append("\n")
+            else:
+                out.append(" ")
+            i += 1
+            continue
+        if in_block:
+            if text.startswith("*/", i):
+                in_block = False
+                out.append("  ")
+                i += 2
+            else:
+                out.append("\n" if text[i] == "\n" else " ")
+                i += 1
+            continue
+        if quote:
+            out.append(text[i])
+            if text[i] == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if text[i] == quote:
+                quote = ""
+            i += 1
+            continue
+        if text.startswith("//", i):
+            in_line = True
+            out.append("  ")
+            i += 2
+            continue
+        if text.startswith("/*", i):
+            in_block = True
+            out.append("  ")
+            i += 2
+            continue
+        if text[i] in "'\"":
+            quote = text[i]
+        out.append(text[i])
+        i += 1
+    return "".join(out)
+
+
+def _quoted(raw: str) -> list[str]:
+    return [m.group(1) for m in re.finditer(r"[\"']([^\"']*)[\"']", raw)]
+
+
+def _spring_paths(args: str) -> list[str]:
+    m = re.search(r"(?:value|path)\s*=\s*(\{[^}]*\}|[\"'][^\"']*[\"'])", args)
+    if m:
+        return _quoted(m.group(1)) or [""]
+    s = args.lstrip()
+    if s.startswith(("\"", "'", "{")):
+        return _quoted(s) or [""]
+    return [""]
+
+
+def _spring_verbs(name: str, args: str) -> list[str]:
+    if name in SPRING_VERB_ANN:
+        return [SPRING_VERB_ANN[name]]
+    verbs = re.findall(r"RequestMethod\.([A-Z]+)", args)
+    return verbs or ["ANY"]
+
+
+def _spring_join(base: str, path: str) -> str:
+    b, p = base.strip(), path.strip()
+    if not b:
+        out = p or "/"
+    elif not p:
+        out = b
+    else:
+        out = b.rstrip("/") + "/" + p.lstrip("/")
+    return out if out.startswith("/") else "/" + out
+
+
+def _spring_mappings(anno: str) -> list[tuple[str, str]]:
+    """annotation 文本 → [(path, verb)]；支持 @@GetMapping 与 @RequestMapping。"""
+    out: list[tuple[str, str]] = []
+    for m in SPRING_MAPPING_RE.finditer(anno):
+        name = m.group(1)
+        start = m.end()
+        # 取该注解的括号参数（不处理嵌套，Spring 映射参数没有嵌套括号）
+        p = anno.find("(", start)
+        if p < 0:
+            args = ""
+        else:
+            q = anno.find(")", p + 1)
+            args = anno[p + 1:q] if q >= 0 else anno[p + 1:]
+        for path in _spring_paths(args):
+            for verb in _spring_verbs(name, args):
+                out.append((path, verb))
+    return out
+
+
+def extract_java_routes(root: Path, f: Path) -> list[dict]:
+    """Spring `@RestController` + `@*Mapping` → api items（框架知识合法落点）。
+
+    类级 `@RequestMapping` 作为 base path；方法级注解组合。`@RequestMapping` 未声明
+    动词时记 `ANY`（不猜成 GET/POST）。只有 `@RestController` / `@Controller` 类才收。
+    """
+    rel = f.relative_to(root).as_posix()
+    text = _strip_java_comments(f.read_text(encoding="utf-8"))
+    lines = text.splitlines()
+    pending: list[tuple[str, int]] = []
+    class_base = [""]
+    is_controller = False
+    items: list[dict] = []
+
+    for lineno, line in enumerate(lines, 1):
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("@"):
+            pending.append((s, lineno))
+            continue
+        if SPRING_CLASS_RE.search(s):
+            ann = "\n".join(a for a, _ in pending)
+            is_controller = bool(re.search(r"@(RestController|Controller)\b", ann))
+            # 类级只取 @RequestMapping 的路径；@GetMapping 出现在类上不合法，忽略
+            class_base = [p for p, _ in _spring_mappings(ann)] or [""]
+            pending = []
+            continue
+        if pending and "(" in s:
+            ann = "\n".join(a for a, _ in pending)
+            if is_controller:
+                for path, verb in _spring_mappings(ann):
+                    for base in class_base:
+                        items.append({
+                            "method": verb,
+                            "path": _spring_join(base, path),
+                            "summary": None,
+                            "source_module": rel,
+                            "source_file": f"{rel}:{pending[0][1]}",
+                        })
+            pending = []
+            continue
+        if pending and (";" in s or "}" in s):
+            pending = []
+    return items
+
+
+
+GO_METHOD_RE = re.compile(
+    r"\b\w+\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD|Any|Get|Post|Put|Delete|Patch|Options|Head)"
+    r"\s*\(\s*\"([^\"]+)\""
+)
+GO_HANDLE_RE = re.compile(
+    r"\b(?:http|mux|router|r)\.(?:HandleFunc|Handle)\s*\(\s*\""
+    r"((?:(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+)?[^\"]+)\""
+)
+
+
+def extract_go_routes(root: Path, f: Path) -> list[dict]:
+    """Go 常见路由注册（net/http、gin/echo/chi/fiber 风格）→ api items。
+
+    `r.GET("/x")` 等记动词；`http.HandleFunc("GET /x")` 取前缀动词；无动词记 `ANY`
+    （ServeMux 的旧写法不承载动词，不猜）。`_test.go` 不扫。
+    """
+    rel = f.relative_to(root).as_posix()
+    if f.name.endswith("_test.go"):
+        return []
+    text = strip_js_comments(f.read_text(encoding="utf-8"))
+    items: list[dict] = []
+    for i, ln in enumerate(text.splitlines(), 1):
+        for m in GO_METHOD_RE.finditer(ln):
+            path = m.group(2)
+            # 路由路径必须以 / 开头；q.Get("delay_ms") 这类 query 读取不是路由
+            if not path.startswith("/"):
+                continue
+            method = m.group(1).upper()
+            items.append({
+                "method": method,
+                "path": path,
+                "summary": None,
+                "source_module": rel,
+                "source_file": f"{rel}:{i}",
+            })
+        for m in GO_HANDLE_RE.finditer(ln):
+            raw = m.group(1).strip()
+            parts = raw.split(None, 1)
+            if len(parts) == 2 and parts[0] in (
+                "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"
+            ):
+                method, path = parts[0], parts[1]
+            else:
+                method, path = "ANY", raw
+            if not path.startswith("/"):
+                continue
+            items.append({
+                "method": method,
+                "path": path,
+                "summary": None,
+                "source_module": rel,
+                "source_file": f"{rel}:{i}",
+            })
+    return items
+
+
+
+NEST_CONTROLLER_RE = re.compile(r"@Controller\s*\(\s*(?:['\"]([^'\"]*)['\"])?\s*\)")
+NEST_METHOD_RE = re.compile(
+    r"@(Get|Post|Put|Delete|Patch|Options|Head|All)\s*"
+    r"\(\s*(?:['\"]([^'\"]*)['\"])?\s*\)"
+)
+
+
+def join_nest(prefix: str, path: str) -> str:
+    p, q = prefix.strip(), path.strip()
+    if not p and not q:
+        return "/"
+    if not p:
+        return q if q.startswith("/") else "/" + q
+    if not q:
+        return p if p.startswith("/") else "/" + p
+    out = p.rstrip("/") + "/" + q.lstrip("/")
+    return out if out.startswith("/") else "/" + out
+
+
+def extract_nest_routes(root: Path, f: Path) -> list[dict]:
+    """NestJS / Midway `@Controller` + `@Get/@Post/...` → api items。
+
+    类级 `@Controller('prefix')` 作 base path；方法级 `@All` 记 ANY；无路径参数记空串。
+    只处理含 `@Controller` 的 TS/JS 文件，避免把任意装饰器当路由。
+    """
+    rel = f.relative_to(root).as_posix()
+    text = strip_js_comments(f.read_text(encoding="utf-8"))
+    if "@Controller" not in text:
+        return []
+    items: list[dict] = []
+    prefix: str | None = None
+    for i, line in enumerate(text.splitlines(), 1):
+        cm = NEST_CONTROLLER_RE.search(line)
+        if cm:
+            prefix = cm.group(1) or ""
+            continue
+        if prefix is None:
+            continue
+        m = NEST_METHOD_RE.search(line)
+        if not m:
+            continue
+        method = m.group(1).upper()
+        if method == "ALL":
+            method = "ANY"
+        items.append({
+            "method": method,
+            "path": join_nest(prefix, m.group(2) or ""),
+            "summary": None,
+            "source_module": rel,
+            "source_file": f"{rel}:{i}",
+        })
+    return items
+
+
 def find_descriptors(root: Path) -> list[str]:
     """按**文件名**找机器可读描述文件（§3.5 的「有描述」探测）。
 
@@ -196,7 +474,7 @@ def main() -> int:
     desc_files: list[str] = find_descriptors(root)
     schema_sources: list[str] = []
     items: list[dict] = []
-    for f in iter_files(root, (".py", ".pyxl", ".js", ".jsx", ".ts", ".tsx"), app_path):
+    for f in iter_files(root, (".py", ".pyxl", ".js", ".jsx", ".ts", ".tsx", ".java", ".go"), app_path):
         rel = f.relative_to(root).as_posix()
         if f.suffix == ".py":
             try:
@@ -208,9 +486,14 @@ def main() -> int:
             items.extend(extract_py_routes(root, f))
         elif f.suffix == ".pyxl":
             items.extend(extract_actions(root, f))
+        elif f.suffix == ".java":
+            items.extend(extract_java_routes(root, f))
+        elif f.suffix == ".go":
+            items.extend(extract_go_routes(root, f))
         else:
             items.extend(extract_js_routes(root, f))
             items.extend(extract_ts_rpc(root, f))
+            items.extend(extract_nest_routes(root, f))
 
     if desc_files or schema_sources:
         # 转指针形态 = 整体丢弃已抽到的 items ⇒ 必须出声，绝不静默清空

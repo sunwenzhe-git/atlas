@@ -120,11 +120,13 @@ atlas check --fast     # 秒级静态体检：全部门禁 + 生成物新鲜度
 ```yaml
 backend_test:                     # 可选段；缺失 = 合法降级
   command: pytest backend/tests   # 测试执行命令
-  test_dir: backend/tests         # AC 挂载点扫描根（缺省 backend/tests）
-  framework: pytest               # v1 仅支持 pytest
+  test_dir: backend/tests         # 提取器扫描根（缺省 backend/tests）
+  extractor: pytest               # 提取器注册表名；示例为 pytest，其它栈见 docs/guide/backend-test.md
   mode: advisory                  # advisory（缺省）| enforce（仅 AC 挂载缺口硬阻断；维度恒 WARN）
-  ac_marker: pytest_mark          # 挂载形态：@pytest.mark.ac("AC-xxx")
+  ac_marker: pytest_mark          # 标记形态由 extractor 解释
 ```
+
+具体标记语法见 `docs/guide/backend-test.md`。非 Python 后端需要声明对应 extractor；未注册的 extractor 会让 AC 门报 `[UNVERIFIED]`（advisory WARN / enforce FAIL），不会伪装 PASS。
 
 测试代码挂 AC：
 
@@ -151,7 +153,7 @@ def test_refund_is_idempotent():
 * **覆盖对账**：报告已声明 AC 与已挂载 AC 的覆盖率（`enforce` 模式下零挂载 ⇒ `FAIL`）；
 * **差量防退化**：与上次快照比，挂载数与覆盖数净增不得为负。
 
-> 语言边界：v1 原生支持 Python / pytest（AST 提取）。其它语言的后端暂由账本、结构事实与独立审查门覆盖。
+> 语言边界：Batch A 内置 pytest extractor；其它测试栈需要提供/声明 extractor。未注册的 extractor 会让 AC 门报 `[UNVERIFIED]`（advisory WARN / enforce FAIL），不会伪装 PASS。
 
 ---
 
@@ -172,6 +174,6 @@ def test_refund_is_idempotent():
 |---|---|
 | 必需依赖 | Node 18+、Python 3.10+、**Trellis 全局包**（需求级任务状态机是 Atlas 的执行宿主；「先学 Trellis 再用 Atlas」的双重学习成本真实存在） |
 | 浏览器级 E2E | Web 单轨（Node + Playwright）；CLI / 移动端 / 嵌入式不适用 |
-| 后端验收 | 独立 AC 对账门禁（v1 = Python / pytest） |
+| 后端验收 | 独立 AC 对账门禁（extractor 可插拔；当前内置 pytest、Vitest/Jest、JUnit 5，并支持外部 extractor 命令） |
 | 结构事实 | 无适配器的技术栈由 agent 撰写，质量取决于代码可读性 |
 | 成熟度 | `0.1.0-beta`：遇到边缘 case 大概率需要读源码或提 Issue |

@@ -2141,6 +2141,88 @@ def test_stack_profile_origin_invalid_fails() -> None:
         assert _sp_check(res, "origin 枚举")["level"] == "FAIL"
 
 
+def test_stack_profile_backend_test_extractor_is_generic() -> None:
+    """D163：extractor 是注册表名，不在 profile 层枚举具体框架。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        text = PROFILE_BASE.format(origin="greenfield") + (
+            "backend_test:\n  extractor: vitest\n  test_dir: web\n  mode: advisory\n"
+        )
+        mk_profile(root, text)
+        res = vsp.validate(root)
+        assert _sp_check(res, "backend_test.extractor")["level"] == "PASS"
+        assert res.status != "FAIL", [(c["check"], c["level"]) for c in res.checks]
+
+
+def test_stack_profile_backend_test_extractor_alias_conflict_fails() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        text = PROFILE_BASE.format(origin="greenfield") + (
+            "backend_test:\n  framework: pytest\n  extractor: vitest\n  test_dir: web\n"
+        )
+        mk_profile(root, text)
+        res = vsp.validate(root)
+        assert _sp_check(res, "backend_test.extractor 别名")["level"] == "FAIL"
+        assert res.status == "FAIL"
+
+
+def test_stack_profile_backend_test_extractor_shape_fails() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        text = PROFILE_BASE.format(origin="greenfield") + (
+            "backend_test:\n  extractor: 'JUnit 5'\n  test_dir: web\n"
+        )
+        mk_profile(root, text)
+        res = vsp.validate(root)
+        assert _sp_check(res, "backend_test.extractor 形态")["level"] == "FAIL"
+
+
+def test_stack_profile_backend_test_legacy_framework_alias_passes() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        text = PROFILE_BASE.format(origin="greenfield") + (
+            "backend_test:\n  framework: pytest\n  test_dir: web\n"
+        )
+        mk_profile(root, text)
+        res = vsp.validate(root)
+        assert _sp_check(res, "backend_test.extractor")["level"] == "PASS"
+
+
+def test_stack_profile_backend_test_external_command_passes() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        text = PROFILE_BASE.format(origin="greenfield") + (
+            "backend_test:\n  extractor_command: java -jar tools/ac.jar\n  test_dir: web\n"
+        )
+        mk_profile(root, text)
+        res = vsp.validate(root)
+        assert _sp_check(res, "backend_test.extractor_command")["level"] == "PASS"
+
+
+def test_stack_profile_backend_test_external_command_mutual_exclusion_fails() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        text = PROFILE_BASE.format(origin="greenfield") + (
+            "backend_test:\n  extractor: pytest\n"
+            "  extractor_command: java -jar tools/ac.jar\n  test_dir: web\n"
+        )
+        mk_profile(root, text)
+        res = vsp.validate(root)
+        assert _sp_check(res, "backend_test.extractor_command 互斥")["level"] == "FAIL"
+        assert res.status == "FAIL"
+
+
+def test_stack_profile_backend_test_external_command_empty_fails() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        text = PROFILE_BASE.format(origin="greenfield") + (
+            "backend_test:\n  extractor_command: ''\n  test_dir: web\n"
+        )
+        mk_profile(root, text)
+        res = vsp.validate(root)
+        assert _sp_check(res, "backend_test.extractor_command 形态")["level"] == "FAIL"
+
+
 def test_stack_profile_top_level_scalar_after_section_is_parsed() -> None:
     """段头之后的顶层标量必须被解析。
 

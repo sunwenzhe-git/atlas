@@ -73,9 +73,9 @@ REVIEW_MODES = ("gate", "auto-baseline", "off")
 
 # 后端测试调度段白名单（shared/stack-profile.md §2；B209-1 / 3507 BT，2026-10-12）。
 # 可选能力：段缺失 = 降级（由项目自行执行）；声明了就必须合法。
-BACKEND_TEST_KEYS = ("command", "test_dir", "framework", "mode", "ac_marker")
+BACKEND_TEST_KEYS = ("command", "test_dir", "framework", "extractor",
+                     "extractor_command", "mode", "ac_marker")
 BACKEND_TEST_MODES = ("enforce", "advisory")
-BACKEND_TEST_FRAMEWORKS = ("pytest",)
 
 
 class Result:
@@ -328,9 +328,36 @@ def validate(root: Path) -> Result:
                 "PASS" if bt_mode is None or bt_mode in BACKEND_TEST_MODES else "FAIL",
                 f"值={bt_mode!r} 允许={list(BACKEND_TEST_MODES)}（缺省 advisory）")
         bt_fw = backend_test.get("framework")
-        res.add("backend_test.framework 枚举",
-                "PASS" if bt_fw is None or bt_fw in BACKEND_TEST_FRAMEWORKS else "FAIL",
-                f"值={bt_fw!r} 允许={list(BACKEND_TEST_FRAMEWORKS)}")
+        bt_ex = backend_test.get("extractor")
+        if bt_fw is not None and bt_ex is not None and bt_fw != bt_ex:
+            res.add("backend_test.extractor 别名",
+                    "FAIL", f"framework={bt_fw!r} 与 extractor={bt_ex!r} 冲突（别名必须一致）")
+        else:
+            bt_name = bt_ex if bt_ex is not None else bt_fw
+            if bt_name is None:
+                res.add("backend_test.extractor",
+                        "PASS", "未声明 = 使用提取器注册表默认值（兼容存量）")
+            elif not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", str(bt_name)):
+                res.add("backend_test.extractor 形态",
+                        "FAIL", f"值={bt_name!r}（应为 [a-z0-9][a-z0-9_-]*；支持性由 AC 门运行时判定）")
+            else:
+                res.add("backend_test.extractor",
+                        "PASS", f"值={bt_name!r}（支持性由 AC 门运行时判定）")
+        bt_cmd = backend_test.get("extractor_command")
+        if bt_cmd is not None:
+            if not isinstance(bt_cmd, str) or not bt_cmd.strip():
+                res.add("backend_test.extractor_command 形态",
+                        "FAIL", f"值={bt_cmd!r}（应为非空 argv 字符串）")
+            elif bt_fw is not None or bt_ex is not None:
+                res.add("backend_test.extractor_command 互斥",
+                        "FAIL", "extractor_command 与 extractor/framework 不得同时声明")
+            else:
+                res.add("backend_test.extractor_command",
+                        "PASS", "外部 extractor argv 已声明（运行时按 argv 执行，不走 shell）")
+        bt_marker = backend_test.get("ac_marker")
+        if bt_marker is not None and (not isinstance(bt_marker, str) or not bt_marker.strip()):
+            res.add("backend_test.ac_marker 形态",
+                    "FAIL", f"值={bt_marker!r}（应为非空字符串）")
     elif backend_test is not None and not isinstance(backend_test, dict):
         res.add("backend_test 段形态", "FAIL", f"值={backend_test!r}（应为映射或 null）")
     else:

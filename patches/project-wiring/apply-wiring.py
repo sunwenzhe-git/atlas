@@ -17,8 +17,8 @@
      同一步把 `session_auto_commit` 默认写为 `false`（D160：提交由人 review，
      不让归档自动 commit；用户显式设置的键尊重不动）。
 
-  3. `<项目根>/pytest.ini`（仅 Python 工程）：补 `ac` marker 注册；非 Python 工程里
-     若躺着本脚本误建的那一份，按退役对称清掉。
+  3. `<项目根>/<测试配置>`（仅 extractor 声明的栈）：由 `adapters/ac/` 的 extractor
+     提供项目级配置 hook；无 hook 的栈跳过，不写任何配置。
 
   4. `<项目根>/.pi/`（仅 pi 宿主）：把官方扩展落到 `.pi/extensions/atlas/index.ts`，
      并在 `.pi/settings.json` 的 `extensions[]` 里幂等登记一行（2026-10-15 补）。
@@ -29,7 +29,7 @@
      不只图谱用户。判据：文件**不存在 ⇒ 不首创**（跳过并在报告里给一行建议）；
      内容已含 `.adapter-out` 字样 ⇒ 幂等跳过；出现 `!.adapter-out` 负模式 ⇒ 跳过，
      不与用户既有规则打架。**本触点无退役对称**：`.gitignore` 不是本项目创建的文件，
-     追加后永不回收（与 `pytest.ini` 的「逐字节相等才清」不同——追加是单向动作，
+     追加后永不回收（与 extractor 配置的「逐字节相等才清」不同——追加是单向动作，
      由报告行当刻告知用户）。
 
 设计要点：
@@ -52,6 +52,7 @@ from pathlib import Path
 if str(Path(__file__).resolve().parents[2]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from _support.layout import LayoutError, load_layout  # noqa: E402
+from adapters.ac import wire_project  # noqa: E402
 
 PKG_ROOT = Path(__file__).resolve().parent
 POINTER_SNIPPET = PKG_ROOT / "agent-pointer.md"
@@ -277,108 +278,6 @@ def wire_config(target: Path) -> dict:
     return {"file": CONFIG_REL, "status": "applied", "detail": detail, "_write": (path, new_text)}
 
 
-# ------------------------------------------------------------------- pytest 配置兜底（R6.2 对账定稿，2026-10-15）
-
-# 注释剥离（2026-10-15 事故）：出厂模板的 `backend_test:` 段是**注释示例**，逐字匹配 raw
-# 文本会把**每个**按模板开户的项目判成 Python 工程 ⇒ 纯前端仓库里凭空多出一个 pytest.ini
-# （存量实测：pnpm + React 仓库，`atlas init` 当刻即中招）。⇒ 只认**声明项**。
-RE_COMMENT = re.compile(r"(?:^|\s+)#.*$")
-
-
-def is_python_project(target: Path) -> bool:
-    """探测是否为 Python 工程（stack-profile **声明**或根目录 Python 特征文件）。
-
-    只看**声明**：注释里出现的关键字不算（见上面 RE_COMMENT 的事故注）——出厂模板的
-    `#   framework: pytest` 是注释，不能当证据。声明面三种任一生效：
-    `python` 字样 / `framework: pytest` / `backend_test:` 段（最后一个是本兜底所服务的
-    AC 标记特性的**契约 opt-in 段**，`shared/stack-profile.md` §2）。
-    """
-    prof_path = load_layout(target).stack_profile
-    if prof_path.is_file():
-        text = prof_path.read_text(encoding="utf-8", errors="ignore")
-        declared = "\n".join(RE_COMMENT.sub("", ln) for ln in text.splitlines()).lower()
-        if "python" in declared or "framework: pytest" in declared or "backend_test:" in declared:
-            return True
-    for marker in ("requirements.txt", "pyproject.toml", "setup.py", "Pipfile", ".venv"):
-        if (target / marker).exists():
-            return True
-    return False
-
-
-MARKERS_INI = (
-    "[pytest]\n"
-    "markers =\n"
-    "    ac: mark test with AC ID for traceability\n"
-)
-
-MARKERS_PYPROJECT = (
-    "[tool.pytest.ini_options]\n"
-    "markers = [\n"
-    "    \"ac: mark test with AC ID for traceability\",\n"
-    "]\n"
-)
-
-
-def _has_pytest_section(pyproject: Path) -> bool:
-    try:
-        return "[tool.pytest" in pyproject.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return False
-
-
-def wire_python_scaffold(target: Path) -> dict:
-    """AC 标记注册兜底——**载体优先级：已有 pytest 配置文件 > 既有 pytest.ini > 新建 pytest.ini**。
-
-    R6.2 对账定稿（2026-10-15）：本兜底只承担 **`ac` marker 注册**这一项正当元数据；
-    `pythonpath = .` 环境补丁已随 F23（适配器输出 `python3 -m pytest`，cwd 自动入
-    `sys.path`）退役——线束不再替业务打环境补丁（假桩③病理）。
-
-    优先级（防「复活被清掉的补丁」）：
-      1. pyproject.toml / setup.cfg 已承载 pytest 配置 ⇒ skip；
-      2. 既有 pytest.ini ⇒ 只补缺失的 marker 注册（pythonpath 不再注入）；
-      3. 什么都没有 ⇒ 新建 pytest.ini（仅 marker 注册）。
-
-    **退役对称（2026-10-15 补）**：非 Python 工程里若躺着一份**逐字节等于我们兜底内容**
-    的 pytest.ini，那是本脚本早先误建的（判据事故见 `RE_COMMENT`）⇒ 清掉。用户改过 ⇒
-    一字不动（只跳过）——「只删自己写的、且没被动过的东西」。
-    """
-    ini_path = target / "pytest.ini"
-    if not is_python_project(target):
-        if ini_path.is_file() and ini_path.read_text(encoding="utf-8") == MARKERS_INI:
-            return {"file": "pytest.ini", "status": "removed",
-                    "detail": "非 Python 工程：清掉本兜底误建的 pytest.ini"
-                              "（仅当内容逐字节等于兜底内容；用户改过则保留）",
-                    "_remove": ini_path}
-        return {"file": "pytest.ini", "status": "skipped", "detail": "非 Python 工程，跳过"}
-
-    pyproject = target / "pyproject.toml"
-    setup_cfg = target / "setup.cfg"
-
-    # 1. pyproject.toml / setup.cfg 已承载 pytest 配置 ⇒ 尊重，不另立 pytest.ini
-    if pyproject.is_file() and _has_pytest_section(pyproject):
-        return {"file": "pytest.ini", "status": "skipped", "detail": "已由 pyproject.toml 承载 pytest 配置"}
-    if setup_cfg.is_file():
-        text_cfg = setup_cfg.read_text(encoding="utf-8", errors="ignore")
-        if "[tool:pytest]" in text_cfg:
-            return {"file": "pytest.ini", "status": "skipped", "detail": "已由 setup.cfg 承载 pytest 配置"}
-
-    if not ini_path.is_file():
-        # 3. 全无 ⇒ 新建 pytest.ini（只承载 marker 注册；pythonpath 补丁已随 F23 退役）
-        return {"file": "pytest.ini", "status": "applied",
-                "detail": "created pytest.ini with ac marker registration (pythonpath retired with F23)",
-                "_write": (ini_path, MARKERS_INI)}
-
-    # 2. 既有 pytest.ini ⇒ 只补 marker 注册（幂等）
-    content = ini_path.read_text(encoding="utf-8")
-    if "markers" in content:
-        return {"file": "pytest.ini", "status": "skipped", "detail": "pytest.ini 已包含 marker 注册"}
-
-    new_content = content.rstrip("\n") + "\nmarkers =\n    ac: mark test with AC ID for traceability\n"
-    return {"file": "pytest.ini", "status": "applied",
-            "detail": "updated (appended ac marker registration)",
-            "_write": (ini_path, new_content)}
-
-
 # ----------------------------------------------------------------- .gitignore 兜底（2026-10-15 补，第 5 个触点）
 
 GITIGNORE_REL = ".gitignore"
@@ -522,7 +421,7 @@ def main() -> int:
         print(f"[FAIL] {exc}", file=sys.stderr)
         return 2
 
-    results = [wire_agents(target), wire_config(target), wire_python_scaffold(target),
+    results = [wire_agents(target), wire_config(target), wire_project(target),
                wire_gitignore(target)]
     results += wire_pi_extension(target)
     errors = sum(1 for r in results if r["status"] == "error")

@@ -84,10 +84,11 @@ def _gate_preconditions(root: Path) -> dict[str, tuple[str, str]]:
         "validate_e2e_mocks": (
             lay.print_value("e2e_index"),
             f"前置未声明（未就绪，非失败）：E2E 用例资产未建（无 {lay.print_value('e2e_index')}）"),
-        # PRD 资产未建 ⇒ AC 对账门无输入面（B209-1，2026-10-12）
+        # PRD 资产未建 ⇒ AC 对账门无输入面（B209-1，2026-10-12）；
+        # 2026-10-29：前置改为 PRD 目录，域级 `*-prd.md` 项目不再被 SKIP。
         "validate_ac_alignment": (
-            f"{lay.print_value('prd')}/prd.md",
-            f"前置未声明（未就绪，非失败）：PRD 资产未建（无 {lay.print_value('prd')}/prd.md）"),
+            lay.print_value("prd"),
+            f"前置未声明（未就绪，非失败）：PRD 资产未建（无 {lay.print_value('prd')}/）"),
         # 架构决策资产未建 ⇒ 未走到这一步（2026-10-13）
         "validate_adr": (
             lay.print_value("adr"),

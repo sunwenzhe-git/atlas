@@ -35,13 +35,15 @@ from _support.layout import load_layout  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _lib import strip_js_comments  # noqa: E402  # 同包共用工具（引号感知的注释剥离）
+from _jpa import parse_project as parse_jpa_project  # noqa: E402
 
 ADAPTER = "models"
-VERSION = "0.2.0"
+VERSION = "0.5.0"
 
 IGNORE_DIRS = {
     ".git", "node_modules", "__pycache__", "site-packages", "dist", "build",
     ".pyxle-build", ".next", ".turbo", ".mypy_cache", ".pytest_cache", "tests",
+    "target", ".gradle", ".idea", ".scratch", ".atlas", ".atlas-run", ".trellis",
 }
 
 
@@ -525,6 +527,105 @@ def parse_ts_models(src: str) -> tuple[list[dict], list[dict], dict]:
     return items, enums, stats
 
 
+
+def iter_java(root: Path, app_path: str | None):
+    base = root / app_path if app_path else root
+    if not base.exists():
+        return
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = sorted(d for d in dirnames if d not in IGNORE_DIRS and not d.startswith("."))
+        for name in sorted(filenames):
+            if name.endswith(".java"):
+                yield Path(dirpath) / name
+
+
+
+# ------------------------------------------------------------------ Go structs
+
+GO_STRUCT_RE = re.compile(r"\btype\s+(\w+)\s+struct\s*\{([^}]*)\}", re.S)
+GO_FIELD_RE = re.compile(r"^\s*(\w+)\s+([\w\.\*\[\]]+)(?:\s+`([^`]*)`)?\s*$")
+
+
+def _go_tag(tags: str, key: str) -> str:
+    m = re.search(r"(?:^|\s)%s:\"([^\"]*)\"" % re.escape(key), tags or "")
+    return m.group(1) if m else ""
+
+
+def _go_table_name(clean: str, struct: str, tags: str) -> str:
+    m = re.search(
+        r"func\s*\(\s*\w*\s*" + re.escape(struct) +
+        r"\s*\)\s*TableName\(\)\s*string\s*\{\s*return\s*\"([^\"]+)\"",
+        clean,
+    )
+    if m:
+        return m.group(1)
+    tm = _go_tag(tags, "gorm")
+    cm = re.search(r"(?:^|;)column:([^;]+)", tm)
+    return struct
+
+
+def parse_go_models(text: str, rel: str) -> list[dict]:
+    clean = strip_js_comments(text)
+    items: list[dict] = []
+    for m in GO_STRUCT_RE.finditer(clean):
+        struct, body = m.group(1), m.group(2)
+        table = _go_table_name(clean, struct, "")
+        rows: list[dict] = []
+        has_tag = False
+        for line in body.splitlines():
+            fm = GO_FIELD_RE.match(line)
+            if not fm:
+                continue
+            field, typ, tags = fm.group(1), fm.group(2), fm.group(3) or ""
+            has_tag = has_tag or bool(tags.strip())
+            gorm = _go_tag(tags, "gorm")
+            db = _go_tag(tags, "db")
+            js = _go_tag(tags, "json")
+            col = db or (re.search(r"(?:^|;)column:([^;]+)", gorm).group(1)
+                         if re.search(r"(?:^|;)column:([^;]+)", gorm) else "")
+            name = col or (js.split(",")[0] if js else "") or field
+            flags: list[str] = []
+            if "primaryKey" in gorm:
+                flags.append("主键")
+            if "autoIncrement" in gorm:
+                flags.append("自增")
+            if "not null" in gorm:
+                flags.append("非空")
+            if "unique" in gorm:
+                flags.append("唯一")
+            sm = re.search(r"(?:^|;)size:(\d+)", gorm)
+            if sm:
+                flags.append(f"长度={sm.group(1)}")
+            relation = typ if typ.startswith(("*", "[]")) else None
+            rows.append({
+                "table": table,
+                "field": name,
+                "type": typ,
+                "constraints": "，".join(flags) if flags else None,
+                "default": None,
+                "relation": relation,
+                "enum": None,
+                "source_file": rel,
+            })
+        # 无 tag 且无 TableName 的 struct 多为 service/infra，不是数据模型；
+        # 宁可少收，不把 `server{mu,counters}` 这种当表（真实仓烟测暴露）。
+        if not rows or (not has_tag and table == struct):
+            continue
+        items.extend(rows)
+    return items
+
+
+def iter_go(root: Path, app_path: str | None):
+    base = root / app_path if app_path else root
+    if not base.exists():
+        return
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = sorted(d for d in dirnames if d not in IGNORE_DIRS and not d.startswith("."))
+        for name in sorted(filenames):
+            if name.endswith(".go") and not name.endswith("_test.go"):
+                yield Path(dirpath) / name
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", required=True)
@@ -601,6 +702,25 @@ def main() -> int:
         # 表+字段，接不住无字段体的枚举），这里只报数量——是否要为它扩契约形状，等有数再定。
         print(f"[{ADAPTER}] 统计：顶层枚举/字面量别名声明 {n_enum_decls} 个（自身不成行）；"
               f"字段引用旁表补回取值 {n_alias_refs} 处", file=sys.stderr)
+
+    java_items, java_enums, java_sources = parse_jpa_project(list(iter_java(root, app_path)), root)
+    if java_items:
+        items.extend(java_items)
+        enums.extend(java_enums)
+        source_files.extend(java_sources)
+    for f in iter_go(root, app_path):
+        try:
+            text = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if "type " not in text or "struct" not in text:
+            continue
+        rel = f.relative_to(root).as_posix()
+        file_items = parse_go_models(text, rel)
+        if not file_items:
+            continue
+        source_files.append(rel)
+        items.extend(file_items)
 
     out = {
         "category": "models",

@@ -1342,3 +1342,16 @@ def test_atlas_check_json_whole_na_row(tmp_path) -> None:
     rows = {r["name"]: r for r in json.loads(out)["rows"]}
     assert rows["validate_adr"]["status"] == "N/A", rows["validate_adr"]
     assert "[N/A" in rows["validate_adr"]["detail"], rows["validate_adr"]
+
+
+def test_ac_gate_precondition_accepts_domain_only_prd_dir(tmp_path: Path) -> None:
+    """D163：AC 前置改为 PRD 目录，域级 `*-prd.md` 项目不再被 SKIP。"""
+    spec = importlib.util.spec_from_file_location("atlas_check_pre", CK)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    prd = tmp_path / "product" / "prd"
+    prd.mkdir(parents=True)
+    (prd / "domain-prd.md").write_text("# 域 PRD\n", encoding="utf-8")
+    path, _reason = mod._gate_preconditions(tmp_path)["validate_ac_alignment"]
+    assert path == "product/prd", path
+    assert (tmp_path / path).exists()

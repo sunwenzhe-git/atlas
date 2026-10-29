@@ -4,6 +4,77 @@
 
 ---
 
+## [Unreleased]
+
+### 🔌 AC 门适配器化与三形态适用性（D163 / RFC-20261029-01）
+
+* **架构**：新增 `adapters/ac/` 提取器注册表与 `adapters/ac/pytest.py`；`validate_ac_alignment.py` 不再包含 `ast`、具体框架名或 `test_*.py` 命名约定，只消费归一化记录。
+* **三形态**：非空 apps 且无 `backend/fullstack` ⇒ 整门 `N/A`；apps 缺失 ⇒ `[UNVERIFIED]`；未注册 extractor ⇒ `[UNVERIFIED]`（advisory WARN / enforce FAIL）。
+* **诚实状态**：有 backend app + PRD AC 但零挂载 ⇒ advisory `[ZERO-COVERAGE]` WARN（原 PASS）；`parse_errors` ⇒ `[PARSE]` WARN/FAIL；`scan_face` ⇒ `[SCAN]` WARN；均不再被维度子项吞掉。
+* **装配**：`apply-wiring.py` 不再把任意 `backend_test:` 当 Python 证据（非 Python 项目不再误建 `pytest.ini`）；`atlas_check` 的 AC 前置改为 PRD 目录，域级 `*-prd.md` 项目不再被 SKIP。
+* **契约**：`shared/stack-profile.md` / `shared/gates.md` 的 AC 行去 pytest 化；新增 `docs/guide/backend-test.md` 示例页；`templates/stack-profile.yaml` 通用化。
+* **测试**：新增 `tests/test_ac_adapters.py`、`tests/test_no_framework_names.py`；更新 AC 形状矩阵、apply-wiring、atlas_check、install 自检。
+
+### 🧹 §1 契约清理（Batch B / D163）
+
+* **框架名清理**：`shared/`、`rings/`、`templates/`、`patches/` 的测试框架名清理完毕；守恒测试从 `validators/` 扩到这四个目录（文本按词边界、Python 按 AST，`expression` 不误报）。
+* **pytest 配置兜底迁移**：`apply-wiring.py` 不再包含 pytest 配置/探测逻辑，改为调用 `adapters/ac/` 的 extractor hook；未知 extractor 跳过，不写任何配置。
+* **测试**：`tests/test_apply_wiring.py` 改为验证 adapter hook；`tests/test_no_framework_names.py` 新增契约/模板/补丁扫描。
+
+### 🧪 TS / Vitest / Jest AC 提取器（Batch C1 / D164）
+
+* **新增**：`adapters/ac/js.py`，注册 `vitest` / `jest` 两个内置 extractor；AC 放标题 `[AC-...]`，dims 放紧邻 JSDoc `@atlas-dims`，waiver 放标题或 `@atlas-waiver`。
+* **语义**：`.skip` / `.todo` / `xit` / `xdescribe` / `describe.skip` ⇒ skipped + weak；`.fails` / `.skipIf` ⇒ weak；`.only` / `fit` / 动态标题 / `test.each` ⇒ 扫描面 WARN；`product/e2e/` 下的 Playwright 用例不串入后端通道。
+* **测试**：`tests/test_ac_adapters.py` 增 Vitest/Jest 记录抽取、skip/waiver、describe 级作用域、动态标题、E2E 排除；`tests/test_validate_ac_alignment.py` 增 TS 端到端（覆盖 PASS / 无主 AC / 无 waiver skip）。
+* **文档**：`docs/guide/backend-test.md` 的 Vitest/Jest 段从「目标形态」改为「已内置」；`install.sh` 自检补 `adapters/ac/js.py`。
+
+### 🧪 JUnit 5 extractor + 外部 extractor 命令协议（Batch C2 / D165）
+
+* **新增**：`adapters/ac/junit.py`，内置 `junit5` extractor；识别 `@Test` / `@ParameterizedTest` / `@RepeatedTest` / `@TestFactory`、`@DisplayName`、`@Disabled` / `@Ignore`、`@Tag("atlas-dims-Cxx")`；不引 JavaParser/JVM。
+* **新增**：`adapters/ac/command.py` + `backend_test.extractor_command` 外部协议；argv 字符串、`shlex.split`、`shell=False`、120s 超时、10MB stdout 上限、`schema_version: 1`；非 0 / 超时 / 非法 JSON ⇒ `[EXTRACTOR]` FAIL。
+* **规则**：`extractor_command` 与 `extractor` / `framework` 互斥；外部命令无项目级 wire hook，不写测试配置。
+* **测试**：`tests/test_ac_adapters.py` 增 JUnit/外部命令；`tests/test_validate_ac_alignment.py` 增 JUnit/外部命令端到端；`tests/test_validators.py` 增 profile 形态/互斥；`tests/test_apply_wiring.py` 增外部命令不写配置。
+* **文档**：`docs/guide/backend-test.md` 的 JUnit 段改为“已内置”，外部 extractor 段补 JSON schema 与安全边界；`install.sh` 自检 61 条。
+
+### 🧱 Java/Spring API + JUnit 测试清单结构适配器（Batch D1 / D166）
+
+* **API**：`adapters/api.py` 新增 Spring 分支——`@RestController` / `@Controller` 类上的 `@RequestMapping` 作 base path，方法级 `@GetMapping` / `@PostMapping` / `@PutMapping` / `@DeleteMapping` / `@PatchMapping` / `@RequestMapping` 组合；`@RequestMapping` 未声明动词记 `ANY`（不猜）。
+* **测试清单**：`adapters/tests.py` 新增 `.java` 盘点（`*Test.java` / `*Tests.java` / `*IT.java`）与 Maven/Gradle 配置探测；命令 `mvn test` / `./gradlew test`（无 wrapper 用 `gradle test`），后缀族/配置族冲突仍置 null + WARN。
+* **契约**：`shared/stack-profile.md` 的 `api.method` 补 `ANY` 语义（动词未声明，不猜）。
+* **测试**：`tests/test_adapter_api.py` 增 Spring 端点/多 base path/非 controller；`tests/test_tools.py` 增 Maven/Gradle/Java+pytest 冲突；变异 M-JAVA1..M-JAVA4 均咬。
+
+### 🧱 JPA 模型抽取 + 单 app 多模块测试盘点（Batch D2a / D167）
+
+* **JPA**：`adapters/models.py` 新增 `@Entity` / `@Table` / `@Column`（name/nullable/unique/length）/ `@Id` / `@GeneratedValue` / `@Enumerated` + `enum` 取值 / 关系注解；无注解字段也收，`@Transient` 与 `static` 跳过；无 `@Table` 时表名用类名（不猜命名策略）。
+* **多模块**：单 app + `test_dir: .` 时 JUnit extractor 递归盘点各模块 `src/test/java`；新增两模块 2/2 覆盖钉。多 backend app 仍 N/A（D2b）。
+* **测试**：`tests/test_adapter_models.py` 增 JPA 表/字段/约束/枚举/关系、非 entity 与 `@Transient` 忽略；`tests/test_validate_ac_alignment.py` 增多模块端到端；变异 M-JPA1..M-JPA3 均咬。
+
+### 🔗 多 backend app 的 AC 门改为统一 `test_dir` 全局对账（Batch D2b / D168）
+
+* **变更**：移除「`>1` 个 backend/fullstack app ⇒ 整门 N/A」；多个 backend app 共享统一 `test_dir`（建议 `.`），按全局 AC 覆盖对账，不按 app 拆分；`backend_test` schema 不变。
+* **测试**：多 app 同 `test_dir` PASS；多 app + `test_dir: .` 两应用 2/2 覆盖；变异 M-MULTI1 咬住「恢复 N/A」。
+* **文档/契约**：`shared/stack-profile.md`、`shared/gates.md`、`iron-gates`、`docs/guide/backend-test.md` 同步多 app 口径。
+
+### 🧱 JPA 跨文件继承/Embeddable + Go 结构适配器（Batch D3 / D169 / D170）
+
+* **JPA**：新增 `adapters/_jpa.py` 跨文件类图；`@Entity` 合并 `@MappedSuperclass` 链字段，`@Embedded` 展开为 `field.nested`；不推断 JPA 继承策略、不猜命名策略。
+* **Go API**：`adapters/api.py` 识别 gin/echo/chi/net/http 常见注册；无动词记 `ANY`，`_test.go` 不扫。
+* **Go 测试清单**：`adapters/tests.py` 盘点 `*_test.go` + `go.mod`，命令 `go test ./...`；配置族冲突仍置 null + WARN。
+* **Go 模型**：`adapters/models.py` 解析 struct 的 `gorm`/`json`/`db` tag 与 `TableName()`，不猜表名。
+* **测试**：`tests/test_adapter_models.py` 12 条、`tests/test_adapter_api.py` 9 条、`tests/test_tools.py` 31 条；变异 M-JPA4/M-JPA5/M-GO1..M-GO3 均咬。
+
+### 🧪 真实仓烟测修复（D171）
+
+* **`.scratch` 排除**：共享忽略集补 `.scratch` / `target` / `.gradle` / `.idea`，影子测试不再污染测试清单。
+* **MyBatis-Plus**：`_jpa.py` 支持 `@TableName` / `@TableId` / `@TableField` 与普通基类字段继承；跳过 getter 的 `return` 行，消除 `type=return` 与重复字段。
+* **NestJS / Midway**：`api.py` 支持 `@Controller(prefix)` + `@Get/@Post/.../@All`，无动词记 `ANY`。
+* **测试**：新增 `.scratch` 排除、MyBatis getter、NestJS 控制器钉；变异 M-REAL1..3 均咬。
+* **真仓烟测**：nanwang（Spring Boot + MyBatis-Plus）AC 1/1 PASS、数据模型生成；cn-console（NestJS + Midway）AC 1/1 PASS、API 51 条、测试清单 20 条、`atlas check --fast` 无失败。
+
+* **边界**：MyBatis XML/注解 SQL 不产模型；NestJS DTO `class` 未纳入 TS 模型（当前真实 core 无 DTO 类）；`.scratch` 是约定不是通用构建目录。
+
+---
+
 ## [v0.2.0-beta.19] - 2026-10-28
 
 ### 🐛 审查报告定位与记录类留痕分家（D161 / #44 / #43）

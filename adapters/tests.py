@@ -33,23 +33,32 @@ from _lib import (  # noqa: E402
 )
 
 ADAPTER = "tests"
-VERSION = "0.2.0"
+VERSION = "0.4.0"
 
 PY_TEST_RE = re.compile(r"^test_.+\.py$|^.+_test\.py$")
 JS_TEST_RE = re.compile(r"\.(spec|test)\.(js|jsx|ts|tsx)$")
+JAVA_TEST_RE = re.compile(r".*(?:Test|Tests|IT)\.java$")
+GO_TEST_RE = re.compile(r".*_test\.go$")
 PYTEST_CONFIG = {"pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml", "conftest.py"}
 PLAYWRIGHT_CONFIG = {"playwright.config.js", "playwright.config.ts"}
 JS_CONFIG = {"vitest.config.js", "vitest.config.ts", "jest.config.js", "jest.config.ts", "package.json"}
+MAVEN_CONFIG = {"pom.xml"}
+GRADLE_CONFIG = {"build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"}
+GO_CONFIG = {"go.mod"}
 
 # 配置探测扫**整项目**（配置是项目级的，不随 app 变）；测试文件盘点按 app 作用域。
-CONFIG_SUFFIXES = (".py", ".ini", ".toml", ".cfg", ".js", ".ts", ".jsx", ".tsx", ".json")
-TEST_SUFFIXES = (".py", ".js", ".jsx", ".ts", ".tsx")
+CONFIG_SUFFIXES = (".py", ".ini", ".toml", ".cfg", ".js", ".ts", ".jsx", ".tsx", ".json", ".xml", ".gradle", ".kts", ".mod")
+TEST_SUFFIXES = (".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go")
 
 RUN_PYTEST = "python3 -m pytest"
 RUN_PLAYWRIGHT = "npx playwright test"
 RUN_VITEST = "npx vitest run"
 RUN_JEST = "npx jest"
 RUN_NPM = "npm test"
+RUN_MAVEN = "mvn test"
+RUN_GRADLEW = "./gradlew test"
+RUN_GRADLE = "gradle test"
+RUN_GO = "go test ./..."
 
 
 def classify(rel: str, playwright: bool) -> str:
@@ -58,7 +67,7 @@ def classify(rel: str, playwright: bool) -> str:
         return "e2e"
     if playwright and JS_TEST_RE.search(low):
         return "e2e"
-    if "integration" in low:
+    if "integration" in low or low.endswith("it.java"):
         return "integration"
     return "unit"
 
@@ -90,6 +99,9 @@ def main() -> int:
     npm_cfg = False
     vitest_cfg = False
     jest_cfg = False
+    maven_cfg = False
+    gradle_cfg = False
+    go_cfg = False
 
     # ① 配置探测：**整项目范围**。`--app` 下若只扫 app 目录，落在项目根的
     #    `pytest.ini` / `playwright.config.ts` 会被漏掉 ⇒ 逐 app 调用（域级类别的主路径）
@@ -112,14 +124,24 @@ def main() -> int:
                 configs.add(rel)
                 vitest_cfg = vitest_cfg or name.startswith("vitest")
                 jest_cfg = jest_cfg or name.startswith("jest")
+        if name in MAVEN_CONFIG:
+            maven_cfg = True
+            configs.add(rel)
+        if name in GRADLE_CONFIG:
+            gradle_cfg = True
+            configs.add(rel)
+        if name in GO_CONFIG:
+            go_cfg = True
+            configs.add(rel)
 
     # ② 测试文件盘点：app 作用域。
     test_files: list[str] = []
     for f in iter_files(root, TEST_SUFFIXES, app_path):
-        if PY_TEST_RE.match(f.name) or JS_TEST_RE.search(f.name):
+        if PY_TEST_RE.match(f.name) or JS_TEST_RE.search(f.name) or JAVA_TEST_RE.match(f.name) or GO_TEST_RE.match(f.name):
             test_files.append(f.relative_to(root).as_posix())
 
     node_cfg = playwright_cfg or npm_cfg or vitest_cfg or jest_cfg
+    gradle_cmd = RUN_GRADLEW if (root / "gradlew").is_file() else RUN_GRADLE
 
     def runner_for(rel: str) -> tuple[str | None, str | None]:
         """(run_command, 冲突说明)。说明非空 ⇒ run_command 置 null 并打 WARN。
@@ -128,6 +150,22 @@ def main() -> int:
         item 仍出（测试文件存在是事实），命令留空（不作主张），并出声点明。
         完全没配置 ⇒ 命令也留空但**不打 WARN**——那是既有正常形态（契约里 `run_command` 本就可空）。
         """
+        if GO_TEST_RE.match(Path(rel).name):
+            if go_cfg:
+                return RUN_GO, None
+            if pytest_cfg or node_cfg or maven_cfg or gradle_cfg:
+                return None, (f"{rel}：Go 测试文件，但仓里只有其它测试栈配置"
+                              f"（后缀族与配置族冲突，不合成命令）")
+            return None, None
+        if JAVA_TEST_RE.match(Path(rel).name):
+            if maven_cfg:
+                return RUN_MAVEN, None
+            if gradle_cfg:
+                return gradle_cmd, None
+            if pytest_cfg or node_cfg:
+                return None, (f"{rel}：Java 测试文件，但仓里只有 Python/JS 侧测试配置"
+                              f"（后缀族与配置族冲突，不合成命令）")
+            return None, None
         if PY_TEST_RE.match(Path(rel).name):
             if pytest_cfg:
                 return RUN_PYTEST, None

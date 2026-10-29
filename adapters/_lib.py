@@ -19,7 +19,8 @@ from _support.layout import load_layout  # noqa: E402
 IGNORE_DIRS = {
     ".git", "node_modules", "__pycache__", "site-packages", "dist", "build",
     ".next", ".turbo", ".mypy_cache", ".pytest_cache", ".pyxle-build",
-    "coverage", ".coverage", ".venv", "venv",
+    "coverage", ".coverage", ".venv", "venv", ".scratch", "target",
+    ".gradle", ".idea", ".atlas", ".atlas-run", ".trellis",
 }
 
 

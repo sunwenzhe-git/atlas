@@ -102,13 +102,15 @@
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `command` | 否 | 测试执行命令（收口核验命令保管；如 `pytest backend/tests`） |
-| `test_dir` | 否 | 测试代码根目录（相对路径，用于 AST 提取 AC 挂载点，缺省 `backend/tests`） |
-| `framework` | 否 | 测试提取器框架，枚举：`pytest`（v1 仅支持 pytest） |
+| `command` | 否 | 测试执行命令（收口核验命令保管；具体命令由项目声明） |
+| `test_dir` | 否 | 测试代码根目录（相对路径，用于提取器扫描 AC 挂载点，缺省 `backend/tests`） |
+| `extractor` | 否 | 提取器注册表名（内置/外部由 `adapters/ac/` 注册）；缺省 = 注册表默认值；不支持的名字 ⇒ AC 门未验证（`WARN`/`enforce` 下 `FAIL`），不得伪装 PASS |
+| `framework` | 否 | `extractor` 的兼容别名；两者同时声明且不一致 ⇒ FAIL |
+| `extractor_command` | 否 | 外部 extractor 的 argv 字符串（`shlex.split`、禁止 shell）；与 `extractor`/`framework` 互斥；stdout 必须输出归一化 JSON（schema 见 `docs/guide/backend-test.md`）；非 0 / 超时 / 非法 JSON ⇒ `[EXTRACTOR]` FAIL |
 | `mode` | 否 | AC 对账门禁模式，枚举：`advisory`（**缺省** = 报告覆盖缺口与对账清单，不阻断）\| `enforce`（**AC 挂载**缺口硬阻断；**维度缺口恒 WARN**，不随 mode 升 FAIL） |
-| `ac_marker` | 否 | 测试用例挂载 AC 的语法形态，如 `pytest_mark`（`@pytest.mark.ac("AC-xxx")`；可选 kwarg `dims=[...]`） |
+| `ac_marker` | 否 | 由 extractor 解释的标记形态（可选）；具体语法见 `docs/guide/backend-test.md` |
 
-**维度声明（D153）**：PRD §五 第五列 `后端适用覆盖维度` ⇔ 测试 `@pytest.mark.ac("AC-X", dims=["C02","C11"])`；`dims` 只作用于 marker 里的 AC，精确 C01-C14。后端门只对「有 `backend/fullstack` app + `backend_test` + pytest + `test_dir`」的项目启用；缺维度 / 仅弱证据 / 零测试 / 未知 / 孤儿 ⇒ WARN。第 4 列仍归 E2E 门（D130），两列各查各的。`mode` **不覆盖维度**。
+**维度声明（D153）**：PRD §五 第五列 `后端适用覆盖维度` ⇔ 归一化测试记录的 `dims`；具体标记语法由 extractor 定义（示例见 `docs/guide/backend-test.md`）。`dims` 只作用于单 AC marker，精确 C01-C14。后端门只对「有 `backend/fullstack` app + `backend_test` + 可解析 extractor + `test_dir`」的项目启用；缺维度 / 仅弱证据 / 零测试 / 未知 / 孤儿 ⇒ WARN；未注册 extractor ⇒ 未验证（advisory `WARN` / enforce `FAIL`）；外部命令失败 ⇒ `[EXTRACTOR]` FAIL。第 4 列仍归 E2E 门（D130），两列各查各的。`mode` **不覆盖维度**。多 backend app 不整门 N/A：`test_dir` 指向覆盖所有后端测试的统一根（建议 `.`），门按全局 AC 对账，app 级归属由 structure 事实/agent 表达。
 
 **`review` 字段的两条口径（写死）**：
 
@@ -154,14 +156,15 @@
   - **为何要它**：候选闸与挂载前缀都会丢弃条目（命名不匹配、前缀求不出），而丢弃**必须可见**——不完整的事实表冒充「structure ⇔ 代码」配门比诚实缺口更糟（`global-rules.md` §15 同族）。同理须在 stderr 逐文件列出未解析原因。
   - **未解析的条目一律不产出**（宁缺不产假路径）：回退成模块相对路径会与其它模块的同名路径撞行键，被 `dedup_by_row_key` 折叠成**假事实**，比缺口更糟。
 
-- **`tests` 的 `run_command` 由测试文件的后缀族推定，配置只在同族内细化命令**（2026-10-15 补，issue #4）：`.py` ⇒ Python 族（有 pytest 配置 ⇒ `python3 -m pytest`）；`.ts/.js/.tsx/.jsx` ⇒ Node 族（playwright / vitest / jest / `package.json scripts.test` 依次取命令）。**配置探测扫整项目**，不随 `--app` 收窄——配置是项目级的、落在项目根；只有测试文件盘点按 app 收窄（否则逐 app 调用拿不到根级配置，命令被静默降级成 `null`）。
-- **后缀族与配置族冲突时不产矛盾条目**（2026-10-15 补）：item 仍出（测试文件存在是事实），`run_command` 置 `null`（**不作主张**），并在 stderr 报 `WARN[tests]` 点名该文件与冲突的配置，**退出码恒 0**——非零会被 `refresh_structure --chain` 当成适配器失败而中止整条链。反例即 issue #4：根有仅声明 atlas `ac` marker 的 `pytest.ini`，全仓唯一测试文件是 `.test.ts`，旧实现给出 `python3 -m pytest` 这条**错误事实**，且「非空且形态合法」骗过接线前置（`§B118` 只识别「产出为空」）。
+- **`tests` 的 `run_command` 由测试文件的后缀族与配置族推定，配置只在同族内细化命令**（2026-10-15 补，issue #4）：具体框架/命令识别在 `adapters/tests.py`（框架知识合法落点）；`shared/` 只约定「按后缀族推定、配置族冲突不产矛盾条目」的规则。**配置探测扫整项目**，不随 `--app` 收窄——配置是项目级的、落在项目根；只有测试文件盘点按 app 收窄（否则逐 app 调用拿不到根级配置，命令被静默降级成 `null`）。
+- **后缀族与配置族冲突时不产矛盾条目**（2026-10-15 补）：item 仍出（测试文件存在是事实），`run_command` 置 `null`（**不作主张**），并在 stderr 报 `WARN[tests]` 点名该文件与冲突的配置，**退出码恒 0**——非零会被 `refresh_structure --chain` 当成适配器失败而中止整条链。反例即 issue #4：根有测试框架配置，全仓唯一测试文件属于另一文件族，旧实现给出错误命令这条**错误事实**，且「非空且形态合法」骗过接线前置（`§B118` 只识别「产出为空」）。
 
 - `items` 与渲染出的 markdown 表**逐行对应**；适配器不产表格外的语义列。
 - **`items` 的粒度 = 渲染行键**（2026-10-15 补）：适配器按**代码里的事实**出行、**不做行键去重**
   （同一端点被两个域各调一次是两条合法事实，各进各的域文件）；同一事实文件内的**重复行键**
   由 `refresh_structure.py` 折叠（D69，行键级合并以「行键唯一」为前提）。
 - **`api` 的 `method` 取值**（2026-10-15 补）：HTTP 形态记动词（`GET`/`POST`/…）；
+  声明了 HTTP 路由但源码未写动词的（契约未声明映射动词）记 **`ANY`**，不猜成具体动词；
   **RPC / action 形态**（调用点看不出传输动词、也没有 URL）记 **`RPC`**，`path` 记**方法名本身**
   ——**不合成 URL、不猜动词**（合成即编事实；`@action` 这类合成路径的形态是**框架事实**，不是通则）。
 - **`routes` 的 `auth`**（2026-10-15 记实）：只记**可静态取证的认证门**；授权门（如

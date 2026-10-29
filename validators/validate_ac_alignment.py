@@ -3,19 +3,20 @@
 
 依据 B209-1 / 3507 BT 决策（2026-10-12）：
   * **无主 AC 拦截（Dangling ACs）**：测试中挂载的 AC ID 必须在现有 PRD 资产中存在（无主即 FAIL）。
-  * **无效跳过拦截（Unwaived Skip/Xfail）**：挂载了 AC 的测试若被标记为跳过（如 skip / xfail），
-    必须附带显式豁免说明（`reason` 包含 `waiver:` 或 docstring 声明 `waiver:`），否则 FAIL。
+  * **无效跳过拦截（Unwaived Skip/Xfail）**：挂载了 AC 的测试若被标记为跳过，必须附带显式豁免说明
+    （`reason` 包含 `waiver:` 或 docstring 声明 `waiver:`），否则 FAIL。
   * **双向对账与覆盖清单（Alignment Coverage）**：
     提取各需求 PRD 的 AC 集合与测试代码映射。若配置为 enforce 模式，检查对应后端 AC 挂载覆盖度。
   * **差量防退化（Delta Ratchet）**：
     与上一次执行留存的基线快照比对，挂载 AC 的测试用例数与覆盖的 AC 数净增不得为负。
   * **AC × 覆盖维度（后端通道，D153）**：
-    域级 PRD 验收表可选列 `后端适用覆盖维度` ⇔ 测试 `@pytest.mark.ac(..., dims=[...])`；
+    域级 PRD 验收表可选列 `后端适用覆盖维度` ⇔ 测试记录的 `dims`；
     缺维度 / 仅弱证据 / 零测试 / 未知 / 孤儿 ⇒ WARN（不 FAIL）。第 4 列仍归 E2E 门（D130）。
 
-- **语言中立架构**：以 AST 提取器与模式匹配器双轨运行，v1 原生支持 Python 测试提取，预留适配器接口。
-- **纯标准库**：无第三方依赖。
-- 判定：`PASS`/`WARN`/`N/A` → 退出码 0；`FAIL` → 1。
+**语言中立架构**：本文件不识别任何具体测试框架，也不识别测试文件命名约定；
+框架知识只在 `adapters/ac/` 的提取器内。本文件只消费归一化记录，并按项目形态决定门是否适用。
+
+判定：`PASS`/`WARN`/`N/A` → 退出码 0；`FAIL` → 1。
 
 用法：
     python3 validate_ac_alignment.py --root <项目根> [--json]
@@ -23,7 +24,6 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import re
 import sys
@@ -31,7 +31,6 @@ from pathlib import Path
 from typing import Any
 
 # 随包内核引导（`_support/`，2026-10-12 单源批）：profile 解析走单源实现
-# （本文件原持第三份手写解析，B209-1 引入时未收敛，见 `_support/stack_profile.py` 头注）。
 if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _support.siblings import load_module  # noqa: E402
@@ -41,16 +40,19 @@ _sp = load_module("stack_profile")
 ac_coverage = load_module("ac_coverage")
 parse_dims_cell = ac_coverage.parse_dims_cell
 
+try:
+    import adapters.ac as ac_adapters
+    from adapters.ac import command as ac_command
+except Exception as exc:  # 装配缺失 / 加载失败必须响亮，不静默降级
+    ac_adapters = None
+    ac_command = None
+    _ADAPTER_IMPORT_ERROR = exc
+
 AC_ID_RE = re.compile(r"\b(AC-[A-Z0-9]+-\d+)\b")
 AC_ID_STRICT_RE = re.compile(r"^AC-[A-Z0-9]+-\d{3}$")
 BACKEND_DIM_HEADER = "后端适用覆盖维度"
 E2E_DIM_HEADER = "适用覆盖维度"
-SKIP_DIRS = {
-    "node_modules", ".git", "dist", "build", ".next", "coverage", "__pycache__",
-    ".venv", "venv", "vendor", ".cache", "out", "target", ".atlas", ".atlas-run"
-}
 BASELINE_PATH = Path(".atlas/runs/backend-ac-alignment.json")
-_UNSUPPORTED = object()
 
 
 class Result:
@@ -99,250 +101,6 @@ def collect_prd_acs(root: Path, lay=None) -> dict[str, set[str]]:
         if matches:
             acs_by_file[p.name] = matches
     return acs_by_file
-
-
-class PyTestACVisitor(ast.NodeVisitor):
-    """AST 遍历提取 pytest 函数/方法中的 AC、dims、skip/weak 与 docstring 归属。"""
-
-    def __init__(self, rel_path: str) -> None:
-        self.rel_path = rel_path
-        self.tests: list[dict[str, Any]] = []
-        self.module_weak = False
-        self.module_pytestmark_ac = False
-
-    @staticmethod
-    def _call_path(node: ast.AST) -> str:
-        if not isinstance(node, ast.Call):
-            return ""
-        names: list[str] = []
-        cur = node.func
-        while isinstance(cur, ast.Attribute):
-            names.append(cur.attr)
-            cur = cur.value
-        if isinstance(cur, ast.Name):
-            names.append(cur.id)
-        names.reverse()
-        return ".".join(names)
-
-    @staticmethod
-    def _literal(node: ast.AST):
-        try:
-            return ast.literal_eval(node)
-        except Exception:
-            return _UNSUPPORTED
-
-    @staticmethod
-    def _has_mark(node: ast.AST, names: set[str]) -> bool:
-        for sub in ast.walk(node):
-            if isinstance(sub, ast.Attribute) and sub.attr in names:
-                return True
-            if isinstance(sub, ast.Name) and sub.id in names:
-                return True
-        return False
-
-    def _decorator_info(self, dec: ast.AST) -> dict[str, Any]:
-        info: dict[str, Any] = {
-            "acs": set(), "dims": set(), "dims_bad": [], "dims_shape_ok": True,
-            "dims_present": False, "skipped": False, "waiver": "",
-            "weak": False, "uncertain": False,
-        }
-        if isinstance(dec, ast.Call):
-            path = self._call_path(dec)
-            if path in ("pytest.mark.ac", "mark.ac", "ac"):
-                for arg in dec.args:
-                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                        info["acs"].update(AC_ID_RE.findall(arg.value))
-                    elif isinstance(arg, (ast.List, ast.Tuple)):
-                        for elt in arg.elts:
-                            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                                info["acs"].update(AC_ID_RE.findall(elt.value))
-                for kw in dec.keywords:
-                    if kw.arg != "dims":
-                        continue
-                    info["dims_present"] = True
-                    val = self._literal(kw.value)
-                    if val is _UNSUPPORTED:
-                        info["dims_shape_ok"] = False
-                        continue
-                    dims, bad, ok = ac_coverage.parse_dims_list(val)
-                    info["dims"] = dims
-                    info["dims_bad"] = bad
-                    info["dims_shape_ok"] = ok
-            elif path in ("pytest.mark.skip", "pytest.mark.xfail", "mark.skip", "mark.xfail", "skip", "xfail"):
-                info["skipped"] = True
-                info["weak"] = True
-                for kw in dec.keywords:
-                    if kw.arg == "reason" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                        info["waiver"] = kw.value.value
-                for arg in dec.args:
-                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                        info["waiver"] = arg.value
-            elif path in ("pytest.mark.skipif", "mark.skipif", "skipif"):
-                info["weak"] = True
-                info["uncertain"] = True
-            elif path in ("pytest.mark.parametrize", "mark.parametrize", "parametrize"):
-                if self._has_mark(dec, {"skip", "xfail", "skipif"}):
-                    info["weak"] = True
-                    info["uncertain"] = True
-        elif isinstance(dec, ast.Attribute):
-            if dec.attr in ("skip", "xfail"):
-                info["skipped"] = True
-                info["weak"] = True
-        elif isinstance(dec, ast.Name) and dec.id in ("skip", "xfail"):
-            info["skipped"] = True
-            info["weak"] = True
-        return info
-
-    def _scan_pytestmark(self, node: ast.AST) -> tuple[bool, bool]:
-        if isinstance(node, ast.Assign):
-            targets = node.targets
-        elif isinstance(node, ast.AnnAssign):
-            targets = [node.target]
-        else:
-            return False, False
-        if not any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in targets):
-            return False, False
-        value = node.value
-        if value is None:
-            return False, False
-        return (
-            self._has_mark(value, {"skip", "xfail", "skipif"}),
-            self._has_mark(value, {"ac"}),
-        )
-
-    def visit_Module(self, node: ast.Module) -> None:
-        for item in node.body:
-            weak, ac = self._scan_pytestmark(item)
-            self.module_weak = self.module_weak or weak
-            self.module_pytestmark_ac = self.module_pytestmark_ac or ac
-        self.generic_visit(node)
-
-    def _visit_test_func(
-        self,
-        node: ast.FunctionDef | ast.AsyncFunctionDef,
-        prefix: str = "",
-        class_weak: bool = False,
-        class_pytestmark_ac: bool = False,
-    ) -> None:
-        if not node.name.startswith("test_"):
-            return
-        func_name = f"{prefix}{node.name}" if prefix else node.name
-        marker_acs: set[str] = set()
-        dims: set[str] = set()
-        dims_bad: list[str] = []
-        dims_present = False
-        dims_shape_ok = True
-        is_skipped = False
-        waiver_reason = ""
-        weak = class_weak or self.module_weak
-        uncertain = False
-
-        for dec in node.decorator_list:
-            info = self._decorator_info(dec)
-            marker_acs.update(info["acs"])
-            if info["dims_present"]:
-                dims_present = True
-                dims.update(info["dims"])
-                dims_bad.extend(info["dims_bad"])
-                dims_shape_ok = dims_shape_ok and info["dims_shape_ok"]
-            if info["skipped"]:
-                is_skipped = True
-                if info["waiver"]:
-                    waiver_reason = info["waiver"]
-            weak = weak or info["weak"]
-            uncertain = uncertain or info["uncertain"]
-
-        doc = ast.get_docstring(node) or ""
-        doc_acs: set[str] = set()
-        if doc:
-            doc_acs.update(AC_ID_RE.findall(doc))
-            if "waiver:" in doc.lower():
-                waiver_reason = waiver_reason or doc
-
-        self.tests.append({
-            "name": func_name,
-            "file": self.rel_path,
-            "line": node.lineno,
-            "acs": marker_acs | doc_acs,
-            "marker_acs": marker_acs,
-            "doc_acs": doc_acs,
-            "dims": dims,
-            "dims_bad": dims_bad,
-            "dims_shape_ok": dims_shape_ok,
-            "dims_present": dims_present,
-            "skipped": is_skipped,
-            "waiver": waiver_reason,
-            "weak": weak,
-            "uncertain": uncertain,
-            "pytestmark_ac_unsupported": class_pytestmark_ac or self.module_pytestmark_ac,
-        })
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self._visit_test_func(node)
-        self.generic_visit(node)
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self._visit_test_func(node)
-        self.generic_visit(node)
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        class_weak = self.module_weak
-        class_ac = self.module_pytestmark_ac
-        for item in node.body:
-            weak, ac = self._scan_pytestmark(item)
-            class_weak = class_weak or weak
-            class_ac = class_ac or ac
-        if node.name.startswith("Test"):
-            for item in node.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    self._visit_test_func(
-                        item, prefix=f"{node.name}.", class_weak=class_weak,
-                        class_pytestmark_ac=class_ac,
-                    )
-        self.generic_visit(node)
-
-
-def scan_backend_tests_detailed(
-    test_dir: Path, root: Path
-) -> tuple[list[dict[str, Any]], list[str], list[str]]:
-    """扫描 Python 测试目录，返回 (tests, parse_errors, scan_face_warnings)。"""
-    collected: list[dict[str, Any]] = []
-    parse_errors: list[str] = []
-    scan_face: list[str] = []
-    if not test_dir.is_dir():
-        return collected, parse_errors, scan_face
-
-    def _files(pattern: str) -> list[Path]:
-        return sorted(
-            p for p in test_dir.rglob(pattern)
-            if not any(part in SKIP_DIRS for part in p.parts)
-        )
-
-    test_files = _files("test_*.py")
-    star_files = _files("*_test.py")
-    if star_files:
-        names = ", ".join(str(p.relative_to(root)) for p in star_files[:3])
-        scan_face.append(f"存在未扫描的 *_test.py：{len(star_files)} 个（{names}）")
-    if not test_files:
-        scan_face.append(f"扫描面无 test_*.py：{test_dir}")
-        return collected, parse_errors, scan_face
-
-    for p in test_files:
-        try:
-            rel = str(p.relative_to(root))
-            source = p.read_text(encoding="utf-8")
-            tree = ast.parse(source, filename=str(p))
-            visitor = PyTestACVisitor(rel)
-            visitor.visit(tree)
-            collected.extend(visitor.tests)
-        except Exception as exc:
-            parse_errors.append(f"{p.relative_to(root)}: {exc}")
-    return collected, parse_errors, scan_face
-
-
-def scan_backend_tests(test_dir: Path, root: Path) -> list[dict[str, Any]]:
-    """兼容旧调用：只返回 tests（既有四条判据使用）。"""
-    return scan_backend_tests_detailed(test_dir, root)[0]
 
 
 def _strip_cell(raw) -> str:
@@ -436,7 +194,11 @@ def collect_backend_dims(prd_dir: Path) -> tuple[dict[str, set[str]], list[str],
 
 
 def backend_channel_reason(root: Path, profile: dict[str, Any], backend_test_cfg: dict[str, Any]) -> str:
-    """后端通道适用/可用判据；返回空串 = 可用。"""
+    """维度子项的通道适用/可用判据；返回空串 = 可用。
+
+    具体框架支持性不在这里判：extractor 解析已在主流程完成；本函数只判
+    「形态 / 多后端 / 是否声明 backend_test / test_dir 是否存在」。
+    """
     apps = profile.get("apps")
     if not isinstance(apps, list) or not apps:
         return "未声明 apps（无法判定后端通道）"
@@ -444,13 +206,8 @@ def backend_channel_reason(root: Path, profile: dict[str, Any], backend_test_cfg
     backend_kinds = [k for k in kinds if k in ("backend", "fullstack")]
     if not backend_kinds:
         return "无 backend/fullstack 应用（当前栈不适用）"
-    if len(backend_kinds) > 1:
-        return "多后端应用未建模（apps 中 backend/fullstack > 1）"
     if not backend_test_cfg:
         return "未声明 backend_test（合法降级）"
-    framework = backend_test_cfg.get("framework")
-    if framework and framework != "pytest":
-        return f"framework={framework!r} 非 pytest（v1 仅支持 pytest）"
     test_dir = backend_test_cfg.get("test_dir") or "backend/tests"
     if not (root / test_dir).is_dir():
         return f"test_dir 不存在：{test_dir}"
@@ -463,32 +220,83 @@ def _cap(items: list[str], n: int = 8) -> str:
     return "、".join(items[:n]) + f"…（共 {len(items)}）"
 
 
-def validate_ac_alignment(root: Path) -> Result:
-    res = Result()
-    try:
-        lay = load_layout(root)
-    except LayoutError as exc:
-        res.add("项目布局配置", "FAIL", str(exc))
-        return res
-    profile = load_stack_profile(root, lay)
-    backend_test_cfg = profile.get("backend_test") or {}
-    if not isinstance(backend_test_cfg, dict):
-        backend_test_cfg = {}
+def _as_str_set(value: Any) -> set[str] | None:
+    if not isinstance(value, (list, tuple, set)):
+        return None
+    if not all(isinstance(x, str) for x in value):
+        return None
+    return set(value)
 
-    test_dir_str = backend_test_cfg.get("test_dir") or "backend/tests"
-    test_dir = root / test_dir_str
 
-    prd_acs_map = collect_prd_acs(root, lay)
-    all_declared_acs: set[str] = set()
-    for acs in prd_acs_map.values():
-        all_declared_acs.update(acs)
+def _record_schema_errors(tests: list[dict[str, Any]], root: Path) -> list[str]:
+    """校验 adapter 归一化记录的不变量；返回空列表 = 合法。"""
+    errors: list[str] = []
+    seen: set[tuple[str, int]] = set()
+    required = (
+        "name", "file", "line", "acs", "marker_acs", "doc_acs",
+        "dims", "dims_bad", "dims_shape_ok", "dims_present",
+        "skipped", "waiver", "weak", "marker_scope_unsupported",
+    )
+    for idx, t in enumerate(tests):
+        if not isinstance(t, dict):
+            errors.append(f"#{idx} 记录不是对象")
+            continue
+        missing = [k for k in required if k not in t]
+        if missing:
+            errors.append(f"#{idx} 缺字段 {missing}")
+            continue
+        name, file, line = t["name"], t["file"], t["line"]
+        if not isinstance(name, str) or not name.strip():
+            errors.append(f"#{idx} name 非空字符串")
+        if not isinstance(file, str) or not file.strip():
+            errors.append(f"#{idx} file 非空字符串")
+        else:
+            p = Path(file)
+            if p.is_absolute() or ".." in p.parts:
+                errors.append(f"#{idx} file 必须是项目根相对路径：{file!r}")
+        if isinstance(line, bool) or not isinstance(line, int) or line <= 0:
+            errors.append(f"#{idx} line 必须为正整数：{line!r}")
+        acs = _as_str_set(t["acs"])
+        marker_acs = _as_str_set(t["marker_acs"])
+        doc_acs = _as_str_set(t["doc_acs"])
+        dims = _as_str_set(t["dims"])
+        dims_bad = _as_str_set(t["dims_bad"])
+        if acs is None or marker_acs is None or doc_acs is None or dims is None or dims_bad is None:
+            errors.append(f"#{idx} acs/marker_acs/doc_acs/dims/dims_bad 必须是字符串集合")
+            continue
+        if marker_acs - acs or doc_acs - acs:
+            errors.append(f"#{idx} marker_acs/doc_acs 必须是 acs 的子集")
+        if acs != (marker_acs | doc_acs):
+            errors.append(f"#{idx} acs 必须等于 marker_acs ∪ doc_acs")
+        if not isinstance(t["dims_shape_ok"], bool) or not isinstance(t["dims_present"], bool):
+            errors.append(f"#{idx} dims_shape_ok/dims_present 必须是布尔")
+        if not isinstance(t["skipped"], bool) or not isinstance(t["weak"], bool):
+            errors.append(f"#{idx} skipped/weak 必须是布尔")
+        if not isinstance(t["waiver"], str):
+            errors.append(f"#{idx} waiver 必须是字符串")
+        if not isinstance(t["marker_scope_unsupported"], bool):
+            errors.append(f"#{idx} marker_scope_unsupported 必须是布尔")
+        if isinstance(file, str) and isinstance(line, int) and not isinstance(line, bool) and line > 0:
+            key = (file, line)
+            if key in seen:
+                errors.append(f"#{idx} (file,line) 重复：{file}:{line}")
+            seen.add(key)
+    return errors
 
-    tests, parse_errors, scan_face = scan_backend_tests_detailed(test_dir, root)
 
-    # 门控态：无 PRD 资产且无测试 ⇒ 整门 N/A（D153：不再伪装 PASS）
-    if not all_declared_acs and not tests:
-        res.add("AC对账门禁运行态", "N/A", "无 PRD 验收标准资产且无测试目录（不适用）")
-        return res
+def _run_checks(
+    res: Result,
+    result,
+    root: Path,
+    lay,
+    profile: dict[str, Any],
+    backend_test_cfg: dict[str, Any],
+    all_declared_acs: set[str],
+    mode: str,
+) -> Result:
+    tests = result.tests
+    parse_errors = result.parse_errors
+    scan_face = result.scan_face
 
     test_with_ac = [t for t in tests if t["acs"]]
     all_cited_acs: set[str] = set()
@@ -521,13 +329,24 @@ def validate_ac_alignment(root: Path) -> Result:
     else:
         res.add("无效跳过拦截", "PASS", "所有挂载 AC 的跳过测试均具备有效豁免声明或无跳过")
 
-    mode = backend_test_cfg.get("mode", "advisory")
+    if parse_errors:
+        status = "FAIL" if mode == "enforce" else "WARN"
+        res.add("测试提取完整性", status,
+                f"[PARSE] 解析失败={len(parse_errors)}个：{'; '.join(parse_errors[:3])}")
+    else:
+        res.add("测试提取完整性", "PASS", "所有测试文件解析成功")
+
+    if scan_face:
+        res.add("测试扫描面", "WARN", f"[SCAN] {'；'.join(scan_face[:4])}")
+
     total_declared = len(all_declared_acs)
     total_cited = len(all_cited_acs)
     coverage_ratio = (total_cited / total_declared) if total_declared > 0 else 1.0
     detail_msg = f"已声明 AC: {total_declared}，后端测试挂载覆盖: {total_cited} ({coverage_ratio:.1%})"
     if mode == "enforce" and total_declared > 0 and total_cited == 0:
         res.add("AC覆盖对账", "FAIL", f"{detail_msg}（enforce 模式下不允许零测试挂载）")
+    elif total_declared > 0 and total_cited == 0:
+        res.add("AC覆盖对账", "WARN", f"[ZERO-COVERAGE] {detail_msg}")
     else:
         res.add("AC覆盖对账", "PASS", detail_msg)
 
@@ -573,7 +392,7 @@ def validate_ac_alignment(root: Path) -> Result:
 
         for t in unique:
             label = f"{t['file']}:{t['name']}"
-            if t.get("pytestmark_ac_unsupported"):
+            if t.get("marker_scope_unsupported"):
                 pm_ac.add(t["file"])
             if t.get("dims_bad"):
                 bad.append(f"{label}={'/'.join(t['dims_bad'])}")
@@ -625,13 +444,9 @@ def validate_ac_alignment(root: Path) -> Result:
         if shape:
             parts.append(f"dims形态不支持={_cap(shape, 4)}")
         if pm_ac:
-            parts.append(f"pytestmark挂AC不支持={_cap(sorted(pm_ac), 4)}")
+            parts.append(f"模块/类级AC标记不支持={_cap(sorted(pm_ac), 4)}")
         if dim_issues:
             parts.append("；".join(dim_issues[:4]))
-        if scan_face:
-            parts.extend(scan_face[:2])
-        if parse_errors:
-            parts.append(f"解析失败={len(parse_errors)}个：{'; '.join(parse_errors[:3])}")
 
         status = "WARN" if parts else "PASS"
         detail = "；".join(parts) if parts else f"{len(declared_dims)} 条 AC 后端维度全量覆盖"
@@ -665,7 +480,8 @@ def validate_ac_alignment(root: Path) -> Result:
     else:
         res.add("差量防回退", "PASS", f"当前挂载测试数: {len(test_with_ac)}，覆盖 AC 数: {len(all_cited_acs)}")
 
-    if res.status != "FAIL":
+    # 解析失败时快照不完整：不写 baseline，避免把坏快照冻成新基线
+    if res.status != "FAIL" and not parse_errors:
         try:
             baseline_file.parent.mkdir(parents=True, exist_ok=True)
             baseline_file.write_text(
@@ -675,6 +491,100 @@ def validate_ac_alignment(root: Path) -> Result:
             pass
 
     return res
+
+
+def validate_ac_alignment(root: Path) -> Result:
+    res = Result()
+    try:
+        lay = load_layout(root)
+    except LayoutError as exc:
+        res.add("项目布局配置", "FAIL", str(exc))
+        return res
+    if ac_adapters is None:
+        res.add("AC提取器注册表", "FAIL",
+                f"adapters/ac 加载失败：{_ADAPTER_IMPORT_ERROR}")
+        return res
+
+    profile = load_stack_profile(root, lay)
+    backend_test_cfg = profile.get("backend_test") or {}
+    if not isinstance(backend_test_cfg, dict):
+        backend_test_cfg = {}
+    mode = backend_test_cfg.get("mode", "advisory")
+    if mode not in ("advisory", "enforce"):
+        mode = "advisory"
+
+    apps = profile.get("apps")
+    apps_declared = isinstance(apps, list) and bool(apps)
+    backend_apps = [
+        a for a in (apps or [])
+        if isinstance(a, dict) and a.get("kind") in ("backend", "fullstack")
+    ] if apps_declared else []
+
+    if apps_declared and not backend_apps:
+        res.add("门控态", "N/A", "无 backend/fullstack 应用（当前形态不适用）")
+        return res
+
+    prd_acs_map = collect_prd_acs(root, lay)
+    all_declared_acs: set[str] = set()
+    for acs in prd_acs_map.values():
+        all_declared_acs.update(acs)
+
+    explicit = backend_test_cfg.get("extractor") or backend_test_cfg.get("framework")
+    command = backend_test_cfg.get("extractor_command")
+    test_dir_str = backend_test_cfg.get("test_dir") or "backend/tests"
+    if command:
+        try:
+            result = ac_command.run(command, root, root / test_dir_str)
+        except ac_command.ExtractError as exc:
+            res.add("测试提取通道", "FAIL", f"[EXTRACTOR] {exc}")
+            return res
+    else:
+        adapter = ac_adapters.resolve(explicit) if explicit else ac_adapters.resolve(None)
+        if explicit and adapter is None:
+            if not all_declared_acs:
+                res.add("AC对账门禁运行态", "N/A", "无 PRD AC 且 extractor 未注册（无输入面）")
+                return res
+            res.add(
+                "后端测试提取通道",
+                "WARN" if mode == "advisory" else "FAIL",
+                f"[UNVERIFIED] extractor={explicit!r} 未注册；后端 AC 覆盖未验证",
+            )
+            return res
+        result = adapter.extract(root, root / test_dir_str, backend_test_cfg)
+    input_present = result.input_state == "present"
+
+    if not all_declared_acs and not input_present:
+        res.add("AC对账门禁运行态", "N/A", "无 PRD 验收标准资产且无测试输入（不适用）")
+        return res
+
+    if not apps_declared:
+        res.add(
+            "后端通道适用性",
+            "WARN" if mode == "advisory" else "FAIL",
+            "[UNVERIFIED] stack-profile 未声明 apps，后端通道适用性无法判定",
+        )
+        if not input_present:
+            return res
+
+    # backend_test 已声明但既没有 extractor、默认提取器也没发现输入：
+    # 不假设项目是 Python，报未验证而不是 ZERO-COVERAGE。
+    if backend_test_cfg and not explicit and not command and not input_present:
+        res.add(
+            "后端测试提取通道",
+            "WARN" if mode == "advisory" else "FAIL",
+            "[UNVERIFIED] 未声明 extractor 且默认提取器未发现测试输入；"
+            "非 Python 后端请声明 extractor",
+        )
+        return res
+
+    schema_errors = _record_schema_errors(result.tests, root)
+    if schema_errors:
+        res.add("测试提取契约", "FAIL", f"[EXTRACTOR] {_cap(schema_errors, 6)}")
+        return res
+
+    return _run_checks(
+        res, result, root, lay, profile, backend_test_cfg, all_declared_acs, mode
+    )
 
 
 def main() -> int:

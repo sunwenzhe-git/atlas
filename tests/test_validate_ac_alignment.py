@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 import pytest
 
@@ -240,6 +241,8 @@ def create_backend_project(
     header: list[str] | None = None,
     with_backend_test: bool = True,
     framework: str | None = None,
+    extractor: str | None = None,
+    extractor_command: str | None = None,
     mode: str = "advisory",
     apps: list[dict] | None = None,
     test_dir_files: dict[str, str] | None = None,
@@ -276,7 +279,11 @@ def create_backend_project(
             f"  mode: {mode}",
             "  ac_marker: pytest_mark",
         ])
-        if framework:
+        if extractor_command:
+            sp.append(f'  extractor_command: "{extractor_command}"')
+        elif extractor:
+            sp.append(f"  extractor: {extractor}")
+        elif framework:
             sp.append(f"  framework: {framework}")
     (tmp_path / "product" / "stack-profile.yaml").write_text("\n".join(sp) + "\n", encoding="utf-8")
 
@@ -285,7 +292,9 @@ def create_backend_project(
     if test_code is not None:
         (test_dir / "test_sample.py").write_text(test_code, encoding="utf-8")
     for name, code in (test_dir_files or {}).items():
-        (test_dir / name).write_text(code, encoding="utf-8")
+        p = test_dir / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(code, encoding="utf-8")
     return tmp_path
 
 
@@ -564,21 +573,22 @@ def test_ok():
     assert "backend_test" in check["detail"], check
 
 
-def test_backend_non_pytest_na(tmp_path: Path):
+def test_backend_unknown_extractor_unverified(tmp_path: Path):
     test_code = 'def test_unrelated():\n    assert True\n'
     proj = create_backend_project(
         tmp_path,
         [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
         test_code,
-        framework="unittest",
+        extractor="unittest",
     )
     res = validate_ac_alignment(proj)
-    check = _check(res)
-    assert check is not None and check["status"] == "N/A", check
-    assert "非 pytest" in check["detail"], check
+    check = _check(res, "后端测试提取通道")
+    assert check is not None and check["status"] == "WARN", check
+    assert "[UNVERIFIED]" in check["detail"], check
+    assert res.status == "WARN", res.status
 
 
-def test_backend_multi_app_na(tmp_path: Path):
+def test_backend_multi_app_uses_global_test_dir(tmp_path: Path):
     apps = [
         {"name": "api1", "path": "api1", "kind": "backend", "role": "landing", "stack": "python"},
         {"name": "api2", "path": "api2", "kind": "backend", "role": "landing", "stack": "python"},
@@ -598,8 +608,40 @@ def test_ok():
     )
     res = validate_ac_alignment(proj)
     check = _check(res)
-    assert check is not None and check["status"] == "N/A", check
-    assert "多后端应用" in check["detail"], check
+    assert check is not None and check["status"] == "PASS", check
+    assert res.status == "PASS", res.status
+
+
+def test_backend_multi_app_root_test_dir_scans_all_apps(tmp_path: Path):
+    apps = [
+        {"name": "api1", "path": "api1", "kind": "backend", "role": "landing", "stack": "python"},
+        {"name": "api2", "path": "api2", "kind": "backend", "role": "landing", "stack": "python"},
+    ]
+    proj = create_backend_project(
+        tmp_path,
+        [
+            ("`AC-A-001`", "Given x When y Then z", "`R-001`", "", "C01"),
+            ("`AC-B-001`", "Given x When y Then z", "`R-002`", "", "C01"),
+        ],
+        None,
+        apps=apps,
+    )
+    profile = proj / "product" / "stack-profile.yaml"
+    profile.write_text(
+        profile.read_text(encoding="utf-8").replace("test_dir: backend/tests", "test_dir: ."),
+        encoding="utf-8",
+    )
+    for app, ac in (("api1", "AC-A-001"), ("api2", "AC-B-001")):
+        d = proj / app / "tests"
+        d.mkdir(parents=True)
+        (d / "test_x.py").write_text(
+            f"import pytest\n\n@pytest.mark.ac('{ac}', dims=['C01'])\ndef test_ok():\n    assert True\n",
+            encoding="utf-8",
+        )
+    res = validate_ac_alignment(proj)
+    assert res.status == "PASS", [(c["check"], c["status"], c["detail"]) for c in res.checks]
+    cov = _check(res, "AC覆盖对账")
+    assert cov is not None and "覆盖: 2" in cov["detail"], cov
 
 
 def test_backend_star_test_scan_face(tmp_path: Path):
@@ -612,9 +654,9 @@ def test_backend_star_test_scan_face(tmp_path: Path):
         },
     )
     res = validate_ac_alignment(proj)
-    check = _check(res)
+    check = _check(res, "测试扫描面")
     assert check is not None and check["status"] == "WARN", check
-    assert "扫描面" in check["detail"] and "零测试" in check["detail"], check
+    assert "[SCAN]" in check["detail"], check
     assert "foo_test.py" in check["detail"], check
 
 
@@ -626,10 +668,11 @@ def test_backend_syntax_error_warn(tmp_path: Path):
         test_dir_files={"test_bad.py": "def broken(:\n"},
     )
     res = validate_ac_alignment(proj)
-    check = _check(res)
+    check = _check(res, "测试提取完整性")
     assert check is not None and check["status"] == "WARN", check
-    assert "解析失败" in check["detail"], check
+    assert "[PARSE]" in check["detail"], check
     assert "test_bad.py" in check["detail"], check
+    assert res.status == "WARN", res.status
 
 
 def test_backend_empty_root_na(tmp_path: Path):
@@ -719,7 +762,7 @@ def test_ok():
     res = validate_ac_alignment(proj)
     check = _check(res)
     assert check is not None and check["status"] == "WARN", check
-    assert "pytestmark挂AC不支持" in check["detail"], check
+    assert "模块/类级AC标记不支持" in check["detail"], check
 
 
 def test_backend_prd_unknown_token_warn(tmp_path: Path):
@@ -872,3 +915,389 @@ def test_ok():
     assert check is not None and check["status"] == "WARN", check
     assert res.status == "WARN", res.status
 
+
+# ---------------------------------------------------------------------------
+# D163：三形态适用性 / extractor 边界 / 诚实状态
+# ---------------------------------------------------------------------------
+
+def test_frontend_only_ac_gate_na(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001")
+def test_ok():
+    assert True
+"""
+    apps = [{"name": "web", "path": "frontend", "kind": "frontend", "role": "landing", "stack": "react"}]
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        test_code,
+        apps=apps,
+    )
+    res = validate_ac_alignment(proj)
+    assert res.status == "N/A", res.status
+    check = _check(res, "门控态")
+    assert check is not None and check["status"] == "N/A", check
+    assert "backend/fullstack" in check["detail"], check
+    assert not (proj / ".atlas" / "runs" / "backend-ac-alignment.json").exists()
+
+
+def test_missing_apps_dangling_ac_still_fails(tmp_path: Path):
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-GHOST-999")
+def test_fake():
+    assert True
+"""
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        test_code,
+    )
+    (proj / "product" / "stack-profile.yaml").write_text("product: x\n", encoding="utf-8")
+    res = validate_ac_alignment(proj)
+    assert res.status == "FAIL", res.status
+    check = _check(res, "无主AC拦截")
+    assert check is not None and check["status"] == "FAIL", check
+    assert "AC-GHOST-999" in check["detail"], check
+    applicability = _check(res, "后端通道适用性")
+    assert applicability is not None and applicability["status"] == "WARN", applicability
+
+
+def test_missing_apps_without_input_unverified(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        None,
+    )
+    (proj / "product" / "stack-profile.yaml").write_text("product: x\n", encoding="utf-8")
+    res = validate_ac_alignment(proj)
+    applicability = _check(res, "后端通道适用性")
+    assert applicability is not None and applicability["status"] == "WARN", applicability
+    assert "[UNVERIFIED]" in applicability["detail"], applicability
+    assert res.status == "WARN", res.status
+
+
+def test_backend_no_extractor_without_input_unverified(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        None,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res, "后端测试提取通道")
+    assert check is not None and check["status"] == "WARN", check
+    assert "[UNVERIFIED]" in check["detail"], check
+    assert res.status == "WARN", res.status
+
+
+def test_backend_non_python_without_extractor_unverified_not_zero_coverage(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        None,
+        test_dir_files={"a.test.ts": "// no Python test input\n"},
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res, "后端测试提取通道")
+    assert check is not None and check["status"] == "WARN", check
+    assert "[UNVERIFIED]" in check["detail"], check
+    cov = _check(res, "AC覆盖对账")
+    assert cov is None, cov  # 未验证分支不应再产出 ZERO-COVERAGE
+
+
+def test_backend_zero_coverage_advisory_warns(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        "def test_unrelated():\n    assert True\n",
+        with_backend_test=False,
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res, "AC覆盖对账")
+    assert check is not None and check["status"] == "WARN", check
+    assert "[ZERO-COVERAGE]" in check["detail"], check
+    assert res.status == "WARN", res.status
+
+
+def test_backend_enforce_parse_errors_fail(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        None,
+        test_dir_files={"test_bad.py": "def broken(:\n"},
+        mode="enforce",
+    )
+    res = validate_ac_alignment(proj)
+    check = _check(res, "测试提取完整性")
+    assert check is not None and check["status"] == "FAIL", check
+    assert "[PARSE]" in check["detail"], check
+    assert res.status == "FAIL", res.status
+
+
+def test_record_schema_rejects_bad_records(tmp_path: Path):
+    base = {
+        "name": "test_x",
+        "file": "backend/tests/test_x.py",
+        "line": 1,
+        "acs": {"AC-X-001"},
+        "marker_acs": {"AC-X-001"},
+        "doc_acs": set(),
+        "dims": set(),
+        "dims_bad": [],
+        "dims_shape_ok": True,
+        "dims_present": False,
+        "skipped": False,
+        "waiver": "",
+        "weak": False,
+        "marker_scope_unsupported": False,
+    }
+    assert vaa._record_schema_errors([base], tmp_path) == []
+    bad_union = dict(base, acs={"AC-X-001"}, marker_acs=set())
+    assert any("acs 必须等于" in e for e in vaa._record_schema_errors([bad_union], tmp_path))
+    bad_line = dict(base, line=0)
+    assert any("line 必须为正整数" in e for e in vaa._record_schema_errors([bad_line], tmp_path))
+    dup = dict(base, name="test_y")
+    assert any("(file,line) 重复" in e for e in vaa._record_schema_errors([base, dup], tmp_path))
+    absolute = dict(base, file=str(tmp_path / "x.py"))
+    assert any("相对路径" in e for e in vaa._record_schema_errors([absolute], tmp_path))
+
+
+# ---------------------------------------------------------------------------
+# D164：TS / Vitest / Jest 内置 extractor（Batch C1）
+# ---------------------------------------------------------------------------
+
+def test_backend_vitest_title_ac_and_dims_pass(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        None,
+        extractor="vitest",
+        test_dir_files={
+            "refund.test.ts": (
+                "/** @atlas-dims C01 */\n"
+                "it('[AC-TEST-001] 余额不足时拒绝退款', () => {});\n"
+            ),
+        },
+    )
+    res = validate_ac_alignment(proj)
+    assert res.status == "PASS", [(c["check"], c["status"], c["detail"]) for c in res.checks]
+    cov = _check(res, "AC覆盖对账")
+    assert cov is not None and "覆盖: 1" in cov["detail"], cov
+    dim = _check(res)
+    assert dim is not None and dim["status"] == "PASS", dim
+
+
+def test_backend_vitest_dangling_ac_fails(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        None,
+        extractor="vitest",
+        test_dir_files={
+            "refund.test.ts": "it('[AC-GHOST-999] 假挂载', () => {});\n",
+        },
+    )
+    res = validate_ac_alignment(proj)
+    assert res.status == "FAIL", res.status
+    check = _check(res, "无主AC拦截")
+    assert check is not None and "AC-GHOST-999" in check["detail"], check
+
+
+def test_backend_jest_skip_without_waiver_fails(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        None,
+        extractor="jest",
+        test_dir_files={
+            "__tests__/refund.spec.js": "test.skip('[AC-TEST-001] 暂不做', () => {});\n",
+        },
+    )
+    res = validate_ac_alignment(proj)
+    assert res.status == "FAIL", res.status
+    check = _check(res, "无效跳过拦截")
+    assert check is not None and check["status"] == "FAIL", check
+
+
+def test_backend_vitest_unwaived_describe_skip_fails(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        None,
+        extractor="vitest",
+        test_dir_files={
+            "refund.test.ts": (
+                "describe.skip('group', () => {\n"
+                "  it('[AC-TEST-001] 暂不做', () => {});\n"
+                "});\n"
+            ),
+        },
+    )
+    res = validate_ac_alignment(proj)
+    assert res.status == "FAIL", res.status
+    check = _check(res, "无效跳过拦截")
+    assert check is not None and "AC-TEST-001" in check["detail"], check
+
+
+
+def test_backend_junit5_title_ac_and_dims_pass(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        None,
+        extractor="junit5",
+        test_dir_files={
+            "RefundTest.java": (
+                "class RefundTest {\n"
+                "  @Test\n"
+                "  @DisplayName(\"[AC-TEST-001] 余额不足拒绝\")\n"
+                "  @Tag(\"atlas-dims-C01\")\n"
+                "  void refundRejected() {}\n"
+                "}\n"
+            ),
+        },
+    )
+    res = validate_ac_alignment(proj)
+    assert res.status == "PASS", [(c["check"], c["status"], c["detail"]) for c in res.checks]
+    dim = _check(res)
+    assert dim is not None and dim["status"] == "PASS", dim
+
+
+def test_backend_junit5_dangling_ac_fails(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        None,
+        extractor="junit5",
+        test_dir_files={
+            "RefundTest.java": (
+                "class RefundTest {\n"
+                "  @Test\n"
+                "  @DisplayName(\"[AC-GHOST-999] 假挂载\")\n"
+                "  void fake() {}\n"
+                "}\n"
+            ),
+        },
+    )
+    res = validate_ac_alignment(proj)
+    assert res.status == "FAIL", res.status
+    check = _check(res, "无主AC拦截")
+    assert check is not None and "AC-GHOST-999" in check["detail"], check
+
+
+def test_backend_junit5_disabled_without_waiver_fails(tmp_path: Path):
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        None,
+        extractor="junit5",
+        test_dir_files={
+            "RefundTest.java": (
+                "class RefundTest {\n"
+                "  @Test\n"
+                "  @DisplayName(\"[AC-TEST-001] 暂不做\")\n"
+                "  @Disabled(\"later\")\n"
+                "  void pending() {}\n"
+                "}\n"
+            ),
+        },
+    )
+    res = validate_ac_alignment(proj)
+    assert res.status == "FAIL", res.status
+    check = _check(res, "无效跳过拦截")
+    assert check is not None and check["status"] == "FAIL", check
+
+
+def _external_extractor(path: Path, body: str) -> str:
+    path.write_text(body, encoding="utf-8")
+    return f"{sys.executable} {path}"
+
+
+def test_backend_external_command_passes(tmp_path: Path):
+    script = tmp_path / "extract.py"
+    cmd = _external_extractor(script, (
+        "import json\n"
+        "print(json.dumps({'schema_version': 1, 'input_state': 'present', 'tests': [{\n"
+        "  'name': 'T.ac', 'file': 'backend/tests/T.java', 'line': 3,\n"
+        "  'acs': ['AC-TEST-001'], 'marker_acs': ['AC-TEST-001'], 'doc_acs': [],\n"
+        "  'dims': ['C01'], 'dims_bad': [], 'dims_shape_ok': True, 'dims_present': True,\n"
+        "  'skipped': False, 'waiver': '', 'weak': False, 'marker_scope_unsupported': False\n"
+        "}], 'parse_errors': [], 'scan_face': []}))\n"
+    ))
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        None,
+        extractor_command=cmd,
+    )
+    res = validate_ac_alignment(proj)
+    assert res.status == "PASS", [(c["check"], c["status"], c["detail"]) for c in res.checks]
+    dim = _check(res)
+    assert dim is not None and dim["status"] == "PASS", dim
+
+
+def test_backend_external_command_invalid_json_fails(tmp_path: Path):
+    script = tmp_path / "extract.py"
+    cmd = _external_extractor(script, "print('not json')\n")
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        None,
+        extractor_command=cmd,
+    )
+    res = validate_ac_alignment(proj)
+    assert res.status == "FAIL", res.status
+    check = _check(res, "测试提取通道")
+    assert check is not None and "[EXTRACTOR]" in check["detail"], check
+
+
+def test_backend_external_command_nonzero_fails(tmp_path: Path):
+    script = tmp_path / "extract.py"
+    cmd = _external_extractor(script, "import sys\nsys.stderr.write('bad\\n')\nsys.exit(3)\n")
+    proj = create_backend_project(
+        tmp_path,
+        [("`AC-TEST-001`", "Given x When y Then z", "`R-001`", "", "C01")],
+        None,
+        extractor_command=cmd,
+    )
+    res = validate_ac_alignment(proj)
+    assert res.status == "FAIL", res.status
+    check = _check(res, "测试提取通道")
+    assert check is not None and "退出码 3" in check["detail"], check
+
+
+def test_backend_junit5_multi_module_test_dir_root(tmp_path: Path):
+    """多模块 Maven/Gradle：单 app + test_dir: . 时递归盘点各模块测试。"""
+    proj = create_backend_project(
+        tmp_path,
+        [
+            ("`AC-MODA-001`", "Given x When y Then z", "`R-001`", "", "C01"),
+            ("`AC-MODB-001`", "Given x When y Then z", "`R-002`", "", "C01"),
+        ],
+        None,
+        extractor="junit5",
+    )
+    profile = proj / "product" / "stack-profile.yaml"
+    profile.write_text(
+        profile.read_text(encoding="utf-8").replace("test_dir: backend/tests", "test_dir: ."),
+        encoding="utf-8",
+    )
+    for module, ac in (("module-a", "AC-MODA-001"), ("module-b", "AC-MODB-001")):
+        d = proj / module / "src" / "test" / "java" / "com" / "x"
+        d.mkdir(parents=True)
+        (d / f"{module.title()}Test.java").write_text(
+            "class T {\n"
+            "  @Test\n"
+            f"  @DisplayName(\"[{ac}] case\")\n"
+            "  @Tag(\"atlas-dims-C01\")\n"
+            "  void t() {}\n"
+            "}\n",
+            encoding="utf-8",
+        )
+    res = validate_ac_alignment(proj)
+    assert res.status == "PASS", [(c["check"], c["status"], c["detail"]) for c in res.checks]
+    cov = _check(res, "AC覆盖对账")
+    assert cov is not None and "覆盖: 2" in cov["detail"], cov

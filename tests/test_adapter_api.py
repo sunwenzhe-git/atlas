@@ -163,3 +163,182 @@ def test_descriptor_file_yields_pointer_form() -> None:
         assert data.get("spec_entry") == "openapi.json", data
         assert "items" not in data or data["items"] == [], data
         assert "丢弃" in p.stderr and "WARN" in p.stderr, p.stderr
+
+
+PROFILE_BACKEND = """product: 夹具
+apps:
+  - name: api
+    path: backend
+    kind: backend
+    role: landing
+    stack: java
+"""
+
+
+def mk_backend(root: Path, files: dict) -> None:
+    (root / "product").mkdir(parents=True, exist_ok=True)
+    (root / "product" / "stack-profile.yaml").write_text(PROFILE_BACKEND, encoding="utf-8")
+    for rel, body in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body, encoding="utf-8")
+
+
+def run_backend(root: Path) -> dict:
+    out = root / "out.json"
+    p = subprocess.run([sys.executable, str(ADAPTER), "--root", str(root),
+                        "--app", "api", "--out", str(out)],
+                       capture_output=True, text=True, timeout=120)
+    assert p.returncode == 0, p.stdout + p.stderr
+    return json.loads(out.read_text(encoding="utf-8"))
+
+
+JAVA_CONTROLLER = """\
+package com.x
+import org.springframework.web.bind.annotation.*
+
+@RestController
+@RequestMapping("/api/refunds")
+class RefundController {
+  @GetMapping("/{id}")
+  public String get(String id) { return id; }
+
+  @PostMapping
+  public String create() { return "ok"; }
+
+  @RequestMapping(value = "/search", method = RequestMethod.POST)
+  public String search() { return "ok"; }
+
+  @RequestMapping("/any")
+  public String any() { return "ok"; }
+}
+"""
+
+
+def test_java_spring_endpoints_are_extracted() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_backend(root, {"backend/src/main/java/com/x/RefundController.java": JAVA_CONTROLLER})
+        items = run_backend(root)["items"]
+        triples = sorted((i["method"], i["path"]) for i in items)
+        assert triples == [
+            ("ANY", "/api/refunds/any"),
+            ("GET", "/api/refunds/{id}"),
+            ("POST", "/api/refunds"),
+            ("POST", "/api/refunds/search"),
+        ], triples
+        assert all(i["source_module"].endswith("RefundController.java") for i in items)
+
+
+def test_java_class_level_multiple_base_paths_cartesian() -> None:
+    code = """\
+@RestController
+@RequestMapping({"/v1", "/v2"})
+class Api {
+  @GetMapping("/x")
+  public String x() { return "ok"; }
+}
+"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_backend(root, {"backend/src/main/java/com/x/Api.java": code})
+        paths = sorted(i["path"] for i in run_backend(root)["items"])
+        assert paths == ["/v1/x", "/v2/x"], paths
+
+
+def test_java_non_controller_and_commented_mappings_are_ignored() -> None:
+    code = """\
+class NotAController {
+  @GetMapping("/ghost")
+  public String ghost() { return "x"; }
+}
+
+// @RestController
+// class Commented {
+//   @GetMapping("/commented")
+//   public String c() { return "x"; }
+// }
+"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_backend(root, {"backend/src/main/java/com/x/NotAController.java": code})
+        assert run_backend(root)["items"] == []
+
+
+GO_ROUTES = """\
+package main
+import "net/http"
+func main() {
+  r := gin.Default()
+  r.GET("/api/users/:id", handler)
+  r.POST("/api/users", handler)
+  r.Any("/anything", handler)
+  http.HandleFunc("GET /health", handler)
+  mux.HandleFunc("/legacy", handler)
+  q.Get("delay_ms")
+  // r.GET("/ghost", handler)
+}
+"""
+
+
+def test_go_routes_are_extracted_and_comments_ignored() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_backend(root, {"backend/main.go": GO_ROUTES})
+        items = run_backend(root)["items"]
+        triples = sorted((i["method"], i["path"]) for i in items)
+        assert triples == [
+            ("ANY", "/anything"),
+            ("ANY", "/legacy"),
+            ("GET", "/api/users/:id"),
+            ("GET", "/health"),
+            ("POST", "/api/users"),
+        ], triples
+        assert not any("ghost" in i["path"] for i in items)
+
+
+def test_nestjs_controller_routes_are_extracted() -> None:
+    code = """\
+import { Controller, Get, Post, All } from '@nestjs/common';
+@Controller('/api/user')
+export class UserController {
+  @Get('/getUserEnums')
+  getEnums() {}
+  @Post('/create')
+  create() {}
+  @All('*')
+  any() {}
+}
+"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, {"frontend/src/user.controller.ts": code})
+        items = run(root)["items"]
+        triples = sorted((i["method"], i["path"]) for i in items)
+        assert triples == [
+            ("ANY", "/api/user/*"),
+            ("GET", "/api/user/getUserEnums"),
+            ("POST", "/api/user/create"),
+        ], triples
+
+
+def test_atlas_dir_is_not_scanned_as_api_source() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product").mkdir()
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: x\napps:\n  - name: api\n    path: .\n    kind: backend\n    role: landing\n    stack: go\n",
+            encoding="utf-8")
+        (root / "main.go").write_text(
+            'package main\nfunc main() { mux.HandleFunc("/healthz", h) }\n', encoding="utf-8")
+        fake = root / ".atlas" / "adapters"
+        fake.mkdir(parents=True)
+        (fake / "fake.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
+        out = root / "out.json"
+        p = subprocess.run([sys.executable, str(ADAPTER), "--root", str(root),
+                            "--app", "api", "--out", str(out)],
+                           capture_output=True, text=True, timeout=120)
+        assert p.returncode == 0, p.stdout + p.stderr
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert data.get("spec_entry") is None, data
+        assert [(i["method"], i["path"]) for i in data["items"]] == [("ANY", "/healthz")], data

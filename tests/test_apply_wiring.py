@@ -17,10 +17,15 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 import tempfile
 from pathlib import Path
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
+if str(PKG_ROOT) not in sys.path:
+    sys.path.insert(0, str(PKG_ROOT))
+
+from adapters.ac import pytest as ac_pytest  # noqa: E402
 WIRING_SCRIPT = PKG_ROOT / "patches" / "project-wiring" / "apply-wiring.py"
 
 
@@ -38,7 +43,7 @@ def test_wire_python_scaffold_created_ini_only_carries_markers() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / "requirements.txt").write_text("fastapi\npytest\n", encoding="utf-8")
-        res = wiring.wire_python_scaffold(root)
+        res = wiring.wire_project(root)
         assert res["status"] == "applied"
         path, text = res["_write"]
         assert "markers" in text and "ac" in text
@@ -46,7 +51,7 @@ def test_wire_python_scaffold_created_ini_only_carries_markers() -> None:
         path.write_text(text, encoding="utf-8")
 
         # 再次运行：幂等跳过
-        res2 = wiring.wire_python_scaffold(root)
+        res2 = wiring.wire_project(root)
         assert res2["status"] == "skipped"
         assert "已包含 marker 注册" in res2["detail"]
 
@@ -60,7 +65,7 @@ def test_wire_python_scaffold_pyproject_toml_takes_priority() -> None:
         (root / "requirements.txt").write_text("pytest\n", encoding="utf-8")
         (root / "pyproject.toml").write_text(
             '[tool.pytest.ini_options]\nmarkers = [\n    "ac: x",\n]\n', encoding="utf-8")
-        res = wiring.wire_python_scaffold(root)
+        res = wiring.wire_project(root)
         assert res["status"] == "skipped" and "pyproject.toml" in res["detail"]
 
 
@@ -71,7 +76,7 @@ def test_wire_python_scaffold_existing_ini_gets_marker_only() -> None:
         root = Path(td)
         (root / "requirements.txt").write_text("pytest\n", encoding="utf-8")
         (root / "pytest.ini").write_text("[pytest]\naddopts = -v\n", encoding="utf-8")
-        res = wiring.wire_python_scaffold(root)
+        res = wiring.wire_project(root)
         assert res["status"] == "applied"
         path, text = res["_write"]
         assert "markers" in text and "ac" in text
@@ -83,9 +88,9 @@ def test_wire_python_scaffold_skips_non_python_projects() -> None:
     wiring = load_wiring()
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        res = wiring.wire_python_scaffold(root)
+        res = wiring.wire_project(root)
         assert res["status"] == "skipped"
-        assert "非 Python 工程" in res["detail"]
+        assert "非本 extractor 工程" in res["detail"]
 
 
 def test_wire_python_scaffold_skips_factory_template_frontend_project() -> None:
@@ -103,14 +108,14 @@ def test_wire_python_scaffold_skips_factory_template_frontend_project() -> None:
         (root / "product" / "stack-profile.yaml").write_bytes(
             (PKG_ROOT / "templates" / "stack-profile.yaml").read_bytes())
         (root / "package.json").write_text('{"name":"v2"}', encoding="utf-8")
-        assert wiring.is_python_project(root) is False, "模板注释不得当声明用"
-        res = wiring.wire_python_scaffold(root)
-        assert res["status"] == "skipped" and "非 Python 工程" in res["detail"], res
+        assert ac_pytest.is_python_project(root) is False, "模板注释不得当声明用"
+        res = wiring.wire_project(root)
+        assert res["status"] == "skipped" and "非本 extractor 工程" in res["detail"], res
         assert not (root / "pytest.ini").exists(), "纯前端项目不得被建 pytest.ini"
 
 
 def test_wire_python_scaffold_honours_declared_backend_test_section() -> None:
-    """反向判据：**声明**（未注释）的 `backend_test:` / `framework: pytest` ⇒ 仍按 Python 认。
+    """反向判据：显式 `framework: pytest` / `extractor: pytest` ⇒ 仍按 Python 认。
     防「修误判时把真 Python 项目一起修没了」。"""
     wiring = load_wiring()
     with tempfile.TemporaryDirectory() as td:
@@ -119,8 +124,28 @@ def test_wire_python_scaffold_honours_declared_backend_test_section() -> None:
         (root / "product" / "stack-profile.yaml").write_text(
             "product: x\nbackend_test:\n  command: pytest backend/tests\n  framework: pytest\n",
             encoding="utf-8")
-        assert wiring.is_python_project(root) is True
-        assert wiring.wire_python_scaffold(root)["status"] == "applied"
+        assert ac_pytest.is_python_project(root) is True
+        assert wiring.wire_project(root)["status"] == "applied"
+
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: x\nbackend_test:\n  extractor: pytest\n  test_dir: backend/tests\n",
+            encoding="utf-8")
+        assert ac_pytest.is_python_project(root) is True
+
+
+def test_wire_python_scaffold_skips_framework_neutral_backend_test() -> None:
+    """`backend_test:` 是框架中立段：非 Python 项目声明它不得被塞 pytest.ini。"""
+    wiring = load_wiring()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product").mkdir()
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: x\nbackend_test:\n  extractor: vitest\n  test_dir: backend/src\n",
+            encoding="utf-8")
+        assert ac_pytest.is_python_project(root) is False
+        res = wiring.wire_project(root)
+        assert res["status"] == "skipped", res
+        assert not (root / "pytest.ini").exists()
 
 
 def test_wire_python_scaffold_removes_own_stray_ini_in_non_python_project() -> None:
@@ -129,8 +154,8 @@ def test_wire_python_scaffold_removes_own_stray_ini_in_non_python_project() -> N
     wiring = load_wiring()
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        (root / "pytest.ini").write_text(wiring.MARKERS_INI, encoding="utf-8")
-        res = wiring.wire_python_scaffold(root)
+        (root / "pytest.ini").write_text(ac_pytest.MARKERS_INI, encoding="utf-8")
+        res = wiring.wire_project(root)
         assert res["status"] == "removed" and res["_remove"] == root / "pytest.ini", res
         res["_remove"].unlink()  # 模拟 --apply 的写盘动作
         assert not (root / "pytest.ini").exists()
@@ -141,9 +166,9 @@ def test_wire_python_scaffold_keeps_user_edited_ini() -> None:
     wiring = load_wiring()
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        edited = wiring.MARKERS_INI + "\naddopts = -v\n"
+        edited = ac_pytest.MARKERS_INI + "\naddopts = -v\n"
         (root / "pytest.ini").write_text(edited, encoding="utf-8")
-        res = wiring.wire_python_scaffold(root)
+        res = wiring.wire_project(root)
         assert res["status"] == "skipped" and "_remove" not in res, res
         assert (root / "pytest.ini").read_text(encoding="utf-8") == edited
 
@@ -538,3 +563,16 @@ def test_wire_gitignore_handles_missing_trailing_newline() -> None:
         res = wiring.wire_gitignore(root)
         assert res["status"] == "applied", res
         assert res["_write"][1] == "node_modules/\n.adapter-out/\n", res["_write"][1]
+
+
+def test_wire_python_scaffold_skips_external_extractor_command() -> None:
+    wiring = load_wiring()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product").mkdir()
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: x\nbackend_test:\n  extractor_command: java -jar tools/ac.jar\n  test_dir: src/test\n",
+            encoding="utf-8")
+        res = wiring.wire_project(root)
+        assert res["status"] == "skipped", res
+        assert not (root / "pytest.ini").exists()

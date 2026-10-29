@@ -68,8 +68,8 @@
   * 发现任何 `Critical` 级缺陷，一票否决收口。
 
 ### 3. 后端/全栈测试用例 ⇔ AC 跨语言对账门 (`validate_ac_alignment.py`)
-* 校验后端与全栈测试用例中挂载的验收标记（如 `@pytest.mark.ac("AC-xxx")`）与 PRD 声明的 AC 集合严格对齐；
-* D153 起另对账测试 `dims=[...]` 与 PRD 第 5 列 `后端适用覆盖维度`：缺维度 / 仅弱证据 / 零测试 / 未知 / 孤儿 ⇒ **WARN**；后端通道不适用/不可用、多后端 app、非 pytest ⇒ **N/A**；扫描面为空/无 `test_*.py` ⇒ **WARN**（点名扫描面）；
+* 校验后端与全栈测试用例中挂载的验收标记与 PRD 声明的 AC 集合严格对齐；具体标记语法由 `adapters/ac/` 的 extractor 定义（示例见 `docs/guide/backend-test.md`）。
+* D153 起另对账测试记录的 `dims` 与 PRD 第 5 列 `后端适用覆盖维度`：缺维度 / 仅弱证据 / 零测试 / 未知 / 孤儿 ⇒ **WARN**；无 backend/fullstack app ⇒ 整门 **N/A**；未声明 `backend_test` ⇒ **N/A**；多 backend app 用统一 `test_dir` 做全局对账；apps 缺失 / 未注册 extractor ⇒ `[UNVERIFIED]` **WARN**（enforce 下 **FAIL**）；parse_errors ⇒ `[PARSE]` **WARN**（enforce 下 **FAIL**）；零挂载 ⇒ `[ZERO-COVERAGE]` **WARN**（enforce 下 **FAIL**）；扫描面非空 ⇒ `[SCAN]` **WARN**。
 * 防止核心业务逻辑在实现后漏测或假挂载，支持 `advisory` 预警与 `enforce` 硬阻断模式——**`enforce` 只管 AC 挂载，维度缺口恒 WARN**。
 
 ### 4. `impact` 影响面预测对账门 (`impact_reconcile.py`)

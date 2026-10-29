@@ -194,7 +194,7 @@ def test_f23_tests_adapter_python3_m_pytest() -> None:
         res = subprocess.run(cmd, capture_output=True, text=True)
         assert res.returncode == 0, res.stderr
         data = json.loads(out_json.read_text(encoding="utf-8"))
-        assert data["adapter_version"] == "0.2.0"
+        assert data["adapter_version"] == "0.4.0"
         assert len(data["items"]) == 1
         assert data["items"][0]["run_command"] == "python3 -m pytest"
 
@@ -653,3 +653,107 @@ def test_release_rejects_invalid_explicit_version() -> None:
 
     with pytest.raises(SystemExit):
         rel.compute_next_beta_version("0.2.0-beta.14; touch /tmp/pwned")
+
+
+def test_java_maven_test_inventory_and_command() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_profile(root)
+        (root / "pom.xml").write_text("<project></project>\n", encoding="utf-8")
+        t = root / "svc" / "src" / "test" / "java" / "com" / "x"
+        t.mkdir(parents=True)
+        (t / "RefundTest.java").write_text("class RefundTest {}\n", encoding="utf-8")
+        res, data = _run_tests_adapter(root)
+        assert res.returncode == 0, res.stderr
+        assert data["items"][0]["run_command"] == "mvn test", data
+        assert data["items"][0]["type"] == "unit", data
+
+
+def test_java_gradle_test_inventory_and_wrapper_command() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_profile(root)
+        (root / "build.gradle").write_text("plugins {}\n", encoding="utf-8")
+        (root / "gradlew").write_text("#!/bin/sh\n", encoding="utf-8")
+        t = root / "svc" / "src" / "test" / "java" / "com" / "x"
+        t.mkdir(parents=True)
+        (t / "RefundIT.java").write_text("class RefundIT {}\n", encoding="utf-8")
+        res, data = _run_tests_adapter(root)
+        assert res.returncode == 0, res.stderr
+        assert data["items"][0]["run_command"] == "./gradlew test", data
+        assert data["items"][0]["type"] == "integration", data
+
+
+def test_java_test_with_only_pytest_config_gets_no_command() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_profile(root)
+        (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+        t = root / "svc" / "src" / "test" / "java" / "com" / "x"
+        t.mkdir(parents=True)
+        (t / "RefundTest.java").write_text("class RefundTest {}\n", encoding="utf-8")
+        res, data = _run_tests_adapter(root)
+        assert res.returncode == 0, res.stderr
+        assert data["items"][0]["run_command"] is None, data
+        assert "后缀族与配置族冲突" in res.stderr, res.stderr
+
+
+def test_go_test_inventory_and_command() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_profile(root)
+        (root / "go.mod").write_text("module example.com/x\n\ngo 1.22\n", encoding="utf-8")
+        d = root / "svc" / "pkg"
+        d.mkdir(parents=True)
+        (d / "user_test.go").write_text("package pkg\n", encoding="utf-8")
+        res, data = _run_tests_adapter(root)
+        assert res.returncode == 0, res.stderr
+        assert data["items"][0]["run_command"] == "go test ./...", data
+        assert data["items"][0]["type"] == "unit", data
+
+
+def test_go_test_with_only_pytest_config_gets_no_command() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_profile(root)
+        (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+        d = root / "svc" / "pkg"
+        d.mkdir(parents=True)
+        (d / "user_test.go").write_text("package pkg\n", encoding="utf-8")
+        res, data = _run_tests_adapter(root)
+        assert res.returncode == 0, res.stderr
+        assert data["items"][0]["run_command"] is None, data
+        assert "后缀族与配置族冲突" in res.stderr, res.stderr
+
+
+def test_scratch_dir_is_not_scanned_as_test_source() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_profile(root)
+        (root / "pom.xml").write_text("<project></project>\n", encoding="utf-8")
+        keep = root / "svc" / "src" / "test" / "java" / "com" / "x"
+        keep.mkdir(parents=True)
+        (keep / "RefundTest.java").write_text("class RefundTest {}\n", encoding="utf-8")
+        scratch = root / ".scratch" / "src" / "test" / "java" / "com" / "x"
+        scratch.mkdir(parents=True)
+        (scratch / "RefundTest.java").write_text("class RefundTest {}\n", encoding="utf-8")
+        res, data = _run_tests_adapter(root)
+        assert res.returncode == 0, res.stderr
+        locs = [i["location"] for i in data["items"]]
+        assert len(locs) == 1 and locs[0].startswith("svc/"), locs
+
+
+def test_atlas_dir_is_not_scanned_as_test_source() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mk_profile(root, apps="  - name: svc\n    path: .\n    kind: backend\n    role: landing\n")
+        (root / "go.mod").write_text("module x\n\ngo 1.22\n", encoding="utf-8")
+        (root / "main_test.go").write_text("package main\n", encoding="utf-8")
+        fake = root / ".atlas" / "tests"
+        fake.mkdir(parents=True)
+        (fake / "test_fake.py").write_text("def test_fake(): pass\n", encoding="utf-8")
+        res, data = _run_tests_adapter(root)
+        assert res.returncode == 0, res.stderr
+        locs = [i["location"] for i in data["items"]]
+        assert locs == ["main_test.go"], locs
+        assert data["items"][0]["run_command"] == "go test ./...", data

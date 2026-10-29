@@ -133,6 +133,8 @@ Atlas 的核心由 **三环（Rings）** 构筑成不可逾越的应然防线：
 | **Ring 2: 项目级 PRD** (`atlas-prd`) | **业务应然** | `<资产根>/prd/`（默认 `product/prd/`） | 业务叙事单一真相源（SSOT）。双向强制追踪链：`功能 ──► 业务规则 ──► 验收准则(AC) ──► E2E 用例`。不挂实现状态，保持应然纯粹性。 |
 | **Ring 3: 验收用例** (`atlas-e2e`) | **验证应然** | `<资产根>/e2e/`（默认 `product/e2e/`） | 真实应用单段执行（Playwright）。总索引唯一入口，一例一片（页面分片），以 `data-testid` 为唯一硬锚，严禁将瞬时反馈（Toast）当终态。 |
 
+> 原生结构适配器当前覆盖前端路由、Python/TS 模型与 API、测试清单，并已支持 Java Spring API、JPA 模型与 JUnit / Maven-Gradle 测试清单（单 app 多模块可用 `test_dir: .`）；多 backend app 已支持统一 `test_dir` 全局 AC 对账；JPA/MyBatis-Plus 模型、Java Spring、NestJS/Midway 控制器与 Go API/测试/模型结构适配器也已支持（Go AC 门用 `extractor_command` 外部适配器）。
+
 ### 3. 唯一单向编排件（atlas-apply 会话技能）
 
 > 💡 **提示**：`apply` 是由 Agent 在会话中执行的认知编排技能（Skill），通过 `/atlas-apply <模式>` 或大白话唤起，终端无独立的 `atlas apply` 命令：
@@ -393,7 +395,8 @@ Atlas 坚持**变异证明（Mutation Proving / M 系列钉子测试）**原则�
 * **闭集**：`C01`–`C14`（正常流 / 异常流 / 边界值 / 权限 / 并发 / 重试 / 审计 / 会话恢复 / 数据一致性 / 依赖容错 / 幂等 / 输入校验 / 状态转换 / 安全）；E2E 通道与后端通道共用同一闭集；
 * **怎么写**：域级 PRD 验收标准表**可选第 4 列** `适用覆盖维度`（E2E 通道；支持 `C01, C02` 与 `C01-C03` 区间写法），用例分片写 `覆盖维度:` 列表声明这条用例打的是哪个失败面；**可选第 5 列** `后端适用覆盖维度`（后端通道，D153）声明后端义务；
 * **怎么判**：已声明但未全覆盖 ⇒ **WARN** 逐条点名缺口；词表外的疑似写法（如 `C15`）⇒ WARN 出声，绝不静默吸收；**没写第 4 列的项目 ⇒ `N/A` 兜底**，不给任何存量项目凭空造红门；
-* **后端通道（D153）**：后端测试用 `@pytest.mark.ac("AC-X", dims=["C02","C11"])` 声明，`validate_ac_alignment.py` 对账；缺维度 / 仅弱证据 / 零测试 ⇒ WARN。第 4 列仍归 E2E，两列各查各的，**不做跨通道并集**；
+* **后端通道（D153）**：后端测试用 extractor 定义的标记声明 AC / dims（当前内置 pytest、Vitest/Jest、JUnit 5，并支持 `extractor_command` 外部适配器；示例见 `docs/guide/backend-test.md`），`validate_ac_alignment.py` 对账；缺维度 / 仅弱证据 / 零测试 ⇒ WARN。第 4 列仍归 E2E，两列各查各的，**不做跨通道并集**；
+* **三形态 × 能力矩阵**：纯前端 = testid + E2E 启用、AC 门 `N/A`；纯后端 = testid/E2E `N/A`、AC 门启用（需可用 extractor）；全栈 = 两条通道都启用。没有 extractor 的栈会被报 `[UNVERIFIED]`（advisory WARN / enforce FAIL），不会伪装 PASS；原生 extractor 列表是能力矩阵，不是技术栈上限；
 * **刻意不做的两件事**：不新建第 4 张手工对账表（撞 single-source，还会与 AC 唯一性定义门撞行），不强制每条 AC 覆盖 14 维（那只会催生几十条同形式的形式用例）。
 
 ---
@@ -434,7 +437,8 @@ Atlas 坚持**变异证明（Mutation Proving / M 系列钉子测试）**原则�
    * 需求实现后、归档收口前，由独立进程执行只读 diff 审查（Fresh Context 隔离；契约与转换器见 scripts/cli_review_convert.py）；
    * **应审 N / 实审 M 严格对账**：实测表明大模型审查大体积 diff 时会悄悄跳过文件；若实际评审文件数 `M < N`，无论结论如何一律报红拒绝，发现 `Critical` 缺陷一票否决。
 3. **后端/全栈测试用例 ⇔ AC 跨语言对账门 (`validate_ac_alignment.py`)**：
-   * 校验后端与全栈测试用例中挂载的验收标记（如 `@pytest.mark.ac("AC-xxx")`）与 PRD 声明的 AC 集合严格对齐，防止实现测试漏测或假挂载。D153 起另对账测试 `dims=[...]` 与 PRD 第 5 列 `后端适用覆盖维度`（维度缺口只 WARN，不随 `mode: enforce` 升 FAIL）。
+   * 校验后端与全栈测试用例中挂载的验收标记（标记语法由 `adapters/ac/` 的 extractor 解释）与 PRD 声明的 AC 集合严格对齐，防止实现测试漏测或假挂载。D153 起另对账测试记录的 `dims` 与 PRD 第 5 列 `后端适用覆盖维度`（维度缺口只 WARN，不随 `mode: enforce` 升 FAIL）。
+   * 三形态 / 未验证语义：无 backend/fullstack app ⇒ 整门 `N/A`；未注册 extractor / apps 缺失 ⇒ `[UNVERIFIED]`（advisory WARN / enforce FAIL）；零挂载 ⇒ `[ZERO-COVERAGE]`、解析失败 ⇒ `[PARSE]`、扫描面非空 ⇒ `[SCAN]`，均不伪装 PASS。
 4. **impact 预测对账门 (`impact_reconcile.py`)**：
    * 在需求规划时预测的影响面集合，与收口时的真实 `git diff` 变更文件列表自动比对差集，持续校准模型的架构感知力。
 5. **设计档案豁免 ⇔ 检测器双向对账 (`validate_design_exemptions.py`)**：

@@ -214,3 +214,239 @@ def test_ts_non_export_alias_and_component_props_are_not_models() -> None:
         assert "CardProps" not in tables, tables     # 组件 Props（UI 管道）
         assert not any("components/" in i["source_file"] for i in items), items
 
+
+
+JPA_ENTITY = """\
+package com.x;
+import jakarta.persistence.*;
+
+@Entity
+@Table(name = "t_user")
+class User {
+  @Id
+  @GeneratedValue
+  private Long id;
+
+  @Column(name = "display_name", nullable = false, length = 64)
+  private String displayName;
+
+  @Enumerated(EnumType.STRING)
+  private Status status;
+
+  @ManyToOne
+  @JoinColumn(name = "dept_id")
+  private Department department;
+
+  private String note;
+
+  @Transient
+  private String cache;
+
+  public String getDisplayName() { return displayName; }
+
+  enum Status { ACTIVE, DISABLED }
+}
+"""
+
+
+def test_jpa_entity_fields_constraints_and_enum() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, JPA_ENTITY, name="User.java")
+        data = run(root)
+        items = {i["field"]: i for i in data["items"]}
+        assert set(items) == {"id", "display_name", "status", "department", "note"}, items
+        assert items["id"]["table"] == "t_user"
+        assert items["id"]["constraints"] == "主键，自增"
+        assert items["display_name"]["constraints"] == "非空，长度=64"
+        assert items["department"]["relation"] == "Department"
+        assert items["status"]["enum"] == "Status"
+        assert any(e["field"] == "status" and {v["value"] for v in e["values"]} == {"ACTIVE", "DISABLED"}
+                   for e in data["enums"]), data["enums"]
+
+
+def test_jpa_non_entity_and_transient_ignored() -> None:
+    code = """\
+class Dto {
+  private String name;
+}
+
+@Entity
+class EntityOnly {
+  @Transient
+  private String cache;
+}
+"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, code, name="Dto.java")
+        data = run(root)
+        assert data["items"] == [], data["items"]
+
+
+def test_jpa_mapped_superclass_and_embedded_expansion() -> None:
+    code = """\
+import jakarta.persistence.*;
+
+@MappedSuperclass
+class BaseEntity {
+  @Id
+  @GeneratedValue
+  private Long id;
+  @Column(nullable = false)
+  private String createdAt;
+}
+
+@Embeddable
+class Address {
+  @Column(name = "city")
+  private String city;
+  private String street;
+}
+
+@Entity
+@Table(name = "t_user")
+class User extends BaseEntity {
+  private String name;
+  @Embedded
+  private Address address;
+}
+"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, code, name="User.java")
+        items = {i["field"]: i for i in run(root)["items"]}
+        assert set(items) == {"id", "createdAt", "name", "address.city", "address.street"}, items
+        assert items["id"]["constraints"] == "主键，自增"
+        assert items["address.city"]["type"] == "String"
+
+
+def test_jpa_cross_file_inheritance_and_embeddable() -> None:
+    base = """\
+@MappedSuperclass
+class BaseEntity {
+  @Id
+  private Long id;
+}
+"""
+    addr = """\
+@Embeddable
+class Address {
+  private String city;
+}
+"""
+    entity = """\
+@Entity
+@Table(name = "t_user")
+class User extends BaseEntity {
+  @Embedded
+  private Address address;
+}
+"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product").mkdir(parents=True)
+        (root / "product" / "stack-profile.yaml").write_text(PROFILE, encoding="utf-8")
+        d = root / "backend" / "app"
+        d.mkdir(parents=True)
+        (d / "BaseEntity.java").write_text(base, encoding="utf-8")
+        (d / "Address.java").write_text(addr, encoding="utf-8")
+        (d / "User.java").write_text(entity, encoding="utf-8")
+        items = {i["field"]: i for i in run(root)["items"]}
+        assert set(items) == {"id", "address.city"}, items
+        assert items["id"]["table"] == "t_user"
+
+
+def test_jpa_plain_base_class_is_not_merged() -> None:
+    code = """\
+class PlainBase {
+  private String inherited;
+}
+
+@Entity
+class EntityOnly extends PlainBase {
+  private String own;
+}
+"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, code, name="EntityOnly.java")
+        fields = {i["field"] for i in run(root)["items"]}
+        assert fields == {"own"}, fields
+
+
+GO_MODELS = """\
+package models
+type User struct {
+  ID uint `gorm:"primaryKey;autoIncrement" json:"id"`
+  Name string `gorm:"not null;size:64" json:"name"`
+  DeptID uint `gorm:"column:dept_id" json:"deptId,omitempty"`
+  Dept *Department `json:"dept"`
+}
+func (User) TableName() string { return "t_user" }
+"""
+
+
+def test_go_struct_models_and_tags() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, GO_MODELS, name="models.go")
+        items = {i["field"]: i for i in run(root)["items"]}
+        assert set(items) == {"id", "name", "dept_id", "dept"}, items
+        assert items["id"]["table"] == "t_user"
+        assert items["id"]["constraints"] == "主键，自增"
+        assert items["name"]["constraints"] == "非空，长度=64"
+        assert items["dept"]["relation"] == "*Department"
+
+
+def test_go_test_files_are_not_models() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, "type Fake struct { ID uint }\n", name="x_test.go")
+        assert run(root)["items"] == []
+
+
+MYBATIS_MODELS = """\
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+
+class BaseEntity {
+  @TableId(type = IdType.ASSIGN_ID)
+  private Long id;
+  @TableField(value = "CREATE_TIME")
+  private String createTime;
+}
+
+@TableName("FM_AI_FUND_FORECAST_RUN")
+class ForecastRunEntity extends BaseEntity {
+  private String runId;
+  private Integer progress;
+  public Long getId() { return id; }
+}
+"""
+
+
+def test_mybatis_plus_table_name_and_base_entity_fields() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, MYBATIS_MODELS, name="ForecastRunEntity.java")
+        items = {i["field"]: i for i in run(root)["items"]}
+        assert set(items) == {"id", "CREATE_TIME", "runId", "progress"}, items
+        assert items["id"]["constraints"] == "主键"
+        assert items["CREATE_TIME"]["type"] == "String"
+        assert items["runId"]["table"] == "FM_AI_FUND_FORECAST_RUN"
+
+
+def test_go_plain_infra_struct_is_not_a_model() -> None:
+    code = """\
+package main
+type server struct {
+  mu sync.Mutex
+  counters map[string]int
+}
+"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, code, name="server.go")
+        assert run(root)["items"] == []
