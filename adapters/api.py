@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import os
 import re
 import sys
@@ -40,11 +41,18 @@ from _lib import (  # noqa: E402
 )
 
 ADAPTER = "api"
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 
 DESCRIPTOR_FILES = {"openapi.json", "openapi.yaml", "openapi.yml", "swagger.json", "swagger.yaml"}
-# 运行时自动生成 schema 的框架信号（框架知识仅允许在适配器出现）
-SCHEMA_MARKERS = (re.compile(r"\bAPIRouter\s*\("), re.compile(r"\bFastAPI\s*\("))
+# 运行时自动生成 schema 的框架信号（框架知识仅允许在适配器出现）。**只认代码里的
+# 构造调用**（AST `Call`）：注释 / 文档字符串 / 正则源码 / 测试夹具里的同名字面量
+# 都不是框架事实（2026-10-29 issue #46：适配器把自己的注释与测试夹具认成了描述源）。
+RUNTIME_SCHEMA_CALLS = ("FastAPI", "APIRouter")
+RUNTIME_SCHEMA_MODULE = "fastapi"
+# 测试文件不是产品接口面：夹具里真起一个 app 也不构成「有描述」
+TEST_PATH_RE = re.compile(
+    r"(?:^|/)(?:tests?|__tests__)/|(?:^|/)test_[^/]*\.py$|(?:^|/)[^/]*_test\.py$|(?:^|/)conftest\.py$"
+)
 DECO_RE = re.compile(r"@(\w+)\.(get|post|put|delete|patch|options|head)\(\s*['\"]([^'\"]*)['\"]")
 PREFIX_RE = re.compile(r"(\w+)\s*=\s*\w+\([^)]*prefix\s*=\s*['\"]([^'\"]+)['\"]")
 JS_RE = re.compile(r"\b(?:app|router)\.(get|post|put|delete|patch)\(\s*['\"]([^'\"]+)['\"]")
@@ -433,6 +441,32 @@ def extract_nest_routes(root: Path, f: Path) -> list[dict]:
     return items
 
 
+def uses_runtime_schema(text: str) -> bool:
+    """文件里是否有**真实的**运行时 schema 构造调用（AST `Call` 节点）。
+
+    字符串 / 注释 / 正则源码不是证据；`from fastapi import FastAPI as App` 的别名也算。
+    解析失败由调用方 WARN 跳过——注释里的字面量曾把适配器自己认成描述源
+    （2026-10-29 issue #46），退回文本匹配会把该缺陷原样带回。
+    """
+    tree = ast.parse(text)
+    names = set(RUNTIME_SCHEMA_CALLS)
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.ImportFrom)
+                and (node.module or "").split(".")[0] == RUNTIME_SCHEMA_MODULE):
+            for a in node.names:
+                if a.name in RUNTIME_SCHEMA_CALLS and a.asname:
+                    names.add(a.asname)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        if isinstance(fn, ast.Name) and fn.id in names:
+            return True
+        if isinstance(fn, ast.Attribute) and fn.attr in names:
+            return True
+    return False
+
+
 def find_descriptors(root: Path) -> list[str]:
     """按**文件名**找机器可读描述文件（§3.5 的「有描述」探测）。
 
@@ -481,8 +515,13 @@ def main() -> int:
                 text = f.read_text(encoding="utf-8")
             except OSError:
                 continue
-            if any(mk.search(text) for mk in SCHEMA_MARKERS):
-                schema_sources.append(rel)
+            if not TEST_PATH_RE.search(rel) and any(n in text for n in RUNTIME_SCHEMA_CALLS):
+                try:
+                    if uses_runtime_schema(text):
+                        schema_sources.append(rel)
+                except (SyntaxError, ValueError) as e:
+                    print(f"WARN[{ADAPTER}]: 跳过无法解析的文件 {rel}（运行时 schema 探测）: {e}",
+                          file=sys.stderr)
             items.extend(extract_py_routes(root, f))
         elif f.suffix == ".pyxl":
             items.extend(extract_actions(root, f))
@@ -497,8 +536,9 @@ def main() -> int:
 
     if desc_files or schema_sources:
         # 转指针形态 = 整体丢弃已抽到的 items ⇒ 必须出声，绝不静默清空
-        # （2026-10-15 补：任何 `.py` 文本含 `APIRouter(`/`FastAPI(` 都会走到这里，
-        # 演示脚本也算；不出声的话用户看到的是「接口清单是空的」而无从查因）。
+        # （2026-10-15 补：探测到运行时 schema 信号也会走到这里；2026-10-29 起信号只认
+        # AST 构造调用，注释/字符串/正则源码不再触发——issue #46。不出声的话用户看到的是
+        # 「接口清单是空的」而无从查因）。
         entry = desc_files[0] if desc_files else "/openapi.json"
         if items:
             print(f"WARN[{ADAPTER}]: 探测到机器可读描述（{entry}）⇒ 按 D 类指针形态只记"

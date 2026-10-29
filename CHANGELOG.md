@@ -4,6 +4,17 @@
 
 ---
 
+## [Unreleased]
+
+### 🐛 api 适配器运行时 schema 只认构造调用（D172 / #46）
+
+* **修复**：`adapters/api.py` 的运行时 schema 判定从文本正则改为 AST 构造调用——注释、文档字符串、正则源码、测试夹具里的 `FastAPI(`/`APIRouter(` 字面量不再把项目误判成「有描述」⇒ 不再产出悬空的 `spec_entry="/openapi.json"` + `items=0` 假指针（此前适配器自身源码即可自触发，实测复现于本仓根）。
+* **口径**：`from fastapi import FastAPI as App` 的别名构造也认；测试文件（`tests?/`、`test_*.py`、`*_test.py`、`conftest.py`）整类不作描述源判定；无法解析的源码 WARN 跳过、不回退文本匹配。真构造调用仍产指针（有回归钉防修成假阴性）。
+* **共享忽略集**补 `.adapter-out`（atlas 中间产物单一位点，不再被当业务源码枚举）。
+* **同步面**：`shared/stack-profile.md` §3.5（字面量不是证据的口径）、`DESIGN.md` D172、map 行数锚。
+
+---
+
 ## [v0.2.0-beta.20] - 2026-10-29
 
 ### 🔌 AC 门适配器化与三形态适用性（D163 / RFC-20261029-01）

@@ -16,6 +16,8 @@ Python 装饰器路由与 `.pyxl` action——对前端 adopt 的主力形态（
      且**出声**（丢弃了多少条端点，不静默清空）；
   5. **适配器不做行键去重**：同一（方法, 路径）从两个域的两个文件被调 ⇒ **两条都在**
      （跨域重复是合法事实，各进各的域文件；同文件内的重复行键由渲染期折叠）。
+  6. **运行时 schema 只认构造调用**（issue #46）：注释 / 字符串 / 测试夹具 / 适配器自身源码
+     里的标记字面量不得触发指针形态；**真构造调用仍要产指针**（防修成假阴性）。
 
 变异 M54：让 `find_descriptors` 退回「搭源码后缀遍历」（描述文件恒找不到）⇒ 第 4 侧红。
 变异 M56：在适配器里加回「按（方法, 路径）全局去重」⇒ 第 5 侧红。
@@ -85,6 +87,22 @@ def run(root: Path) -> dict:
                        capture_output=True, text=True, timeout=120)
     assert p.returncode == 0, p.stdout + p.stderr
     return json.loads(out.read_text(encoding="utf-8"))
+
+
+def run_root(root: Path) -> dict:
+    """整根扫描（不带 --app）——issue #46 的触发形态就是「源码根 = 项目根」。"""
+    out = root / "out.json"
+    p = subprocess.run([sys.executable, str(ADAPTER), "--root", str(root), "--out", str(out)],
+                       capture_output=True, text=True, timeout=120)
+    assert p.returncode == 0, p.stdout + p.stderr
+    return json.loads(out.read_text(encoding="utf-8"))
+
+
+def mk_plain(root: Path, files: dict) -> None:
+    for rel, body in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body, encoding="utf-8")
 
 
 def test_ts_rpc_calls_are_extracted() -> None:
@@ -334,6 +352,10 @@ def test_atlas_dir_is_not_scanned_as_api_source() -> None:
         fake = root / ".atlas" / "adapters"
         fake.mkdir(parents=True)
         (fake / "fake.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
+        artifacts = root / ".adapter-out"
+        artifacts.mkdir()
+        (artifacts / "probe.py").write_text(
+            "from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
         out = root / "out.json"
         p = subprocess.run([sys.executable, str(ADAPTER), "--root", str(root),
                             "--app", "api", "--out", str(out)],
@@ -342,3 +364,55 @@ def test_atlas_dir_is_not_scanned_as_api_source() -> None:
         data = json.loads(out.read_text(encoding="utf-8"))
         assert data.get("spec_entry") is None, data
         assert [(i["method"], i["path"]) for i in data["items"]] == [("ANY", "/healthz")], data
+
+
+def test_runtime_schema_constructor_yields_pointer() -> None:
+    """真构造调用 ⇒ 仍产运行时 schema 指针（防「修假阳性修成假阴性」）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_plain(root, {"main.py": "from fastapi import FastAPI\napp = FastAPI()\n"})
+        data = run_root(root)
+        assert data.get("spec_entry") == "/openapi.json", data
+        assert not data.get("items"), data
+        assert data["source_files"] == ["main.py"], data
+
+
+def test_runtime_schema_alias_constructor_yields_pointer() -> None:
+    """`import FastAPI as App` 的别名构造调用也要认（AST 判定不得窄于文本判定的真实形态）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_plain(root, {"main.py": "from fastapi import FastAPI as App\napp = App()\n"})
+        assert run_root(root).get("spec_entry") == "/openapi.json"
+
+
+def test_schema_marker_literals_are_not_descriptor_evidence() -> None:
+    """issue #46：注释 / 字符串 / 测试夹具 / 适配器自身源码里的标记字面量不算描述源。
+
+    `tests/test_fixture.py` 里是**真的** `app = FastAPI()`——夹具文件不是产品接口面；
+    `vendor/api.py` 是适配器源码原样拷贝（正则源码 + 注释 + 字符串三面齐全）。
+    """
+    flask_app = (
+        "from flask import Flask, jsonify\n"
+        "app = Flask(__name__)\n"
+        "\n"
+        "# 旧写法备忘：APIRouter( 与 FastAPI( 都是运行时 schema，本仓不用\n"
+        'SNIPPET = "from fastapi import FastAPI\\napp = FastAPI()\\n"\n'
+        "\n"
+        "@app.get('/ping')\n"
+        "def ping():\n"
+        "    return jsonify(ok=True)\n"
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_plain(root, {
+            "app/main.py": flask_app,
+            "tests/test_fixture.py": (
+                "from fastapi import FastAPI\n"
+                "app = FastAPI()  # 夹具自起的 app，不是产品接口面\n"
+            ),
+            "vendor/api.py": ADAPTER.read_text(encoding="utf-8"),
+        })
+        data = run_root(root)
+        assert data.get("spec_entry") is None, data
+        assert [(i["method"], i["path"]) for i in data["items"]] == [("GET", "/ping")], data
+        assert data["source_files"] == ["app/main.py"], data

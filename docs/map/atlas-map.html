@@ -317,7 +317,7 @@ adapt: {
     {id:'ad-routes',x:288,y:76,kind:'tool', title:'routes.py',
       tip:{sum:'文件式路由 + JSX <Route> 两种形态,apps 挂载前缀合成(实测 19→52 条)。',files:[['adapters/routes.py','路由适配器 785 行:pyxle_route / load_apps / collect_file_routes']]}},
     {id:'ad-api',x:288,y:154,kind:'tool', title:'api.py',
-      tip:{sum:'OpenAPI/Swagger 描述文件 + Python/JS/Java Spring 路由双通道。',files:[['adapters/api.py','API 适配器 531 行:DESCRIPTOR_FILES + Python/JS/Java/Go']]}},
+      tip:{sum:'OpenAPI/Swagger 描述文件 + 运行时 schema 构造调用判定 + Python/JS/Java Spring 路由双通道。',files:[['adapters/api.py','API 适配器 571 行:DESCRIPTOR_FILES + 运行时 schema(AST) + Python/JS/Java/Go']]}},
     {id:'ad-models',x:288,y:232,kind:'tool', title:'models.py',
       tip:{sum:'AST 解析 + SQLModel 继承 + JPA @Entity 字段/枚举/约束。',files:[['adapters/models.py','模型适配器 740 行:AST + SQLModel/TS/JPA/MyBatis/Go']]}},
     {id:'ad-tests',x:288,y:310,kind:'tool', title:'tests.py',

@@ -2,6 +2,13 @@
 
 本文档记录了 **Atlas** 每个版本的重要特性变更、架构治理与问题修复。遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范。
 
+## [Unreleased]
+
+### 🐛 api 适配器运行时 schema 只认构造调用（D172 / #46）
+
+* **修复**：`adapters/api.py` 的运行时 schema 判定从文本正则改为 AST 构造调用——注释、文档字符串、正则源码、测试夹具里的 `FastAPI(`/`APIRouter(` 字面量不再把项目误判成「有描述」⇒ 不再产出悬空的 `spec_entry="/openapi.json"` + `items=0` 假指针。
+* **口径**：别名构造也认；测试文件整类不作描述源判定；无法解析的源码 WARN 跳过、不回退文本匹配。共享忽略集补 `.adapter-out`。
+
 ## [v0.2.0-beta.20] - 2026-10-29
 
 ### 🔌 AC 门适配器化与三形态适用性（D163 / RFC-20261029-01）
