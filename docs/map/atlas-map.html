@@ -493,7 +493,7 @@ rings: {sum:'structure / prd / e2e 三环的规程契约(环内逻辑唯一正�
   files:[['rings/structure/reference.md','structure 环契约:反向工程与事实区规程'],
          ['rings/prd/reference.md','prd 环契约:PRD 六件套 / 走查单 / 变更记录规程'],
          ['rings/e2e/reference.md','e2e 环契约:用例分片文法 / 状态机 / 真跑规程'],
-         ['skills/','8 个 agent 执行入口(atlas-apply/structure/prd/e2e…):薄桩引用契约,不复制正文']],blind:null},
+         ['skills/','7 个 agent 执行入口(atlas-apply/structure/prd/e2e…):薄桩引用契约,不复制正文']],blind:null},
 e2egen: {sum:'用例分片(中文 DSL)编译为 Playwright 脚本 + 纯标准库 SSE 评审控制台(慢动作回放)。',
   points:['动词值域封闭:click/hover/type/dispatch 等,陌生动词直接中止生成,治旧安装副本「静默吸收新语法」','登录形态三态:real 四值 / fabricated+storage_key / mode: none(显式声明非降级)','独立审查有 Critical ⇒ --apply 拒绝写盘;前置未声明 ⇒ exit 3 not_ready','失败留证:trace retain-on-failure + screenshot only-on-failure,全绿轮零构件','控制台 127.0.0.1:4190:500ms 慢动作弹窗回放、逐用例三值走查、提交解锁人工 Review;评审指纹(head_sha+scripts_hash)防旧评审挂新执行','运行器判据 = 依赖可导入性(非路径存在)+ 浏览器就绪探针,同内核 _support/pw_runner.py'],
   files:[['scripts/gen_e2e_scripts.py','生成器本体 2477 行(全仓最大单件):分片 DSL → Playwright .spec.ts'],

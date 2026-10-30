@@ -96,7 +96,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 - `duty-review/`:每日巡检(README 协议 + QUEUE 三区队列 + `bugs.md` 按环分类存量库 + `families.py` 分型);`scripts/duty_signals.sh` 只读收集五信号源。
 - `scripts/atlas_report.py`:§15 自感知上报(四段式零业务上下文,`--trigger user` 不冒充自动感知)。
-- `scripts/release.py` + `skills/atlas-release`:发版流程(版本串多处落点 + npm prerelease tag 纪律 + GitHub Release 跟随 tag)。
+- `scripts/release.py`:发版流程(版本串多处落点 + npm prerelease tag 纪律 + GitHub Release 跟随 tag);发版 skill 为用户级安装,不随源包分发。
 
 ## 数字快照(v0.2.0-beta.22)
 
@@ -105,7 +105,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 | 校验器 | 10(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py:52` |
 | 编排门行 | 8 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:850`) |
 | 出厂测试文件 | 42 | `tests/` |
-| skills | 8(含 frontend-design) | `skills/` |
+| skills | 7(含 frontend-design) | `skills/` |
 | 环 | 3(structure / prd / e2e;原型环 E1 已退役) | `rings/` |
 | 共享契约 | 7 份 | `shared/` |
 | 共享内核 | 10 件 | `_support/` |

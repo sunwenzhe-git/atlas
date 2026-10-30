@@ -192,7 +192,7 @@ def check_path_token(tok: str, where: str, repo: Path) -> dict | None:
             "sev": "FAIL", "code": "path_missing", "where": where,
             "msg": f"`{tok}` 目录不存在"}
     if (repo / p).is_dir():
-        return None  # 无尾斜线的目录（`skills/atlas-release`）也算活
+        return None  # 无尾斜线的目录也算活
     if _resolve(p, repo) is None:
         return {"sev": "FAIL", "code": "path_missing", "where": where,
                 "msg": f"`{tok}` 路径不存在（{p}）"}
