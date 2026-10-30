@@ -10,6 +10,7 @@
 
 * **新增**：`shared/gates.md` §3 新增两个候选观测面缺口行：「测试 ⇔ 生产代码变异（变异得分）」「实现代码 ⇔ 覆盖×复杂度（CRAP）」，§4 新立「候选观测面（非门）」小节登记。来源 = ub-mode（Uncle Bob）变异测试 / CRAP 分数思想。
 * **非门**：候选形态 WARN/N-A，不建 FAIL 门、不进 `atlas_check`、不装工具进 Atlas 依赖；升格条件 = 真实仓**副本**试跑信噪比证据。与 M 系列变异钉正交（M 向判据注入脏数据，变异测试篡改生产代码考测试）。
+* **试跑收口（同日）**：go/no-go 已过——三工具原生支持六语言（文章「Python 生态、TS 需换 StrykerJS」有误）；Python 夹具三工具全通；cn-console TS 副本与 nanwang Java 副本 crapper/dryer/mutator 均实测通过（Java 变异 84.6%、~6.6s/变异体）；全部跑在一次性 /tmp 副本（原目录只读）。**已拍板采纳为 WARN 级观测面**：crapper/dryer 全仓扫描（按第一方范围圈定）+ mutator 按批 `--changed` 触发，仍非门。
 * **同步面**：`DESIGN.md` D175、`docs/map/gates.md` 与 `docs/map/atlas-map.html` 行数锚（149 → 152 行）。
 
 ### 🧷 评审重审范围收敛到「真正变化的内容」（D174）
