@@ -1902,6 +1902,43 @@ def test_e2e_index_or_step_ignores_comment() -> None:
     assert _index_levels(machine_or)["步骤非二选一"] == "WARN"
 
 
+def _tolerant_level(case: str) -> str:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, case)
+        mk_index(root)
+        return {c["check"]: c["level"] for c in ve.validate(root).checks}["容忍前提措辞"]
+
+
+def test_e2e_index_tolerant_wording_in_comments_warns() -> None:
+    """issue #47 / D176：容忍性前提措辞（把实现现状写成合法前提）⇒ WARN。
+
+    本项**刻意读注释**（§5.5「机器忽略 `#` 之后」的唯一例外）——容忍性假设天然写在
+    step/expected 注释尾巴或 precondition 散文里；代码部分不扫（业务文案含「存量」不误报）。
+    `容忍: <理由>` 行内显式豁免。
+
+    变异：**M160a** 摘掉词表匹配 ⇒ ①②红；**M160b** 跳过注释（改扫 `_code`）⇒ ①红。
+    """
+    case_comment = CASE_GOOD.replace(
+        "- click home-cta-btn          # 点击主操作按钮",
+        "- click home-cta-btn          # 点击主操作按钮（存量行可能停在引用）",
+    )
+    assert _tolerant_level(case_comment) == "WARN", "step 注释里的容忍措辞漏报"
+
+    case_pre = CASE_GOOD.replace("  - 已打开首页", "  - 已打开首页，视情况沿用存量登录态")
+    assert _tolerant_level(case_pre) == "WARN", "precondition 散文里的容忍措辞漏报"
+
+    case_exempt = CASE_GOOD.replace(
+        "- click home-cta-btn          # 点击主操作按钮",
+        "- click home-cta-btn          # 存量行可能停在引用 # 容忍: 数据迁移业务文案",
+    )
+    assert _tolerant_level(case_exempt) == "PASS", "`容忍:` 豁免未生效"
+
+    case_code = CASE_GOOD.replace("text home-title 首页", "text home-title 存量列表")
+    assert _tolerant_level(case_code) == "PASS", "代码部分的业务文案被误报（本项不得扫代码）"
+
+
 def test_e2e_index_waitfor_is_action_not_assertion() -> None:
     """契约 §5.5 / §8.2（2026-09-25 补）：`waitFor` 是**动作**，不是终态断言。
 
@@ -2874,6 +2911,50 @@ def test_rfc20261023_02_optional_section_explicit_none() -> None:
         na = dom.replace("## 六、Assumptions & Defaults\n\n无。\n\n", "")
         mk_prd_raw(root, plain, na)
         assert row()["status"] == "PASS", row()      # 节缺席 = 开户最小集，不参与
+
+
+def _derived_row(dom_text: str) -> dict:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prd_raw(root, FM_GLOBAL + PRD_GLOBAL, FM_DOMAIN + dom_text)
+        return {c["check"]: c for c in vpr.validate(root).checks}["派生字段默认语义（§六）"]
+
+
+def test_prd_derived_field_defaults_require_section6_registration() -> None:
+    """issue #47 / D176：字段规范表可选列「派生/重置」⇒ §六 须登记该字段的默认值。
+
+    独立 check 行（不并入参数 4 聚合，否则 WARN 被升 FAIL）；列不存在 ⇒ N/A（opt-in）。
+
+    变异：**M160c** 判据恒 N/A ⇒ 第一侧红；**M160d** 只认列不查 §六 ⇒ 第一/三侧红。
+    """
+    field_sec = (
+        "## 三、功能详细说明\n\n### 功能 1\n\n"
+        "| 字段名 | 类型 | 必填 | 长度限制 | 校验规则 | 错误提示文案 | 派生/重置 |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| 计划名 | 文本 | 是 | 20 | 非空 | 必填 | 提交后系统清空并派生默认名 |\n"
+        "| 省份 | 枚举 | 是 | — | 枚举内 | 非法 | — |\n\n"
+    )
+    six_registered = (
+        "## 六、Assumptions & Defaults\n\n"
+        "| 假设内容 | 采用的默认值 | 影响面 | 何时需要澄清 |\n|---|---|---|---|\n"
+        "| 计划名 提交后重置 | 派生为「未命名计划」 | 计划创建 | 产品确认 |\n\n"
+    )
+    base = PRD_DEMO.format(ac="AC-HOME-001", rows="| `AC-HOME-001` | 纯渲染 |")
+    six_none = "## 六、Assumptions & Defaults\n\n无。\n\n"
+
+    with_col = base.replace("## 四、业务规则", field_sec + "## 四、业务规则")
+
+    missed = with_col.replace(six_none, "## 六、Assumptions & Defaults\n\n无。\n\n")
+    assert _derived_row(missed)["status"] == "WARN", "派生字段未登记却未报"
+
+    ok = with_col.replace(six_none, six_registered)
+    assert _derived_row(ok)["status"] == "PASS", _derived_row(ok)
+
+    no_col = base
+    assert _derived_row(no_col)["status"] == "NA", "未启用可选列时应 N/A"
+
+    dash_only = with_col.replace("提交后系统清空并派生默认名", "—")
+    assert _derived_row(dash_only)["status"] == "PASS", "`—` 应视为未声明"
 
 
 def test_forbidden_vocabulary_single_source() -> None:

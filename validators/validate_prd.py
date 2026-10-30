@@ -259,6 +259,53 @@ def _table_rows(section: str) -> tuple[list[str], list[list[str]]]:
     return [], []
 
 
+_DERIVED_EMPTY = ("", "—", "-", "无", "N/A", "n/a")
+
+
+def derived_field_gaps(dtext: str) -> tuple[bool, list[str]]:
+    """issue #47（D176）：字段规范表可选列「派生/重置」× §六 默认值登记的对账。
+
+    返回 `(是否出现该列, 未在 §六 登记默认值的字段)`。表头按**单元格前缀**匹配
+    （`派生/重置` / `派生/重置语义` 均可），不绑列位置；`—` / `无` / 空视为未声明。
+    登记要求 = §六 表某行「假设内容」列含字段名且「采用的默认值」列非空。
+    """
+    lines = dtext.splitlines()
+    declared: list[str] = []
+    has_col = False
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if not s.startswith("|"):
+            continue
+        cells = _cells(s)
+        idx = next((j for j, c in enumerate(cells) if c.startswith("派生/重置")), None)
+        if idx is None:
+            continue
+        has_col = True
+        for row in lines[i + 2:]:
+            if not row.strip().startswith("|"):
+                break
+            rc = _cells(row)
+            if not rc or rc[0] == "字段名" or set(rc[0]) <= {"-", ":"}:
+                continue
+            val = rc[idx] if idx < len(rc) else ""
+            if val not in _DERIVED_EMPTY:
+                declared.append(rc[0])
+    if not declared:
+        return has_col, []
+    registered: set[str] = set()
+    sec6 = section_of(dtext, "六")
+    if sec6 is not None:
+        header6, rows6 = _table_rows(sec6)
+        didx = next((j for j, c in enumerate(header6) if "默认值" in c), None)
+        if didx is not None:
+            for r in rows6:
+                name = r[0] if r else ""
+                val = r[didx] if didx < len(r) else ""
+                if val.strip() not in _DERIVED_EMPTY:
+                    registered.add(name)
+    return True, [f for f in declared if not any(f in name for name in registered)]
+
+
 # AC 号**定义行**：表格首格 = 该 ID 且**至少 3 列**（`| ID | 场景 | 回指规则 |`）。
 # 必须排除引用行（跨域回指 / 规则→AC 列）与结构类 AC 清单（只有 2 列）。**`[^|\n]` 不能写成 `[^|]`**
 # （后者会跨行吃掉后续内容 ⇒ 把 2 列行也当 3 列）。
@@ -345,6 +392,7 @@ def validate(root: Path) -> Result:
     if not domains:
         res.add("变更记录形态", "NA", "无域级 PRD（门控态 / adopt 未开户）")
         res.add("可无项显式（§六）", "NA", "无域级 PRD（门控态 / adopt 未开户）")
+        res.add("派生字段默认语义（§六）", "NA", "无域级 PRD（门控态 / adopt 未开户）")
     else:
         legacy, empty_rec, bad_shape, no_explicit = [], [], [], []
         for d in domains:
@@ -391,6 +439,25 @@ def validate(root: Path) -> Result:
                     + "（写 `无` 或补假设行；翻转触发器见 `rings/prd/reference.md` §7）")
         else:
             res.add("可无项显式（§六）", "PASS", "")
+        # issue #47（D176）：独立 check 行（不并入参数 4 聚合——否则 WARN 会被升成 FAIL）。
+        derived_na = 0
+        derived_gaps: list[str] = []
+        for d in domains:
+            has_col, gaps = derived_field_gaps(d.read_text(encoding="utf-8"))
+            if not has_col:
+                derived_na += 1
+                continue
+            derived_gaps.extend(f"{d.name}:{g}" for g in gaps)
+        if derived_na == len(domains):
+            res.add("派生字段默认语义（§六）", "NA",
+                    "无字段规范表含可选列「派生/重置」（未启用该声明）")
+        elif derived_gaps:
+            res.add("派生字段默认语义（§六）", "WARN",
+                    "派生/重置字段未在 §六 登记默认值=" + ",".join(derived_gaps[:8])
+                    + "（列已声明 ⇒ §六 须有一行含该字段名且「采用的默认值」非空；"
+                      "issue #47 / D176）")
+        else:
+            res.add("派生字段默认语义（§六）", "PASS", "")
 
     # ---- 范围形态声明 / 与 §六 表形态一致 / 最小必填集（契约 §3；结论并入参数 4）
     decl_form, decl_cover, decl_base = (DECL_FORM.search(prd_text), DECL_COVER.search(prd_text),

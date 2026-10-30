@@ -2,6 +2,13 @@
 
 本文档记录了 **Atlas** 每个版本的重要特性变更、架构治理与问题修复。遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范。
 
+## [Unreleased]
+
+### 🧭 E2E 容忍前提措辞 + PRD 派生字段默认语义（issue #47，D176）
+
+* **新增**：E2E 文本期门新增「容忍前提措辞」WARN（注释尾巴 / `precondition` 命中容忍词表；`容忍: <理由>` 豁免）；PRD 门新增「派生字段默认语义」WARN（可选列 `派生/重置` ⇒ §六 须登记默认值，无列 = N/A）。两条均 WARN、不建 FAIL 门。
+* **测试**：`tests/test_validators.py` 180 → 182；变异 M160a–d。
+
 ## [v0.2.0-beta.23] - 2026-10-30
 
 ### 🧭 登记测试有效性与 CRAP 候选观测面（D175）

@@ -103,6 +103,11 @@ PLACEHOLDERS = ("TODO", "待补充", "TBD", "待定", "[FIELD:", "视情况而�
 
 EXPECTED_BLACK = ("正常", "无", "OK", "显示正确", "工作正常")
 INTENT_BLACK = ("显示正确", "功能正常", "页面正常")
+# 容忍性前提措辞（issue #47，D176）：把「实现现在恰好是什么」写成合法前提的措辞。
+# 本项**刻意读注释**（§5.5「机器忽略 `#` 之后」的唯一例外）：容忍性假设天然写在
+# step/expected 的注释尾巴或 precondition 散文里，只扫代码会漏、且业务文案（如「存量迁移」）
+# 写在代码部分时不应误报。词表收窄到问题实证形态；行内 `容忍: <理由>` 显式豁免。
+TOLERANT_BLACK = ("存量", "可能停在", "视情况", "随机", "取决于历史")
 TOAST_WORDS = ("toast", "成功提示", "弹窗关闭")
 # 契约 §5.6 R2：「持久化写」的机器近似 = 步骤里出现**提交性控件**的 testid 语义段。
 # 刻意**不**列 编辑 / 修改 / 新建：它们在中文说明里多指「打开编辑器 / 打开新建弹窗」，
@@ -1221,6 +1226,27 @@ def validate(root: Path) -> Result:
     res.add("持久化写复断言", "PASS" if not persist_unverified else "WARN",
             f"{_format_list(persist_unverified)} (💡 提示: 包含写入/提交动作后，建议在 step 补充 `refresh` 并在 expected 复查断言，防乐观更新假阳性)" if persist_unverified else "")
     res.add("步骤非二选一", "PASS" if not or_step else "WARN", f"{_format_list(or_step)}")
+    # 容忍前提措辞（issue #47，D176）：见 TOLERANT_BLACK 注释——扫 precondition 全文 +
+    # step/expected 的注释尾巴（不扫代码部分），`容忍: <理由>` 显式豁免。
+    tol_hits = []
+    for cid, d in blocks.items():
+        texts = [ln.strip() for ln in d.get("precondition", [])]
+        for key in ("step", "expected"):
+            for ln in d.get(key, []):
+                raw = ln.strip()
+                code = _code(raw)
+                if code == raw:
+                    continue  # 无注释尾巴
+                texts.append(raw[len(code):].strip().lstrip("#").strip())
+        for t in texts:
+            if "容忍:" in t or "容忍：" in t:
+                continue
+            word = next((w for w in TOLERANT_BLACK if w in t), None)
+            if word:
+                tol_hits.append(f"{cid}:{word}")
+    res.add("容忍前提措辞", "PASS" if not tol_hits else "WARN",
+            (f"{_format_list(tol_hits)} (💡 改为显式前置复位或值断言；确属业务文案/已评估 ⇒ 行尾 `# 容忍: <理由>` 豁免)")
+            if tol_hits else "")
     res.add("文案为渲染后文案", "PASS" if not i18n else "WARN", f"疑似 i18n/枚举={_format_list(i18n)}")
     # 契约 §5.7：结构化 `seed:` 的实体 × 字段 ⇔ structure 的 data-models 事实（静态对账）
     _lvl, _det = seed_models_check(root, blocks)
