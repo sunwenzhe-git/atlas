@@ -51,6 +51,34 @@ def _format_list(items: list[str] | set[str], max_show: int = 20) -> str:
     return f"{lst[:max_show]} (共 {len(lst)} 项，截断前 {max_show} 项)"
 
 
+def _fix(root: Path, action: str) -> str:
+    cmd = ("python3 .atlas/scripts/atlas_check.py --fast"
+           if (root / ".atlas/scripts/atlas_check.py").is_file()
+           else "python3 scripts/atlas_check.py --fast")
+    return f"｜修复: {action}｜复跑: {cmd}"
+
+
+def _repair_action(unequal: list[dict], origin: str) -> str:
+    parts = []
+    for det in unequal[:3]:
+        page = det.get("page", "?")
+        missing = det.get("缺失(抽取源无)") or []
+        orphan = det.get("多余(用例未引)") or []
+        if missing:
+            parts.append(
+                f"{page} 页缺 {', '.join(missing[:3])} ⇒ 源码补 data-testid，"
+                f"或确认断言多余后从分片移除"
+            )
+        if orphan and origin != "adopt":
+            parts.append(
+                f"{page} 页多 {', '.join(orphan[:3])} ⇒ 分片补 testid:/step/expected 引用，"
+                f"或删源码多余 data-testid"
+            )
+    if len(unequal) > 3:
+        parts.append(f"…共 {len(unequal)} 页")
+    return "；".join(parts) or "按分页差集修正 testid 应然/实然"
+
+
 def _load_stub_generator():
     """F32：定位随包的 `gen_testid_stub`（副本态 = `.atlas` 同级装配；包态 = 源包同级）。"""
     here = Path(__file__).resolve()
@@ -707,7 +735,9 @@ def validate(root: Path) -> Result:
             if any(template_pattern_hit(n, tpl_patterns) for n in missing_all)
             else ""
         )
-        res.add("分页双向集合相等", "FAIL", json.dumps(unequal, ensure_ascii=False) + hint)
+        res.add("分页双向集合相等", "FAIL",
+                json.dumps(unequal, ensure_ascii=False) + hint
+                + _fix(root, _repair_action(unequal, origin)))
     elif unequal_soft:
         hint_msg = (
             "（存量 adopt 模式未引 testid 降级为 WARN，或页实现状态非「已实现」⇒ 缺口列此）"
@@ -760,7 +790,10 @@ def validate(root: Path) -> Result:
                     else:
                         bad_land_soft.append(f"{err}[{page_state}]")
     if bad_land_hard:
-        res.add("应然落点", "FAIL", f"声明与实然不符={_format_list(bad_land_hard)}")
+        res.add("应然落点", "FAIL",
+                f"声明与实然不符={_format_list(bad_land_hard)}"
+                + _fix(root, "在分片 `落点:` 行补/改 `<tid> <存在的相对路径>`，"
+                             "并确保该文件内可解析到该 testid"))
     elif bad_land_soft:
         warn_msg = f"未实现页落点先行待落地={_format_list(bad_land_soft)}"
         if no_land:

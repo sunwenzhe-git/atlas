@@ -83,3 +83,21 @@
 3. **编译应然资产**：
    * 若有任一为“是”，必须先在 `product/prd/` 中更新受影响域的 AC，并在 `product/e2e/cases/` 生成用例分片；
    * 只有应然资产编译就绪并通过全部前置门禁，Agent 才被允许进入代码编写阶段。
+
+---
+
+## 4. 附：Agent Harness 五子系统与 Atlas 资产的类比映射
+
+外部课程把 Agent Harness 拆成五个子系统。下表只做**类比映射**，不是把两层当成同一层：Agent Harness 管单会话，Project Harness 管跨会话；前者由外部 Coding Agent 提供，后者由 Atlas 固化在仓库里。
+
+| Agent Harness 子系统 | 课程落点 | Atlas 对应 | Atlas 的差异 |
+|---|---|---|---|
+| Instructions | AGENTS.md / CLAUDE.md | init 注入指针 + skills 瘦桩 + `shared/global-rules.md` | 入口是路由，规则随包版本化 |
+| State | progress.md / feature_list.json | Trellis 任务 + 结构基线 + ADR + E2E 索引 | 门禁判定 + 人审落账，跨会话可对账（门禁只报告，不改写资产） |
+| Verification | init.sh / 测试命令 | `atlas check` 两档 + 硬门 + 变异证明 | 双向对账，门禁自证会红 |
+| Scope | WIP=1 / 完成定义 | 三问门 + AC + 覆盖维度 | 需求级裁剪；覆盖维度只提示缺口，不替代语义审查 |
+| Session Lifecycle | session-handoff.md | apply / backfill / closeout + 人审账本 | 跨会话资产化 + 评审指纹 |
+
+两者不是替代关系：课程解决「单次会话怎么让 agent 可靠地做完一件事」，Atlas 解决「跨会话、跨需求，项目怎么持续证明自己没漂移」。课程已经要求验证命令通过后才改状态，但 `feature_list.json` 仍是单文件、由 agent 维护；Atlas 用 PRD / AC / E2E 三份独立资产 + 双向门 + 人审账本，防「自己批自己作业」与「资产 ⇄ 实现漂移」。
+
+> 外部参考（仅作类比，不构成依赖）：`walkinglabs/learn-harness-engineering` 课程；Anthropic《Harness design for long-running application development》；OpenAI《Harness engineering》；arXiv:2610.34577《Rethinking Verification in Agent Harnesses》。

@@ -52,6 +52,13 @@ def _format_list(items: list[str], max_show: int = 20) -> str:
         return f"{items}"
     return f"{items[:max_show]} (共 {len(items)} 项，截断前 {max_show} 项)"
 
+
+def _fix(root: Path, action: str) -> str:
+    cmd = ("python3 .atlas/scripts/atlas_check.py --fast"
+           if (root / ".atlas/scripts/atlas_check.py").is_file()
+           else "python3 scripts/atlas_check.py --fast")
+    return f"｜修复: {action}｜复跑: {cmd}"
+
 # 随包内核引导（`_support/`，2026-10-12 单源批）：用例块解析取 `_support/case_block.py`
 # 单源实现（原与 gen_e2e_scripts 逐字节双拷贝；本文件被控制台经内核加载，见 _support/siblings.py）。
 if str(Path(__file__).resolve().parents[1]) not in sys.path:
@@ -386,7 +393,11 @@ def validate(root: Path) -> Result:
         reason_ok = (g["状态"] in ("blocked", "skipped")) == bool(g["状态原因"])
         if not reason_ok:
             field_bad.append(f"{g['用例ID']}:状态原因/状态不匹配")
-    res.add("行字段完整", "PASS" if not field_bad else "FAIL", f"{_format_list(field_bad)}")
+    res.add("行字段完整", "PASS" if not field_bad else "FAIL",
+            (f"{_format_list(field_bad)}"
+             + _fix(root, f"在索引行补齐缺失列（{', '.join(field_bad[:3])}）；"
+                          "状态原因只在 blocked/skipped 时填写并与状态匹配"))
+            if field_bad else "")
 
     # 分片块
     blocks, file_page = gather_shards(cases) if cases.is_dir() else ({}, {})
@@ -396,12 +407,19 @@ def validate(root: Path) -> Result:
         missing_keys = [k for k in needed if not d.get(k)]
         if missing_keys:
             block_bad.append(f"{cid}在{d.get('_file', '')}(缺:{','.join(missing_keys)})")
-    res.add("分片块字段齐", "PASS" if not block_bad else "FAIL", f"缺字段={_format_list(block_bad)}")
+    res.add("分片块字段齐", "PASS" if not block_bad else "FAIL",
+            (f"缺字段={_format_list(block_bad)}"
+             + _fix(root, "在分片的 atlas-case 块补齐 "
+                          "id/pages/precondition/step/expected/testid"))
+            if block_bad else "")
 
     orphan = sorted(set(blocks) - set(ids))
     dead = sorted(set(ids) - set(blocks))
     res.add("索引↔分片无孤儿/死链", "PASS" if not orphan and not dead else "FAIL",
-             f"孤儿(分片有索引无)={_format_list(orphan)} 死链(索引有分片无)={_format_list(dead)}")
+             f"孤儿(分片有索引无)={_format_list(orphan)} 死链(索引有分片无)={_format_list(dead)}"
+             + (_fix(root, "死链 ⇒ 补/修分片或删该索引行；"
+                           "孤儿 ⇒ 补索引行或删分片")
+                if orphan or dead else ""))
 
     # 分片链接可达 + 锚点标题
     # 索引↔分片标题一致（契约 §8.2，2026-09-25 补，依据 `3509 §B31`）：

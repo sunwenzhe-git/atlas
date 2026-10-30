@@ -1288,6 +1288,93 @@ def test_testids_plain_missing_gets_no_dynamic_hint() -> None:
         assert "容器 + 计数" not in detail and "稳定样例行" not in detail, detail
 
 
+# ── RFC-20261030-01：FAIL 修复指引（试点）────────────────────────────
+
+def _repair_detail(res, check: str) -> str:
+    return [c["detail"] for c in res.checks if c["check"] == check][0]
+
+
+def test_testids_fail_detail_includes_repair_hint() -> None:
+    """FAIL 修复指引：缺项必须指向源码补 testid 或确认断言多余后删除，不能反向补应然。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD.replace(
+            "  - text home-title 首页        # 页面标题文案为「首页」\n",
+            "  - text home-title 首页        # 页面标题文案为「首页」\n  - visible home-missing-btn\n"))
+        mk_index(root, _with_page_table("已实现"))
+        detail = _repair_detail(vt.validate(root), "分页双向集合相等")
+        assert "home-missing-btn" in detail
+        assert "源码补 data-testid" in detail
+        assert "在分片补 testid 声明" not in detail
+        assert "｜修复:" in detail and "复跑: python3" in detail and "--fast" in detail
+        assert "item" not in detail
+
+
+def test_testids_landing_fail_detail_includes_repair_hint() -> None:
+    """应然落点 FAIL：必须指向分片 落点 行的可解析路径。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD.replace("web/src/home.html", "web/src/nope.html"))
+        row = {c["check"]: c for c in vt.validate(root).checks}["应然落点"]
+        assert row["level"] == "FAIL", row
+        assert "落点:" in row["detail"] and "可解析" in row["detail"]
+        assert "｜修复:" in row["detail"] and "--fast" in row["detail"]
+
+
+def test_e2e_index_row_field_fail_includes_repair_hint() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root)
+        bad = INDEX_GOOD.replace(
+            "| E2E-HOME-001 | home | 首页加载并可进入空态 | smoke | AC-HOME-001 | | red | | [cases/home.md#e2e-home-001](cases/home.md#e2e-home-001) |",
+            "| E2E-HOME-001 | home | 首页加载并可进入空态 | smoke | AC-HOME-001 | | red | |")
+        mk_index(root, bad)
+        detail = _repair_detail(ve.validate(root), "行字段完整")
+        assert "E2E-HOME-001:分片空" in detail
+        assert "补齐缺失列" in detail and "｜修复:" in detail and "--fast" in detail
+
+
+def test_e2e_index_orphan_dead_fail_includes_repair_hint() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD.replace("E2E-HOME-001", "E2E-HOME-002"))
+        mk_index(root)
+        detail = _repair_detail(ve.validate(root), "索引↔分片无孤儿/死链")
+        assert "E2E-HOME-002" in detail and "E2E-HOME-001" in detail
+        assert "死链 ⇒ 补/修分片或删该索引行" in detail
+        assert "孤儿 ⇒ 补索引行或删分片" in detail
+        assert "｜修复:" in detail and "--fast" in detail
+
+
+def test_e2e_index_block_field_fail_includes_repair_hint() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD.replace("testid:\n  - home-cta-btn\n  - home-title\n", ""))
+        mk_index(root)
+        detail = _repair_detail(ve.validate(root), "分片块字段齐")
+        assert "缺:testid" in detail
+        assert "id/pages/precondition/step/expected/testid" in detail
+        assert "｜修复:" in detail and "--fast" in detail
+
+
+def test_repair_hint_not_added_on_pass() -> None:
+    """PASS 分支不得带修复后缀：提示只在 FAIL 时出现。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root)
+        mk_index(root)
+        assert "修复:" not in _repair_detail(vt.validate(root), "分页双向集合相等")
+        e2e_res = ve.validate(root)
+        for name in ("行字段完整", "分片块字段齐", "索引↔分片无孤儿/死链"):
+            assert "修复:" not in _repair_detail(e2e_res, name)
+
+
 def test_e2e_index_gate_na() -> None:
     with tempfile.TemporaryDirectory() as td:
         assert ve.validate(Path(td)).status == "N/A"
@@ -2887,6 +2974,8 @@ def test_testids_adopt_unidirectional_subset_check() -> None:
         checks_gf = {c["check"]: c for c in res_gf.checks}
         assert checks_gf["分页双向集合相等"]["level"] == "FAIL", checks_gf
         assert "home-extra-legacy" in checks_gf["分页双向集合相等"]["detail"]
+        assert "分片补 testid:/step/expected 引用" in checks_gf["分页双向集合相等"]["detail"]
+        assert "删源码多余 data-testid" in checks_gf["分页双向集合相等"]["detail"]
         assert res_gf.status == "FAIL"
 
         # 3. 切回 adopt 模式：若用例引用的代码缺失（正向缺失），依然严格判 FAIL
@@ -2898,6 +2987,8 @@ def test_testids_adopt_unidirectional_subset_check() -> None:
         res_missing = vt.validate(root)
         checks_missing = {c["check"]: c for c in res_missing.checks}
         assert checks_missing["分页双向集合相等"]["level"] == "FAIL", checks_missing
+        assert "源码补 data-testid" in checks_missing["分页双向集合相等"]["detail"]
+        assert "删源码多余 data-testid" not in checks_missing["分页双向集合相等"]["detail"]
         assert res_missing.status == "FAIL"
 
 

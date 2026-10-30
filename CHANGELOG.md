@@ -4,6 +4,17 @@
 
 ---
 
+## [Unreleased]
+
+### 🧭 FAIL 修复指引试点（RFC-20261030-01）
+
+* **新增**：`validate_testids` / `validate_e2e_index` / `validate_ac_alignment` 的 7 条核心 FAIL 追加 `｜修复: <最小动作>｜复跑: <命令>` 后缀；不改判定、状态与退出码，PASS / WARN / N/A 不加。
+* **命令自适配**：装配态提示 `python3 .atlas/scripts/atlas_check.py --fast`，源包态提示 `python3 scripts/atlas_check.py --fast`，不依赖全局 CLI。
+* **文档**：`docs/concepts/architecture.md` 新增「Agent Harness 五子系统 ⇄ Atlas 资产」类比映射；`shared/gates.md` 登记反馈格式约定。
+* **同步面**：`shared/gates.md` 门册计数（`tests/test_validators.py` 168 条 / `tests/test_validate_ac_alignment.py` 62 条）、`docs/map/gates.md` 行数与测试文件数（36 → 42）。
+
+---
+
 ## [v0.2.0-beta.21] - 2026-10-29
 
 ### 🐛 api 适配器运行时 schema 只认构造调用（D172 / #46）

@@ -220,6 +220,13 @@ def _cap(items: list[str], n: int = 8) -> str:
     return "、".join(items[:n]) + f"…（共 {len(items)}）"
 
 
+def _fix(root: Path, action: str) -> str:
+    cmd = ("python3 .atlas/scripts/atlas_check.py --fast"
+           if (root / ".atlas/scripts/atlas_check.py").is_file()
+           else "python3 scripts/atlas_check.py --fast")
+    return f"｜修复: {action}｜复跑: {cmd}"
+
+
 def _as_str_set(value: Any) -> set[str] | None:
     if not isinstance(value, (list, tuple, set)):
         return None
@@ -316,7 +323,8 @@ def _run_checks(
     if dangling_acs:
         res.add(
             "无主AC拦截", "FAIL",
-            f"测试中引用的 AC ID 未在任何 {lay.print_value('prd')}/*.md 中声明：{sorted(dangling_acs)}",
+            f"测试中引用的 AC ID 未在任何 {lay.print_value('prd')}/*.md 中声明：{sorted(dangling_acs)}"
+            + _fix(root, "先在 PRD 声明该 AC；确认测试标记写错则移除标记"),
         )
     else:
         res.add("无主AC拦截", "PASS", f"测试中引用的 {len(all_cited_acs)} 个 AC 均有合法 PRD 声明")
@@ -324,7 +332,8 @@ def _run_checks(
     if unwaived_skips:
         res.add(
             "无效跳过拦截", "FAIL",
-            f"挂载 AC 的测试被 skip/xfail 但未附带合法的 waiver 豁免理由：{unwaived_skips}",
+            f"挂载 AC 的测试被 skip/xfail 但未附带合法的 waiver 豁免理由：{unwaived_skips}"
+            + _fix(root, "去掉 skip/xfail，或在测试上补 waiver:<理由>"),
         )
     else:
         res.add("无效跳过拦截", "PASS", "所有挂载 AC 的跳过测试均具备有效豁免声明或无跳过")

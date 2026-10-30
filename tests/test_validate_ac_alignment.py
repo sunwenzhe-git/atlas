@@ -133,6 +133,60 @@ def test_skipped_without_waiver():
     assert "test_skipped_without_waiver" in skip_check["detail"]
 
 
+def test_dangling_ac_fail_includes_repair_hint(tmp_path: Path):
+    """RFC-20261030-01：无主 AC 的 FAIL 必须给出 PRD 声明 / 移除标记的修复动作与复跑命令。"""
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-GHOST-999")
+def test_fake_case():
+    assert True
+"""
+    proj = create_minimal_project(tmp_path, prd_acs=["AC-TEST-001"], test_code=test_code)
+    res = validate_ac_alignment(proj)
+    check = [c for c in res.checks if c["check"] == "无主AC拦截"][0]
+    assert check["status"] == "FAIL"
+    assert "AC-GHOST-999" in check["detail"]
+    assert "先在 PRD 声明该 AC" in check["detail"]
+    assert "｜修复:" in check["detail"] and "复跑: python3" in check["detail"] and "--fast" in check["detail"]
+
+
+def test_unwaived_skip_fail_includes_repair_hint(tmp_path: Path):
+    """RFC-20261030-01：无效跳过的 FAIL 必须给出 waiver 或去 skip 的修复动作与复跑命令。"""
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001")
+@pytest.mark.skip(reason="暂未实现")
+def test_skipped_without_waiver():
+    assert False
+"""
+    proj = create_minimal_project(tmp_path, prd_acs=["AC-TEST-001"], test_code=test_code)
+    res = validate_ac_alignment(proj)
+    check = [c for c in res.checks if c["check"] == "无效跳过拦截"][0]
+    assert check["status"] == "FAIL"
+    assert "test_skipped_without_waiver" in check["detail"]
+    assert "waiver:<理由>" in check["detail"]
+    assert "｜修复:" in check["detail"] and "复跑: python3" in check["detail"] and "--fast" in check["detail"]
+
+
+def test_pass_detail_has_no_repair_hint(tmp_path: Path):
+    """PASS 分支不得带修复后缀。"""
+    test_code = """
+import pytest
+
+@pytest.mark.ac("AC-TEST-001")
+def test_valid_case():
+    assert True
+"""
+    proj = create_minimal_project(tmp_path, prd_acs=["AC-TEST-001"], test_code=test_code)
+    res = validate_ac_alignment(proj)
+    for name in ("无主AC拦截", "无效跳过拦截", "AC覆盖对账"):
+        check = [c for c in res.checks if c["check"] == name][0]
+        assert check["status"] == "PASS"
+        assert "修复:" not in check["detail"]
+
+
 def test_waived_skip_passes(tmp_path: Path):
     # 显式附带 waiver: 豁免理由的 skip -> 放行 PASS
     test_code = """
