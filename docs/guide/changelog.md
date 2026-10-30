@@ -2,7 +2,7 @@
 
 本文档记录了 **Atlas** 每个版本的重要特性变更、架构治理与问题修复。遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范。
 
-## [Unreleased]
+## [v0.2.0-beta.23] - 2026-10-30
 
 ### 🧭 登记测试有效性与 CRAP 候选观测面（D175）
 
