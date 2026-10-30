@@ -2,7 +2,7 @@
 
 本文档记录了 **Atlas** 每个版本的重要特性变更、架构治理与问题修复。遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范。
 
-## [Unreleased]
+## [v0.2.0-beta.24] - 2026-10-30
 
 ### 🧭 E2E 容忍前提措辞 + PRD 派生字段默认语义（issue #47，D176）
 
