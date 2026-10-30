@@ -451,6 +451,27 @@ def validate(root: Path) -> Result:
     idx_text = text
     page_rows = [ln for ln in idx_text.splitlines()
                  if re.match(r"^\|\s*[a-z0-9][a-z0-9-]*\s*\|\s*/", ln)]
+    # issue #49：是否启用第 5 列只看**表头**——任意第 5 列（如「备注」）不得被误当覆盖就绪。
+    # 多张「页面/路由」表时优先选带 `覆盖就绪` 的表头；4 列表的行按缺省值回落。
+    page_table_headers = [
+        ln for ln in idx_text.splitlines()
+        if ln.strip().startswith("|") and "页面" in ln and "路由" in ln
+    ]
+    page_table_header = next(
+        (ln for ln in page_table_headers
+         if any(c.strip().startswith("覆盖就绪")
+                for c in ln.strip().strip("|").split("|"))),
+        page_table_headers[0] if page_table_headers else "",
+    )
+    page_header_cells = (
+        [c.strip() for c in page_table_header.strip().strip("|").split("|")]
+        if page_table_header else []
+    )
+    coverage_header_index = next(
+        (i for i, c in enumerate(page_header_cells) if c.startswith("覆盖就绪")),
+        None,
+    )
+    has_coverage_column = coverage_header_index is not None
     known = None
     page_routes: list[str] = []
     if page_rows:
@@ -465,6 +486,9 @@ def validate(root: Path) -> Result:
             known.add(slug)
             if not route.startswith("/") or route in routes:
                 page_bad2.append(f"{slug}:{route}")
+            if (coverage_header_index is not None and len(cells) > coverage_header_index
+                    and cells[coverage_header_index] not in ("", "—", "是", "否")):
+                page_bad2.append(f"{slug}:覆盖就绪={cells[coverage_header_index]}")
             routes.append(route)
         page_routes = routes
         page_routes_map = {}
@@ -473,7 +497,7 @@ def validate(root: Path) -> Result:
             if len(cells) >= 2 and cells[0] not in ("页面", "---"):
                 page_routes_map[cells[0]] = cells[1]
         res.add("页面表合法", "PASS" if not page_bad2 else "FAIL",
-                f"路由非/开头或重复={page_bad2[:8]}" if page_bad2 else "")
+                f"路由非/开头或重复 / 覆盖就绪取值非法={page_bad2[:8]}" if page_bad2 else "")
     if known is None:
         known = {md.stem for md in lay.e2e_cases_dir.glob("*.md")}
         res.add("页面表合法", "WARN", "索引无页面表（E1 起应有；暂按分片文件名推导页清单）")
@@ -554,14 +578,27 @@ def validate(root: Path) -> Result:
     # （落点 = PRD 侧，理由：可不可验是 AC 定义（应然）的属性；自洽门见 validate_prd.py）。
     # 覆盖关系是**派生量**（真相源 = 主表 `关联AC` 列 + 域级 PRD §五 AC 定义行），不落第 4 张
     # 手工表（`single-source.md` §4：同一信息两处正文即漂移）。
-    dom_status: dict[str, set[str]] = {}
+    # 页面级覆盖就绪（issue #49）：`覆盖就绪` 列可选，显式 `是` 让「实现中」页也参与 AC 覆盖对账；
+    # 缺省 / `—` 回落到 `实现状态 == 已实现`，保持存量项目行为不变。
+    page_ready: dict[str, bool] = {}
+    dom_pages: dict[str, set[str]] = {}
     for ln in page_rows:
         cells = [c.strip() for c in ln.strip().strip("|").split("|")]
         if len(cells) < 4 or cells[0] in ("页面", "---"):
             continue
+        slug, status = cells[0], cells[3]
+        coverage = (cells[coverage_header_index]
+                    if coverage_header_index is not None and len(cells) > coverage_header_index
+                    else "")
+        if coverage == "是":
+            page_ready[slug] = True
+        elif coverage == "否":
+            page_ready[slug] = False
+        else:
+            page_ready[slug] = status == "已实现"
         for dom in re.split(r"\s*·\s*", cells[2]):
             if dom and dom != "—":
-                dom_status.setdefault(dom, set()).add(cells[3])
+                dom_pages.setdefault(dom, set()).add(slug)
     dom_acs: dict[str, set[str]] = {}
     dom_unver: dict[str, set[str]] = {}
     for pf in prd_files:
@@ -584,14 +621,15 @@ def validate(root: Path) -> Result:
             unver = {m.group(1) for m in
                      re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|", zone, re.M)}
         dom_unver[m_slug.group(1)] = unver
-    if not dom_acs or not dom_status:
+    if not dom_acs or not dom_pages:
         res.add("AC 反向覆盖", "N/A", "域级 PRD 无 `domain:` 声明，或索引无页面表")
     else:
         covered_ac = {g["关联AC"] for g in grid}
         gaps: list[str] = []
         exempted: list[str] = []
         for dom in sorted(dom_acs):
-            if dom_status.get(dom) != {"已实现"}:
+            pages = dom_pages.get(dom, set())
+            if not pages or not all(page_ready.get(p, False) for p in pages):
                 continue
             missing = dom_acs[dom] - covered_ac
             unver = dom_unver.get(dom, set())
@@ -601,7 +639,7 @@ def validate(root: Path) -> Result:
             missing = sorted(missing - unver)
             if missing:
                 gaps.append(f"{dom}:{'/'.join(missing)}")
-        detail = f"已实现域零挂靠={gaps[:6]}" if gaps else ""
+        detail = f"覆盖就绪域零挂靠={gaps[:6]}" if gaps else ""
         if exempted:
             detail += ("；" if detail else "") + f"不可验豁免={exempted}"
         # 门级（2026-10-12，`3509 §B201-3`）：豁免落点已定形（PRD 侧「不可验 AC 清单」机器读取，
@@ -627,6 +665,9 @@ def validate(root: Path) -> Result:
     covered_ac_dims: dict[str, set[str]] = {}
     bad_case_dims: list[str] = []
     for g in grid:
+        # issue #49：只采信覆盖就绪页上的用例声明；未就绪页的维度缺口仍由该页自己的 AC 门暴露。
+        if not page_ready.get(g["页面"], False):
+            continue
         cid = g["用例ID"]
         acid = g["关联AC"]
         blk = blocks.get(cid, {})
@@ -641,11 +682,19 @@ def validate(root: Path) -> Result:
     else:
         dim_gaps: list[str] = []
         covered_ac_set = {g["关联AC"] for g in grid}
+        ac_pages: dict[str, set[str]] = {}
+        for g in grid:
+            ac_pages.setdefault(g["关联AC"], set()).add(g["页面"])
         for dom in sorted(dom_acs):
-            if dom_status.get(dom) != {"已实现"}:
+            pages = dom_pages.get(dom, set())
+            if not has_coverage_column and (
+                not pages or not all(page_ready.get(p, False) for p in pages)
+            ):
                 continue
             for acid in sorted(dom_acs[dom]):
                 if acid not in covered_ac_set or acid not in declared_ac_dims:
+                    continue
+                if not any(page_ready.get(p, False) for p in ac_pages.get(acid, set())):
                     continue
                 applicable = declared_ac_dims[acid]
                 actual = covered_ac_dims.get(acid, set())
@@ -657,9 +706,13 @@ def validate(root: Path) -> Result:
             detail_parts.append(f"维度缺口={dim_gaps[:6]}")
         if bad_case_dims:
             detail_parts.append(f"未知维度={bad_case_dims[:4]}")
-        total_declared = len([ac for dom in dom_acs if dom_status.get(dom) == {"已实现"} for ac in dom_acs[dom] if ac in declared_ac_dims and ac in covered_ac_set])
+        total_declared = len([
+            ac for dom in dom_acs for ac in dom_acs[dom]
+            if ac in declared_ac_dims and ac in covered_ac_set
+            and any(page_ready.get(p, False) for p in ac_pages.get(ac, set()))
+        ])
         status = "WARN" if (dim_gaps or bad_case_dims) else "PASS"
-        detail = "；".join(detail_parts) if detail_parts else f"{total_declared} 条已实现 AC 声明维度全量覆盖"
+        detail = "；".join(detail_parts) if detail_parts else f"{total_declared} 条覆盖就绪 AC 声明维度全量覆盖"
         res.add("AC × 覆盖维度", status, detail)
 
     # 零证据用例须挂结构类 AC（契约 §8.2；2026-09-25 补，`3509 §B36` + `§B50`）：

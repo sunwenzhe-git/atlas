@@ -13,8 +13,8 @@
 
 | 文件 | 行数 | 角色 |
 |---|---|---|
-| `scripts/gen_e2e_scripts.py` | 2477 | 生成器本体(全仓最大单件):分片 DSL → `.spec.ts` |
-| `scripts/e2e_console.py` | 1107 | 评审控制台:纯标准库 SSE 服务(默认 127.0.0.1:4190) |
+| `scripts/gen_e2e_scripts.py` | 2614 | 生成器本体(全仓最大单件):分片 DSL → `.spec.ts` |
+| `scripts/e2e_console.py` | 1389 | 评审控制台:纯标准库 SSE 服务(默认 127.0.0.1:4190) |
 | `scripts/gen_testid_stub.py` | — | testid 实然盘点薄桩生成器(adopt 开户交尾件) |
 | `_support/pw_runner.py` | — | 运行器单源内核:可解析性判据 / 全局兜底修复 / 浏览器就绪探针 |
 | `_support/case_block.py` / `case_id.py` / `manual_block.py` | — | 用例块解析 / 用例 ID 文法 / 手工块(共享内核件) |
@@ -23,11 +23,11 @@
 
 ### 1. 用例块文法与行解析(`scripts/gen_e2e_scripts.py`)
 
-用例以 ```atlas-case 围栏块(`CASE_BLOCK`,`scripts/gen_e2e_scripts.py:79`)声明;每行三段式(动词 · testid · 值)由 `parse_line`(`scripts/gen_e2e_scripts.py:168`)解析。行前缀 `initial:` / `unchanged:`(`PREFIXES`,`scripts/gen_e2e_scripts.py:129`)与 `after:N`(`AFTER_RE`,`scripts/gen_e2e_scripts.py:131`)表达时序;提交类词族(`SUBMITTING_WORDS`,`scripts/gen_e2e_scripts.py:136`)驱动保存后动作语义。
+用例以 ```atlas-case 围栏块(`CASE_BLOCK`,`scripts/gen_e2e_scripts.py:81`)声明;每行三段式(动词 · testid · 值)由 `parse_line`(`scripts/gen_e2e_scripts.py:170`)解析。行前缀 `initial:` / `unchanged:`(`PREFIXES`,`scripts/gen_e2e_scripts.py:131`)与 `after:N`(`AFTER_RE`,`scripts/gen_e2e_scripts.py:133`)表达时序;提交类词族(`SUBMITTING_WORDS`,`scripts/gen_e2e_scripts.py:138`)驱动保存后动作语义。
 
 ### 2. 动词值域封闭(D98)
 
-`ACTION_VERBS`(`scripts/gen_e2e_scripts.py:96`)与 `ASSERT_VERBS`(`scripts/gen_e2e_scripts.py:97`)是封闭词表:陌生动词**中止生成**,不静默吸收——治旧安装副本对「新语法」的静默吞掉。`dispatch` 动词走合成事件直发(动画窗被吞 / native 挂死双灭实证);`NO_TESTID_VERBS`(`scripts/gen_e2e_scripts.py:98`)声明第二 token 不是 testid 的例外(refresh / goto)。
+`ACTION_VERBS`(`scripts/gen_e2e_scripts.py:98`)与 `ASSERT_VERBS`(`scripts/gen_e2e_scripts.py:99`)是封闭词表:陌生动词**中止生成**,不静默吸收——治旧安装副本对「新语法」的静默吞掉。`dispatch` 动词走合成事件直发(动画窗被吞 / native 挂死双灭实证);`NO_TESTID_VERBS`(`scripts/gen_e2e_scripts.py:100`)声明第二 token 不是 testid 的例外(refresh / goto)。
 
 ### 3. 登录形态三态(D80②)
 
@@ -39,11 +39,11 @@
 
 ### 5. 双前置门:独立审查 + 就绪
 
-`review_gate`(`scripts/gen_e2e_scripts.py:1318`)读最新审查报告(`REVIEW_LEVELS`,`scripts/gen_e2e_scripts.py:1178`),有 Critical 拒绝写盘;`NOT_READY`(`scripts/gen_e2e_scripts.py:84`,exit 3)= 前置未声明的显式跳过,不是失败。
+`review_gate`(`scripts/gen_e2e_scripts.py:1431`)读最新审查报告(`REVIEW_LEVELS`,`scripts/gen_e2e_scripts.py:1182`),有 Critical 拒绝写盘;`NOT_READY`(`scripts/gen_e2e_scripts.py:84`,exit 3)= 前置未声明的显式跳过,不是失败。
 
 ### 6. 失败留证(D108/D142)
 
-Playwright 配置层 `trace` / `screenshot` 两轨(`scripts/gen_e2e_scripts.py:2215`):retain-on-failure + only-on-failure——全绿轮零构件,失败即有现场。含 `request` 断言的用例单独成文件(`D142`,`scripts/gen_e2e_scripts.py:190`),顶层 `test.use` 单独控制其 trace。
+Playwright 配置层 `trace` / `screenshot` 两轨(`scripts/gen_e2e_scripts.py:2342`):retain-on-failure + only-on-failure——全绿轮零构件,失败即有现场。含 `request` 断言的用例单独成文件(`D142`,`scripts/gen_e2e_scripts.py:190`),顶层 `test.use` 单独控制其 trace。
 
 ### 7. 参数通道(D109)与 base query 转发(D104)
 
@@ -51,7 +51,7 @@ Playwright 配置层 `trace` / `screenshot` 两轨(`scripts/gen_e2e_scripts.py:2
 
 ### 8. 评审控制台(`scripts/e2e_console.py`)
 
-`snapshot`(`scripts/e2e_console.py:293`)聚合现场;`repo_provenance`(`scripts/e2e_console.py:153`)产评审指纹(head_sha + scripts_hash)防旧账本挂新执行;`Ledger`(`scripts/e2e_console.py:402`)落评审台账;`Runner`(`scripts/e2e_console.py:408`)做 500ms 慢动作回放 + 逐用例三值走查(pass/fail/skip),提交即解锁人工 Review;`resolve_pw`(`scripts/e2e_console.py:375`)复用运行器判据与全局兜底。
+`snapshot`(`scripts/e2e_console.py:561`)聚合现场;`repo_provenance`(`scripts/e2e_console.py:387`)产评审指纹(应用内容指纹 + 逐文件脚本散列)防旧账本挂新执行;`Ledger`(`scripts/e2e_console.py:675`)落评审台账;`Runner`(`scripts/e2e_console.py:804`)做 500ms 慢动作回放 + 逐用例三值走查(pass/fail/skip),提交即解锁人工 Review;`resolve_pw`(`scripts/e2e_console.py:642`)复用运行器判据与全局兜底。
 
 ## 对外接口(谁咬它)
 

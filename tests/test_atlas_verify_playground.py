@@ -82,6 +82,8 @@ def playground():
                             "--root", str(root), "--apply"],
                            capture_output=True, text=True, timeout=300)
         assert g.returncode == 0, g.stderr[-800:]
+        assert not list((root / "product" / "e2e" / "reviews").glob("*-baseline")), \
+            "playground 的审查夹具未被接受（inputs/MANIFEST.json 缺失或过期）"
 
         handler = functools.partial(http.server.SimpleHTTPRequestHandler,
                                     directory=str(root / "site"))

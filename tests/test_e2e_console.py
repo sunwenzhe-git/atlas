@@ -887,45 +887,191 @@ def test_scripts_hash_excludes_runtime_artifacts_and_whitelists_scripts() -> Non
 
 
 def test_case_review_state_lifecycle() -> None:
-    """D128：case_review_state 四态闭集（unreviewed / fresh / stale / legacy）。"""
+    """D128 + D174：四态闭集不变；新指纹按**内容**复算，逐条作废而不是整目录。"""
     cons = load("e2e_console", "scripts/e2e_console.py")
+    snap = {"ok": True, "reviewed": {"pass": True}}
+    fp = {"script": "scripts/demo.spec.ts", "block": "b1", "rest": "r1", "shared": "s1", "app": "a1"}
+    prov = {"head_sha": "abc1234567890", "scripts_hash": "hash1234", "git_dirty": False,
+            "actor_type": "human", "fp": fp}
+    cur_case = {"script": "scripts/demo.spec.ts", "block": "b1", "rest": "r1"}
+
+    def current(case=None, shared="s1", app="a1", head="def9999999999", scripts="hash9999"):
+        return {"head_sha": head, "scripts_hash": scripts,
+                "cases": {"E2E-DEMO-001": case if case is not None else dict(cur_case)},
+                "shared_hash": shared, "app_hash": app}
+
     # ① 未评审
-    st1 = cons.case_review_state({"ok": True, "reviewed": {"pass": False}}, None)
+    st1 = cons.case_review_state("E2E-DEMO-001", {"ok": True, "reviewed": {"pass": False}}, None)
     assert st1["state"] == "unreviewed", st1
 
     # ② 历史账本无指纹 => legacy
-    st2 = cons.case_review_state({"ok": True, "reviewed": {"pass": True}}, {"head_sha": "abc", "scripts_hash": "123"})
+    st2 = cons.case_review_state("E2E-DEMO-001", snap, {"head_sha": "abc", "scripts_hash": "123"})
     assert st2["state"] == "legacy", st2
 
-    # ③ 指纹完全匹配 => fresh
-    prov = {"head_sha": "abc1234567890", "scripts_hash": "hash1234", "git_dirty": False, "actor_type": "human"}
-    current = dict(prov)
-    st3 = cons.case_review_state({"ok": True, "reviewed": {"pass": True}, "prov": prov}, current)
+    # ③ 内容一致 => fresh——HEAD/全局脚本散列变了也不影响（D174 的核心）
+    st3 = cons.case_review_state("E2E-DEMO-001", dict(snap, prov=prov), current())
     assert st3["state"] == "fresh", st3
     assert "warning" not in st3, st3
 
     # ④ 提交时工作区 dirty => fresh 但带警告
-    prov_dirty = dict(prov, git_dirty=True)
-    st4 = cons.case_review_state({"ok": True, "reviewed": {"pass": True}, "prov": prov_dirty}, current)
+    st4 = cons.case_review_state("E2E-DEMO-001", dict(snap, prov=dict(prov, git_dirty=True)), current())
     assert st4["state"] == "fresh" and "dirty" in st4.get("warning", ""), st4
 
-    # ⑤ HEAD 变动 => stale
-    cur_new_head = dict(current, head_sha="def9999999999")
-    st5 = cons.case_review_state({"ok": True, "reviewed": {"pass": True}, "prov": prov}, cur_new_head)
-    assert st5["state"] == "stale" and "HEAD变动" in st5["reason"], st5
+    # ⑤ 只改这一条的 test 块 => 只有它 stale
+    st5 = cons.case_review_state("E2E-DEMO-001", dict(snap, prov=prov),
+                                 current(case=dict(cur_case, block="b2")))
+    assert st5["state"] == "stale" and "用例脚本变动" in st5["reason"], st5
 
-    # ⑥ 脚本变动 => stale
-    cur_new_scripts = dict(current, scripts_hash="hash9999")
-    st6 = cons.case_review_state({"ok": True, "reviewed": {"pass": True}, "prov": prov}, cur_new_scripts)
-    assert st6["state"] == "stale" and "脚本变动" in st6["reason"], st6
+    # ⑥ 同文件块外代码变动 => stale
+    st6 = cons.case_review_state("E2E-DEMO-001", dict(snap, prov=prov),
+                                 current(case=dict(cur_case, rest="r2")))
+    assert st6["state"] == "stale" and "同文件共享代码变动" in st6["reason"], st6
+
+    # ⑦ 共享脚本 / 应用代码变动 => stale
+    assert "共享脚本变动" in cons.case_review_state("E2E-DEMO-001", dict(snap, prov=prov),
+                                                    current(shared="s2"))["reason"]
+    assert "应用代码变动" in cons.case_review_state("E2E-DEMO-001", dict(snap, prov=prov),
+                                                    current(app="a2"))["reason"]
+
+    # ⑧ 用例换脚本 / 脚本里找不到 => stale
+    st8 = cons.case_review_state("E2E-DEMO-001", dict(snap, prov=prov),
+                                 current(case=dict(cur_case, script="scripts/other.spec.ts")))
+    assert st8["state"] == "stale" and "脚本位置变动" in st8["reason"], st8
+    st9 = cons.case_review_state("E2E-DEMO-001", dict(snap, prov=prov),
+                                 {"cases": {}, "shared_hash": "s1", "app_hash": "a1"})
+    assert st9["state"] == "stale" and "找不到" in st9["reason"], st9
+
+    # ⑨ 旧条目（无 fp）沿用 D128 口径：HEAD/脚本变了 => stale
+    legacy_prov = {k: v for k, v in prov.items() if k != "fp"}
+    st10 = cons.case_review_state("E2E-DEMO-001", dict(snap, prov=legacy_prov), current())
+    assert st10["state"] == "stale" and "HEAD变动" in st10["reason"], st10
+
+
+def test_case_fingerprints_slice_per_case_and_share_rest() -> None:
+    """D174：逐用例块哈希——改一条 test 只动该条；改块外 helper 动整文件的 rest。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        s_dir = root / "product" / "e2e" / "scripts"
+        s_dir.mkdir(parents=True)
+        spec = s_dir / "demo.spec.ts"
+        spec.write_text(
+            "import { test } from './atlas-hold';\n"
+            "const helper = 1;\n"
+            "test(\"E2E-DEMO-001 a\", async ({ page }) => {\n"
+            "  console.log(helper);\n"
+            "});\n"
+            "test(\"E2E-DEMO-002 b\", async ({ page }) => {\n"
+            "  console.log(helper);\n"
+            "});\n",
+            encoding="utf-8",
+        )
+        fp1 = cons.case_fingerprints(s_dir)
+        assert fp1["E2E-DEMO-001"]["script"] == "scripts/demo.spec.ts"
+        assert fp1["E2E-DEMO-001"]["rest"] == fp1["E2E-DEMO-002"]["rest"]
+
+        # 只改 001 的块：001.block 变，002.block 与 rest 不变
+        spec.write_text(spec.read_text(encoding="utf-8").replace("console.log(helper);\n});\ntest(\"E2E-DEMO-002",
+                                                                  "console.log(helper + 1);\n});\ntest(\"E2E-DEMO-002"),
+                        encoding="utf-8")
+        fp2 = cons.case_fingerprints(s_dir)
+        assert fp2["E2E-DEMO-001"]["block"] != fp1["E2E-DEMO-001"]["block"]
+        assert fp2["E2E-DEMO-002"]["block"] == fp1["E2E-DEMO-002"]["block"]
+        assert fp2["E2E-DEMO-002"]["rest"] == fp1["E2E-DEMO-002"]["rest"]
+
+        # 改块外 helper：两条的 rest 一起变
+        spec.write_text(spec.read_text(encoding="utf-8").replace("const helper = 1;", "const helper = 2;"),
+                        encoding="utf-8")
+        fp3 = cons.case_fingerprints(s_dir)
+        assert fp3["E2E-DEMO-001"]["rest"] != fp2["E2E-DEMO-001"]["rest"]
+        assert fp3["E2E-DEMO-001"]["rest"] == fp3["E2E-DEMO-002"]["rest"]
+
+
+def test_shared_scripts_import_closure_ignores_unreferenced_probes() -> None:
+    """D174：共享面 = spec/config/setup/prepare 的静态 import 闭包；一次性探针不参与。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        s_dir = root / "product" / "e2e" / "scripts"
+        s_dir.mkdir(parents=True)
+        (s_dir / "atlas-hold.ts").write_text("export const test = 1;\n", encoding="utf-8")
+        (s_dir / "demo.spec.ts").write_text(
+            "import { test } from './atlas-hold';\n"
+            "test(\"E2E-DEMO-001 a\", async () => {});\n", encoding="utf-8")
+        (s_dir / "playwright.config.ts").write_text("export default {};\n", encoding="utf-8")
+        (s_dir / "probe.mjs").write_text("console.log('probe');\n", encoding="utf-8")
+
+        shared, agg, fallback = cons.shared_script_hashes(root)
+        assert fallback is False, (shared, fallback)
+        assert "scripts/atlas-hold.ts" in shared, shared
+        assert "scripts/playwright.config.ts" in shared, shared
+        assert "scripts/probe.mjs" not in shared, shared
+
+        # 改未被引用的探针 => 共享聚合不变
+        (s_dir / "probe.mjs").write_text("console.log('probe2');\n", encoding="utf-8")
+        assert cons.shared_script_hashes(root)[1] == agg
+
+        # 改被 spec 引用的 helper => 共享聚合变化
+        (s_dir / "atlas-hold.ts").write_text("export const test = 2;\n", encoding="utf-8")
+        assert cons.shared_script_hashes(root)[1] != agg
+
+        # 相对 import 解析不出 => 保守回退（所有非 spec 都算共享）
+        (s_dir / "demo.spec.ts").write_text(
+            "import { test } from './missing';\n"
+            "test(\"E2E-DEMO-001 a\", async () => {});\n", encoding="utf-8")
+        shared2, _agg2, fallback2 = cons.shared_script_hashes(root)
+        assert fallback2 is True and "scripts/probe.mjs" in shared2, (shared2, fallback2)
+
+
+def test_app_fingerprint_content_not_commits(tmp_path: Path) -> None:
+    """D174：应用指纹绑内容，不绑提交——commit 本身不失效，src 内容变才失效。"""
+    if not shutil.which("git"):
+        import pytest
+        pytest.skip("无 git")
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    root = tmp_path
+    s_dir = root / "product" / "e2e" / "scripts"
+    s_dir.mkdir(parents=True)
+    (root / "src").mkdir()
+    (root / "src" / "app.ts").write_text("v1\n", encoding="utf-8")
+    (root / "README.md").write_text("doc\n", encoding="utf-8")
+    (s_dir / "demo.spec.ts").write_text("test(\"E2E-DEMO-001 a\", async () => {});\n", encoding="utf-8")
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+    git("init", "-q")
+    git("add", "-A")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+    h1 = cons.app_fingerprint(root)
+    assert h1, "git 仓库内必须产出应用指纹"
+
+    # 文档 / E2E 脚本 / 提交指针变化都不影响
+    (root / "README.md").write_text("doc2\n", encoding="utf-8")
+    (s_dir / "demo.spec.ts").write_text("test(\"E2E-DEMO-001 b\", async () => {});\n", encoding="utf-8")
+    git("add", "-A")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "docs+spec")
+    assert cons.app_fingerprint(root) == h1
+
+    # 应用源码内容变化（未提交）=> 变；提交后内容没变 => 值不变
+    (root / "src" / "app.ts").write_text("v2\n", encoding="utf-8")
+    h2 = cons.app_fingerprint(root)
+    assert h2 != h1
+    git("add", "-A")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "src")
+    assert cons.app_fingerprint(root) == h2
 
 
 def test_submit_attaches_provenance_and_committed_computes_stale() -> None:
-    """D128：_compact 留存 prov，committed_snapshot 注入 review_state 且重算最新新鲜度。"""
+    """D128 + D174：_compact 落逐用例 fp；committed_snapshot 按内容复算新鲜度。"""
     cons = load("e2e_console", "scripts/e2e_console.py")
-    prov_v1 = {"head_sha": "11111112222222", "scripts_hash": "aaaa1111", "git_dirty": False, "actor_type": "human"}
-    compacted = cons._compact({"ok": True, "reviewed": {"pass": True, "checked_at": "12:00"}}, prov=prov_v1)
+    prov_v1 = {"head_sha": "11111112222222", "scripts_hash": "aaaa1111", "git_dirty": False,
+               "actor_type": "human", "app_hash": "app111", "shared_hash": "sh111",
+               "cases": {"E2E-001": {"script": "scripts/demo.spec.ts", "block": "b1", "rest": "r1"}}}
+    compacted = cons._compact({"ok": True, "reviewed": {"pass": True, "checked_at": "12:00"}},
+                              prov=prov_v1, cid="E2E-001")
     assert compacted["prov"]["head_sha"] == "11111112222222"
+    assert compacted["prov"]["fp"]["block"] == "b1"
     assert compacted["reviewed"]["pass"] is True
 
     with tempfile.TemporaryDirectory() as td:
@@ -934,19 +1080,19 @@ def test_submit_attaches_provenance_and_committed_computes_stale() -> None:
         ledger.append({
             "kind": "submit",
             "source": "app",
-            "prov": prov_v1,
+            "prov": {k: v for k, v in prov_v1.items() if k not in ("cases", "shared_hash", "app_hash")},
             "reviewed_scope": ["E2E-001"],
             "cases": {"E2E-001": compacted},
         })
-        # 用相同指纹读取 => fresh
+        # 内容一致 => fresh
         snap_fresh = ledger.committed_snapshot("app", current=prov_v1)
         assert snap_fresh["cases"]["E2E-001"]["review_state"]["state"] == "fresh"
 
-        # 换新提交指纹读取 => 自动判定为 stale，不污染底表
-        prov_v2 = dict(prov_v1, head_sha="33333334444444")
-        snap_stale = ledger.committed_snapshot("app", current=prov_v2)
+        # 只改这条用例的块 => stale；同文件另一条不受影响（此处只验这一条）
+        cur = dict(prov_v1, cases={"E2E-001": {"script": "scripts/demo.spec.ts", "block": "b2", "rest": "r1"}})
+        snap_stale = ledger.committed_snapshot("app", current=cur)
         assert snap_stale["cases"]["E2E-001"]["review_state"]["state"] == "stale"
-        assert "HEAD变动" in snap_stale["cases"]["E2E-001"]["review_state"]["reason"]
+        assert "用例脚本变动" in snap_stale["cases"]["E2E-001"]["review_state"]["reason"]
 
         # reviewed_scope 必须有消费者（否则是死字段）：committed 视图 + 人读账本都要暴露
         assert snap_fresh["reviewed_scope"] == ["E2E-001"] and snap_fresh["reviewed_count"] == 1, snap_fresh

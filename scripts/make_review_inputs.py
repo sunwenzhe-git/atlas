@@ -31,10 +31,35 @@ from _support.layout import LayoutError, load_layout  # noqa: E402
 
 
 def defaults_for(root: Path) -> tuple[str, ...]:
+    """默认收录：索引 + 用例分片 + 域级 PRD。
+
+    `e2e.index` / `e2e.cases_dir` 若在 stack-profile 中覆盖，必须与生成器用同一来源；
+    否则清单收的是默认路径，生成门按覆盖路径核对 ⇒ 真 PASS 也会被误判 stale（issue #48）。
+    """
     lay = load_layout(root)
+    index = lay.print_value("e2e_index")
+    cases = lay.print_value("e2e_cases")
+    profile_path = lay.stack_profile
+    if profile_path.is_file():
+        try:
+            from _support.stack_profile import parse_profile  # noqa: E402 — 延迟导入，保持脚本轻量
+            e2e = parse_profile(profile_path.read_text(encoding="utf-8")).get("e2e")
+            if isinstance(e2e, dict):
+                index = str(e2e.get("index") or index)
+                cases = str(e2e.get("cases_dir") or cases)
+        except Exception:
+            # 清单工具不替代生成器的 profile 校验；解析失败时保持 layout 默认值。
+            pass
+    root_resolved = root.resolve()
+    for label, value in (("e2e.index", index), ("e2e.cases_dir", cases)):
+        p = Path(value)
+        if ".." in p.parts:
+            raise LayoutError(f"{label} 不得包含 `..`：{value}")
+        if p.is_absolute() and not p.resolve().is_relative_to(root_resolved):
+            raise LayoutError(f"{label} 必须在项目根内：{value}")
     return (
-        lay.print_value("e2e_index"),
-        f"{lay.print_value('e2e_cases')}/*.md",
+        index,
+        f"{cases}/*.md",
         f"{lay.print_value('prd')}/*.md",
     )
 
@@ -48,15 +73,28 @@ def sha256(p: Path) -> str:
 
 
 def collect(root: Path, patterns: list[str]) -> list[dict]:
+    root = root.resolve()
     seen: list[Path] = []
     for pat in patterns:
+        p = Path(pat)
+        if p.is_absolute():
+            p = p.resolve()
+            if any(c in p.name for c in "*?["):
+                seen.extend(sorted(p.parent.glob(p.name)))
+            elif p.is_file():
+                seen.append(p)
+            continue
         seen.extend(sorted(root.glob(pat)) if any(c in pat for c in "*?[") else
                     ([root / pat] if (root / pat).is_file() else []))
     out = []
     for p in sorted(set(seen)):
         if not p.is_file():
             continue
-        out.append({"path": str(p.relative_to(root)).replace("\\", "/"),
+        try:
+            rel = p.resolve().relative_to(root)
+        except ValueError:
+            rel = p
+        out.append({"path": str(rel).replace("\\", "/"),
                     "sha256": sha256(p), "bytes": p.stat().st_size,
                     "lines": len(p.read_text(encoding="utf-8", errors="ignore").splitlines())})
     return out

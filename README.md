@@ -313,10 +313,11 @@ Atlas 随包自带了一个**纯 Python 标准库编写的本地轻量级可视�
      * 向 `<资产根>/e2e/reviews/console/events.jsonl`（默认 `product/e2e/reviews/console/events.jsonl`）追加一条不可篡改的事件快照；
      * 派生人读的 `ledger.md` 评审账本；
      * 原子回写总索引 `<资产根>/e2e/e2e-index.md`（默认 `product/e2e/e2e-index.md`）的状态列。
-5. **评审指纹与陈旧度（代码一变，勾就作废）**：
-   * 每条提交事件与逐用例快照都绑定工作区指纹 `prov = {head_sha, scripts_hash, git_dirty, actor_type}`——**人审的到底是哪一版，账本自己说得出**；
-   * `scripts_hash` 只对源码脚本与数据准备钩子敏感，**对运行期产物免疫**（`test-results/`、trace、截图一律不入指纹），不会跑一轮就假漂移；
-   * 控制台按当前指纹实时复算 `review_state` 四态：`fresh`（有效）/ `stale`（HEAD 或脚本已变 ⇒ 标红「需重审」、禁勾、不计已评审）/ `legacy`（旧账本无指纹，不冒充已核验）/ `unreviewed`；
+5. **评审指纹与陈旧度（内容一变，勾就作废；无关改动不连坐）**：
+   * 逐用例快照绑定内容指纹 `prov.fp = {script, block, rest, shared, app}`——**人审的到底是哪一版，账本自己说得出**；
+   * 只改一条 test ⇒ 只作废该条；改同文件块外代码 ⇒ 该文件其余用例作废；共享脚本（spec/config/setup/prepare 的静态 import 闭包）或应用代码内容变 ⇒ 全部作废；commit 与提交账本本身不作废评审；
+   * 指纹**对运行期产物免疫**（`test-results/`、trace、截图一律不入指纹），不会跑一轮就假漂移；
+   * 控制台按当前指纹实时复算 `review_state` 四态：`fresh`（有效）/ `stale`（上述内容已变 ⇒ 标红「需重审」、禁勾、不计已评审）/ `legacy`（旧账本无指纹，不冒充已核验）/ `unreviewed`；
    * 重新执行一条用例会**自动清空它的旧勾选**——杜绝「上次审过」挂在新的执行结果上；
    * 顶栏单列「需重审」计数，「只看未评审」筛选同样把 stale/legacy 一并捞出来。
 

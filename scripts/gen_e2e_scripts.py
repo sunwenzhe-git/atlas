@@ -57,6 +57,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -1219,11 +1220,80 @@ def latest_review_report(reports_dir: Path) -> Path | None:
     return dated[-1][3]
 
 
-def review_report_status(reports_dir: Path) -> tuple[str, str]:
-    """返回 `(level, detail)`；level ∈ `ok` / `baseline` / `missing` / `invalid` / `critical`。
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def review_inputs_status(report_dir: Path, root: Path,
+                         required_paths: list[Path]) -> tuple[bool, str]:
+    """报告 `inputs/MANIFEST.json` 是否覆盖并匹配本次生成所需的输入文件。
+
+    契约 `rings/e2e/reference.md` §12.5 / §12.6：审查报告以 `inputs/MANIFEST.json`
+    作为审查输入的指针化清单；生成门按本次待生成分片逐一核对 sha256——分片在审查后
+    发生变化 ⇒ 报告过期（stale），不得再用旧结论为新输入放行。
+    """
+    manifest_path = report_dir / "inputs" / "MANIFEST.json"
+    if not manifest_path.is_file():
+        return False, f"{report_dir.name}/inputs/MANIFEST.json 不存在（无法证明审查输入=当前分片）"
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 — 仅用于报出原因
+        return False, f"{report_dir.name}/inputs/MANIFEST.json 解析失败：{exc}"
+    entries = data.get("files")
+    if not isinstance(entries, list):
+        return False, f"{report_dir.name}/inputs/MANIFEST.json 缺 files[]"
+    by_path: dict[str, dict] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        rel = str(entry.get("path") or "").replace("\\", "/")
+        if rel.startswith("./"):
+            rel = rel[2:]
+        if rel:
+            by_path[rel] = entry
+    stale: list[str] = []
+    root_resolved = root.resolve()
+    for path in required_paths:
+        try:
+            rel = path.resolve().relative_to(root_resolved).as_posix()
+        except ValueError:
+            stale.append(f"{path}: 不在项目根内")
+            continue
+        entry = by_path.get(rel)
+        if entry is None:
+            stale.append(f"{rel}: 不在 MANIFEST")
+            continue
+        if not path.is_file():
+            stale.append(f"{rel}: 文件不存在")
+            continue
+        expected = str(entry.get("sha256") or "")
+        if not expected:
+            stale.append(f"{rel}: MANIFEST 缺 sha256")
+            continue
+        try:
+            actual = _sha256_file(path)
+        except OSError:
+            stale.append(f"{rel}: 不可读")
+            continue
+        if actual != expected:
+            stale.append(f"{rel}: 审查后已变更")
+    if stale:
+        return False, "审查报告输入已过期（" + "；".join(stale[:6]) + "）"
+    return True, ""
+
+
+def review_report_status(reports_dir: Path, root: Path | None = None,
+                         required_paths: list[Path] | None = None) -> tuple[str, str]:
+    """返回 `(level, detail)`；level ∈ `ok` / `baseline` / `missing` / `invalid` / `critical` / `stale`。
 
     判据**不在门口信任模型结论**（契约 §4）：读的是 `review.json` 的 `status` 字段。
     C1（评审 Critical 约束）：Critical 判定先行，basis 键受严格形状锁守护，杜绝单键绕门。
+    传入 `root` + `required_paths` 时，再按报告 `inputs/MANIFEST.json` 核对本次输入分片
+    的 sha256（§12.6，issue #48）；输入在审查后变化 ⇒ `stale`。
     """
     d = latest_review_report(reports_dir)
     if d is None:
@@ -1256,6 +1326,10 @@ def review_report_status(reports_dir: Path) -> tuple[str, str]:
             return "baseline", f"{d.name}（基线报告兜底中）"
         return "invalid", f"{d.name}/review.json 声明 basis 但未满足基线报告形状锁（须 WARN 且 reviewed=0 且 expected>=1 且 checks为空）"
 
+    if required_paths and root is not None:
+        inputs_ok, inputs_detail = review_inputs_status(d, root, required_paths)
+        if not inputs_ok:
+            return "stale", f"{d.name} {inputs_detail}"
     return "ok", f"{d.name} status={status}"
 
 
@@ -1267,61 +1341,104 @@ def auto_heal_review_report(root: Path, scope: str = "auto-baseline",
     d = (lay or load_layout(root)).e2e_reviews_dir / dirname
     d.mkdir(parents=True, exist_ok=True)
     rj = d / "review.json"
-    if not rj.is_file():
-        payload = {
-            "ok": True,
-            "status": "WARN",
-            "basis": "auto-baseline",
-            "executed": False,
-            "root": str(root),
-            "scope": scope,
-            "unit": "e2e",
-            "round": 1,
-            "expected": max(1, expected_count),
-            "reviewed": 0,
-            "budget_exceeded": False,
-            "checks": [],
-            "other": ["本报告为接入基线报告，机器兜底生成，独立审查未执行（rings/e2e §12.6）"],
-        }
-        rj.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    existing = None
+    if rj.is_file():
+        try:
+            existing = json.loads(rj.read_text(encoding="utf-8"))
+        except Exception:
+            existing = None
+    if existing is not None and existing.get("basis") != "auto-baseline":
+        print(f"WARN: 自愈目标目录 {d.name} 已存在非基线报告，拒绝覆盖；请改用独立目录",
+              file=sys.stderr)
+        return d
+    # 每次自愈都重写元数据：expected 反映当前用例数，避免同日二次自愈仍带旧计数。
+    payload = {
+        "ok": True,
+        "status": "WARN",
+        "basis": "auto-baseline",
+        "executed": False,
+        "root": str(root),
+        "scope": scope,
+        "unit": "e2e",
+        "round": 1,
+        "expected": max(1, expected_count),
+        "reviewed": 0,
+        "budget_exceeded": False,
+        "checks": [],
+        "other": ["本报告为接入基线报告，机器兜底生成，独立审查未执行（rings/e2e §12.6）"],
+    }
+    rj.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     readme = d / "README.md"
-    if not readme.is_file():
-        readme.write_text(
-            f"# 审查总结（{scope}）\n\n"
-            f"- 状态：WARN（自动自愈基线报告）\n"
-            f"- 范围：E2E 环审查自动兜底（adopt 模式或 review 免阻断）\n"
-            f"- 问题清单：本报告为接入基线报告，机器兜底生成，独立审查未执行。\n"
-            f"- 优化建议：跑 `python3 .atlas/scripts/gen_e2e_scripts.py --bootstrap-review` 输出任务包拉起独立审查。\n",
-            encoding="utf-8",
-        )
+    readme.write_text(
+        f"# 审查总结（{scope}）\n\n"
+        f"- 状态：WARN（自动自愈基线报告）\n"
+        f"- 范围：E2E 环审查自动兜底（adopt 模式或 review 免阻断）\n"
+        f"- 问题清单：本报告为接入基线报告，机器兜底生成，独立审查未执行。\n"
+        f"- 优化建议：跑 `python3 .atlas/scripts/gen_e2e_scripts.py --bootstrap-review` 输出任务包拉起独立审查。\n",
+        encoding="utf-8",
+    )
     inputs_dir = d / "inputs"
     inputs_dir.mkdir(parents=True, exist_ok=True)
     manifest_file = inputs_dir / "MANIFEST.json"
-    if not manifest_file.is_file():
-        try:
-            mri = load_module("make_review_inputs")
-            pats = list(mri.DEFAULTS)
-            files = mri.collect(root, pats)
-            manifest = {
-                "kind": "atlas-review-input-manifest",
-                "note": "指针化清单：审查者按 path 读当前文件；要冻结基线用 sha256，不要拷副本。",
-                "root": str(root),
-                "taken_at": today,
-                "files": files,
-            }
-            manifest_file.write_text(json.dumps(manifest, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-        except Exception:
-            pass
+    # 每次自愈都重写清单：分片可能已再次变化，旧 sha256 不能代表当前输入。
+    try:
+        mri = load_module("make_review_inputs")
+        pats = list(mri.defaults_for(root))
+        files = mri.collect(root, pats)
+        manifest = {
+            "kind": "atlas-review-input-manifest",
+            "note": "指针化清单：审查者按 path 读当前文件；要冻结基线用 sha256，不要拷副本。",
+            "root": str(root),
+            "taken_at": today,
+            "files": files,
+        }
+        manifest_file.write_text(json.dumps(manifest, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 — 自愈不得阻断写盘，但必须响亮
+        print(f"WARN: 自愈基线未能生成 inputs/MANIFEST.json（{type(exc).__name__}: {exc}）", file=sys.stderr)
     return d
 
 
-def review_gate(root: Path, prof: dict | None = None, lay=None) -> tuple[bool, list[str], bool]:
+def latest_baseline_with_current_inputs(reports_dir: Path, root: Path,
+                                        required_paths: list[Path]) -> Path | None:
+    """在最新日期下找一份 inputs 与当前分片匹配的基线报告。
+
+    同日已有真报告但真报告已 stale 时，复用已刷新的基线兜底，避免每次生成都重新自愈。
+    """
+    latest = latest_review_report(reports_dir)
+    if latest is None:
+        return None
+    date_prefix = latest.name[:10]
+    candidates: list[Path] = []
+    for p in reports_dir.iterdir():
+        if not p.is_dir() or not p.name.startswith(date_prefix):
+            continue
+        rj = p / "review.json"
+        if not rj.is_file():
+            continue
+        try:
+            data = json.loads(rj.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if data.get("basis") == "auto-baseline":
+            candidates.append(p)
+    for p in sorted(candidates, reverse=True):
+        ok, _ = review_inputs_status(p, root, required_paths)
+        if ok:
+            return p
+    return None
+
+
+def review_gate(root: Path, prof: dict | None = None, lay=None,
+                required_paths: list[Path] | None = None) -> tuple[bool, list[str], bool]:
     """独立审查门（契约 `rings/e2e/reference.md` §12.6 + `§7.1`；E1：只验本环报告）。
 
-    判据 = **报告存在 + 无 Critical**；
-    v0.1.0-beta.14 自愈与免阻断：当审查报告缺失（missing）或损坏（invalid）时，若处于
-    `origin: adopt`（存量接管首日无历史报告）或显式声明 `e2e.review.mode: auto-baseline`
-    时，判定为放行并标记 `auto_heal=True`；`mode: off`（免审）直接放行且不落基线。
+    判据 = **报告存在 + 无 Critical + 报告输入覆盖本次生成分片**；
+    v0.1.0-beta.14 自愈与免阻断：当审查报告缺失（missing）、损坏（invalid）或输入已过期
+    （stale）时，若处于 `origin: adopt`（存量接管首日无历史报告）或显式声明
+    `e2e.review.mode: auto-baseline`，判定为放行并标记 `auto_heal=True`；
+    `mode: off`（免审）直接放行且不落基线。
+    **baseline 报告不是真审**：只在 adopt / auto-baseline 显式通道放行（WARN），
+    不再是任何项目都可以直接通过的兜底。
     **`review: null` / 未声明 ≠ 免审**（R6.1 对账定稿，2026-10-15）：`null` 的契约语义 =
     审查执行器取会话默认（shared/stack-profile.md §2）⇒ 走缺省严格门；免阻断须显式
     `mode: auto-baseline`，免审须显式 `mode: off`——三个语义三把钥匙，不得隐式互化。
@@ -1329,7 +1446,7 @@ def review_gate(root: Path, prof: dict | None = None, lay=None) -> tuple[bool, l
     """
     reasons: list[str] = []
     lay = lay or load_layout(root)
-    level, detail = review_report_status(lay.e2e_reviews_dir)
+    level, detail = review_report_status(lay.e2e_reviews_dir, root, required_paths)
     origin = prof.get("origin") if prof else None
     e2e = prof.get("e2e") if prof else {}
     rev = e2e.get("review") if isinstance(e2e, dict) else None
@@ -1341,13 +1458,29 @@ def review_gate(root: Path, prof: dict | None = None, lay=None) -> tuple[bool, l
         return True, [], False
 
     if level == "baseline":
-        reasons.append(f"WARN: 独立审查未执行（基线报告兜底中：{detail}）—— 跑 python3 .atlas/scripts/gen_e2e_scripts.py --bootstrap-review 拉起独立审查")
-        return True, reasons, False
+        if origin == "adopt" or mode == "auto-baseline":
+            reasons.append(f"WARN: 独立审查未执行（基线报告兜底中：{detail}）—— 跑 python3 .atlas/scripts/gen_e2e_scripts.py --bootstrap-review 拉起独立审查")
+            # 显式通道下刷新自愈基线：第二次及以后分片变化时，inputs/MANIFEST.json 必须跟到当前值。
+            return True, reasons, True
+        reasons.append(
+            f"E2E 环审查报告不合格（baseline）：{detail}；baseline 报告不是真审，"
+            "只有 origin: adopt 或 e2e.review.mode: auto-baseline 的显式免阻断通道可用"
+            "（rings/e2e/reference.md §12.6）"
+        )
+        return False, reasons, False
 
-    if level in ("missing", "invalid"):
+    if level in ("missing", "invalid", "stale"):
         # adopt 模式（存量接管首日）或显式 auto-baseline 声明 ⇒ 自愈放行；
         # null / 未声明不在此列（语义 = 缺省严格门，见 docstring）。
         if origin == "adopt" or mode == "auto-baseline":
+            if level == "stale" and required_paths:
+                baseline = latest_baseline_with_current_inputs(
+                    lay.e2e_reviews_dir, root, required_paths)
+                if baseline is not None:
+                    reasons.append(
+                        f"WARN: 独立审查未执行（基线报告兜底中：{baseline.name}）—— "
+                        "真报告输入已过期，复用当前分片的基线兜底")
+                    return True, reasons, False
             reasons.append(f"NOTICE: 审查报告处于 {level} 态，处于 adopt 模式或显式 auto-baseline 免阻断通道，已启用自动自愈基线（rings/e2e §12.6）")
             return True, reasons, True
 
@@ -1806,7 +1939,11 @@ def main() -> int:
         return 2
 
     # 独立审查门（契约 §12.6 / §7.1）：存在性挂在**写盘动作**上；dry-run 只报状态。
-    gate_ok, gate_reasons, will_auto_heal = review_gate(root, prof, lay)
+    # issue #48：同时核对报告 inputs/MANIFEST.json 与本次待生成分片的 sha256——
+    # 旧报告不得为新分片放行。
+    required_case_files = [cases_dir / f"{page}.md" for page in cases]
+    gate_ok, gate_reasons, will_auto_heal = review_gate(
+        root, prof, lay, required_paths=required_case_files)
     if not gate_ok and args.apply:
         print("ERROR: 独立审查门未通过（rings/e2e/reference.md §12.6），拒绝写盘：", file=sys.stderr)
         for r in gate_reasons:

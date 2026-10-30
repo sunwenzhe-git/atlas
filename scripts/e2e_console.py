@@ -104,6 +104,19 @@ def _git_output(root: Path, *args: str) -> str | None:
         return None
 
 
+def _git_paths(root: Path, *args: str) -> list[str] | None:
+    """`git -C root <args>` 的 NUL 分隔路径输出（配 `-z` 用，绕开 core.quotePath 转义）。"""
+    try:
+        res = subprocess.run(["git", "-C", str(root), *args], capture_output=True, check=True)
+    except Exception:
+        return None
+    return [p for p in res.stdout.decode("utf-8", "replace").split("\0") if p]
+
+
+def _sha16(data: str | bytes) -> str:
+    return hashlib.sha256(data.encode("utf-8") if isinstance(data, str) else data).hexdigest()[:16]
+
+
 def repo_head(root: Path) -> str | None:
     return _git_output(root, "rev-parse", "HEAD")
 
@@ -151,6 +164,226 @@ def scripts_hash(root: Path) -> str | None:
     return h.hexdigest()[:16]
 
 
+def script_file_map(root: Path) -> dict[str, Path]:
+    """白名单脚本的逐文件清单 `{相对路径: 路径}`。
+
+    白名单与 `scripts_hash` 同源（源码脚本 + 可选 `atlas-prepare.mjs`，排除运行期产物），
+    但按文件去重——逐用例指纹与共享闭包都从这里取，不另写第二份枚举。
+    """
+    s_dir = load_layout(root).e2e_scripts_dir
+    if not s_dir.is_dir():
+        return {}
+    out: dict[str, Path] = {}
+    for p in sorted(s_dir.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(s_dir).as_posix()
+        if any(part in rel for part in ("test-results", "playwright-report", ".atlas-auth", "node_modules")):
+            continue
+        if rel.endswith((".trace", ".png", ".webm", ".last-run.json")):
+            continue
+        if rel.endswith((".ts", ".js", ".mjs", ".json", ".yaml", ".yml")):
+            out[f"scripts/{rel}"] = p
+    for prep in (s_dir / "atlas-prepare.mjs", root / "atlas-prepare.mjs"):
+        if prep.is_file():
+            out.setdefault("scripts/atlas-prepare.mjs" if prep.parent == s_dir else "atlas-prepare.mjs", prep)
+            break
+    return dict(sorted(out.items()))
+
+
+def script_file_hashes(root: Path) -> dict[str, str]:
+    """白名单脚本的逐文件内容散列（16 字符前缀）。"""
+    out: dict[str, str] = {}
+    for rel, p in script_file_map(root).items():
+        try:
+            out[rel] = _sha16(p.read_bytes())
+        except OSError:
+            out[rel] = "missing"
+    return out
+
+
+_CASE_TEST_LINE = re.compile(rf"\s*test\(['\"]({case_id.GRAMMAR})[ '\"].*async")
+_LOCAL_IMPORT = re.compile(r"""(?:\bfrom\s+|\bimport\s+|\bimport\s*\(\s*|\brequire\s*\(\s*)['"](\.[^'"]*)['"]""")
+_JS_EXTS = (".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".json")
+
+
+def case_fingerprints(scripts_dir: Path) -> dict[str, dict]:
+    """逐用例脚本指纹 `{用例ID: {script, block, rest}}`。
+
+    `block` = 该 `test(...)` 行到下一个 `test(` 行之间的原文；`rest` = 同一文件里
+    所有用例块之外的原文（imports / 文件内 helper）。判据：
+      * 只改一条用例的块 ⇒ 只有该条 `block` 变；
+      * 改块外共享代码 ⇒ 该文件全部用例 `rest` 变（保守：块外代码可能被任一用例调用）。
+    用例之间的夹层文本归属前一条用例（生成物里用例块连续，夹层只有空行/注释）。
+    """
+    out: dict[str, dict] = {}
+    if not scripts_dir.is_dir():
+        return out
+    for ts in sorted(scripts_dir.glob("*.spec.ts")):
+        try:
+            lines = ts.read_text(encoding="utf-8").splitlines(keepends=True)
+        except OSError:
+            continue
+        marks: list[tuple[int, str]] = []
+        for i, line in enumerate(lines):
+            m = _CASE_TEST_LINE.match(line)
+            if m:
+                marks.append((i, m.group(1)))
+        if not marks:
+            continue
+        spans = [(start, marks[i + 1][0] if i + 1 < len(marks) else len(lines))
+                 for i, (start, _cid) in enumerate(marks)]
+        inside: set[int] = set()
+        for start, end in spans:
+            inside.update(range(start, end))
+        rest = _sha16("".join(line for i, line in enumerate(lines) if i not in inside))
+        script = f"scripts/{ts.name}"
+        for (start, end), (_i, cid) in zip(spans, marks):
+            out[cid] = {"script": script, "block": _sha16("".join(lines[start:end])), "rest": rest}
+    return out
+
+
+def _resolve_local_import(src: Path, spec: str, known: dict[Path, str]) -> str | None:
+    base = src.parent / spec
+    cands = [base] + [Path(str(base) + ext) for ext in _JS_EXTS]
+    cands += [base / f"index{ext}" for ext in _JS_EXTS]
+    for cand in cands:
+        try:
+            rel = known.get(cand.resolve())
+        except OSError:
+            rel = None
+        if rel:
+            return rel
+    return None
+
+
+def shared_script_hashes(root: Path) -> tuple[dict[str, str], str | None, bool]:
+    """静态可达的非 spec 脚本（config / setup / prepare / helper）逐文件散列与聚合散列。
+
+    可达性 = 从 `.spec.ts`、`playwright.config.ts`、`*.setup.ts`、`atlas-prepare.mjs`
+    出发解析相对 import（传递）。没被任何执行入口引用的脚本（如一次性探针）不进指纹
+    ——它们不是验收证据，改它们不该作废评审。
+    任一相对 import 解析不出 ⇒ **保守回退**：全部非 spec 脚本都算共享（宁可多判 stale）。
+    返回 `(逐文件散列, 聚合散列, 是否保守回退)`；无共享脚本 ⇒ 聚合为 `None`。
+    """
+    files = script_file_map(root)
+    if not files:
+        return {}, None, False
+    known: dict[Path, str] = {}
+    for rel, p in files.items():
+        try:
+            known[p.resolve()] = rel
+        except OSError:
+            pass
+    roots = [(rel, p) for rel, p in files.items()
+             if p.name.endswith(".spec.ts") or p.name == "playwright.config.ts"
+             or p.name.endswith(".setup.ts") or p.name == "atlas-prepare.mjs"]
+    if not roots:
+        return {}, None, False
+    spec_rels = {rel for rel, p in roots if p.name.endswith(".spec.ts")}
+    seen: set[str] = set()
+    queue = [p for _rel, p in roots]
+    unresolved = False
+    while queue:
+        cur = queue.pop()
+        try:
+            text = cur.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for spec in _LOCAL_IMPORT.findall(text):
+            if "${" in spec:
+                unresolved = True
+                continue
+            rel = _resolve_local_import(cur, spec, known)
+            if rel is None:
+                unresolved = True
+                continue
+            if rel not in seen:
+                seen.add(rel)
+                queue.append(files[rel])
+    if unresolved:
+        shared = {rel for rel, p in files.items() if not p.name.endswith(".spec.ts")}
+    else:
+        shared = ({rel for rel, p in roots if not p.name.endswith(".spec.ts")} | seen) - spec_rels
+    hashes: dict[str, str] = {}
+    for rel in sorted(shared):
+        try:
+            hashes[rel] = _sha16(files[rel].read_bytes())
+        except OSError:
+            hashes[rel] = "missing"
+    agg = _sha16("\n".join(f"{rel}\0{h}" for rel, h in hashes.items())) if hashes else None
+    return hashes, agg, unresolved
+
+
+_APP_FILE_CACHE: dict[str, tuple[int, int, str]] = {}
+
+
+def _is_app_path(rel: str, e2e_rel: str) -> bool:
+    if rel == e2e_rel or rel.startswith(e2e_rel + "/"):
+        return False
+    if rel == ".atlas" or rel.startswith(".atlas/"):
+        return False
+    if rel == "node_modules" or rel.startswith("node_modules/") or "/node_modules/" in rel:
+        return False
+    if rel.endswith(".md"):
+        return False
+    return True
+
+
+def _content_digest(path: Path) -> str:
+    try:
+        st = path.stat()
+    except OSError:
+        return "missing"
+    key = str(path)
+    hit = _APP_FILE_CACHE.get(key)
+    if hit and hit[0] == st.st_mtime_ns and hit[1] == st.st_size:
+        return hit[2]
+    try:
+        digest = _sha16(path.read_bytes())
+    except OSError:
+        return "missing"
+    _APP_FILE_CACHE[key] = (st.st_mtime_ns, st.st_size, digest)
+    return digest
+
+
+def app_fingerprint(root: Path) -> str | None:
+    """应用代码的**内容**指纹（与提交指针无关；D174）。
+
+    评审绑定的应是「当时被测应用的内容」，不是 `HEAD`：commit 本身、提交账本
+    都不该让全部用例失效。范围 = 工作区里 git 已跟踪 + 未忽略的新文件，
+    排除 E2E 环（脚本/索引/账本）、`.atlas/`、`node_modules/` 与 `*.md`
+    （文档不是运行时证据）；未提交改动天然计入（读的是工作区内容）。
+    """
+    if _git_output(root, "rev-parse", "--is-inside-work-tree") != "true":
+        return None
+    tracked = _git_paths(root, "ls-files", "-z")
+    if tracked is None:
+        return None
+    untracked = _git_paths(root, "ls-files", "-o", "--exclude-standard", "-z") or []
+    lay = load_layout(root)
+    try:
+        e2e_rel = lay.e2e_dir.resolve().relative_to(Path(root).resolve()).as_posix()
+    except ValueError:
+        e2e_rel = "product/e2e"
+    entries = []
+    for rel in sorted(set(tracked) | set(untracked)):
+        if not _is_app_path(rel, e2e_rel):
+            continue
+        entries.append(f"{rel}\0{_content_digest(Path(root) / rel)}")
+    return _sha16("\n".join(entries))
+
+
+def review_fingerprint(root: Path) -> dict:
+    """`case_review_state` 复算用的当前指纹面（不进 `provenance` 的前端负载）。"""
+    _shared, shared_hash, _fallback = shared_script_hashes(root)
+    return {
+        "scripts": script_file_hashes(root),
+        "shared_hash": shared_hash,
+        "cases": case_fingerprints(load_layout(root).e2e_scripts_dir),
+    }
+
+
 def repo_provenance(root: Path) -> dict:
     """提取当前工作区的代码提交与测试脚本指纹，供评审账本留痕与陈旧度（stale）判定。"""
     head = repo_head(root)
@@ -164,18 +397,27 @@ def repo_provenance(root: Path) -> dict:
         "head_short": head[:7] if head else None,
         "git_dirty": dirty,
         "scripts_hash": shash,
+        "app_hash": app_fingerprint(root),
         "actor_type": actor_type,
     }
 
 
-def case_review_state(snap: dict, current: dict | None) -> dict:
-    """计算单个用例在当前代码/脚本下的评审新鲜度。
+def case_review_state(cid: str, snap: dict, current: dict | None) -> dict:
+    """计算单个用例在当前内容下的评审新鲜度。
 
-    状态闭集：
+    状态闭集（D128 四态语义不变）：
       - unreviewed: 尚未标记评审通过
-      - fresh: 评审指纹与当前 HEAD 及生成脚本一致（有效评审）
-      - stale: 评审后 HEAD 或生成脚本已变化（需重跑/重审）
-      - legacy: 历史账本条目无提交指纹（来源无法验证）
+      - fresh: 评审指纹与当前**内容**一致（有效评审）
+      - stale: 评审后该用例的脚本块 / 文件内共享代码 / 共享脚本 / 应用代码已变化
+      - legacy: 历史账本条目无可用指纹（来源无法验证）
+
+    D174：新账本条目按「内容」判——
+      ① 用例自己的 test 块（`fp.block`）变了 ⇒ 只作废这一条；
+      ② 同文件块外代码（`fp.rest`）变了 ⇒ 该文件全部用例作废；
+      ③ 共享脚本（`fp.shared`）变了 ⇒ 全部作废；
+      ④ 应用代码（`fp.app`）变了 ⇒ 全部作废；
+      ⑤ 用例换了脚本文件 / 当前脚本里找不到 ⇒ 作废。
+    旧条目（无 `fp`）沿用 D128 的 HEAD + 全局脚本散列比较（fail-closed，重提交后升级）。
     """
     reviewed = snap.get("reviewed") or {}
     if not reviewed.get("pass"):
@@ -185,6 +427,31 @@ def case_review_state(snap: dict, current: dict | None) -> dict:
         return {"state": "legacy", "reason": "历史快照无提交指纹，需重审"}
     if current is None:
         return {"state": "legacy", "reason": "未提供当前工作区指纹，新鲜度无法核验"}
+    fp = prov.get("fp")
+    if isinstance(fp, dict):
+        mismatches = []
+        cur = (current.get("cases") or {}).get(cid)
+        script = fp.get("script")
+        if script:
+            if not isinstance(cur, dict):
+                mismatches.append(f"脚本中找不到该用例({script})")
+            else:
+                if cur.get("script") != script:
+                    mismatches.append(f"脚本位置变动({script}→{cur.get('script')})")
+                elif cur.get("block") != fp.get("block"):
+                    mismatches.append(f"用例脚本变动({script})")
+                if cur.get("rest") != fp.get("rest"):
+                    mismatches.append(f"同文件共享代码变动({script})")
+        if fp.get("shared") and current.get("shared_hash") and fp["shared"] != current["shared_hash"]:
+            mismatches.append("共享脚本变动")
+        if fp.get("app") and current.get("app_hash") and fp["app"] != current["app_hash"]:
+            mismatches.append("应用代码变动")
+        if mismatches:
+            return {"state": "stale", "reason": "；".join(mismatches), "prov": prov}
+        res = {"state": "fresh", "prov": prov}
+        if prov.get("git_dirty"):
+            res["warning"] = "提交时工作区有未提交改动（dirty），提交后请先落库"
+        return res
     mismatches = []
     cur_head = current.get("head_sha")
     old_head = prov.get("head_sha")
@@ -366,7 +633,7 @@ def node_ids(scripts_dir: Path) -> dict:
         return out
     for ts in sorted(scripts_dir.glob("*.spec.ts")):
         for lineno, line in enumerate(ts.read_text(encoding="utf-8").splitlines(), start=1):
-            m = re.match(rf"\s*test\(['\"]({case_id.GRAMMAR})[ '\"].*async", line)
+            m = _CASE_TEST_LINE.match(line)
             if m:
                 out[m.group(1)] = f"{ts.name}:{lineno}"
     return out
@@ -525,9 +792,9 @@ class Ledger:
             s = e.get("reviewed_scope")
             if isinstance(s, list):
                 scope = [str(x) for x in s]
-        for snap in merged.values():
+        for cid, snap in merged.items():
             if isinstance(snap, dict):
-                snap["review_state"] = case_review_state(snap, current)
+                snap["review_state"] = case_review_state(cid, snap, current)
         return {"ts": ts, "actor": actor, "cases": merged,
                 "reviewed_scope": scope, "reviewed_count": len(scope)}
 
@@ -790,8 +1057,12 @@ def _snap_cases(entry: dict) -> dict:
     return cases if isinstance(cases, dict) else {}
 
 
-def _compact(entry: dict, prov: dict | None = None) -> dict:
-    """落账本的快照条目：失败才带输出尾部（80 行，与运行期同长），避免账本被 traceback 撑爆。"""
+def _compact(entry: dict, prov: dict | None = None, cid: str | None = None) -> dict:
+    """落账本的快照条目：失败才带输出尾部（80 行，与运行期同长），避免账本被 traceback 撑爆。
+
+    D174：`prov` 带当前指纹面（`cases` / `shared_hash` / `app_hash`）时，逐用例落
+    `prov.fp = {script, block, rest, shared, app}` —— 评审新鲜度按内容复算，不再绑 HEAD。
+    """
     out = {"ok": bool(entry.get("ok")), "exit": entry.get("exit"),
            "duration_ms": entry.get("duration_ms"), "timeout": bool(entry.get("timeout")),
            "ts": entry.get("ts")}
@@ -808,6 +1079,15 @@ def _compact(entry: dict, prov: dict | None = None) -> dict:
             "git_dirty": p.get("git_dirty"),
             "actor_type": p.get("actor_type", "human"),
         }
+        if cid and isinstance(prov, dict) and ("cases" in prov or "shared_hash" in prov):
+            cf = (prov.get("cases") or {}).get(cid) or {}
+            out["prov"]["fp"] = {
+                "script": cf.get("script"),
+                "block": cf.get("block"),
+                "rest": cf.get("rest"),
+                "shared": prov.get("shared_hash"),
+                "app": prov.get("app_hash"),
+            }
     if not out["ok"] and entry.get("tail"):
         out["tail"] = "\n".join(str(entry["tail"]).splitlines()[-80:])
     return out
@@ -871,7 +1151,8 @@ class App:
                     "ledger": self.layout.print_value("console_ledger"), "cases": [], "nodeids": {},
                     "committed": {"ts": None, "actor": None, "cases": {}},
                     "provenance": current_prov}
-        committed = self.ledger.committed_snapshot(source, current_prov)
+        current = dict(current_prov, **review_fingerprint(self.root))
+        committed = self.ledger.committed_snapshot(source, current)
         return {
             "source": source,
             "sources": read_sources(self.root),
@@ -1031,15 +1312,16 @@ class Handler(BaseHTTPRequestHandler):
         apply = bool(body.get("apply"))
         # 指纹在 writeback 前获取，避免 writeback 自身修改索引使 git_dirty 假阳性（D128）
         prov = repo_provenance(self.app.root)
+        current = dict(prov, **review_fingerprint(self.app.root))
         res = writeback(self.app.root, draft, apply, source)
         if apply:
-            snap = {cid: _compact(v, prov) for cid, v in draft.items()}
+            snap = {cid: _compact(v, current, cid) for cid, v in draft.items()}
             reviewed_scope = [cid for cid, v in draft.items() if (v.get("reviewed") or {}).get("pass")]
             self.app.ledger.append({"kind": "submit", "source": source,
                                     "changed": res["changed"], "cases": snap,
                                     "prov": prov, "actor_type": prov.get("actor_type", "human"),
                                     "reviewed_scope": reviewed_scope})
-            res["committed_ts"] = self.app.ledger.committed_snapshot(source, prov).get("ts")
+            res["committed_ts"] = self.app.ledger.committed_snapshot(source, current).get("ts")
             res["provenance"] = prov
         self._json(res)
 

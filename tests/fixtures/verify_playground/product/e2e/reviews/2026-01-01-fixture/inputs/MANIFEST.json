@@ -1,0 +1,13 @@
+{
+  "kind": "atlas-review-input-manifest",
+  "note": "fixture",
+  "root": ".",
+  "files": [
+    {
+      "path": "product/e2e/cases/home.md",
+      "sha256": "94784f7aa45a7c1a849707ab70868f66248168f2c1bac7a4e76370d7fea82b96",
+      "bytes": 680,
+      "lines": 40
+    }
+  ]
+}

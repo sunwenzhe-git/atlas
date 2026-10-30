@@ -1003,6 +1003,33 @@ def _with_page_table(state: str, slug: str = "home") -> str:
     )
 
 
+def _with_page_table_cov(state: str, coverage: str, slug: str = "home") -> str:
+    """issue #49：带可选 `覆盖就绪` 列的页面表。"""
+    return INDEX_GOOD.replace(
+        "## 页面 ↔ 用例",
+        "## 页面表（页 ↔ 路由）\n\n"
+        "| 页面 | 路由 | 域 | 实现状态 | 覆盖就绪 |\n|---|---|---|---|---|\n"
+        f"| {slug} | / | demo | {state} | {coverage} |\n\n## 页面 ↔ 用例",
+    )
+
+
+def _with_page_table_mixed(home_state: str, home_cov: str, other_state: str, other_cov: str,
+                           with_cov: bool = True) -> str:
+    """两页同域：home 有用例，other 无；用于 mixed-domain 作用域测试。"""
+    if with_cov:
+        header = "| 页面 | 路由 | 域 | 实现状态 | 覆盖就绪 |\n|---|---|---|---|---|"
+        rows = (f"| home | / | demo | {home_state} | {home_cov} |\n"
+                f"| other | /other | demo | {other_state} | {other_cov} |")
+    else:
+        header = "| 页面 | 路由 | 域 | 实现状态 |\n|---|---|---|---|"
+        rows = (f"| home | / | demo | {home_state} |\n"
+                f"| other | /other | demo | {other_state} |")
+    return INDEX_GOOD.replace(
+        "## 页面 ↔ 用例",
+        f"## 页面表（页 ↔ 路由）\n\n{header}\n{rows}\n\n## 页面 ↔ 用例",
+    )
+
+
 def test_testids_in_progress_page_gap_is_warn_not_fail() -> None:
     """`3509 §B106`：页 `实现状态 = 实现中` ⇒ 双向缺口降 WARN 并附清单（用例先行窗口内不得长红）。
 
@@ -3298,6 +3325,223 @@ def test_index_ac_reverse_coverage_skips_unimplemented_domain() -> None:
         res = ve.validate(root)
         row = [c for c in res.checks if c["check"] == "AC 反向覆盖"][0]
         assert row["level"] == "PASS", row
+
+
+def test_index_ac_reverse_coverage_warns_on_coverage_ready_implementing_page() -> None:
+    """issue #49：`实现中` 页显式 `覆盖就绪: 是` ⇒ 该域参与对账，零挂靠 AC WARN。
+
+    变异证明：保留「域内页面全已实现」整域跳过 ⇒ 本用例红（这正是 #49 的盲区）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root, _with_page_table_cov("实现中", "是"))
+        mk_prd(root)
+        res = ve.validate(root)
+        row = [c for c in res.checks if c["check"] == "AC 反向覆盖"][0]
+        assert row["level"] == "WARN", row
+        assert "demo" in row["detail"] and "AC-HOME-999" in row["detail"], row
+
+
+def test_coverage_ready_header_accepts_optional_suffix() -> None:
+    """issue #49：模板表头是 `覆盖就绪（可选）`，必须按前缀识别，不得空转。"""
+    idx = INDEX_GOOD.replace(
+        "## 页面 ↔ 用例",
+        "## 页面表（页 ↔ 路由）\n\n"
+        "| 页面 | 路由 | 域 | 实现状态 | 覆盖就绪（可选） |\n|---|---|---|---|---|\n"
+        "| home | / | demo | 实现中 | 是 |\n\n## 页面 ↔ 用例",
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root, idx)
+        mk_prd(root)
+        res = ve.validate(root)
+        row = [c for c in res.checks if c["check"] == "AC 反向覆盖"][0]
+        assert row["level"] == "WARN", row
+
+
+def test_index_ac_reverse_coverage_skips_coverage_not_ready_page() -> None:
+    """issue #49：`实现中` + `覆盖就绪: 否` ⇒ 显式不参与，零挂靠不 WARN。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root, _with_page_table_cov("实现中", "否"))
+        mk_prd(root)
+        res = ve.validate(root)
+        row = [c for c in res.checks if c["check"] == "AC 反向覆盖"][0]
+        assert row["level"] == "PASS", row
+
+
+def test_index_ac_reverse_coverage_skips_zero_case_in_mixed_domain() -> None:
+    """零挂靠 AC 无页归属：混合域只要有一页未就绪，反向覆盖门仍跳过（D173 边界）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root, _with_page_table_mixed("实现中", "是", "未开始", "—"))
+        mk_prd(root)
+        res = ve.validate(root)
+        row = [c for c in res.checks if c["check"] == "AC 反向覆盖"][0]
+        assert row["level"] == "PASS", row
+
+
+def test_index_ac_reverse_coverage_skips_coverage_not_ready_implemented_page() -> None:
+    """issue #49：`已实现` + `覆盖就绪: 否` ⇒ 显式关闭该页，零挂靠不 WARN。
+
+    变异证明：忽略 `否`（只按实现状态）⇒ 本用例红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root, _with_page_table_cov("已实现", "否"))
+        mk_prd(root)
+        res = ve.validate(root)
+        row = [c for c in res.checks if c["check"] == "AC 反向覆盖"][0]
+        assert row["level"] == "PASS", row
+
+
+def test_page_table_coverage_ready_vocab_fails() -> None:
+    """`覆盖就绪` 只接受 `是 / 否 / — / 空`；词表外取值 ⇒ `页面表合法` FAIL。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root, _with_page_table_cov("实现中", "maybe"))
+        mk_prd(root)
+        res = ve.validate(root)
+        row = [c for c in res.checks if c["check"] == "页面表合法"][0]
+        assert row["level"] == "FAIL", row
+        assert "覆盖就绪" in row["detail"], row
+
+
+def test_coverage_dimensions_run_for_coverage_ready_implementing_page() -> None:
+    """issue #49：`实现中` + `覆盖就绪: 是` 的页，AC×覆盖维度门照常对账（缺维度 WARN / 覆盖 PASS）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_index(root, _with_page_table_cov("实现中", "是"))
+        prd_dir = root / "product" / "prd"
+        prd_dir.mkdir(parents=True, exist_ok=True)
+        (prd_dir / "home-prd.md").write_text(
+            "---\ndomain: home\n---\n\n"
+            "## 五、验收标准\n\n"
+            "| AC ID | 场景 | 回指规则 | 适用覆盖维度 |\n"
+            "|---|---|---|---|\n"
+            "| `AC-HOME-001` | 首页展示正常 | HOME-R-001 | C01 |\n",
+            encoding="utf-8",
+        )
+        mk_cases(root)
+        res_warn = ve.validate(root)
+        check_warn = next((c for c in res_warn.checks if c["check"] == "AC × 覆盖维度"), None)
+        assert check_warn is not None and check_warn["level"] == "WARN", check_warn
+        assert "AC-HOME-001缺C01" in check_warn["detail"], check_warn
+
+        case_with_c01 = CASE_GOOD.strip()[:-3] + "覆盖维度:\n  - C01\n```\n"
+        mk_cases(root, case_with_c01)
+        res_pass = ve.validate(root)
+        check_pass = next((c for c in res_pass.checks if c["check"] == "AC × 覆盖维度"), None)
+        assert check_pass is not None and check_pass["level"] == "PASS", check_pass
+
+
+def _mk_dimension_prd(root: Path) -> None:
+    prd_dir = root / "product" / "prd"
+    prd_dir.mkdir(parents=True, exist_ok=True)
+    (prd_dir / "home-prd.md").write_text(
+        "---\ndomain: home\n---\n\n"
+        "## 五、验收标准\n\n"
+        "| AC ID | 场景 | 回指规则 | 适用覆盖维度 |\n"
+        "|---|---|---|---|\n"
+        "| `AC-HOME-001` | 首页展示正常 | HOME-R-001 | C01 |\n",
+        encoding="utf-8",
+    )
+
+
+def test_e2e_dimension_check_preserves_legacy_mixed_domain_skip() -> None:
+    """issue #49：没有第 5 列的旧 4 列表，混合状态域仍按旧行为整域跳过（存量不变）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_index(root, _with_page_table_mixed("已实现", "", "未开始", "", with_cov=False))
+        _mk_dimension_prd(root)
+        mk_cases(root)
+        res = ve.validate(root)
+        check = next((c for c in res.checks if c["check"] == "AC × 覆盖维度"), None)
+        assert check is not None and check["level"] == "PASS", check
+
+
+def test_e2e_dimension_check_uses_page_ready_in_mixed_domain() -> None:
+    """issue #49：出现第 5 列后，混合域按页级 ready 判——home 就绪即对账（缺维度 WARN）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_index(root, _with_page_table_mixed("已实现", "是", "未开始", "—"))
+        _mk_dimension_prd(root)
+        mk_cases(root)
+        res = ve.validate(root)
+        check = next((c for c in res.checks if c["check"] == "AC × 覆盖维度"), None)
+        assert check is not None and check["level"] == "WARN", check
+        assert "AC-HOME-001缺C01" in check["detail"], check
+
+
+def test_e2e_dimension_check_page_level_when_coverage_column_all_dash() -> None:
+    """issue #49：出现 `覆盖就绪` 列（即使全 `—`）⇒ 切页级 ready，mixed 域 home 就绪即对账。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_index(root, _with_page_table_mixed("已实现", "—", "未开始", "—"))
+        _mk_dimension_prd(root)
+        mk_cases(root)
+        res = ve.validate(root)
+        check = next((c for c in res.checks if c["check"] == "AC × 覆盖维度"), None)
+        assert check is not None and check["level"] == "WARN", check
+
+
+def test_coverage_ready_second_page_table_is_detected() -> None:
+    """issue #49：多张页面/路由表时，优先识别带 `覆盖就绪` 的表头，不得只看第一张表。"""
+    idx = INDEX_GOOD.replace(
+        "## 页面 ↔ 用例",
+        "## 页面表 A\n\n"
+        "| 页面 | 路由 | 域 | 实现状态 |\n|---|---|---|---|\n"
+        "| home | / | demo | 实现中 |\n\n"
+        "## 页面表 B\n\n"
+        "| 页面 | 路由 | 域 | 实现状态 | 覆盖就绪 |\n|---|---|---|---|---|\n"
+        "| home | / | demo | 实现中 | 是 |\n\n## 页面 ↔ 用例",
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root, idx)
+        mk_prd(root)
+        res = ve.validate(root)
+        row = [c for c in res.checks if c["check"] == "AC 反向覆盖"][0]
+        assert row["level"] == "WARN", row
+
+
+def test_page_table_extra_column_is_not_treated_as_coverage() -> None:
+    """issue #49：第 5 列是「备注」而非「覆盖就绪」⇒ 不得按覆盖列解释（不 FAIL、仍走旧域级判据）。"""
+    idx = INDEX_GOOD.replace(
+        "## 页面 ↔ 用例",
+        "## 页面表（页 ↔ 路由）\n\n"
+        "| 页面 | 路由 | 域 | 实现状态 | 备注 |\n|---|---|---|---|---|\n"
+        "| home | / | demo | 实现中 | 随便写 |\n\n## 页面 ↔ 用例",
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root, idx)
+        mk_prd(root)
+        res = ve.validate(root)
+        legal = [c for c in res.checks if c["check"] == "页面表合法"][0]
+        assert legal["level"] == "PASS", legal
+        ac = [c for c in res.checks if c["check"] == "AC 反向覆盖"][0]
+        assert ac["level"] == "PASS", ac
 
 
 # ---- 域间依赖：`depends_on` ⇔ 全局 §五 mermaid 实线边集（`3509 §B186-1`）----

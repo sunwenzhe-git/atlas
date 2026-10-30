@@ -10,6 +10,7 @@ py 专属机制（conftest.py 发射 / pytest marker / `_data` 基线清单 / `_
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import subprocess
 import sys
@@ -17,6 +18,7 @@ import difflib
 import json
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -111,6 +113,28 @@ def write_review(root: Path, ring: str, dirname: str, status: str,
          "scope": "fixture", "checks": checks, "other": []},
         ensure_ascii=False), encoding="utf-8")
     (d / "README.md").write_text("# 审查总结\n\n通过\n", encoding="utf-8")
+    # issue #48：生成门按报告 inputs/MANIFEST.json 核对本次分片 sha256。
+    # 夹具报告必须带指针化输入清单，否则会被判 stale。
+    manifest_files = []
+    for base in (root / "product" / "e2e" / "cases", root / "product" / "prd"):
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*.md")):
+            data = path.read_bytes()
+            manifest_files.append({
+                "path": path.relative_to(root).as_posix(),
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "bytes": len(data),
+                "lines": len(data.decode("utf-8").splitlines()),
+            })
+    inputs = d / "inputs"
+    inputs.mkdir(parents=True, exist_ok=True)
+    (inputs / "MANIFEST.json").write_text(json.dumps({
+        "kind": "atlas-review-input-manifest",
+        "note": "fixture",
+        "root": str(root),
+        "files": manifest_files,
+    }, ensure_ascii=False), encoding="utf-8")
     return d
 
 
@@ -1544,6 +1568,158 @@ def test_review_gate_uses_latest_dated_report() -> None:
         assert run(root, "--apply").returncode != 0, "更大的日期是 FAIL ⇒ 阻断"
 
 
+def test_review_gate_blocks_when_required_shard_changed_after_review() -> None:
+    """issue #48：报告存在，但 `inputs/MANIFEST.json` 与当前分片不一致 ⇒ stale，拒绝写盘。
+
+    变异证明：去掉 manifest 核对（只读 status）⇒ 本用例红——旧 PASS 会为新分片放行。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        case_file = root / "product" / "e2e" / "cases" / "home.md"
+        case_file.write_text(
+            case_file.read_text(encoding="utf-8") + "\n<!-- changed after review -->\n",
+            encoding="utf-8",
+        )
+        r = run(root, "--apply")
+        assert r.returncode != 0, r.stdout + r.stderr
+        assert "过期" in r.stderr or "stale" in r.stderr.lower(), r.stderr
+        assert not (root / "product" / "e2e" / "scripts" / "home.spec.ts").exists()
+
+
+def test_review_gate_blocks_pass_report_without_manifest() -> None:
+    """issue #48：PASS 报告缺 `inputs/MANIFEST.json` ⇒ 无法证明审查输入=当前分片 ⇒ 阻断。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        manifest = (root / "product" / "e2e" / "reviews" / "2026-01-01-fixture"
+                    / "inputs" / "MANIFEST.json")
+        manifest.unlink()
+        r = run(root, "--apply")
+        assert r.returncode != 0, r.stdout + r.stderr
+        assert "MANIFEST" in r.stderr, r.stderr
+        assert not (root / "product" / "e2e" / "scripts" / "home.spec.ts").exists()
+
+
+def test_review_gate_rejects_baseline_outside_explicit_channel() -> None:
+    """issue #48：baseline 报告不是真审；未走 adopt / auto-baseline 显式通道 ⇒ 阻断。
+
+    旧行为是任何项目都无条件放行 baseline；本用例钉住「不再同权」。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, review=False)
+        d = root / "product" / "e2e" / "reviews" / "2026-01-01-baseline"
+        (d / "inputs").mkdir(parents=True)
+        (d / "review.json").write_text(json.dumps({
+            "ok": True, "status": "WARN", "basis": "auto-baseline",
+            "executed": False, "root": str(root), "scope": "auto-baseline",
+            "unit": "e2e", "round": 1, "expected": 1, "reviewed": 0,
+            "budget_exceeded": False, "checks": [], "other": [],
+        }, ensure_ascii=False), encoding="utf-8")
+        (d / "README.md").write_text("# baseline\n", encoding="utf-8")
+        r = run(root, "--apply")
+        assert r.returncode != 0, r.stdout + r.stderr
+        assert "baseline" in r.stderr, r.stderr
+        assert not (root / "product" / "e2e" / "scripts" / "home.spec.ts").exists()
+
+
+def test_review_gate_auto_heals_stale_on_explicit_channel() -> None:
+    """issue #48：stale 在 `auto-baseline` 显式通道下自愈放行（不阻断存量项目）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=PROFILE.replace(
+            "runner: node-playwright", "runner: node-playwright\n  review:\n    mode: auto-baseline"))
+        case_file = root / "product" / "e2e" / "cases" / "home.md"
+        case_file.write_text(
+            case_file.read_text(encoding="utf-8") + "\n<!-- changed after review -->\n",
+            encoding="utf-8",
+        )
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stderr + r.stdout
+        assert (root / "product" / "e2e" / "scripts" / "home.spec.ts").exists()
+        reports = list((root / "product" / "e2e" / "reviews").glob("*-auto-baseline/review.json"))
+        assert len(reports) == 1, reports
+        manifest = reports[0].parent / "inputs" / "MANIFEST.json"
+        assert manifest.is_file(), manifest
+        data1 = json.loads(manifest.read_text(encoding="utf-8"))
+        sha1 = next(f["sha256"] for f in data1["files"]
+                    if f["path"] == "product/e2e/cases/home.md")
+        assert sha1 == hashlib.sha256(case_file.read_bytes()).hexdigest()
+
+        # 第二次 stale：基线已存在（同日同 scope）时也必须刷新 manifest，不能留旧 sha。
+        case_file.write_text(
+            case_file.read_text(encoding="utf-8") + "\n<!-- second change -->\n",
+            encoding="utf-8",
+        )
+        r2 = run(root, "--apply")
+        assert r2.returncode == 0, r2.stderr + r2.stdout
+        data2 = json.loads(manifest.read_text(encoding="utf-8"))
+        sha2 = next(f["sha256"] for f in data2["files"]
+                    if f["path"] == "product/e2e/cases/home.md")
+        assert sha2 == hashlib.sha256(case_file.read_bytes()).hexdigest()
+        assert sha2 != sha1
+
+
+def test_review_gate_reuses_refreshed_baseline_when_same_day_report_stale() -> None:
+    """issue #48：同日已有真报告且真报告 stale 时，第二次生成复用当前基线，不再反复自愈。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=PROFILE.replace(
+            "runner: node-playwright", "runner: node-playwright\n  review:\n    mode: auto-baseline"))
+        fixture = root / "product" / "e2e" / "reviews" / "2026-01-01-fixture"
+        shutil.rmtree(fixture)
+        write_review(root, "e2e", f"{time.strftime('%Y-%m-%d')}-today", "PASS")
+        case_file = root / "product" / "e2e" / "cases" / "home.md"
+        case_file.write_text(
+            case_file.read_text(encoding="utf-8") + "\n<!-- changed -->\n",
+            encoding="utf-8",
+        )
+        r1 = run(root, "--apply")
+        assert r1.returncode == 0, r1.stderr + r1.stdout
+        reviews = root / "product" / "e2e" / "reviews"
+        assert len(list(reviews.glob("*-auto-baseline/review.json"))) == 1
+        r2 = run(root, "--apply")
+        assert r2.returncode == 0, r2.stderr + r2.stdout
+        assert len(list(reviews.glob("*-auto-baseline/review.json"))) == 1
+
+
+def test_review_inputs_status_stale_on_missing_and_changed() -> None:
+    """issue #48：输入清单的 `./` 归一、缺失、变更、分片被删四种边界。"""
+    gen = load_generator()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        case = root / "product" / "e2e" / "cases" / "home.md"
+        case.parent.mkdir(parents=True)
+        case.write_text("v1", encoding="utf-8")
+        report = root / "product" / "e2e" / "reviews" / "2026-01-01-r"
+        inputs = report / "inputs"
+        inputs.mkdir(parents=True)
+        manifest = {
+            "files": [{
+                "path": "./product/e2e/cases/home.md",
+                "sha256": hashlib.sha256(case.read_bytes()).hexdigest(),
+            }]
+        }
+        (inputs / "MANIFEST.json").write_text(json.dumps(manifest), encoding="utf-8")
+        ok, detail = gen.review_inputs_status(report, root, [case])
+        assert ok, detail
+
+        case.write_text("v2", encoding="utf-8")
+        ok, detail = gen.review_inputs_status(report, root, [case])
+        assert not ok and "已变更" in detail, detail
+
+        (inputs / "MANIFEST.json").unlink()
+        ok, detail = gen.review_inputs_status(report, root, [case])
+        assert not ok and "不存在" in detail, detail
+
+        manifest["files"][0]["sha256"] = hashlib.sha256(case.read_bytes()).hexdigest()
+        (inputs / "MANIFEST.json").write_text(json.dumps(manifest), encoding="utf-8")
+        case.unlink()
+        ok, detail = gen.review_inputs_status(report, root, [case])
+        assert not ok and "文件不存在" in detail, detail
+
+
 def test_review_gate_rejects_malformed_report() -> None:
     """`review.json` 缺 / 坏 / `status` 不在词表内 ⇒ 视为**未通过**（不得默认放行）。"""
     with tempfile.TemporaryDirectory() as td:
@@ -1589,6 +1765,10 @@ def test_review_gate_auto_heals_on_adopt() -> None:
         assert report_data["basis"] == "auto-baseline"
         assert report_data["reviewed"] == 0
         assert report_data["expected"] >= 1
+        manifest = reports[0].parent / "inputs" / "MANIFEST.json"
+        assert manifest.is_file(), manifest
+        manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+        assert any(f["path"] == "product/e2e/cases/home.md" for f in manifest_data["files"])
 
 
 def test_review_gate_modes_triple_key_semantics() -> None:
@@ -3228,6 +3408,20 @@ def test_generator_uses_configured_assets_root(tmp_path) -> None:
         {"ok": True, "status": "PASS", "root": str(root), "scope": "fixture",
          "checks": [], "other": []}, ensure_ascii=False), encoding="utf-8")
     (review / "README.md").write_text("# 审查总结\n\n通过\n", encoding="utf-8")
+    case_bytes = (root / "docs" / "e2e" / "cases" / "home.md").read_bytes()
+    inputs = review / "inputs"
+    inputs.mkdir(parents=True)
+    (inputs / "MANIFEST.json").write_text(json.dumps({
+        "kind": "atlas-review-input-manifest",
+        "note": "fixture",
+        "root": str(root),
+        "files": [{
+            "path": "docs/e2e/cases/home.md",
+            "sha256": hashlib.sha256(case_bytes).hexdigest(),
+            "bytes": len(case_bytes),
+            "lines": len(case_bytes.decode("utf-8").splitlines()),
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
 
     r = run(root, "--apply")
     assert r.returncode == 0, (r.stdout, r.stderr)

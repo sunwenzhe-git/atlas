@@ -4,6 +4,31 @@
 
 ---
 
+## [Unreleased]
+
+### 🧭 登记测试有效性与 CRAP 候选观测面（D175）
+
+* **新增**：`shared/gates.md` §3 新增两个候选观测面缺口行：「测试 ⇔ 生产代码变异（变异得分）」「实现代码 ⇔ 覆盖×复杂度（CRAP）」，§4 新立「候选观测面（非门）」小节登记。来源 = ub-mode（Uncle Bob）变异测试 / CRAP 分数思想。
+* **非门**：候选形态 WARN/N-A，不建 FAIL 门、不进 `atlas_check`、不装工具进 Atlas 依赖；升格条件 = 真实仓**副本**试跑信噪比证据。与 M 系列变异钉正交（M 向判据注入脏数据，变异测试篡改生产代码考测试）。
+* **同步面**：`DESIGN.md` D175、`docs/map/gates.md` 与 `docs/map/atlas-map.html` 行数锚（149 → 152 行）。
+
+### 🧷 评审重审范围收敛到「真正变化的内容」（D174）
+
+* **改进**：控制台评审陈旧度从「HEAD 指针 + 整目录 `scripts_hash`」改为**逐用例内容指纹**。只改一条 test ⇒ 只有该条需重审；同文件块外代码变化 ⇒ 该文件其余用例需重审；共享脚本（spec / config / setup / prepare 的静态 import 闭包）或应用代码内容变化 ⇒ 全部需重审。commit 与提交账本本身不再作废评审。
+* **指纹形状**：逐用例快照落 `prov.fp = {script, block, rest, shared, app}`；应用代码读**工作区内容**（git 已跟踪 + 未忽略新文件，排除 E2E 环 / `.atlas` / `node_modules` / `*.md`）；未被引用的探针脚本不参与；相对 import 解析不出 ⇒ 保守回退全部非 spec 脚本。
+* **兼容**：旧账本条目（无 `fp`）沿用 D128 的 HEAD + 全局散列口径（fail-closed），重新评审提交后升级。
+* **测试**：`tests/test_e2e_console.py` 25 → 28。
+* **契约 / 设计**：`rings/e2e/reference.md` §10.1、`DESIGN.md` D174、`shared/gates.md`、`docs/innovations/e2e-console.md` §5、`docs/map` 行数与锚。
+
+### 🛡️ E2E 审查门输入指纹 + 页面级覆盖就绪（issue #48 / #49）
+
+* **修复（#48）**：`gen_e2e_scripts.py` 的独立审查门在读取最新报告 `status` 之外，核对 `inputs/MANIFEST.json` 与本次待生成分片的 `sha256`；分片在审查后变化 ⇒ `stale`，`--apply` 拒绝写盘。`basis: auto-baseline` 的报告不再与真审同权，只在 `origin: adopt` / `e2e.review.mode: auto-baseline` 显式通道放行（WARN）。
+* **修复（#49）**：页面表新增可选 `覆盖就绪` 列（`是/否/—`）；`是` 让「实现中」页参与 AC 反向覆盖与 AC×覆盖维度对账，缺列 / `—` 回落 `实现状态 == 已实现`；零挂靠 AC 无页归属，反向覆盖门仍要求域内全部页覆盖就绪（避免误报），有页级用例的 AC 与维度门按页级 ready。`validators/validate_e2e_index.py` 的两道追溯门从「域全已实现」改为页级 ready；模板 / 契约同步。
+* **测试**：`tests/test_gen_e2e_scripts.py` 118 → 124；`tests/test_validators.py` 168 → 180；`tests/test_atlas_check.py` 48 → 49。
+* **契约 / 设计**：`rings/e2e/reference.md` §3.2 / §8.2 / §12.6、`shared/independent-review.md` §4、`templates/e2e/e2e-index.md`、`DESIGN.md` D173、`shared/gates.md` 计数。
+
+---
+
 ## [v0.2.0-beta.22] - 2026-10-30
 
 ### 🧭 FAIL 修复指引试点（RFC-20261030-01）

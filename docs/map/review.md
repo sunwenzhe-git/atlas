@@ -9,7 +9,7 @@
 |---|---|
 | `shared/independent-review.md` | 独立审查契约:四类实例接线(§1)、骨架条款(§2)、输出双份契约(§3) |
 | `shared/closeout.md` | 收口触发表:唯一真相源,派生器只解析不判定(触发表 §1) |
-| `scripts/make_review_inputs.py` | 造审查输入:按模式收集文件并附摘要(`collect`,`scripts/make_review_inputs.py:50`) |
+| `scripts/make_review_inputs.py` | 造审查输入:按模式收集文件并附摘要(`collect`,`scripts/make_review_inputs.py:73`) |
 | `scripts/cli_review_convert.py` | CLI 审查输出 → `review.json` 契约 + N/M 对账(`SEVERITY_MAP`,`scripts/cli_review_convert.py:40`;缺实审数拒绝产出) |
 | `scripts/validate_review_report.py` | 报告落盘形态门:分级闭集 / fingerprint 去重 / 签字取证(`validate_report`,`scripts/validate_review_report.py:71`) |
 | `scripts/closeout_derive.py` | 按本轮 git diff 匹配触发表路径族,派生收口必跑步骤(`ATLAS_OWNED_PREFIXES`,`scripts/closeout_derive.py:52`) |

@@ -1,17 +1,14 @@
 {
   "ok": true,
   "status": "PASS",
-  "basis": "fixture",
   "executed": true,
   "root": ".",
-  "scope": "fixture",
-  "unit": "ring",
+  "scope": "home#E2E-HOME-001,E2E-HOME-002",
+  "unit": "home",
   "round": 1,
-  "expected": 1,
-  "reviewed": 1,
+  "expected": 2,
+  "reviewed": 2,
   "budget_exceeded": false,
   "checks": [],
-  "other": [
-    "合成靶场开户夹具(机器兜底,独立审查未执行)"
-  ]
+  "other": []
 }

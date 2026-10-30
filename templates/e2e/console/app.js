@@ -89,7 +89,7 @@ async function load() {
   const cfg = srcCfg();
   const prov = d.provenance || {};
   const provNote = prov.head_short
-    ? ` · HEAD=${prov.head_short}${prov.git_dirty ? '(dirty)' : ''} · 脚本=${prov.scripts_hash || '无'}`
+    ? ` · HEAD=${prov.head_short}${prov.git_dirty ? '(dirty)' : ''} · 脚本=${prov.scripts_hash || '无'} · 应用=${prov.app_hash || '无'}`
     : '';
   $('meta').textContent = `来源 ${cfg.label || S.source}（${cfg.base_url || '未配置'}）`
     + ` · ${d.head ? '执行时弹出浏览器窗口' : '无头执行（不弹窗口）'} · 一次跑一条 · 单条超时 ${d.timeout}s`
@@ -210,7 +210,7 @@ function rowHTML(c) {
   const canCheck = (unlocked || reviewedPass) && !needsRecheck;
 
   const recheckTitle = isStale
-    ? `代码或脚本已变化（${esc(revState.reason || '')}），需重新执行并复核`
+    ? `脚本或应用代码已变化（${esc(revState.reason || '')}），需重新执行并复核`
     : `旧账本快照无提交指纹，重新执行后将自动绑定当前版本`;
   const reviewCell = `<label class="chk${canCheck ? '' : ' off'}" title="${needsRecheck ? recheckTitle : unlocked ? '勾选＝复核该条执行结果符合业务预期；再点一次取消（提交后才落账本）' : reviewedPass ? '取消勾选即撤销评审' : '执行通过后才可勾选'}">
       <input type="checkbox" data-review="${c.id}" ${reviewedPass && !needsRecheck ? 'checked' : ''} ${canCheck ? '' : 'disabled'}>

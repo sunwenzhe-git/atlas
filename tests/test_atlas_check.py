@@ -763,6 +763,70 @@ def test_review_input_manifest_is_pointer_based_and_tracks_current_files() -> No
         assert f1["product/e2e/cases/home.md"] != f2["product/e2e/cases/home.md"], "指纹未跟随当前文件"
 
 
+def test_review_input_manifest_uses_stack_profile_cases_dir_override() -> None:
+    """issue #48：清单生产者与生成器必须同源读取 `e2e.cases_dir` / `e2e.index`。
+
+    变异证明：退回 layout 默认路径 ⇒ 本用例红（清单缺 `cases-v2/home.md`，生成门会永久 stale）。
+    """
+    script = PKG_ROOT / "scripts" / "make_review_inputs.py"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "product").mkdir()
+        (root / "product" / "stack-profile.yaml").write_text(
+            "e2e:\n  cases_dir: product/cases-v2\n  index: product/index-v2.md\n",
+            encoding="utf-8")
+        (root / "product" / "cases-v2").mkdir()
+        (root / "product" / "cases-v2" / "home.md").write_text(
+            "## E2E-HOME-001 x\n", encoding="utf-8")
+        (root / "product" / "index-v2.md").write_text("# index v2\n", encoding="utf-8")
+        (root / "product" / "e2e" / "cases").mkdir(parents=True)
+        (root / "product" / "e2e" / "cases" / "home.md").write_text(
+            "## E2E-HOME-999 stale\n", encoding="utf-8")
+        (root / "product" / "e2e" / "e2e-index.md").write_text("# default index\n", encoding="utf-8")
+        out = "product/e2e/reviews/2026-01-01-t/inputs"
+        p = subprocess.run([sys.executable, str(script), "--root", ".", "--out", out],
+                           cwd=str(root), capture_output=True, text=True, timeout=120)
+        assert p.returncode == 0, p.stderr
+        m = json.loads((root / out / "MANIFEST.json").read_text(encoding="utf-8"))
+        paths = {f["path"] for f in m["files"]}
+        assert "product/cases-v2/home.md" in paths, paths
+        assert "product/index-v2.md" in paths, paths
+        assert "product/e2e/cases/home.md" not in paths, paths
+        assert "product/e2e/e2e-index.md" not in paths, paths
+
+        # 绝对路径覆盖：`root.glob` 不支持绝对 pattern，collect 必须单独处理。
+        abs_cases = root / "abs-cases"
+        abs_cases.mkdir()
+        (abs_cases / "abs-home.md").write_text("## E2E-HOME-002 y\n", encoding="utf-8")
+        (root / "product" / "stack-profile.yaml").write_text(
+            f"e2e:\n  cases_dir: {abs_cases}\n  index: product/index-v2.md\n",
+            encoding="utf-8")
+        out2 = "product/e2e/reviews/2026-01-01-t2/inputs"
+        p2 = subprocess.run([sys.executable, str(script), "--root", ".", "--out", out2],
+                            cwd=str(root), capture_output=True, text=True, timeout=120)
+        assert p2.returncode == 0, p2.stderr
+        m2 = json.loads((root / out2 / "MANIFEST.json").read_text(encoding="utf-8"))
+        assert "abs-cases/abs-home.md" in {f["path"] for f in m2["files"]}, m2
+
+        # 根外绝对路径：清单工具必须明确拒绝，而不是产出永久 stale 的绝对 path。
+        (root / "product" / "stack-profile.yaml").write_text(
+            "e2e:\n  cases_dir: /tmp/outside-cases\n  index: product/index-v2.md\n",
+            encoding="utf-8")
+        p3 = subprocess.run([sys.executable, str(script), "--root", ".", "--out", out2],
+                            cwd=str(root), capture_output=True, text=True, timeout=120)
+        assert p3.returncode == 2, p3.stderr
+        assert "必须在项目根内" in p3.stderr, p3.stderr
+
+        # 相对 .. 同样拒绝，避免 glob 到根外产出不可对账的绝对 path。
+        (root / "product" / "stack-profile.yaml").write_text(
+            "e2e:\n  cases_dir: ../outside-cases\n  index: product/index-v2.md\n",
+            encoding="utf-8")
+        p4 = subprocess.run([sys.executable, str(script), "--root", ".", "--out", out2],
+                            cwd=str(root), capture_output=True, text=True, timeout=120)
+        assert p4.returncode == 2, p4.stderr
+        assert "不得包含" in p4.stderr, p4.stderr
+
+
 # ---- 「装配版本」对账（P3，2026-10-05）----
 
 
