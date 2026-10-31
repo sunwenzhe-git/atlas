@@ -94,6 +94,7 @@ atlas/
 |---|---|
 | `workflow-plan-apply/` | 往 `.trellis/workflow.md` 的 Phase 1 插入 `#### 1.6 项目级资产更新`（调 `atlas apply`）+ 面包屑 enforcement 行 |
 | `workflow-root-cause/` | 首次红灯根因前置排查挂载，确保报错现场不丢失 |
+| `workflow-skill-routing/` | 把 UI 合规、落笔纪律、设计决策追问、前端复用优先挂进 `.trellis/workflow.md` 面包屑；D177 起前端复用直接指向 `shared/frontend-reuse.md` |
 | `project-wiring/` | `AGENTS.md` 指针段 + `after_finish` hook |
 
 **为什么要写成 Plan 的 `[required · once]` 步骤**：Trellis 的「自动」分两层——hook 注入面包屑是**确定性**的，skill description 命中是**概率性**的；且建 task 前必须获得用户同意。所以只有写成强制步骤 + enforcement 行才可靠。

@@ -36,7 +36,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 |---|---|---|---|---|
 | 0 | 共享内核 | 全包单源的解析/复用实现,禁止就地复制 | `_support/`(10 件) | — |
 | 1 | CLI 与装配 | 把 atlas 装进目标仓库并保持副本与源包对账 | `bin/atlas.js`、`install.sh` | [cli.md](cli.md) |
-| 2 | 共享契约层 | 一切规则的真相源(门册/全局规则/布局/单源) | `shared/`(7 份)、`templates/` | — |
+| 2 | 共享契约层 | 规则与执行期程序契约的单一落点(frontend-reuse 非门、非真相源) | `shared/`(8 份)、`templates/` | — |
 | 3 | 结构抽取适配器 | 从业务代码确定性抽取路由/API/模型/测试事实 | `adapters/`、`scripts/refresh_structure.py` | [adapters.md](adapters.md) |
 | 4 | 代码图谱 | 外部图谱后端的唯一隔离层 + 影响面报告与对账 | `adapters/_graph.py` | [graph.md](graph.md) |
 | 5 | 三环资产引擎 | structure / prd / e2e 三环的环内规程契约 | `rings/*/reference.md`、`skills/atlas-*` | — |
@@ -61,7 +61,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 ### 2. 共享契约层 `shared/`
 
-七份 markdown 是对应机器面的真相源:`gates.md`(门登记总账)、`global-rules.md`(跨项目无框架名/确认门/退役三件套等元规则)、`stack-profile.md`(项目声明 schema)、`layout.md`(产物落点)、`single-source.md`(单一真相源纪律)、`independent-review.md`(独立审查契约)、`closeout.md`(收口触发表)。`tests/test_canonical_consistency.py` 守卫契约间互引与计数自洽。**改机器判据必同步改这里的契约正文**——这是「契约 ⇄ 实现」对账平面的源侧。
+八份 markdown 是规则/程序契约的单一落点(`frontend-reuse.md` 为执行期程序契约,非门、非真相源):`gates.md`(门登记总账)、`global-rules.md`(跨项目无框架名/确认门/退役三件套等元规则)、`stack-profile.md`(项目声明 schema)、`layout.md`(产物落点)、`single-source.md`(单一真相源纪律)、`independent-review.md`(独立审查契约)、`closeout.md`(收口触发表)、`frontend-reuse.md`(前端复用程序契约,非门、非真相源)。`tests/test_canonical_consistency.py` 守卫契约间互引与计数自洽。**改机器判据必同步改这里的契约正文**——这是「契约 ⇄ 实现」对账平面的源侧。
 
 ### 3. 结构抽取适配器 `adapters/` + `scripts/refresh_structure.py`
 
@@ -104,10 +104,10 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 |---|---|---|
 | 校验器 | 10(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py:52` |
 | 编排门行 | 8 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:850`) |
-| 出厂测试文件 | 42 | `tests/` |
+| 出厂测试文件 | 43 | `tests/` |
 | skills | 7(含 frontend-design) | `skills/` |
 | 环 | 3(structure / prd / e2e;原型环 E1 已退役) | `rings/` |
-| 共享契约 | 7 份 | `shared/` |
+| 共享契约 | 8 份 | `shared/` |
 | 共享内核 | 10 件 | `_support/` |
 | install.sh 自检声明 | 62 条 | `install.sh` |
 | 最大单件 | `scripts/gen_e2e_scripts.py` 2614 行 | — |

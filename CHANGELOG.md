@@ -4,6 +4,15 @@
 
 ---
 
+## [Unreleased]
+
+### 🧭 前端复用优先：程序契约 + Trellis 面包屑注入（D177）
+
+* **新增（执行期契约）**：`shared/frontend-reuse.md` —— 适用四档、当前模块交互清点、四层查找（同面板 sibling → 业务组件 → 公共组件 → 组件库）、五列复用记录、surface 维度、新模块目录一次性确认；明确「非门、非真相源」，普通修复不强制。
+* **新增（Trellis 注入）**：`patches/workflow-skill-routing` 扩 4 条面包屑（planning / in_progress + inline）+ 2.2 末注；直接指向 `.atlas/shared/frontend-reuse.md`，不新建 skill / 补丁包。
+* **澄清（E2E）**：`rings/e2e/reference.md` §4 明确同一能力的不同 surface 都算必要元素；§5.8 明确临时网络打桩只作本地交互核对，不记作 E2E 通过。
+* **测试 / 同步面**：新增 `tests/test_frontend_reuse_patch.py` 9 条；`shared/single-source.md` 登记复用决策记录 owner；`docs/map` 快照同步（共享契约 7→8、出厂测试 42→43）；`DESIGN.md` D177。
+
 ## [v0.2.0-beta.24] - 2026-10-30
 
 ### 🧭 E2E 容忍前提措辞 + PRD 派生字段默认语义（issue #47，D176）

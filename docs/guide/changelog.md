@@ -2,6 +2,15 @@
 
 本文档记录了 **Atlas** 每个版本的重要特性变更、架构治理与问题修复。遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范。
 
+## [Unreleased]
+
+### 🧭 前端复用优先：程序契约 + Trellis 面包屑注入（D177）
+
+* **新增**：`shared/frontend-reuse.md` 执行期契约（适用四档、当前模块交互清点、四层查找、五列复用记录、surface 维度、新模块目录一次性确认；非门、非真相源）。
+* **新增**：`patches/workflow-skill-routing` 扩 4 条面包屑 + 2.2 末注，直接指向契约；不新建 skill / 补丁包。
+* **澄清**：`rings/e2e/reference.md` §4 同一能力的不同 surface 都算必要元素；§5.8 临时打桩不记作 E2E 通过。
+* **同步面**：`tests/test_frontend_reuse_patch.py`、`shared/single-source.md`、`docs/map` 计数（共享契约 8、出厂测试 43）、`DESIGN.md` D177。
+
 ## [v0.2.0-beta.24] - 2026-10-30
 
 ### 🧭 E2E 容忍前提措辞 + PRD 派生字段默认语义（issue #47，D176）
