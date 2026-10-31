@@ -2,7 +2,7 @@
 
 本文档记录了 **Atlas** 每个版本的重要特性变更、架构治理与问题修复。遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范。
 
-## [Unreleased]
+## [v0.2.0-beta.25] - 2026-10-31
 
 ### 🧭 前端复用优先：程序契约 + Trellis 面包屑注入（D177）
 
