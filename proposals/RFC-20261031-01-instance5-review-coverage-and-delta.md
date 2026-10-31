@@ -252,6 +252,7 @@ E4 与 E1 同根：**报告把 CLI 自报的 `summary` 当成实审数，而不�
   * H2（2 completed + 1 reused）：v2 legacy 模拟（当前 v2 路径）`reviewed_files=[]`，validator `FAIL`（误红）；v3 路径 post-fix 为 `reviewed_files` 2 + `reused_files` 1 + WARN（M<N）。见附录 A.2 / `/tmp/atlas-batch-b-evidence/`。
 * **post-fix 绿（Batch A H1，2026-10-31 实跑）**：H1 6/4/2 夹具 → `WARN 应审 6 / 实审 4`、`failed_files=2`、`cli_status=partial`；validator 输出 `[WARN] CLI 审查状态` + `[WARN] 应审/实审对账`，退出码 0。真实 r1 payload 同形复跑同样得到 4/6 + `failed_files` 2 + `partial`；证据见本次会话 `/tmp/atlas-batch-a-evidence/`（H1 与真实 r1 两份 log/json）。
 * **post-fix（Batch B H2，2026-10-31 实跑）**：H2 2 completed + 1 reused → `reviewed=2`、`reviewed_files` 2、`reused_files` 1、`status=WARN`（M<N），validator `delta 对账 PASS` + `应审/实审 WARN`，退出码 0；不再 FAIL。
+* **真实 r2 v3（2026-10-31 实跑）**：真实 r2 CLI `cli-r2-gemini.json` 以 Batch B 重转 → `schema_version=3`、`head_sha=31ad5ee…`、`reviewed_files/completed_files/selected_files` 各 3、`delta 对账 PASS`、应审/实审 3/3、状态 `WARN`（1 条 Major）；validator PASS。报告在 `/tmp/atlas-impl-review-20261031-204905/nanwang/product/reviews/2026-10-31-impl-review-dashboard-topn-r2-v3/`。
 * **反面包**：非 delta、无 coverage 的旧 GOOD 报告仍 PASS（V5）；C1 的合法 3–4 文件结论不得被整体作废（WARN 不是 FAIL）；Critical+partial 仍 FAIL（V4）。
 * **三态结论**：Batch A H1 = `闭族`；Batch B H2 = `闭族`（FAIL→WARN，不再误红；`reused` 不计 M 的 M<N 是如实结果）。跨轮 D5 另案。
 
