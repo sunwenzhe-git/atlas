@@ -4,13 +4,14 @@
 
 ## [Unreleased]
 
-### 🧭 实例⑤审查报告 coverage 权威 + CLI 失败面（Batch A，RFC-20261031-01）
+### 🧭 实例⑤审查报告 coverage 权威 + CLI 失败面（Batch A/B，RFC-20261031-01）
 
 * **修复**：`cli_review_convert.py` 以 CLI `manifest.coverage.completed[]` 为实审 M 权威（无 coverage 才回退 `summary.files_reviewed`）；`summary` 与 coverage 冲突以 coverage 为准并写入 `cli_warnings`；报告新增 `cli_status` / `failed_files` / `waived_files` / `reused_files` / `cli_warnings`。
 * **状态**：`partial` / `failed` 或 `failed_files` 非空 ⇒ 状态下限 `WARN`（不降级阻断性 `Critical`）；`skipped` / `unknown` 只记录；coverage 缺 `completed[]` 拒绝产出。
 * **校验**：`validate_review_report.py` 复算 CLI WARN 下限并新增 CLI 状态行；`_support/review_policy.py` 单源 `cli_warn_floor` 与字段形态校验。
 * **测试**：`tests/test_cli_review_convert.py` 12 → 25；`tests/test_review_report.py` 18 → 27。
 * **契约/设计**：`shared/independent-review.md` §3/§10.2、`docs/concepts/review.md` §3、`docs/gates/iron-gates.md` §8、`shared/gates.md`、`DESIGN.md` D178。
+* **Batch B（delta v3）**：`delta_only` 新报告使用 `schema_version=3`，必须 `head_sha` + 非空 `reviewed_files`（coverage completed / 显式 `--reviewed-files`）；`selected_files`/数量/成员/target 对账只 WARN；v2 delta 缺 `head_sha` 只 WARN；clean delta 不再误红（2 completed + 1 reused ⇒ 如实 M<N WARN）。测试 25 → 39 / 27 → 39。
 
 ## [v0.2.0-beta.25] - 2026-10-31
 

@@ -97,6 +97,7 @@
   * `disposition`：`fixed` / `false_positive` 必须带**签字人 + 取证**才生效，否则照常阻断（防止模型自审一句话就把 Critical 关掉）；
   * **轮次收敛**：第 4 轮起必须登记 `escalation` 升级到人/架构复议——治「Agent 作者 ⇔ Agent 评审」互相忙到天亮的死循环；
   * **CLI coverage 失败面（Batch A，2026-10-31，`RFC-20261031-01`）**：`cli_status=partial|failed` 或 `failed_files` 非空 ⇒ 状态下限 `WARN`（**不降级阻断性 Critical**）；`skipped|unknown` 只记录；`summary.files_reviewed` 与 coverage 冲突以 coverage 为准并进 `cli_warnings`；
+  * **delta v3（Batch B，2026-10-31）**：`schema_version=3` 的 delta 必须有 `head_sha` + 非空 `reviewed_files`（completed/显式）；`selected_files` 对账；数量/成员/selected 不一致 ⇒ `WARN`；v2 delta 缺 `head_sha` 只 `WARN`；`reused` 不计 M（2 completed + 1 reused ⇒ M<N WARN，不是 FAIL）；
   * **历史兼容**：缺省 `schema_version = 1` 沿用旧「任一 Critical 即 FAIL」语义且**不回扫存量报告**（回扫 = 永久红 = 静音门）；Batch A 新字段均为可选，无 coverage 的 v2 存量报告保持原判。
 
 ### 9. AC × 覆盖维度门 (`validate_e2e_index.py` 内的一行)

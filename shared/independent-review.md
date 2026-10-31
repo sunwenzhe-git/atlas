@@ -70,6 +70,7 @@
 - **`unit` / `round`**（2026-09-27 补）：单元产物的扇出单元键与**第几轮**。每复审一次 `round` +1；两者都落进文件，供「未改动单元复用上轮结论」（§6 第 5 条）与 §4「复审落点」使用。
 - **`expected` / `reviewed` / `budget_exceeded`**（2026-10-06 补，`3509 §B112` 残留清偿）：**应审 N / 实审 M 对账的机器落点**（§6 第 8 条）——**必填**（单审查者实例记 `1 / 1`）；`reviewed < expected` 或 `budget_exceeded: true` ⇒ 报告级 `status` 至少 `WARN`（状态映射复算含此下限，`cli_review_convert` 同规则）。实例 ⑤ 由 `cli_review_convert` 写入；①②④ 由聚合器写入。**报告落盘当轮必跑** `scripts/validate_review_report.py --dir <报告目录>`（形态 + 对账门，登记 `shared/gates.md` 2.1）。
 - **coverage 权威（Batch A，2026-10-31，`RFC-20261031-01`）**：CLI 提供 `manifest.coverage` 时，`reviewed` = `completed[]` 去重文件数（`reviewed_files` 同集）；`summary.files_reviewed` 只作自报，不一致以 coverage 为准并进 `cli_warnings`。`cli_status`（`complete|completed|partial|failed|skipped|unknown`）/ `failed_files` / `waived_files` / `reused_files` / `cli_warnings` 为可选审计字段；`cli_status=partial|failed` 或 `failed_files` 非空 ⇒ 状态下限 `WARN`（**不得降级阻断性 Critical**）；`skipped|unknown` 只记录。无 coverage 的旧 CLI 回退 `summary.files_reviewed`。
+- **delta v3（Batch B，2026-10-31，`RFC-20261031-01`）**：`delta_only=true` 的新报告使用 `schema_version=3`；必须提供非空 `head_sha`（`--head-sha`，**不得用 `--to` 兼取**）与 `reviewed_files`（coverage completed 或显式 `--reviewed-files`）；`selected_files` 记录 coverage selected。v3 delta 对 `len(reviewed_files) != reviewed`、finding target 不在 `reviewed_files`、`reviewed_files ∩ failed_files`、`selected_files` 数量/分区 ⇒ `WARN`；v2 delta 缺 `head_sha` 只 WARN（兼容）。无 coverage 且无显式列表 ⇒ 拒绝产出。`reused` 不计入 `reviewed`（语义未确认），因此 2 completed + 1 reused 的 3 文件轮会如实 `M<N` WARN，而不是假 PASS。
 - **`schema_version: 2` 与收敛与处置扩展（2026-10-21，`DESIGN.md` D129）**：
   - **`checks[].fingerprint`**（可选，v2 推荐）：基于目标文件路径（排除行号）+ 检查类别 + 核心摘要计算的去重指纹。v2 报告中未关闭（`disposition != "fixed"`）的 finding 出现重复 fingerprint ⇒ 校验器直接 FAIL，防止反复报同类问题刷分。
   - **`checks[].pre_existing`**（bool，缺省 `false`）：标记该缺陷是否为改动前即已存在的存量代码问题。`pre_existing=true` 的 Critical **不阻断本次收口**，但状态下限维持 `WARN`（记录于存量台账，不静默放行）。
@@ -199,7 +200,8 @@ atlas-grill（提炼刺痛代价与致命冲突） → 用户拍板关键抉择
 
 ### 10.2 应审 N / 实审 M（硬；§6 第 8 条在此实例的落地）
 
-- N = **CLI `--preview` 的 Will review 数**（`.md` 等不支持扩展名会被 CLI 排除——契约与文档面本就不属实例 ⑤ 的对象，**不得**用 git diff 全量计数，会假 `WARN`）；M = **CLI `manifest.coverage.completed[]` 的去重文件数**（coverage 存在时；无 coverage 才回退 `summary.files_reviewed`）。**M < N、预算击穿、`cli_status=partial|failed` 或 `failed_files` 非空 ⇒ `WARN` 起步**；coverage 缺 `completed[]` / CLI 不报实审数 ⇒ 转换器**拒绝产出**（缺权威输入不得给「通过」，骨架 §2.6）。
+- N = **CLI `--preview` 的 Will review 数**（`.md` 等不支持扩展名会被 CLI 排除——契约与文档面本就不属实例 ⑤ 的对象，**不得**用 git diff 全量计数，会假 `WARN`）；M = **CLI `manifest.coverage.completed[]` 的去重文件数**（coverage 存在时；无 coverage 才回退 `summary.files_reviewed`；`reused` 暂不计入）。**M < N、预算击穿、`cli_status=partial|failed` 或 `failed_files` 非空 ⇒ `WARN` 起步**；coverage 缺 `completed[]` / CLI 不报实审数 ⇒ 转换器**拒绝产出**（缺权威输入不得给「通过」，骨架 §2.6）。
+- **delta v3**：`head_sha` 必备；`reviewed_files` = coverage completed 或 `--reviewed-files`；`selected_files` 记录 coverage；数量/成员/selected 对账只 WARN。v2 delta 缺 `head_sha` 只 WARN（兼容）。
 - 动机：实测取证——CLI 会对超大 diff **静默跳过文件**，属「静默少审」族（`3509 §B100`）。对账不是附加项，是**接入前提**。
 
 ### 10.3 门禁与回流

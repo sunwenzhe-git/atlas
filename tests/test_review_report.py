@@ -296,3 +296,111 @@ def test_v2_non_delta_without_cli_fields_passes() -> None:
         assert p.returncode == 0 and p.stdout.strip().endswith("PASS"), p.stdout
 
 
+# ── 2026-10-31 RFC-20261031-01 Batch B：delta v3 ───────────────────────────────
+def test_v3_delta_good_passes() -> None:
+    payload = {**GOOD, "schema_version": 3, "delta_only": True, "head_sha": "h",
+               "reviewed_files": ["a.py", "b", "c"],
+               "selected_files": ["a.py", "b", "c"]}
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), payload))
+        assert p.returncode == 0 and p.stdout.strip().endswith("PASS"), p.stdout
+
+
+def test_v3_delta_missing_head_sha_fails() -> None:
+    payload = {**GOOD, "schema_version": 3, "delta_only": True,
+               "reviewed_files": ["a.py", "b", "c"],
+               "selected_files": ["a.py", "b", "c"]}
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), payload))
+        assert p.returncode == 1 and "head_sha" in p.stdout, p.stdout
+
+
+def test_v3_delta_missing_reviewed_files_fails() -> None:
+    payload = {**GOOD, "schema_version": 3, "delta_only": True, "head_sha": "h",
+               "selected_files": ["a.py", "b", "c"]}
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), payload))
+        assert p.returncode == 1 and "reviewed_files" in p.stdout, p.stdout
+
+
+def test_v3_delta_duplicate_reviewed_files_fails() -> None:
+    payload = {**GOOD, "schema_version": 3, "delta_only": True, "head_sha": "h",
+               "reviewed_files": ["a.py", "a.py"], "selected_files": ["a.py"]}
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), payload))
+        assert p.returncode == 1 and "重复" in p.stdout, p.stdout
+
+
+def test_v3_delta_count_mismatch_warns() -> None:
+    payload = {**GOOD, "schema_version": 3, "delta_only": True, "head_sha": "h",
+               "reviewed_files": ["a.py"], "selected_files": ["a.py", "b", "c"],
+               "status": "WARN"}
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), payload))
+        assert p.returncode == 0 and "WARN" in p.stdout and "delta 对账（v3）" in p.stdout, p.stdout
+
+
+def test_v3_delta_finding_outside_reviewed_warns() -> None:
+    checks = [{**GOOD["checks"][0], "target": "src/x.ts:1"}]
+    payload = {**GOOD, "schema_version": 3, "delta_only": True, "head_sha": "h",
+               "checks": checks, "reviewed_files": ["a.py", "b", "c"],
+               "selected_files": ["a.py", "b", "c"], "status": "WARN"}
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), payload))
+        assert p.returncode == 0 and "delta 对账（v3）" in p.stdout, p.stdout
+
+
+def test_v3_delta_finding_on_failed_warns() -> None:
+    checks = [{**GOOD["checks"][0], "target": "c:1"}]
+    payload = {**GOOD, "schema_version": 3, "delta_only": True, "head_sha": "h",
+               "expected": 1, "reviewed": 1, "checks": checks,
+               "reviewed_files": ["a.py"], "failed_files": ["c"],
+               "selected_files": ["a.py", "c"], "status": "WARN"}
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), payload))
+        assert p.returncode == 0 and "delta 对账（v3）" in p.stdout, p.stdout
+
+
+def test_v3_delta_selected_mismatch_warns() -> None:
+    payload = {**GOOD, "schema_version": 3, "delta_only": True, "head_sha": "h",
+               "reviewed_files": ["a.py", "b", "c"],
+               "selected_files": ["a.py", "b", "c", "d"], "status": "WARN"}
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), payload))
+        assert p.returncode == 0 and "delta 对账（v3）" in p.stdout, p.stdout
+
+
+def test_v3_delta_clean_reused_warns_m_le() -> None:
+    payload = {**GOOD, "schema_version": 3, "delta_only": True, "head_sha": "h",
+               "expected": 3, "reviewed": 2,
+               "reviewed_files": ["a.py", "b"],
+               "selected_files": ["a.py", "b", "c"], "reused_files": ["c"],
+               "status": "WARN"}
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), payload))
+        assert p.returncode == 0 and "[PASS] delta 对账（v3）" in p.stdout, p.stdout
+        assert "[WARN] 应审/实审对账" in p.stdout, p.stdout
+
+
+def test_v2_delta_missing_head_sha_warns() -> None:
+    payload = {**GOOD, "schema_version": 2, "delta_only": True,
+               "reviewed_files": ["a.py"], "status": "WARN"}
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), payload))
+        assert p.returncode == 0 and "delta 对账（v2 兼容）" in p.stdout, p.stdout
+
+
+def test_v3_non_delta_without_head_sha_passes() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), {**GOOD, "schema_version": 3}))
+        assert p.returncode == 0 and p.stdout.strip().endswith("PASS"), p.stdout
+
+
+def test_v3_delta_selected_files_shape_fails() -> None:
+    payload = {**GOOD, "schema_version": 3, "delta_only": True, "head_sha": "h",
+               "reviewed_files": ["a.py"], "selected_files": "a.py"}
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), payload))
+        assert p.returncode == 1 and "selected_files" in p.stdout, p.stdout
+
+

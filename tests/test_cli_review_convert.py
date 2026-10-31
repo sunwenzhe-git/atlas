@@ -331,3 +331,174 @@ def test_no_coverage_falls_back_to_summary(tmp_path: Path) -> None:
     assert review["reviewed"] == 2 and review["status"] == "PASS"
     assert "failed_files" not in review
 
+
+# ── 2026-10-31 RFC-20261031-01 Batch B：delta v3 ───────────────────────────────
+def test_delta_v3_clean_uses_completed_and_head_sha(tmp_path: Path) -> None:
+    payload = ok_payload([], files_reviewed=3, status="complete",
+                         coverage=coverage(completed=("src/a.ts", "src/b.ts", "src/c.ts")))
+    r = run(tmp_path, payload, extra=["--round", "2", "--expected-files", "3",
+                                       "--delta-only", "--base-sha", "111", "--head-sha", "222"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert review["schema_version"] == 3
+    assert review["head_sha"] == "222"
+    assert review["reviewed_files"] == ["src/a.ts", "src/b.ts", "src/c.ts"]
+    assert review["status"] == "PASS" and "delta_warnings" not in review
+
+
+def test_delta_v3_missing_head_sha_refused(tmp_path: Path) -> None:
+    payload = ok_payload([], files_reviewed=3, status="complete",
+                         coverage=coverage(completed=("src/a.ts", "src/b.ts", "src/c.ts")))
+    r = run(tmp_path, payload, extra=["--round", "2", "--expected-files", "3",
+                                       "--delta-only", "--base-sha", "111"])
+    assert r.returncode == 2 and "head_sha" in r.stderr
+
+
+def test_delta_v3_without_coverage_or_reviewed_files_refused(tmp_path: Path) -> None:
+    payload = ok_payload([], files_reviewed=3, status="complete")
+    r = run(tmp_path, payload, extra=["--round", "2", "--expected-files", "3",
+                                       "--delta-only", "--head-sha", "222"])
+    assert r.returncode == 2 and "reviewed_files" in r.stderr
+
+
+def test_delta_v3_explicit_reviewed_files_without_coverage(tmp_path: Path) -> None:
+    payload = ok_payload([], files_reviewed=3, status="complete")
+    r = run(tmp_path, payload, extra=["--round", "2", "--expected-files", "3",
+                                       "--delta-only", "--head-sha", "222",
+                                       "--reviewed-files", "src/a.ts,src/b.ts,src/c.ts"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert review["schema_version"] == 3
+    assert review["reviewed_files"] == ["src/a.ts", "src/b.ts", "src/c.ts"]
+    assert review["status"] == "PASS"
+
+
+def test_delta_v3_reviewed_files_from_completed_not_findings(tmp_path: Path) -> None:
+    payload = ok_payload([dict(C, severity="high")], files_reviewed=3, status="complete",
+                         coverage=coverage(completed=("src/a.ts", "src/b.ts", "src/c.ts")))
+    r = run(tmp_path, payload, extra=["--round", "2", "--expected-files", "3",
+                                       "--delta-only", "--head-sha", "222"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert review["reviewed_files"] == ["src/a.ts", "src/b.ts", "src/c.ts"]
+    assert review["status"] == "WARN"  # high → Major；不是 reviewed_files 1/3
+    assert "delta_warnings" not in review
+
+
+def test_delta_v3_clean_reused_warns_m_le(tmp_path: Path) -> None:
+    payload = ok_payload(
+        [], files_reviewed=3, status="complete",
+        coverage=coverage(completed=("src/a.ts", "src/b.ts"), reused=("src/c.ts",)),
+    )
+    r = run(tmp_path, payload, extra=["--round", "2", "--expected-files", "3",
+                                       "--delta-only", "--head-sha", "222",
+                                       "--reviewed-files", "src/a.ts,src/b.ts"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert review["reviewed"] == 2 and review["reviewed_files"] == ["src/a.ts", "src/b.ts"]
+    assert review["reused_files"] == ["src/c.ts"]
+    assert review["status"] == "WARN" and "delta_warnings" not in review
+
+
+def test_delta_v3_count_mismatch_warns(tmp_path: Path) -> None:
+    payload = ok_payload(
+        [], files_reviewed=3, status="complete",
+        coverage=coverage(completed=("src/a.ts", "src/b.ts")),
+    )
+    r = run(tmp_path, payload, extra=["--round", "2", "--expected-files", "3",
+                                       "--delta-only", "--head-sha", "222",
+                                       "--reviewed-files", "src/a.ts,src/b.ts,src/c.ts"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert review["reviewed"] == 2 and len(review["reviewed_files"]) == 3
+    assert any("reviewed_files" in w and "reviewed" in w for w in review["delta_warnings"])
+    assert review["status"] == "WARN"
+
+
+def test_delta_v3_selected_mismatch_warns(tmp_path: Path) -> None:
+    payload = ok_payload(
+        [], files_reviewed=3, status="complete",
+        coverage=coverage(completed=("src/a.ts", "src/b.ts", "src/c.ts"),
+                          selected=("src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts")),
+    )
+    r = run(tmp_path, payload, extra=["--round", "2", "--expected-files", "3",
+                                       "--delta-only", "--head-sha", "222"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert any("selected_files" in w for w in review["delta_warnings"])
+    assert review["status"] == "WARN"
+
+
+def test_delta_v3_target_outside_reviewed_warns(tmp_path: Path) -> None:
+    payload = ok_payload(
+        [dict(C, severity="low", path="src/c.ts")], files_reviewed=2, status="complete",
+        coverage=coverage(completed=("src/a.ts", "src/b.ts")),
+    )
+    r = run(tmp_path, payload, extra=["--round", "2", "--expected-files", "2",
+                                       "--delta-only", "--head-sha", "222"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert any("src/c.ts" in w and "reviewed_files" in w for w in review["delta_warnings"])
+    assert review["status"] == "WARN"
+
+
+def test_delta_v3_target_on_failed_warns(tmp_path: Path) -> None:
+    payload = ok_payload(
+        [dict(C, severity="low", path="src/c.ts")], files_reviewed=3, status="complete",
+        coverage=coverage(completed=("src/a.ts", "src/b.ts"), failed=("src/c.ts",)),
+    )
+    r = run(tmp_path, payload, extra=["--round", "2", "--expected-files", "3",
+                                       "--delta-only", "--head-sha", "222"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert any("failed_files" in w for w in review["delta_warnings"])
+    assert review["status"] == "WARN"
+
+
+def test_delta_v2_missing_head_sha_warns(tmp_path: Path) -> None:
+    payload = ok_payload([dict(C, severity="low")], files_reviewed=2, status="complete",
+                         coverage=coverage(completed=("src/a.ts", "src/b.ts")))
+    r = run(tmp_path, payload, extra=["--round", "2", "--expected-files", "2",
+                                       "--delta-only", "--schema-version", "2", "--base-sha", "111"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert review["schema_version"] == 2
+    assert review["reviewed_files"] == ["src/a.ts"]  # v2 legacy：findings 反推
+    assert any("v2 delta 缺 head_sha" in w for w in review["delta_warnings"])
+    assert review["status"] == "WARN"
+
+
+def test_delta_v3_empty_reviewed_files_refused(tmp_path: Path) -> None:
+    payload = ok_payload([dict(C, severity="low")], files_reviewed=1, status="complete",
+                         coverage=coverage(completed=(), failed=("src/a.ts",)))
+    r = run(tmp_path, payload, extra=["--round", "2", "--expected-files", "1",
+                                       "--delta-only", "--head-sha", "222"])
+    assert r.returncode == 2 and "reviewed_files" in r.stderr
+
+
+def test_delta_v3_missing_target_skips_membership(tmp_path: Path) -> None:
+    payload = ok_payload(
+        [{"content": "定位失败", "category": "bug", "severity": "low"}],
+        files_reviewed=2, status="complete",
+        coverage=coverage(completed=("src/a.ts", "src/b.ts")),
+    )
+    r = run(tmp_path, payload, extra=["--round", "2", "--expected-files", "2",
+                                       "--delta-only", "--head-sha", "222"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert "delta_warnings" not in review and review["status"] == "PASS"
+
+
+def test_delta_v3_reviewed_failed_overlap_warns(tmp_path: Path) -> None:
+    payload = ok_payload(
+        [], files_reviewed=1, status="complete",
+        coverage=coverage(completed=("src/a.ts",), failed=("src/a.ts",),
+                          selected=("src/a.ts",)),
+    )
+    r = run(tmp_path, payload, extra=["--round", "2", "--expected-files", "1",
+                                       "--delta-only", "--head-sha", "222"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert any("交集" in w for w in review["delta_warnings"])
+    assert review["status"] == "WARN"
+

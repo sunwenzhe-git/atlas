@@ -25,6 +25,30 @@ def clean_target_file(target: str) -> str:
     return _LINE_STRIP_RE.sub("", s)
 
 
+def normalize_paths(items: object) -> list[str]:
+    """coverage / 报告路径列表：取 dict.path 或裸 string，统一 `/`，去重排序。"""
+    out: set[str] = set()
+    if not isinstance(items, list):
+        return []
+    for item in items:
+        p = item.get("path") if isinstance(item, dict) else item
+        if isinstance(p, str) and p.strip():
+            out.add(p.strip().replace("\\", "/"))
+    return sorted(out)
+
+
+def target_file(target: object) -> str:
+    """从 finding target 提取文件路径；`?` / 空 ⇒ ''（无法归属，跳过成员对账）。"""
+    s = str(target or "").strip()
+    if not s or s == "?":
+        return ""
+    s = clean_target_file(s)
+    if ":?" in s:
+        s = s.split(":?", 1)[0]
+    s = s.replace("\\", "/").strip()
+    return "" if s == "?" else s
+
+
 def compute_fingerprint(target: str, check: str, detail: str) -> str:
     """计算 finding 去重指纹（16 字符 hex）。
 
@@ -91,6 +115,60 @@ def cli_warn_floor(data: dict) -> bool:
     status = str(data.get("cli_status") or "").strip().lower()
     failed = data.get("failed_files")
     return status in ("partial", "failed") or (isinstance(failed, list) and bool(failed))
+
+
+def delta_warnings(data: dict, checks: list[dict] | None = None,
+                   other: list[dict] | None = None) -> list[str]:
+    """delta 对账的 WARN 面（不改变 FAIL 优先级）。
+
+    v2：缺 head_sha 只 WARN（历史兼容）。
+    v3：reviewed_files 数量、与 failed 交集、selected 对账、finding target 成员。
+    """
+    if data.get("delta_only") is not True:
+        return []
+    schema_version = data.get("schema_version", 1)
+    if not isinstance(schema_version, int) or schema_version < 3:
+        if not str(data.get("head_sha") or "").strip():
+            return ["v2 delta 缺 head_sha（兼容模式，仅 WARN）"]
+        return []
+
+    issues: list[str] = []
+    reviewed_files = normalize_paths(data.get("reviewed_files"))
+    failed = normalize_paths(data.get("failed_files"))
+    waived = normalize_paths(data.get("waived_files"))
+    reused = normalize_paths(data.get("reused_files"))
+    selected = normalize_paths(data.get("selected_files"))
+    reviewed = data.get("reviewed")
+    expected = data.get("expected")
+    if isinstance(reviewed, int) and len(reviewed_files) != reviewed:
+        issues.append(f"`reviewed_files` {len(reviewed_files)} 个 ≠ reviewed {reviewed}")
+    both = set(reviewed_files) & set(failed)
+    if both:
+        issues.append(f"`reviewed_files` 与 `failed_files` 有交集：{sorted(both)}")
+    if selected:
+        if isinstance(expected, int) and len(selected) != expected:
+            issues.append(f"`selected_files` {len(selected)} 个 ≠ expected {expected}")
+        union = set(reviewed_files) | set(failed) | set(waived) | set(reused)
+        if set(selected) != union:
+            issues.append("`selected_files` 无法被 reviewed/failed/waived/reused 解释："
+                          f"missing={sorted(set(selected) - union)} extra={sorted(union - set(selected))}")
+    for item in (checks or []) + (other or []):
+        if not isinstance(item, dict):
+            continue
+        p = target_file(item.get("target"))
+        if not p:
+            continue
+        if p in reviewed_files:
+            continue
+        if p in failed:
+            issues.append(f"finding target `{p}` 落在 failed_files")
+        elif p in waived:
+            issues.append(f"finding target `{p}` 落在 waived_files")
+        elif p in reused:
+            issues.append(f"finding target `{p}` 落在 reused_files（未计入 reviewed）")
+        else:
+            issues.append(f"finding target `{p}` 超出 reviewed_files")
+    return issues
 
 
 def validate_v2_finding(c: dict, idx: int) -> list[str]:
@@ -163,4 +241,29 @@ def validate_v2_report_fields(data: dict) -> list[str]:
         v = data["cli_warnings"]
         if not isinstance(v, list) or any(not isinstance(x, str) for x in v):
             errs.append("`cli_warnings` 必须为字符串列表")
+    if "head_sha" in data and (not isinstance(data["head_sha"], str) or not data["head_sha"].strip()):
+        errs.append("`head_sha` 若存在必须为非空字符串")
+    if "selected_files" in data:
+        v = data["selected_files"]
+        if not isinstance(v, list) or any(not isinstance(x, str) or not x.strip() for x in v):
+            errs.append("`selected_files` 必须为字符串列表且元素非空")
+        elif len(set(v)) != len(v):
+            errs.append("`selected_files` 不得有重复项")
+    return errs
+
+
+def validate_v3_report_fields(data: dict) -> list[str]:
+    """v3 报告：delta 必须有 head_sha + 非空且不重复的 reviewed_files。"""
+    errs: list[str] = []
+    if data.get("delta_only") is True:
+        head = data.get("head_sha")
+        if not isinstance(head, str) or not head.strip():
+            errs.append("v3 delta 报告必须提供非空 `head_sha`")
+        rf = data.get("reviewed_files")
+        if not isinstance(rf, list) or not rf:
+            errs.append("v3 delta 报告必须提供非空 `reviewed_files` 列表")
+        elif any(not isinstance(x, str) or not x.strip() for x in rf):
+            errs.append("`reviewed_files` 必须为字符串列表且元素非空")
+        elif len(set(rf)) != len(rf):
+            errs.append("`reviewed_files` 不得有重复项")
     return errs

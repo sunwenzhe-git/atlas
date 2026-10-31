@@ -64,18 +64,6 @@ def count_diff_files(root: Path, ref_from: str, ref_to: str) -> int:
     return len([l for l in out.stdout.splitlines() if l.strip()])
 
 
-def _normalize_paths(items: object) -> list[str]:
-    """coverage 路径列表：只取 dict.path / 裸 string，统一 `/`，去重排序。"""
-    out: set[str] = set()
-    if not isinstance(items, list):
-        return []
-    for item in items:
-        p = item.get("path") if isinstance(item, dict) else item
-        if isinstance(p, str) and p.strip():
-            out.add(p.strip().replace("\\", "/"))
-    return sorted(out)
-
-
 def _coverage_info(payload: dict) -> dict:
     """CLI coverage：completed 为实审权威；缺 completed / 形态错 ⇒ 拒绝产出。"""
     manifest = payload.get("manifest")
@@ -89,12 +77,18 @@ def _coverage_info(payload: dict) -> dict:
         if key in coverage and not isinstance(coverage[key], list):
             raise SystemExit(die(f"CLI coverage.{key} 必须为列表"))
     return {"present": True,
-            "completed": _normalize_paths(coverage["completed"]),
-            "failed": _normalize_paths(coverage.get("failed")),
-            "waived": _normalize_paths(coverage.get("waived")),
-            "reused": _normalize_paths(coverage.get("reused")),
-            "selected": _normalize_paths(coverage.get("selected")),
+            "completed": review_policy.normalize_paths(coverage["completed"]),
+            "failed": review_policy.normalize_paths(coverage.get("failed")),
+            "waived": review_policy.normalize_paths(coverage.get("waived")),
+            "reused": review_policy.normalize_paths(coverage.get("reused")),
+            "selected": review_policy.normalize_paths(coverage.get("selected")),
             "cli_status": "unknown"}
+
+
+def _parse_paths(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return review_policy.normalize_paths([p for p in value.split(",") if p.strip()])
 
 
 def convert(payload: dict) -> tuple[list[dict], list[dict], int, bool, list[dict], dict]:
@@ -163,14 +157,21 @@ def main() -> int:
     ap.add_argument("--from", dest="ref_from", help="git 起 ref（与 --to 同用，自算应审 N）")
     ap.add_argument("--to", dest="ref_to", help="git 止 ref")
     ap.add_argument("--expected-files", type=int, help="应审 N 显式传入（无 git ref 时）")
-    ap.add_argument("--schema-version", type=int, default=2, help="报告契约版本（默认 2）")
+    ap.add_argument("--schema-version", type=int, default=None,
+                    help="报告契约版本（缺省：delta=v3，非 delta=v2）")
     ap.add_argument("--escalate-to", help="round >= 4 轮次上限升级复议人/团队")
     ap.add_argument("--escalate-reason", help="round >= 4 轮次上限升级复议理由")
     ap.add_argument("--delta-only", action="store_true", help="是否为差量评审（首轮之后）")
     ap.add_argument("--base-sha", help="差量评审对比基线 HEAD SHA")
+    ap.add_argument("--head-sha", help="差量评审的止点 SHA（v3 delta 必填；不得用 --to 兼取）")
+    ap.add_argument("--reviewed-files", help="逗号分隔的实际审阅文件列表（v3 delta 无 coverage 时必填）")
     args = ap.parse_args()
     root = Path(args.root).resolve()
+    schema_version = args.schema_version if args.schema_version is not None else (
+        3 if args.delta_only else 2)
 
+    if schema_version < 1:
+        return die("schema_version 必须 ≥ 1")
     if args.round < 1:
         return die("round 必须 ≥ 1")
     # 轮次上限属**过程收敛纪律**（D129），与报告形态版本无关 ⇒ 不因 --schema-version 1 而放行
@@ -196,15 +197,38 @@ def main() -> int:
         return die(f"读输入 {src} 失败：{e}")
     checks, other, reviewed, budget, warnings, cov = convert(payload)
     cli_status = cov["cli_status"]
+    selected_files = cov["selected"]
     failed_files = cov["failed"]
     waived_files = cov["waived"]
     reused_files = cov["reused"]
 
-    # 状态映射（D129 统一策略内核 + Batch A：CLI partial/failed 只抬 WARN，不降级 Critical）
+    head_sha = (args.head_sha or "").strip()
+    reviewed_files: list[str] = []
+    if args.delta_only:
+        if schema_version >= 3:
+            explicit = _parse_paths(args.reviewed_files)
+            reviewed_files = explicit or cov["completed"]
+            if not reviewed_files:
+                return die("v3 delta 缺 reviewed_files：给 coverage.completed 或 --reviewed-files")
+            if not head_sha:
+                return die("v3 delta 缺 head_sha：给 --head-sha（不得用 --to 兼取）")
+        else:
+            reviewed_files = sorted({c["target"].split(":")[0] for c in checks
+                                     if "target" in c and c["target"] != "?"})
+
+    delta_view = {"schema_version": schema_version, "delta_only": args.delta_only,
+                  "head_sha": head_sha, "reviewed_files": reviewed_files,
+                  "reviewed": reviewed, "expected": expected,
+                  "failed_files": failed_files, "waived_files": waived_files,
+                  "reused_files": reused_files, "selected_files": selected_files}
+    delta_issues = review_policy.delta_warnings(delta_view, checks, other) if args.delta_only else []
+
+    # 状态映射（D129 统一策略内核 + Batch A：CLI partial/failed 只抬 WARN，不降级 Critical
+    # + Batch B：delta 数量/成员/selected 对账只抬 WARN）
     warn_floor = reviewed < expected or budget or review_policy.cli_warn_floor(
-        {"cli_status": cli_status, "failed_files": failed_files})
+        {"cli_status": cli_status, "failed_files": failed_files}) or bool(delta_issues)
     status = review_policy.calculate_status(checks, warn_floor=warn_floor,
-                                            schema_version=args.schema_version)
+                                            schema_version=schema_version)
 
     outdir = root / args.out
     findings = outdir / "findings"
@@ -213,7 +237,7 @@ def main() -> int:
     if unit_file.is_file():
         return die(f"{unit_file} 已存在 —— 同 (unit, round) 不得覆盖，round 必须递增（骨架 §4）")
 
-    review = {"schema_version": args.schema_version, "ok": status != "FAIL", "status": status,
+    review = {"schema_version": schema_version, "ok": status != "FAIL", "status": status,
               "root": str(root), "scope": args.scope, "unit": args.unit, "round": args.round,
               "expected": expected, "reviewed": reviewed, "budget_exceeded": budget,
               "cli_status": cli_status,
@@ -221,6 +245,7 @@ def main() -> int:
                                for w in warnings],
               "checks": checks, "other": other}
     if cov["present"]:
+        review["selected_files"] = selected_files
         review["failed_files"] = failed_files
         review["waived_files"] = waived_files
         review["reused_files"] = reused_files
@@ -230,7 +255,11 @@ def main() -> int:
         review["delta_only"] = True
         if args.base_sha:
             review["base_sha"] = args.base_sha
-        review["reviewed_files"] = sorted({c["target"].split(":")[0] for c in checks if "target" in c and c["target"] != "?"})
+        if head_sha:
+            review["head_sha"] = head_sha
+        review["reviewed_files"] = reviewed_files
+        if delta_issues:
+            review["delta_warnings"] = delta_issues
 
     unit_file.write_text(json.dumps(review, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     (outdir / "review.json").write_text(json.dumps(review, ensure_ascii=False, indent=1) + "\n",
@@ -247,6 +276,10 @@ def main() -> int:
     lines += [f"  - 复用文件：`{p}`" for p in reused_files]
     lines += [f"  - `{w.get('file', '?')}` [{w.get('type', '?')}] {w.get('message', '')}"
               for w in warnings]
+    if args.delta_only:
+        lines += [f"- delta：base `{args.base_sha or '—'}` → head `{head_sha or '—'}`；"
+                  f"reviewed_files {len(reviewed_files)} 个；对账 WARN {len(delta_issues)} 条"]
+        lines += [f"  - {issue}" for issue in delta_issues]
     lines.append("")
     for level in ("Critical", "Major", "Minor"):
         group = [c for c in checks if c["level"] == level]

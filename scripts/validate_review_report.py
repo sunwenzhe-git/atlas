@@ -108,6 +108,7 @@ def validate_report(d: Path) -> Result:
             "；".join(bad) if bad else f"{len(REQUIRED_KEYS)} 键齐且类型对")
 
     checks = data.get("checks") if isinstance(data.get("checks"), list) else []
+    other = data.get("other") if isinstance(data.get("other"), list) else []
     bad_lv: list[str] = []
     schema_version = data.get("schema_version", 1)
     if not isinstance(schema_version, int) or schema_version < 1:
@@ -126,6 +127,8 @@ def validate_report(d: Path) -> Result:
 
     if schema_version >= 2:
         bad_lv.extend(review_policy.validate_v2_report_fields(data))
+        if schema_version >= 3:
+            bad_lv.extend(review_policy.validate_v3_report_fields(data))
         # v2 去重指纹校验：未 fixed 的 finding 不得有重复 fingerprint
         fps: dict[str, int] = {}
         for c in checks:
@@ -143,8 +146,9 @@ def validate_report(d: Path) -> Result:
     # Critical ⇒ FAIL；否则 Major 或 M<N 或预算击穿 ⇒ WARN；否则 PASS）
     exp, rev = data.get("expected"), data.get("reviewed")
     exec_val = data.get("executed")
+    delta_issues = review_policy.delta_warnings(data, checks, other)
     warn_floor = (data.get("budget_exceeded") is True) or (
-        _is_int(exp) and _is_int(rev) and rev < exp) or (exec_val is False) or review_policy.cli_warn_floor(data)
+        _is_int(exp) and _is_int(rev) and rev < exp) or (exec_val is False) or review_policy.cli_warn_floor(data) or bool(delta_issues)
     expect = review_policy.calculate_status(checks, warn_floor=warn_floor,
                                             schema_version=schema_version)
     st, ok = data.get("status"), data.get("ok")
@@ -163,6 +167,11 @@ def validate_report(d: Path) -> Result:
         res.add("CLI 审查状态（coverage）", "WARN" if cli_floor else "PASS",
                 f"cli_status={cli_status or '<absent>'}；"
                 f"failed_files={len(failed_files) if isinstance(failed_files, list) else 0}")
+
+    if data.get("delta_only") is True:
+        res.add("delta 对账（v3）" if schema_version >= 3 else "delta 对账（v2 兼容）",
+                "WARN" if delta_issues else "PASS",
+                "；".join(delta_issues) or "head_sha / reviewed_files 齐全")
 
     if exp is None and rev is None:
         res.add("应审/实审对账（§6 第 8 条）", "FAIL",

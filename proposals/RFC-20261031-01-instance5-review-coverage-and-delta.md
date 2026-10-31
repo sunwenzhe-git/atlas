@@ -2,7 +2,7 @@
 
 > 提案编号：RFC-20261031-01
 > 提案作者：@sunwenzhe-git
-> 关联状态：已定案 (Accepted)（Batch A 已实现、待合并；Batch B 待实施）
+> 关联状态：已定案 (Accepted)（Batch A/B 已实现、待合并）
 > 影响范围：脚本工具 (scripts) | 校验器 (_support / scripts) | 契约 (shared/independent-review.md)
 > 关联取证：2026-10-31 实例⑤真实仓副本 r1/r2 + 最小夹具（见 §1.2 / §4.5 / 附录 A）
 > 实施批次：Batch A（coverage 假绿 + partial 可见）/ Batch B（delta v3 字段）；两批可独立合并，Batch B 不阻塞 A
@@ -233,6 +233,7 @@ E4 与 E1 同根：**报告把 CLI 自报的 `summary` 当成实审数，而不�
 * **M40**：摘掉 `cli_status` 的 WARN 下限 ⇒ C1/V3 红。
 * **M41**：把 `cli_status` 下限误写成可降级 Critical ⇒ V4 红。
 * **四段协议（2026-10-31 实跑）**：M37 基线绿 → 注入后 `reviewed 6≠3` 红 → sha256 `a074…` 还原 → 复绿；M40 基线绿 → 注入后 validator exit 1 红 → sha256 `24e3…` 还原 → 复绿；M41 基线绿 → 注入后 converter exit 0/WARN 红 → sha256 `31d5…` 还原 → 复绿。日志在 `/tmp/atlas-batch-a-evidence/`。
+* **四段协议（2026-10-31 Batch B）**：M38 基线绿 → 摘 `head_sha` 必备后 missing-head 测试 `0≠2` 红 → sha256 `f0b0…` 还原 → 复绿；M39 基线绿 → 摘 `reviewed_files` 数量对账后 count 测试无 reviewed 警告红 → sha256 `7830…` 还原 → 复绿。日志在 `/tmp/atlas-batch-b-evidence/`。
 
 > **编号说明（主审抽查）**：README 明确「编号在各自测试文件内自成序列，同一号在不同门含义不同」（`README.md:367`）。M37–M41 接 `tests/test_review_report.py` 现有 M35/M36；其他测试文件里的 M38/M39/M40 不构成撞号。若落盘时发现同文件已有占号，再顺延。
 
@@ -241,18 +242,18 @@ E4 与 E1 同根：**报告把 CLI 自报的 `summary` 当成实审数，而不�
 * **触发面核对**：(b) 改转换器 / 校验器 / 契约判据，diff 落在 `scripts/`、`_support/`、`shared/` 路径族；触发，必须走留出验证。触发 (a) 不适用（本批无 ≥3 条独立审查重复 finding；实例⑤单次真实取证 + 一次子代理评审，不足以冒充 (a)）。
 * **留出集（与 §4.1 夹具结构不同，未参与挖弱点）**：
   * **H1（coverage 假绿）**：`selected=6`、`completed=4`、`failed=2`、`summary.files_reviewed=6`、0 comments。预期修复后 `reviewed=4`、`failed_files=2`、WARN；与 C1 的 5/3/1/1 结构不同。
-  * **H2（clean delta 误红）**：delta、`completed=2`、`reused=1`、0 comments、`head_sha` 提供、显式 `--reviewed-files` 提供。预期修复后 `reviewed_files` 2 个（当前只算 completed）、PASS；与 C2 的 3/3 结构不同。
+  * **H2（clean delta 误红）**：delta、`completed=2`、`reused=1`、0 comments、`head_sha` 提供、显式 `--reviewed-files` 提供。预期修复后 `reviewed_files` 2 个、`reused_files` 1 个、**WARN（reused 不计 M ⇒ 2<3 如实 M<N）**，但 validator 不再 FAIL；与 C2 的 3/3 结构不同。
 * **独立性三条**：
-  1. **判据输出翻转**：H1 的 `reviewed` 5→3、status PASS→WARN；H2 的 validator FAIL→PASS。
+  1. **判据输出翻转**：H1 的 `reviewed` 6→4、status PASS→WARN（C1 为 5→3）；H2 的 validator FAIL→WARN（不再误红；M<N 如实 WARN）。
   2. **变异增量杀伤**：M37/M38 除对应 C 系列外，分别咬 H1/H2（落盘后实测）。
   3. **结构不可达**：现有测试没有 coverage / clean-delta 形态；H1/H2 与 C1/C2 的集合大小、waived/reused 维度不同，不能由既有夹具只改路径/措辞得到。
 * **pre-fix 红（本轮已实跑，附录 A 可复现）**：
   * H1（6/4/2）：当前转换器 `PASS 6/6`，validator `PASS`（假绿）；`reviewed` 不读 coverage。见附录 A.1。
-  * H2（2 completed + 1 reused）：当前转换器 `reviewed_files=[]`，validator `FAIL`（误红）。见附录 A.2。
+  * H2（2 completed + 1 reused）：v2 legacy 模拟（当前 v2 路径）`reviewed_files=[]`，validator `FAIL`（误红）；v3 路径 post-fix 为 `reviewed_files` 2 + `reused_files` 1 + WARN（M<N）。见附录 A.2 / `/tmp/atlas-batch-b-evidence/`。
 * **post-fix 绿（Batch A H1，2026-10-31 实跑）**：H1 6/4/2 夹具 → `WARN 应审 6 / 实审 4`、`failed_files=2`、`cli_status=partial`；validator 输出 `[WARN] CLI 审查状态` + `[WARN] 应审/实审对账`，退出码 0。真实 r1 payload 同形复跑同样得到 4/6 + `failed_files` 2 + `partial`；证据见本次会话 `/tmp/atlas-batch-a-evidence/`（H1 与真实 r1 两份 log/json）。
-* **Batch B H2**：clean delta 的 `reviewed_files` 修复仍属 Batch B，post-fix 未回填；本 RFC 不宣称它已闭。
+* **post-fix（Batch B H2，2026-10-31 实跑）**：H2 2 completed + 1 reused → `reviewed=2`、`reviewed_files` 2、`reused_files` 1、`status=WARN`（M<N），validator `delta 对账 PASS` + `应审/实审 WARN`，退出码 0；不再 FAIL。
 * **反面包**：非 delta、无 coverage 的旧 GOOD 报告仍 PASS（V5）；C1 的合法 3–4 文件结论不得被整体作废（WARN 不是 FAIL）；Critical+partial 仍 FAIL（V4）。
-* **三态结论**：Batch A H1 = `闭族`；Batch B H2 = `未闭族`（本批未实施）。整体不宣称全闭。
+* **三态结论**：Batch A H1 = `闭族`；Batch B H2 = `闭族`（FAIL→WARN，不再误红；`reused` 不计 M 的 M<N 是如实结果）。跨轮 D5 另案。
 
 ### 4.6 常规验证命令
 
@@ -263,7 +264,7 @@ python3 scripts/atlas_check.py --fast
 python3 tests/test_install_selfcheck.py
 ```
 
-* **结果（2026-10-31）**：聚焦 **52 passed**；rebase 到 `54281f7` 后全量 `pytest tests/` **934 passed, 5 skipped**；`tests/test_install_selfcheck.py` **PASS**；`tests/test_map_anchors.py` **8 passed**。`atlas_check --fast` 在源包工作树无目标资产，按源包态不适用；装配副本回归另行。
+* **结果（2026-10-31）**：聚焦 **78 passed**（Batch A 52 + Batch B 26）；Batch B 后全量 `pytest tests/` **960 passed, 5 skipped**；`tests/test_install_selfcheck.py` **PASS**；`tests/test_map_anchors.py` **8 passed**。`atlas_check --fast` 在源包工作树无目标资产，按源包态不适用；装配副本回归另行。
 
 ---
 
