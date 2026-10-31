@@ -119,21 +119,20 @@ def cli_warn_floor(data: dict) -> bool:
 
 def delta_warnings(data: dict, checks: list[dict] | None = None,
                    other: list[dict] | None = None) -> list[str]:
-    """delta 对账的 WARN 面（不改变 FAIL 优先级）。
+    """delta 对账的 WARN 面（只对 v3 生效；不改变 FAIL 优先级）。
 
-    v2：缺 head_sha 只 WARN（历史兼容）。
-    v3：reviewed_files 数量、与 failed 交集、selected 对账、finding target 成员。
+    v2 只出提示（`delta_notes`），**不进入 warn_floor**，保证旧 v2 PASS 报告不变。
+    v3：reviewed_files 数量/与 completed 一致性/与 failed 交集、selected 对账、target 成员。
     """
     if data.get("delta_only") is not True:
         return []
     schema_version = data.get("schema_version", 1)
     if not isinstance(schema_version, int) or schema_version < 3:
-        if not str(data.get("head_sha") or "").strip():
-            return ["v2 delta 缺 head_sha（兼容模式，仅 WARN）"]
         return []
 
     issues: list[str] = []
     reviewed_files = normalize_paths(data.get("reviewed_files"))
+    completed = normalize_paths(data.get("completed_files"))
     failed = normalize_paths(data.get("failed_files"))
     waived = normalize_paths(data.get("waived_files"))
     reused = normalize_paths(data.get("reused_files"))
@@ -142,10 +141,12 @@ def delta_warnings(data: dict, checks: list[dict] | None = None,
     expected = data.get("expected")
     if isinstance(reviewed, int) and len(reviewed_files) != reviewed:
         issues.append(f"`reviewed_files` {len(reviewed_files)} 个 ≠ reviewed {reviewed}")
+    if completed and reviewed_files and set(reviewed_files) != set(completed):
+        issues.append("`reviewed_files` 与 coverage.completed 不一致（显式列表优先）")
     both = set(reviewed_files) & set(failed)
     if both:
         issues.append(f"`reviewed_files` 与 `failed_files` 有交集：{sorted(both)}")
-    if selected:
+    if "selected_files" in data:
         if isinstance(expected, int) and len(selected) != expected:
             issues.append(f"`selected_files` {len(selected)} 个 ≠ expected {expected}")
         union = set(reviewed_files) | set(failed) | set(waived) | set(reused)
@@ -169,6 +170,17 @@ def delta_warnings(data: dict, checks: list[dict] | None = None,
         else:
             issues.append(f"finding target `{p}` 超出 reviewed_files")
     return issues
+
+
+def delta_notes(data: dict) -> list[str]:
+    """v2 delta 的兼容提示：只显示，不进入状态下限（旧 v2 PASS 报告保持 PASS）。"""
+    if data.get("delta_only") is not True:
+        return []
+    schema_version = data.get("schema_version", 1)
+    if not isinstance(schema_version, int) or schema_version < 3:
+        if not str(data.get("head_sha") or "").strip():
+            return ["v2 delta 缺 head_sha（兼容模式，仅提示，不改变 report status）"]
+    return []
 
 
 def validate_v2_finding(c: dict, idx: int) -> list[str]:
@@ -230,7 +242,7 @@ def validate_v2_report_fields(data: dict) -> list[str]:
         cs = data["cli_status"]
         if not isinstance(cs, str) or cs not in CLI_STATUSES:
             errs.append(f"`cli_status`={cs!r} 不在闭集 {CLI_STATUSES}")
-    for key in ("failed_files", "waived_files", "reused_files"):
+    for key in ("completed_files", "failed_files", "waived_files", "reused_files"):
         if key in data:
             v = data[key]
             if not isinstance(v, list) or any(not isinstance(x, str) or not x.strip() for x in v):

@@ -13,7 +13,7 @@
 * **校验**：`validate_review_report.py` 复算 CLI WARN 下限并新增 CLI 状态行；`_support/review_policy.py` 单源 `cli_warn_floor` 与字段形态校验。
 * **测试**：`tests/test_cli_review_convert.py` 12 → 25；`tests/test_review_report.py` 18 → 27。
 * **契约/设计**：`shared/independent-review.md` §3/§10.2、`docs/concepts/review.md` §3、`docs/gates/iron-gates.md` §8、`shared/gates.md`、`DESIGN.md` D178。
-* **Batch B（delta v3）**：`delta_only` 新报告使用 `schema_version=3`，必须 `head_sha` + 非空 `reviewed_files`（coverage completed / 显式 `--reviewed-files`）；`selected_files`/数量/成员/target 对账只 WARN；v2 delta 缺 `head_sha` 只 WARN（兼容）；clean delta 不再误红（2 completed + 1 reused ⇒ 如实 M<N WARN）。测试 `test_cli_review_convert.py` 25 → 39、`test_review_report.py` 27 → 39。
+* **Batch B（delta v3）**：`delta_only` 新报告使用 `schema_version=3`，必须 `head_sha` + 非空 `reviewed_files`（coverage completed / 显式 `--reviewed-files`）；`selected_files`/数量/成员/target 对账只 WARN；v2 delta 缺 `head_sha` 只 WARN（兼容）；clean delta 不再误红（2 completed + 1 reused ⇒ 如实 M<N WARN）。测试 `test_cli_review_convert.py` 25 → 41、`test_review_report.py` 27 → 39。
 
 ## [v0.2.0-beta.25] - 2026-10-31
 

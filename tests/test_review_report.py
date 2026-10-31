@@ -384,10 +384,12 @@ def test_v3_delta_clean_reused_warns_m_le() -> None:
 
 def test_v2_delta_missing_head_sha_warns() -> None:
     payload = {**GOOD, "schema_version": 2, "delta_only": True,
-               "reviewed_files": ["a.py"], "status": "WARN"}
+               "reviewed_files": ["a.py"], "status": "PASS"}
     with tempfile.TemporaryDirectory() as td:
         p = run(mk_report(Path(td), payload))
-        assert p.returncode == 0 and "delta 对账（v2 兼容）" in p.stdout, p.stdout
+        assert p.returncode == 0, p.stdout
+        assert "[WARN] delta 对账（v2 兼容）" in p.stdout, p.stdout
+        assert "[PASS] 状态映射复算" in p.stdout, p.stdout
 
 
 def test_v3_non_delta_without_head_sha_passes() -> None:

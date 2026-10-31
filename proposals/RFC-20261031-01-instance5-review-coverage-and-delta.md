@@ -235,7 +235,7 @@ E4 与 E1 同根：**报告把 CLI 自报的 `summary` 当成实审数，而不�
 * **四段协议（2026-10-31 实跑）**：M37 基线绿 → 注入后 `reviewed 6≠3` 红 → sha256 `a074…` 还原 → 复绿；M40 基线绿 → 注入后 validator exit 1 红 → sha256 `24e3…` 还原 → 复绿；M41 基线绿 → 注入后 converter exit 0/WARN 红 → sha256 `31d5…` 还原 → 复绿。日志在 `/tmp/atlas-batch-a-evidence/`。
 * **四段协议（2026-10-31 Batch B）**：M38 基线绿 → 摘 `head_sha` 必备后 missing-head 测试 `0≠2` 红 → sha256 `f0b0…` 还原 → 复绿；M39 基线绿 → 摘 `reviewed_files` 数量对账后 count 测试无 reviewed 警告红 → sha256 `7830…` 还原 → 复绿。日志在 `/tmp/atlas-batch-b-evidence/`。
 
-> **编号说明（主审抽查）**：README 明确「编号在各自测试文件内自成序列，同一号在不同门含义不同」（`README.md:367`）。M37–M41 接 `tests/test_review_report.py` 现有 M35/M36；其他测试文件里的 M38/M39/M40 不构成撞号。若落盘时发现同文件已有占号，再顺延。
+> **编号说明（主审抽查）**：README 明确「编号在各自测试文件内自成序列，同一号在不同门含义不同」（`README.md:367`）。M37–M39 属 `tests/test_cli_review_convert.py`（该文件已有 M130c；本批暂用 RFC 内部标签，落盘前可顺延为 M131–M133）；M40–M41 接 `tests/test_review_report.py` 现有 M35/M36。其他测试文件里的同号不构成撞号。
 
 ### 4.5 留出验证（系统性修复必填；`RFC-20261026-03`）
 
@@ -264,7 +264,7 @@ python3 scripts/atlas_check.py --fast
 python3 tests/test_install_selfcheck.py
 ```
 
-* **结果（2026-10-31）**：聚焦 **78 passed**（Batch A 52 + Batch B 26）；Batch B 后全量 `pytest tests/` **960 passed, 5 skipped**；`tests/test_install_selfcheck.py` **PASS**；`tests/test_map_anchors.py` **8 passed**。`atlas_check --fast` 在源包工作树无目标资产，按源包态不适用；装配副本回归另行。
+* **结果（2026-10-31）**：聚焦 **80 passed**（Batch A 52 + Batch B 28）；Batch B 后全量 `pytest tests/` **962 passed, 5 skipped**；`tests/test_install_selfcheck.py` **PASS**；`tests/test_map_anchors.py` **8 passed**。`atlas_check --fast` 在源包工作树无目标资产，按源包态不适用；装配副本回归另行。
 
 ---
 
@@ -326,13 +326,14 @@ cat > /tmp/atlas-delta-prefix-red/payload.json <<'JSON'
   }}
 }
 JSON
+# pre-fix（v2 legacy 模拟）：当前旧语义
 python3 scripts/cli_review_convert.py --root /tmp/atlas-delta-prefix-red \
   --input /tmp/atlas-delta-prefix-red/payload.json --out report2 --unit U1 --round 2 \
-  --scope "clean delta fixture" --expected-files 3 --delta-only --base-sha 1111111
-# 当前输出：PASS 3/3；review.json reviewed_files=[]；validate_review_report FAIL
+  --scope "clean delta fixture" --expected-files 3 --delta-only --schema-version 2 --base-sha 1111111
+# 输出：WARN 3/2；review.json reviewed_files=[]；validate_review_report FAIL
 
-# post-fix 预期（Batch B）：
-# python3 scripts/cli_review_convert.py ... --head-sha 2222222 \
+# post-fix（v3）：Batch B
+# python3 scripts/cli_review_convert.py ... --schema-version 3 --head-sha 2222222 \
 #   --reviewed-files src/a.ts,src/b.ts
-# 预期：reviewed=2、reviewed_files 2 个、status=PASS、validator PASS
+# 输出：WARN 3/2（M<N，reused 不计 M）；reviewed_files 2；validator delta 对账 PASS + 应审/实审 WARN
 ```

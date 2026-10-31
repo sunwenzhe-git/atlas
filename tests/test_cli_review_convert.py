@@ -465,7 +465,7 @@ def test_delta_v2_missing_head_sha_warns(tmp_path: Path) -> None:
     assert review["schema_version"] == 2
     assert review["reviewed_files"] == ["src/a.ts"]  # v2 legacy：findings 反推
     assert any("v2 delta 缺 head_sha" in w for w in review["delta_warnings"])
-    assert review["status"] == "WARN"
+    assert review["status"] == "PASS"  # v2 兼容：提示不改变 report status
 
 
 def test_delta_v3_empty_reviewed_files_refused(tmp_path: Path) -> None:
@@ -500,5 +500,32 @@ def test_delta_v3_reviewed_failed_overlap_warns(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stderr
     review = _review(tmp_path)
     assert any("交集" in w for w in review["delta_warnings"])
+    assert review["status"] == "WARN"
+
+
+def test_delta_v3_explicit_conflicts_with_coverage_warns(tmp_path: Path) -> None:
+    payload = ok_payload(
+        [], files_reviewed=3, status="complete",
+        coverage=coverage(completed=("src/a.ts", "src/b.ts", "src/c.ts")),
+    )
+    r = run(tmp_path, payload, extra=["--round", "2", "--expected-files", "3",
+                                       "--delta-only", "--head-sha", "222",
+                                       "--reviewed-files", "src/x.ts,src/y.ts,src/z.ts"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert any("coverage.completed" in w for w in review["delta_warnings"])
+    assert review["status"] == "WARN"
+
+
+def test_delta_v3_selected_empty_warns(tmp_path: Path) -> None:
+    payload = ok_payload(
+        [], files_reviewed=1, status="complete",
+        coverage=coverage(completed=("src/a.ts",), selected=()),
+    )
+    r = run(tmp_path, payload, extra=["--round", "2", "--expected-files", "1",
+                                       "--delta-only", "--head-sha", "222"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert any("selected_files" in w for w in review["delta_warnings"])
     assert review["status"] == "WARN"
 

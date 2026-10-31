@@ -220,8 +220,12 @@ def main() -> int:
                   "head_sha": head_sha, "reviewed_files": reviewed_files,
                   "reviewed": reviewed, "expected": expected,
                   "failed_files": failed_files, "waived_files": waived_files,
-                  "reused_files": reused_files, "selected_files": selected_files}
+                  "reused_files": reused_files}
+    if cov["present"]:
+        delta_view["completed_files"] = cov["completed"]
+        delta_view["selected_files"] = selected_files
     delta_issues = review_policy.delta_warnings(delta_view, checks, other) if args.delta_only else []
+    delta_notes = review_policy.delta_notes(delta_view) if args.delta_only else []
 
     # 状态映射（D129 统一策略内核 + Batch A：CLI partial/failed 只抬 WARN，不降级 Critical
     # + Batch B：delta 数量/成员/selected 对账只抬 WARN）
@@ -245,6 +249,7 @@ def main() -> int:
                                for w in warnings],
               "checks": checks, "other": other}
     if cov["present"]:
+        review["completed_files"] = cov["completed"]
         review["selected_files"] = selected_files
         review["failed_files"] = failed_files
         review["waived_files"] = waived_files
@@ -258,8 +263,8 @@ def main() -> int:
         if head_sha:
             review["head_sha"] = head_sha
         review["reviewed_files"] = reviewed_files
-        if delta_issues:
-            review["delta_warnings"] = delta_issues
+        if delta_issues or delta_notes:
+            review["delta_warnings"] = delta_issues + delta_notes
 
     unit_file.write_text(json.dumps(review, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     (outdir / "review.json").write_text(json.dumps(review, ensure_ascii=False, indent=1) + "\n",
@@ -277,9 +282,10 @@ def main() -> int:
     lines += [f"  - `{w.get('file', '?')}` [{w.get('type', '?')}] {w.get('message', '')}"
               for w in warnings]
     if args.delta_only:
+        all_delta = delta_issues + delta_notes
         lines += [f"- delta：base `{args.base_sha or '—'}` → head `{head_sha or '—'}`；"
-                  f"reviewed_files {len(reviewed_files)} 个；对账 WARN {len(delta_issues)} 条"]
-        lines += [f"  - {issue}" for issue in delta_issues]
+                  f"reviewed_files {len(reviewed_files)} 个；对账 WARN {len(all_delta)} 条"]
+        lines += [f"  - {issue}" for issue in all_delta]
     lines.append("")
     for level in ("Critical", "Major", "Minor"):
         group = [c for c in checks if c["level"] == level]

@@ -147,6 +147,7 @@ def validate_report(d: Path) -> Result:
     exp, rev = data.get("expected"), data.get("reviewed")
     exec_val = data.get("executed")
     delta_issues = review_policy.delta_warnings(data, checks, other)
+    delta_notes = review_policy.delta_notes(data)
     warn_floor = (data.get("budget_exceeded") is True) or (
         _is_int(exp) and _is_int(rev) and rev < exp) or (exec_val is False) or review_policy.cli_warn_floor(data) or bool(delta_issues)
     expect = review_policy.calculate_status(checks, warn_floor=warn_floor,
@@ -169,9 +170,10 @@ def validate_report(d: Path) -> Result:
                 f"failed_files={len(failed_files) if isinstance(failed_files, list) else 0}")
 
     if data.get("delta_only") is True:
+        all_delta = delta_issues + delta_notes
         res.add("delta 对账（v3）" if schema_version >= 3 else "delta 对账（v2 兼容）",
-                "WARN" if delta_issues else "PASS",
-                "；".join(delta_issues) or "head_sha / reviewed_files 齐全")
+                "WARN" if all_delta else "PASS",
+                "；".join(all_delta) or "head_sha / reviewed_files 齐全")
 
     if exp is None and rev is None:
         res.add("应审/实审对账（§6 第 8 条）", "FAIL",
