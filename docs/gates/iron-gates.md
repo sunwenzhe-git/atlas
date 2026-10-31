@@ -64,8 +64,8 @@
 * **运行机制**：需求实现完成后、归档收口前，由独立的外部只读进程执行 `git diff` 审查（Fresh Context 隔离；契约与转换器见 `scripts/cli_review_convert.py`）；
 * **应审 N / 实审 M 严格对账**：
   * 实测证明：大模型在审查数十个文件的大 Diff 时，会**悄悄跳过文件**（静默少审）；
-  * 审查器启动时先提取预审文件数 `N`，审查结束后统计给出 findings 的文件数 `M`。**一旦 `M < N`，不论结论多好一律报红拦截**！
-  * 发现任何 `Critical` 级缺陷，一票否决收口。
+  * 审查器启动时先提取预审文件数 `N`（preview Will review），审查结束后以 CLI `manifest.coverage.completed[]` 的去重数计 `M`（无 coverage 才回退 summary）。**`M < N`、`partial/failed` 或 `failed_files` 非空 ⇒ 报告至少 `WARN` 起步**；发现任何 `Critical` 级缺陷，一票否决收口。
+  * **coverage 假绿防线（Batch A，`RFC-20261031-01`）**：CLI `status=partial` 且 coverage 实际 `completed=4/failed=2`、summary 自报 6 时，转换器必须以 coverage 写 `reviewed=4` + `failed_files`，不得写 6/6；`summary` 与 coverage 不一致写 `cli_warnings`。
 
 ### 3. 后端/全栈测试用例 ⇔ AC 跨语言对账门 (`validate_ac_alignment.py`)
 * 校验后端与全栈测试用例中挂载的验收标记与 PRD 声明的 AC 集合严格对齐；具体标记语法由 `adapters/ac/` 的 extractor 定义（示例见 `docs/guide/backend-test.md`）。
@@ -96,7 +96,8 @@
   * `pre_existing`：存量代码缺陷**不阻断本次收口**，但状态下限抬为 `WARN`（可见、不静默放行）——实测评审约 59% 的发现落在改动前就存在的代码上；
   * `disposition`：`fixed` / `false_positive` 必须带**签字人 + 取证**才生效，否则照常阻断（防止模型自审一句话就把 Critical 关掉）；
   * **轮次收敛**：第 4 轮起必须登记 `escalation` 升级到人/架构复议——治「Agent 作者 ⇔ Agent 评审」互相忙到天亮的死循环；
-  * **历史兼容**：缺省 `schema_version = 1` 沿用旧「任一 Critical 即 FAIL」语义且**不回扫存量报告**（回扫 = 永久红 = 静音门）。
+  * **CLI coverage 失败面（Batch A，2026-10-31，`RFC-20261031-01`）**：`cli_status=partial|failed` 或 `failed_files` 非空 ⇒ 状态下限 `WARN`（**不降级阻断性 Critical**）；`skipped|unknown` 只记录；`summary.files_reviewed` 与 coverage 冲突以 coverage 为准并进 `cli_warnings`；
+  * **历史兼容**：缺省 `schema_version = 1` 沿用旧「任一 Critical 即 FAIL」语义且**不回扫存量报告**（回扫 = 永久红 = 静音门）；Batch A 新字段均为可选，无 coverage 的 v2 存量报告保持原判。
 
 ### 9. AC × 覆盖维度门 (`validate_e2e_index.py` 内的一行)
 * 域级 PRD §五 可选第 4 列声明每条 AC 的适用维度（`C01`–`C14` E2E 闭集），用例分片 `覆盖维度:` 声明打击面，校验器算差集；

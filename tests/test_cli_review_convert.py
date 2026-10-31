@@ -28,9 +28,24 @@ def run(tmp_path: Path, payload: dict | None, *, unit: str = "B1", extra: list[s
     return subprocess.run(cmd + (extra or []), capture_output=True, text=True)
 
 
-def ok_payload(comments: list[dict] | None = None, files_reviewed: int = 2) -> dict:
-    return {"status": "completed", "summary": {"files_reviewed": files_reviewed, "comments":
-            len(comments or [])}, "comments": comments or [], "warnings": []}
+def ok_payload(comments: list[dict] | None = None, files_reviewed: int = 2, *,
+               status: str = "completed", coverage: dict | None = None) -> dict:
+    payload = {"status": status, "summary": {"files_reviewed": files_reviewed, "comments":
+               len(comments or [])}, "comments": comments or [], "warnings": []}
+    if coverage is not None:
+        payload["manifest"] = {"coverage": coverage}
+    return payload
+
+
+def coverage(completed=(), failed=(), waived=(), reused=(), selected=None) -> dict:
+    def paths(items):
+        return [{"path": p} for p in items]
+
+    if selected is None:
+        selected = list(dict.fromkeys([*completed, *reused, *failed, *waived]))
+    return {"completed": paths(completed), "failed": paths(failed),
+            "waived": paths(waived), "reused": paths(reused),
+            "selected": paths(selected)}
 
 
 C = {"path": "src/a.ts", "content": "覆盖了原文件", "start_line": 88, "end_line": 88,
@@ -158,4 +173,161 @@ def test_fingerprint_stable_across_line_numbers(tmp_path: Path) -> None:
     fp_c = json.loads((tmp_path / "report" / "findings" / "FP-C.r1.json").read_text())
     assert fp_c["checks"][0]["fingerprint"] != fp_a["checks"][0]["fingerprint"], (
         "不同内容指纹相同 ⇒ 去重门误杀真问题")
+
+
+# ── 2026-10-31 RFC-20261031-01 Batch A：coverage 权威 + CLI 失败面 ──────────────
+def _review(tmp_path: Path) -> dict:
+    return json.loads((tmp_path / "report" / "review.json").read_text())
+
+
+def test_coverage_completed_is_reviewed_not_summary(tmp_path: Path) -> None:
+    """M37：coverage.completed 是实审权威，summary 只作自报。
+
+    变异证明 M37：摘掉 coverage 读取（退回 summary）⇒ 本用例红。
+    """
+    payload = ok_payload(
+        [], files_reviewed=6, status="partial",
+        coverage=coverage(
+            completed=("src/a.ts", "src/b.ts", "src/c.ts"),
+            failed=("src/e.ts",), waived=("src/f.ts",),
+            selected=("src/a.ts", "src/b.ts", "src/c.ts", "src/e.ts", "src/f.ts"),
+        ),
+    )
+    r = run(tmp_path, payload, extra=["--expected-files", "5"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert review["reviewed"] == 3
+    assert review["expected"] == 5
+    assert review["cli_status"] == "partial"
+    assert review["failed_files"] == ["src/e.ts"]
+    assert review["waived_files"] == ["src/f.ts"]
+    assert review["status"] == "WARN"
+    assert any("summary.files_reviewed=6" in w for w in review["cli_warnings"])
+
+
+def test_coverage_partial_with_critical_still_fails(tmp_path: Path) -> None:
+    """CLI partial 只抬 WARN，不得把 Critical 降级。"""
+    payload = ok_payload(
+        [dict(C, severity="critical")], files_reviewed=3, status="partial",
+        coverage=coverage(completed=("src/a.ts", "src/b.ts"), failed=("src/c.ts",)),
+    )
+    r = run(tmp_path, payload, extra=["--expected-files", "3"])
+    assert r.returncode == 1
+    assert _review(tmp_path)["status"] == "FAIL"
+
+
+def test_coverage_empty_completed_refused(tmp_path: Path) -> None:
+    """有 coverage 但 completed 为空且无 findings ⇒ 没有发生审查，拒绝产出。"""
+    payload = ok_payload(
+        [], files_reviewed=3, status="failed",
+        coverage=coverage(completed=(), failed=("src/a.ts", "src/b.ts", "src/c.ts")),
+    )
+    r = run(tmp_path, payload, extra=["--expected-files", "3"])
+    assert r.returncode == 2 and "没有发生审查" in r.stderr
+
+
+def test_coverage_missing_completed_refused(tmp_path: Path) -> None:
+    payload = ok_payload([], files_reviewed=3, status="partial")
+    payload["manifest"] = {"coverage": {"selected": [{"path": "src/a.ts"}]}}
+    r = run(tmp_path, payload, extra=["--expected-files", "3"])
+    assert r.returncode == 2 and "completed" in r.stderr
+
+
+def test_summary_coverage_mismatch_uses_coverage(tmp_path: Path) -> None:
+    payload = ok_payload(
+        [], files_reviewed=6, status="complete",
+        coverage=coverage(completed=("src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts")),
+    )
+    r = run(tmp_path, payload, extra=["--expected-files", "4"])
+    assert r.returncode == 0
+    review = _review(tmp_path)
+    assert review["reviewed"] == 4 and review["status"] == "PASS"
+    assert any("summary.files_reviewed=6" in w for w in review["cli_warnings"])
+
+
+def test_reused_not_counted_as_reviewed(tmp_path: Path) -> None:
+    payload = ok_payload(
+        [], files_reviewed=3, status="complete",
+        coverage=coverage(completed=("src/a.ts", "src/b.ts"), reused=("src/c.ts",)),
+    )
+    r = run(tmp_path, payload, extra=["--expected-files", "3"])
+    assert r.returncode == 0
+    review = _review(tmp_path)
+    assert review["reviewed"] == 2 and review["status"] == "WARN"
+    assert review["reused_files"] == ["src/c.ts"]
+
+
+def test_failed_files_with_complete_status_warns(tmp_path: Path) -> None:
+    payload = ok_payload(
+        [], files_reviewed=3, status="complete",
+        coverage=coverage(completed=("src/a.ts", "src/b.ts"), failed=("src/c.ts",)),
+    )
+    r = run(tmp_path, payload, extra=["--expected-files", "3"])
+    assert r.returncode == 0
+    review = _review(tmp_path)
+    assert review["reviewed"] == 2 and review["status"] == "WARN"
+    assert review["failed_files"] == ["src/c.ts"]
+
+
+def test_unknown_cli_status_recorded_not_floor(tmp_path: Path) -> None:
+    payload = ok_payload(
+        [], files_reviewed=2, status="weird",
+        coverage=coverage(completed=("src/a.ts", "src/b.ts")),
+    )
+    r = run(tmp_path, payload, extra=["--expected-files", "2"])
+    assert r.returncode == 0
+    review = _review(tmp_path)
+    assert review["cli_status"] == "unknown" and review["status"] == "PASS"
+    assert any("未知 CLI status" in w for w in review["cli_warnings"])
+
+
+def test_skipped_cli_status_recorded_not_floor(tmp_path: Path) -> None:
+    payload = ok_payload(
+        [], files_reviewed=2, status="skipped",
+        coverage=coverage(completed=("src/a.ts", "src/b.ts")),
+    )
+    r = run(tmp_path, payload, extra=["--expected-files", "2"])
+    assert r.returncode == 0
+    review = _review(tmp_path)
+    assert review["cli_status"] == "skipped" and review["status"] == "PASS"
+
+
+def test_no_completed_with_findings_warns(tmp_path: Path) -> None:
+    payload = ok_payload(
+        [dict(C, severity="high")], files_reviewed=1, status="failed",
+        coverage=coverage(completed=(), failed=("src/a.ts",)),
+    )
+    r = run(tmp_path, payload, extra=["--expected-files", "1"])
+    assert r.returncode == 0
+    review = _review(tmp_path)
+    assert review["reviewed"] == 0 and review["status"] == "WARN"
+    assert review["failed_files"] == ["src/a.ts"]
+
+
+def test_coverage_path_normalization_dedup(tmp_path: Path) -> None:
+    payload = ok_payload(
+        [], files_reviewed=2, status="complete",
+        coverage=coverage(completed=("src\\a.ts", "src/a.ts"),
+                          selected=("src\\a.ts", "src/a.ts")),
+    )
+    r = run(tmp_path, payload, extra=["--expected-files", "1"])
+    assert r.returncode == 0
+    review = _review(tmp_path)
+    assert review["reviewed"] == 1 and review["status"] == "PASS"
+
+
+def test_comments_null_refused(tmp_path: Path) -> None:
+    payload = ok_payload([], files_reviewed=2)
+    payload["comments"] = None
+    r = run(tmp_path, payload, extra=["--expected-files", "2"])
+    assert r.returncode == 2 and "comments" in r.stderr
+
+
+def test_no_coverage_falls_back_to_summary(tmp_path: Path) -> None:
+    r = run(tmp_path, ok_payload([], files_reviewed=2, status="complete"),
+            extra=["--expected-files", "2"])
+    assert r.returncode == 0
+    review = _review(tmp_path)
+    assert review["reviewed"] == 2 and review["status"] == "PASS"
+    assert "failed_files" not in review
 

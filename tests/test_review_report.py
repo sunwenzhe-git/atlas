@@ -11,6 +11,8 @@
 
 变异证明（`gates.md` 2.1 行）：M35 摘掉状态映射复算 ⇒ `test_status_mapping_mismatch_fails` 红；
 M36 把「缺对账字段」降为放行 ⇒ `test_missing_counts_fail` 红。
+Batch A（RFC-20261031-01）：M40 摘掉 `cli_warn_floor` ⇒ `test_cli_partial_warns` 红；
+M41 让 CLI WARN 下限降级 Critical ⇒ `test_cli_partial_does_not_downgrade_critical` 红。
 """
 from __future__ import annotations
 
@@ -222,5 +224,75 @@ def test_v2_round_4_requires_escalation() -> None:
         esc = {"to": "architecture-team", "reason": "争议边界需拍板", "approved_by": "lead"}
         p2 = run(mk_report(Path(td) / "r2", {**GOOD, "schema_version": 2, "round": 4, "escalation": esc}))
         assert p2.returncode == 0, p2.stdout
+
+
+# ── 2026-10-31 RFC-20261031-01 Batch A：CLI coverage 失败面 ─────────────────────
+def test_cli_partial_warns() -> None:
+    """M40：cli_status=partial 或 failed_files 非空 ⇒ 状态下限 WARN。"""
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), {**GOOD, "schema_version": 2, "cli_status": "partial",
+                                     "failed_files": ["src/e.ts"], "status": "WARN"}))
+        assert p.returncode == 0, p.stdout
+        assert "WARN" in p.stdout and "CLI" in p.stdout, p.stdout
+
+
+def test_cli_partial_does_not_downgrade_critical() -> None:
+    """M41：CLI WARN 下限不得把阻断性 Critical 降级。
+
+    形态门只判「报告形态是否合法」：报告自身 status=FAIL 是合法形态，故 validator
+    退出码 0；防降级钉在报告 status 仍为 FAIL，且 CLI 行只报 WARN。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        crit = {**GOOD["checks"][0], "level": "Critical"}
+        d = mk_report(Path(td), {**GOOD, "schema_version": 2, "checks": [crit],
+                                 "cli_status": "partial", "status": "FAIL", "ok": False})
+        p = run(d)
+        assert p.returncode == 0 and "[WARN] CLI 审查状态" in p.stdout, p.stdout
+        review = json.loads((d / "review.json").read_text())
+        assert review["status"] == "FAIL" and review["ok"] is False
+
+
+def test_cli_failed_files_without_status_warns() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), {**GOOD, "schema_version": 2,
+                                     "failed_files": ["src/e.ts"], "status": "WARN"}))
+        assert p.returncode == 0 and "WARN" in p.stdout and "CLI" in p.stdout, p.stdout
+
+
+def test_cli_status_invalid_fails() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), {**GOOD, "schema_version": 2, "cli_status": "done"}))
+        assert p.returncode == 1 and "cli_status" in p.stdout, p.stdout
+
+
+def test_cli_failed_files_shape_fails() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), {**GOOD, "schema_version": 2, "failed_files": "src/a.ts"}))
+        assert p.returncode == 1 and "failed_files" in p.stdout, p.stdout
+
+
+def test_cli_failed_files_duplicate_fails() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), {**GOOD, "schema_version": 2,
+                                     "failed_files": ["src/a.ts", "src/a.ts"]}))
+        assert p.returncode == 1 and "重复" in p.stdout, p.stdout
+
+
+def test_cli_warnings_shape_fails() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), {**GOOD, "schema_version": 2, "cli_warnings": "x"}))
+        assert p.returncode == 1 and "cli_warnings" in p.stdout, p.stdout
+
+
+def test_cli_skipped_does_not_warn() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), {**GOOD, "schema_version": 2, "cli_status": "skipped"}))
+        assert p.returncode == 0 and p.stdout.strip().endswith("PASS"), p.stdout
+
+
+def test_v2_non_delta_without_cli_fields_passes() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        p = run(mk_report(Path(td), {**GOOD, "schema_version": 2}))
+        assert p.returncode == 0 and p.stdout.strip().endswith("PASS"), p.stdout
 
 

@@ -14,6 +14,7 @@ import re
 LEVELS = ("Critical", "Major", "Minor")
 DISPOSITIONS = ("open", "fixed", "false_positive", "intentional", "ignored")
 VERIFICATION_STATUSES = ("confirmed", "rejected", "inconclusive")
+CLI_STATUSES = ("complete", "completed", "partial", "failed", "skipped", "unknown")
 
 _LINE_STRIP_RE = re.compile(r":\d+(?:-\d+)?$")
 
@@ -81,6 +82,17 @@ def calculate_status(checks: list[dict], warn_floor: bool = False,
     return "PASS"
 
 
+def cli_warn_floor(data: dict) -> bool:
+    """CLI 失败面 ⇒ 状态下限 WARN（工具失败 ≠ 代码 finding，不直接 FAIL）。
+
+    `partial` / `failed` 或 `failed_files` 非空都算「本次审查没跑全」；
+    `skipped` / `unknown` 不额外抬升，交给 `reviewed < expected` 等既有下限。
+    """
+    status = str(data.get("cli_status") or "").strip().lower()
+    failed = data.get("failed_files")
+    return status in ("partial", "failed") or (isinstance(failed, list) and bool(failed))
+
+
 def validate_v2_finding(c: dict, idx: int) -> list[str]:
     """校验 v2 单条 finding 字段形态与合法性。"""
     errs: list[str] = []
@@ -136,4 +148,19 @@ def validate_v2_report_fields(data: dict) -> list[str]:
             errs.append("`escalation` 若存在必须为对象")
         elif "approved_by" in esc and not str(esc.get("approved_by") or "").strip():
             errs.append("`escalation.approved_by` 若存在必须为非空字符串")
+    if "cli_status" in data:
+        cs = data["cli_status"]
+        if not isinstance(cs, str) or cs not in CLI_STATUSES:
+            errs.append(f"`cli_status`={cs!r} 不在闭集 {CLI_STATUSES}")
+    for key in ("failed_files", "waived_files", "reused_files"):
+        if key in data:
+            v = data[key]
+            if not isinstance(v, list) or any(not isinstance(x, str) or not x.strip() for x in v):
+                errs.append(f"`{key}` 必须为字符串列表且元素非空")
+            elif len(set(v)) != len(v):
+                errs.append(f"`{key}` 不得有重复项")
+    if "cli_warnings" in data:
+        v = data["cli_warnings"]
+        if not isinstance(v, list) or any(not isinstance(x, str) for x in v):
+            errs.append("`cli_warnings` 必须为字符串列表")
     return errs

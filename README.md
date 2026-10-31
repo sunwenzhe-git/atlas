@@ -436,7 +436,7 @@ Atlas 坚持**变异证明（Mutation Proving / M 系列钉子测试）**原则�
    * **断言**：用例分片中声明的应然 `testid:` 清单，与前端源码中真实扫描出的 `data-testid` **按页面双向集合严格相等**。漏写控件报 FAIL，多写无用埋点报 FAIL。
 2. **实例 ⑤：实现代码 ⇔ 应然资产独立审查（防漏审；机制与对账门已定形，外部执行器接入中，见 shared/gates.md）**：
    * 需求实现后、归档收口前，由独立进程执行只读 diff 审查（Fresh Context 隔离；契约与转换器见 scripts/cli_review_convert.py）；
-   * **应审 N / 实审 M 严格对账**：实测表明大模型审查大体积 diff 时会悄悄跳过文件；若实际评审文件数 `M < N`，无论结论如何一律报红拒绝，发现 `Critical` 缺陷一票否决。
+   * **应审 N / 实审 M 严格对账**：实测表明大模型审查大体积 diff 时会悄悄跳过文件；若实际评审文件数 `M < N`，报告至少 `WARN`（不直接阻断），发现 `Critical` 缺陷一票否决。`M` 取 CLI `manifest.coverage.completed`（无 coverage 才回退 summary）。
 3. **后端/全栈测试用例 ⇔ AC 跨语言对账门 (`validate_ac_alignment.py`)**：
    * 校验后端与全栈测试用例中挂载的验收标记（标记语法由 `adapters/ac/` 的 extractor 解释）与 PRD 声明的 AC 集合严格对齐，防止实现测试漏测或假挂载。D153 起另对账测试记录的 `dims` 与 PRD 第 5 列 `后端适用覆盖维度`（维度缺口只 WARN，不随 `mode: enforce` 升 FAIL）。
    * 三形态 / 未验证语义：无 backend/fullstack app ⇒ 整门 `N/A`；未注册 extractor / apps 缺失 ⇒ `[UNVERIFIED]`（advisory WARN / enforce FAIL）；零挂载 ⇒ `[ZERO-COVERAGE]`、解析失败 ⇒ `[PARSE]`、扫描面非空 ⇒ `[SCAN]`，均不伪装 PASS。

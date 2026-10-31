@@ -8,8 +8,9 @@
 
 **解决方式**：转换器是唯一桥——CLI 的 JSON 是**输入侧证据**（原样留报告目录），
 `review.json` 是**契约侧产物**（门禁只读它）。四档→三档映射**写死**；
-应审 N（diff 文件数）/ 实审 M（CLI 汇总）对账，M < N ⇒ `WARN` 起步；
-CLI 不报实审数 ⇒ **拒绝产出**（缺权威输入不得给「通过」，骨架 §2.6）。
+应审 N（diff 文件数）/ 实审 M（coverage completed；无 coverage 才回退 summary）对账，
+M < N ⇒ `WARN` 起步；CLI 不报实审数 / coverage 缺 completed ⇒ **拒绝产出**
+（缺权威输入不得给「通过」，骨架 §2.6）。
 
 用法：
     python3 .atlas/scripts/cli_review_convert.py \
@@ -63,8 +64,41 @@ def count_diff_files(root: Path, ref_from: str, ref_to: str) -> int:
     return len([l for l in out.stdout.splitlines() if l.strip()])
 
 
-def convert(payload: dict) -> tuple[list[dict], list[dict], int, bool, list[dict]]:
-    """returns (checks, other, files_reviewed, budget_exceeded, warnings)"""
+def _normalize_paths(items: object) -> list[str]:
+    """coverage 路径列表：只取 dict.path / 裸 string，统一 `/`，去重排序。"""
+    out: set[str] = set()
+    if not isinstance(items, list):
+        return []
+    for item in items:
+        p = item.get("path") if isinstance(item, dict) else item
+        if isinstance(p, str) and p.strip():
+            out.add(p.strip().replace("\\", "/"))
+    return sorted(out)
+
+
+def _coverage_info(payload: dict) -> dict:
+    """CLI coverage：completed 为实审权威；缺 completed / 形态错 ⇒ 拒绝产出。"""
+    manifest = payload.get("manifest")
+    coverage = manifest.get("coverage") if isinstance(manifest, dict) else None
+    if not isinstance(coverage, dict):
+        return {"present": False, "completed": [], "failed": [], "waived": [],
+                "reused": [], "selected": [], "cli_status": "unknown"}
+    if "completed" not in coverage or not isinstance(coverage["completed"], list):
+        raise SystemExit(die("CLI coverage 缺 completed[] —— 无法判定实审文件，拒绝产出"))
+    for key in ("failed", "waived", "reused", "selected"):
+        if key in coverage and not isinstance(coverage[key], list):
+            raise SystemExit(die(f"CLI coverage.{key} 必须为列表"))
+    return {"present": True,
+            "completed": _normalize_paths(coverage["completed"]),
+            "failed": _normalize_paths(coverage.get("failed")),
+            "waived": _normalize_paths(coverage.get("waived")),
+            "reused": _normalize_paths(coverage.get("reused")),
+            "selected": _normalize_paths(coverage.get("selected")),
+            "cli_status": "unknown"}
+
+
+def convert(payload: dict) -> tuple[list[dict], list[dict], int, bool, list[dict], dict]:
+    """returns (checks, other, reviewed, budget_exceeded, warnings, coverage)"""
     summary = payload.get("summary")
     if not isinstance(summary, dict) or not isinstance(summary.get("files_reviewed"), int):
         raise SystemExit(die("CLI 输出缺 summary.files_reviewed —— 无法判定实审数，"
@@ -95,7 +129,27 @@ def convert(payload: dict) -> tuple[list[dict], list[dict], int, bool, list[dict
                            "fingerprint": fp, "pre_existing": False, "disposition": "open",
                            "rollback": "implement"})  # 默认回退环；triage 可改判 prd/e2e 入 backfill
     warnings = [w for w in (payload.get("warnings") or []) if isinstance(w, dict)]
-    return checks, other, summary["files_reviewed"], bool(summary.get("budget_exceeded")), warnings
+    raw_status = str(payload.get("status") or "").strip().lower()
+    cli_status = raw_status if raw_status in review_policy.CLI_STATUSES else "unknown"
+    if raw_status and raw_status not in review_policy.CLI_STATUSES:
+        warnings.append({"file": "<cli>", "type": "status",
+                         "message": f"未知 CLI status={raw_status!r}，按 unknown 记录"})
+    cov = _coverage_info(payload)
+    cov["cli_status"] = cli_status
+    if cov["present"]:
+        reviewed = len(cov["completed"])
+        summary_count = summary["files_reviewed"]
+        if summary_count != reviewed:
+            warnings.append({"file": "<coverage>", "type": "coverage",
+                             "message": f"summary.files_reviewed={summary_count} != "
+                                        f"coverage.completed={reviewed}；以 coverage 为准"})
+        if not cov["completed"] and not checks and not other:
+            raise SystemExit(die("CLI coverage.completed 为空且无 findings —— 没有发生审查，拒绝产出"))
+    else:
+        reviewed = summary["files_reviewed"]
+        if cli_status == "failed" and not checks and not other:
+            raise SystemExit(die("CLI status=failed 且无 findings —— 没有发生审查，拒绝产出"))
+    return checks, other, reviewed, bool(summary.get("budget_exceeded")), warnings, cov
 
 
 def main() -> int:
@@ -140,10 +194,16 @@ def main() -> int:
         payload = json.loads(src.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
         return die(f"读输入 {src} 失败：{e}")
-    checks, other, reviewed, budget, warnings = convert(payload)
+    checks, other, reviewed, budget, warnings, cov = convert(payload)
+    cli_status = cov["cli_status"]
+    failed_files = cov["failed"]
+    waived_files = cov["waived"]
+    reused_files = cov["reused"]
 
-    # 状态映射（D129 统一策略内核）
-    status = review_policy.calculate_status(checks, warn_floor=(reviewed < expected or budget),
+    # 状态映射（D129 统一策略内核 + Batch A：CLI partial/failed 只抬 WARN，不降级 Critical）
+    warn_floor = reviewed < expected or budget or review_policy.cli_warn_floor(
+        {"cli_status": cli_status, "failed_files": failed_files})
+    status = review_policy.calculate_status(checks, warn_floor=warn_floor,
                                             schema_version=args.schema_version)
 
     outdir = root / args.out
@@ -156,7 +216,14 @@ def main() -> int:
     review = {"schema_version": args.schema_version, "ok": status != "FAIL", "status": status,
               "root": str(root), "scope": args.scope, "unit": args.unit, "round": args.round,
               "expected": expected, "reviewed": reviewed, "budget_exceeded": budget,
+              "cli_status": cli_status,
+              "cli_warnings": [f"{w.get('file', '?')} [{w.get('type', '?')}] {w.get('message', '')}"
+                               for w in warnings],
               "checks": checks, "other": other}
+    if cov["present"]:
+        review["failed_files"] = failed_files
+        review["waived_files"] = waived_files
+        review["reused_files"] = reused_files
     if args.escalate_to:
         review["escalation"] = {"to": args.escalate_to, "reason": args.escalate_reason}
     if args.delta_only:
@@ -173,7 +240,11 @@ def main() -> int:
              "", "## 1. 审查总结", "",
              f"- 结论：**{STATUS_SUMMARY[status]}**（`{status}`；round {args.round}）",
              f"- **应审 {expected} / 实审 {reviewed}**" + ("（少审！见问题清单末尾）" if reviewed < expected else ""),
-             f"- 预算击穿：{'是' if budget else '否'}；CLI warnings：{len(warnings)} 条"]
+             f"- CLI 状态：`{cli_status}`；失败文件：{len(failed_files)} 个；"
+             f"预算击穿：{'是' if budget else '否'}；CLI warnings：{len(warnings)} 条"]
+    lines += [f"  - 失败文件：`{p}`" for p in failed_files]
+    lines += [f"  - 豁免文件：`{p}`" for p in waived_files]
+    lines += [f"  - 复用文件：`{p}`" for p in reused_files]
     lines += [f"  - `{w.get('file', '?')}` [{w.get('type', '?')}] {w.get('message', '')}"
               for w in warnings]
     lines.append("")
@@ -191,7 +262,7 @@ def main() -> int:
     (outdir / "README.md").write_text("\n".join(lines), encoding="utf-8")
 
     print(f"cli_review_convert @ {outdir}   {status}   应审 {expected} / 实审 {reviewed}"
-          f"   checks {len(checks)} + other {len(other)}")
+          f"   CLI {cli_status} failed {len(failed_files)}   checks {len(checks)} + other {len(other)}")
     return 1 if status == "FAIL" else 0
 
 

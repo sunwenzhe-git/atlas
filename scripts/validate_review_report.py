@@ -13,9 +13,12 @@
   2. §3 必备键齐且类型对：`ok`(bool) / `status` / `root` / `scope` / `unit`(非空) / `round`(int ≥1) / `checks`[] / `other`[]。
   3. 分级闭集：`checks[].level ∈ {Critical, Major, Minor}`；每条 finding 必带非空 `rollback`（骨架 §2.4）。
   4. 状态映射复算（§3 写死 + §6 第 8 条 WARN 下限，cli_review_convert 同规则）：有 Critical ⇒
-     FAIL；否则有 Major 或 M<N 或 budget_exceeded ⇒ WARN；否则 PASS；且 `ok == (status != "FAIL")`。
+     FAIL；否则有 Major 或 M<N 或 budget_exceeded 或 CLI partial/failed ⇒ WARN；否则 PASS；
+     且 `ok == (status != "FAIL")`。
   5. 应审/实审对账（§6 第 8 条）：`expected` / `reviewed` **必填**（单审查者实例记 1/1）——
      缺一或缺二 ⇒ FAIL（缺权威输入不得给「通过」）；`reviewed < expected` 或 `budget_exceeded` ⇒ WARN。
+  6. CLI coverage 失败面（Batch A）：`cli_status=partial/failed` 或 `failed_files` 非空 ⇒ WARN，
+     只抬下限、不降级 Critical；`skipped/unknown` 只记录。
 
 用法：
 
@@ -141,7 +144,7 @@ def validate_report(d: Path) -> Result:
     exp, rev = data.get("expected"), data.get("reviewed")
     exec_val = data.get("executed")
     warn_floor = (data.get("budget_exceeded") is True) or (
-        _is_int(exp) and _is_int(rev) and rev < exp) or (exec_val is False)
+        _is_int(exp) and _is_int(rev) and rev < exp) or (exec_val is False) or review_policy.cli_warn_floor(data)
     expect = review_policy.calculate_status(checks, warn_floor=warn_floor,
                                             schema_version=schema_version)
     st, ok = data.get("status"), data.get("ok")
@@ -152,6 +155,14 @@ def validate_report(d: Path) -> Result:
         map_bad.append(f"ok={ok!r} ≠ (status != FAIL)")
     res.add("状态映射复算（§3 写死 + §6 下限）", "FAIL" if map_bad else "PASS",
             "；".join(map_bad) if map_bad else f"status={expect} 与分级 / 对账下限一致")
+
+    cli_status = data.get("cli_status")
+    failed_files = data.get("failed_files")
+    if cli_status is not None or isinstance(failed_files, list):
+        cli_floor = review_policy.cli_warn_floor(data)
+        res.add("CLI 审查状态（coverage）", "WARN" if cli_floor else "PASS",
+                f"cli_status={cli_status or '<absent>'}；"
+                f"failed_files={len(failed_files) if isinstance(failed_files, list) else 0}")
 
     if exp is None and rev is None:
         res.add("应审/实审对账（§6 第 8 条）", "FAIL",
