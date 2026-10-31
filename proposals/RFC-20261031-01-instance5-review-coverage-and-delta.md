@@ -2,7 +2,7 @@
 
 > 提案编号：RFC-20261031-01
 > 提案作者：@sunwenzhe-git
-> 关联状态：已定案 (Accepted)（Batch A/B 已实现、待合并）
+> 关联状态：已合并 (Merged)（Batch A/B）
 > 影响范围：脚本工具 (scripts) | 校验器 (_support / scripts) | 契约 (shared/independent-review.md)
 > 关联取证：2026-10-31 实例⑤真实仓副本 r1/r2 + 最小夹具（见 §1.2 / §4.5 / 附录 A）
 > 实施批次：Batch A（coverage 假绿 + partial 可见）/ Batch B（delta v3 字段）；两批可独立合并，Batch B 不阻塞 A
