@@ -232,6 +232,13 @@ atlas-grill（提炼刺痛代价与致命冲突） → 用户拍板关键抉择
 - **不造第二真相源**：只写「这个域什么算坏」，**不得**复述 AC、状态词表或门清单——那些各有唯一真相源（`single-source.md` §1）；与 AC / 契约冲突时**以契约为准**，冲突本身按 finding 报出；
 - **缺文件 = 合法降级**：没有该域指引 ⇒ 按 §10.4 三问审即可，不因此报红（新增内容面不设永久红门，同 `DESIGN.md` D130 口径）。
 
+## 11. 跨轮闭环台账（resolves，2026-10-31，`RFC-20261031-02`）
+
+- **触发**：报告目录有 ≥2 轮 `findings/<unit>.r*.json`；`python3 .atlas/scripts/review_closure.py --dir <报告目录>`。
+- **规则**：上一轮未关闭的 `Critical|Major`（`pre_existing` 除外）必须在最新轮同指纹重报（`carried`）或在最新 `review.json.resolves` 声明关闭；否则 `unaccounted` WARN。
+- **`resolves`**：`[{fingerprint, status, by?, evidence?, round?}]`；`status ∈ {fixed,false_positive,intentional,ignored}`；`fixed`/`false_positive` 必须带 `by`+`evidence`；Critical 只接受 fixed/false_positive；Major 可 intentional/ignored；unknown fingerprint ⇒ WARN；重复/坏形状 ⇒ exit 2。
+- **非门**：WARN observer，不进 `atlas_check`；<2 轮 `SKIP`；`carried` 是「仍可见」，不是关闭；不强制同指纹重报（与 §4「同一问题跨轮不得重复贴」不冲突）。
+
 ## Guidance
 
 动手做任何一处独立审查前，先读本文件（骨架 + §6 成本约束 + §7 校准环），再读该实例自己的契约拿**维度**与**回退环取值**。**不得**把骨架条款复制进环契约（`single-source.md` §1）；**不得**在报告里写被审对象的正文；**不得**让审查者替代 `global-rules.md §7` 的确认门。改本契约时同步环契约的接线与 `3507` 决策记录。

@@ -43,6 +43,7 @@ Atlas 把「独立审查」做成流水线里的一等机制：不指望某一�
 * **实审 M** = CLI `manifest.coverage.completed[]` 的去重文件数（coverage 存在时；无 coverage 才回退 `summary.files_reviewed`）；
 * `reviewed < expected`、预算击穿、`cli_status=partial|failed` 或 `failed_files` 非空 ⇒ 报告级状态**至少 `WARN`**；coverage 缺 `completed[]` / CLI 不报实审数 ⇒ 转换器**拒绝产出**（缺权威输入不得给「通过」）。
 * **delta v3**：`head_sha` + 非空 `reviewed_files`（coverage completed / 显式 `--reviewed-files`）+ `selected_files` 对账；数量/成员/selected 不一致只 **WARN**；v2 delta 缺 `head_sha` 只 WARN（兼容）。`reused` 不计入 M（2 completed + 1 reused ⇒ 如实 M<N WARN）。
+* **跨轮闭环（D5，2026-10-31，`RFC-20261031-02`）**：`scripts/review_closure.py --dir` 读多轮 `findings/`；prior open Critical/Major（`pre_existing` 除外）必须在最新轮 carried 或在 `review.json.resolves` 关闭，否则 WARN；<2 轮 SKIP；非门、不进 `atlas_check`。
 
 报告落盘当轮必跑形态 + 对账门：`scripts/validate_review_report.py --dir <报告目录>`。
 

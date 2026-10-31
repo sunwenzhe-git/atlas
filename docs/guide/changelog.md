@@ -13,6 +13,12 @@
 * **契约/设计**：`shared/independent-review.md` §3/§10.2、`docs/concepts/review.md` §3、`docs/gates/iron-gates.md` §8、`shared/gates.md`、`DESIGN.md` D178。
 * **Batch B（delta v3）**：`delta_only` 新报告使用 `schema_version=3`，必须 `head_sha` + 非空 `reviewed_files`（coverage completed / 显式 `--reviewed-files`）；`selected_files`/数量/成员/target 对账只 WARN；v2 delta 缺 `head_sha` 只 WARN；clean delta 不再误红（2 completed + 1 reused ⇒ 如实 M<N WARN）。测试 25 → 41 / 27 → 39。
 
+### 🧭 跨轮 finding 闭环台账（D5，RFC-20261031-02）
+
+* **新增（观察面）**：`scripts/review_closure.py` WARN observer——prior open Critical/Major 未 carried/resolves ⇒ WARN；<2 轮 SKIP；不进 `atlas_check`。
+* **真实报告**：r1/r2 首跑 12 条 prior Major unaccounted；r2-v3 单轮 SKIP。
+* **测试/设计**：`tests/test_review_closure.py` 16 条；`DESIGN.md` D179；契约 §11 / closeout 步骤 10 / gates §4。
+
 ## [v0.2.0-beta.25] - 2026-10-31
 
 ### 🧭 前端复用优先：程序契约 + Trellis 面包屑注入（D177）
