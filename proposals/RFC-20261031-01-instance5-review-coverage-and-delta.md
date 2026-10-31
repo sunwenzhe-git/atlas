@@ -1,10 +1,10 @@
 # 实例⑤审查报告：coverage 为实审权威 + delta v3 字段（Batch A/B）
 
-> 提案编号：RFC-20261031-01  
-> 提案作者：@sunwenzhe-git  
-> 关联状态：已定案 (Accepted)（Batch A 已实现、待合并；Batch B 待实施）  
-> 影响范围：脚本工具 (scripts) | 校验器 (_support / scripts) | 契约 (shared/independent-review.md)  
-> 关联取证：2026-10-31 实例⑤真实仓副本 r1/r2 + 最小夹具（见 §1.2 / §4.5 / 附录 A）  
+> 提案编号：RFC-20261031-01
+> 提案作者：@sunwenzhe-git
+> 关联状态：已定案 (Accepted)（Batch A 已实现、待合并；Batch B 待实施）
+> 影响范围：脚本工具 (scripts) | 校验器 (_support / scripts) | 契约 (shared/independent-review.md)
+> 关联取证：2026-10-31 实例⑤真实仓副本 r1/r2 + 最小夹具（见 §1.2 / §4.5 / 附录 A）
 > 实施批次：Batch A（coverage 假绿 + partial 可见）/ Batch B（delta v3 字段）；两批可独立合并，Batch B 不阻塞 A
 
 ---
@@ -263,7 +263,7 @@ python3 scripts/atlas_check.py --fast
 python3 tests/test_install_selfcheck.py
 ```
 
-* **结果（2026-10-31）**：聚焦 **52 passed**；全量 `pytest tests/` **926 passed, 4 skipped**；`tests/test_install_selfcheck.py` **PASS**；`tests/test_map_anchors.py` **8 passed**。`atlas_check --fast` 在源包工作树无目标资产，按源包态不适用；装配副本回归另行。 
+* **结果（2026-10-31）**：聚焦 **52 passed**；rebase 到 `54281f7` 后全量 `pytest tests/` **934 passed, 5 skipped**；`tests/test_install_selfcheck.py` **PASS**；`tests/test_map_anchors.py` **8 passed**。`atlas_check --fast` 在源包工作树无目标资产，按源包态不适用；装配副本回归另行。
 
 ---
 
