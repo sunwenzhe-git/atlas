@@ -110,13 +110,13 @@ review_closure …  WARN  rounds 4 prior 16 carried 0 resolved  3 unaccounted 13
 
 ## 3. 改动面
 
-- [ ] `scripts/review_closure.py`：中间轮关闭证据 + 轮次单调 + 重置语义 + `--emit-skeleton`。
-- [ ] `scripts/cli_review_convert.py`：`--resolves` 输入、README 的升级/声明两行、无 coverage 点名。
-- [ ] `_support/review_policy.py`：`CLI_STATUSES` 加 `success`。
-- [ ] `tests/test_review_closure.py`：跨轮持久正例 + 重置反例 + 轮次倒挂反例 + 骨架输出（M6/M7/M8）。
-- [ ] `tests/test_cli_review_convert.py`：`--resolves` 两形态与坏形状、`success` 词表、无 coverage 点名、README 两行。
-- [ ] `shared/independent-review.md` §11、`shared/closeout.md` 步骤 10、`shared/gates.md` §4。
-- [ ] `DESIGN.md` D180；`CHANGELOG.md` / `docs/guide/changelog.md`；`docs/concepts/review.md`；
+- [x] `scripts/review_closure.py`：中间轮关闭证据 + 轮次单调 + 重置语义 + `--emit-skeleton`。
+- [x] `scripts/cli_review_convert.py`：`--resolves` 输入、README 的升级/声明两行、无 coverage 点名。
+- [x] `_support/review_policy.py`：`CLI_STATUSES` 加 `success`。
+- [x] `tests/test_review_closure.py`：跨轮持久正例 + 重置反例 + 轮次倒挂反例 + 骨架输出（M6/M7/M8）。
+- [x] `tests/test_cli_review_convert.py`：`--resolves` 两形态与坏形状、`success` 词表、无 coverage 点名、README 两行。
+- [x] `shared/independent-review.md` §11、`shared/closeout.md` 步骤 10、`shared/gates.md` §4。
+- [x] `DESIGN.md` D180；`CHANGELOG.md` / `docs/guide/changelog.md`；`docs/concepts/review.md`；
       `docs/gates/iron-gates.md`；`docs/map/*`（行数与门册快照）。
 
 ## 4. 验证
@@ -130,9 +130,24 @@ python3 scripts/review_closure.py --dir <四轮报告目录>
 python3 scripts/review_closure.py --dir <四轮报告目录> --emit-skeleton /tmp/skeleton.json
 ```
 
-变异钉子（编号属各自测试文件）：M6 摘掉中间轮证据 ⇒ 跨轮持久用例红；
-M7 去掉轮次单调/重置校验 ⇒ 重置与倒挂用例红；M8 骨架输出不写文件 ⇒ 骨架用例红；
-`--resolves` / 词表 / README 渲染各自的钉子见 §4 实录。
+## 4.1 结果实录（2026-11-01，分支 `0ad624f`）
+
+* **全量**：`pytest tests/` ⇒ **998 passed, 5 skipped**（合批前 981 + 17 条新用例）；`test_install_selfcheck` PASS；`test_canonical_consistency` + `test_map_anchors` 17 passed。
+* **用例增量**：`tests/test_review_closure.py` 19 → **28**；`tests/test_cli_review_convert.py` 41 → **48**；`tests/test_review_report.py` 39 → **40**。
+* **七枚钉子四段协议**（基线绿 → 注入红 → sha256 逐字节还原 → 复绿，日志 `/tmp/atlas-rfc01-evidence/mutation-proof.log`）：
+  * **M6**（`closer = None`，等于只认最新轮）⇒ 3 红：`test_intermediate_resolves_persists_to_later_rounds`、`test_intermediate_rereported_closure_persists`、`test_stale_intermediate_declare_warns_but_not_loudly`。
+  * **M7**（去掉 `best[0] <= last_open` 的轮次判据）⇒ 2 红：`test_reopen_after_intermediate_close_is_unaccounted`、`test_declare_earlier_than_obligation_does_not_count`（**不放水侧**）。
+  * **M8**（骨架不写文件）⇒ `test_emit_skeleton_lists_unaccounted` 红。
+  * **M42 / M43 / M44**（`--resolves` 不落键 / 无 coverage 不点名 / README 不渲染）⇒ 各自 2 / 1 / 1 红。
+  * **M45**（`CLI_STATUSES` 摘 `success`）⇒ 转换器与形态门两侧同红（2 红）。
+  * 七次注入全部还原逐字节一致，复跑 116 passed。
+* **H3（真实语料，误红侧）**：四轮报告 `2026083101.462`（r1 12 Major + r2 1 + r3 3 = 16 义务）——
+  * 修前（main `c1e2b3a` 版脚本）：`WARN rounds 4 prior 16 resolved 3 unaccounted 13`
+  * 修后（本批）：`PASS rounds 4 prior 16 resolved 16 unaccounted 0`，`via` 分布 = `resolves@r3` ×13 + `resolves` ×3
+  * `--emit-skeleton` 在义务已清时输出 0 条（不误造待填项）。
+* **H4（真实语料，不放水侧）**：把 H3 那份四轮报告复制成 `/tmp/atlas-rfc01-h4`，仅**删掉 r3 里 `aff7ef9e83b103e4` 这一条关闭声明** ⇒ `WARN rounds 4 prior 16 resolved 15 unaccounted 1`（持久化不是「只要历史上出现过声明就永远算关」，也不是把义务集缩小）。
+* **H4b（重置侧，夹具）**：`test_reopen_after_intermediate_close_is_unaccounted` —— 中间轮关过、更晚一轮同指纹又 open ⇒ 回到 `unaccounted`；`test_declare_earlier_than_obligation_does_not_count` —— 声明轮次早于义务出现轮 ⇒ 不作数。
+* **留出独立性（D156 三条）**：①判据输出翻转（`unaccounted 13 → 0`、`resolved 3 → 16`、`via` 新增形态）；②变异增量杀伤（M6/M7 注入后既有 19 条钉全绿而新钉红）；③结构不可达（既有夹具最多两轮，无「中间轮声明 + 最新轮未提」形态；H3 用真实四轮语料）。⇒ 三态结论 = **闭族**。
 
 ### 4.5 留出验证（D156）
 
