@@ -8,7 +8,7 @@
 
 ```bash
 cd /Users/sunwenzhe/Desktop/atlas
-git log --oneline -3                      # 期望 HEAD = f3fd984（main，未 push）
+git log --oneline -3                      # 期望 HEAD 已含本文件那条 docs(handoff)；main 未 push
 git status --porcelain                    # 期望空
 git worktree list                         # 期望含 /private/tmp/atlas-rfc-20261101-03-20261101-192510
 cd /private/tmp/atlas-rfc-20261101-03-20261101-192510
@@ -18,7 +18,7 @@ git merge-base main HEAD                  # 期望 = main HEAD（⇒ 合并是�
 git rev-list --count main..origin/main 2>/dev/null; git rev-list --count origin/main..main
 ```
 
-已知（写于 2026-11-01 晚）：main = `f3fd984`，比 `origin/main` 领先 **10 个提交，未 push**（用户未授权推送）；分支 = `d24ae6e`（已 rebase 到 main，**未合并**），工作树干净。
+已知（写于 2026-11-01 晚）：main 比 `origin/main` 领先（写这几行时为 12 个提交，**未 push**，用户未授权），确切数以 `git rev-list --count origin/main..main` 为准；分支 = `d24ae6e`（已 rebase 到 main，**未合并**），工作树干净。
 
 ## 2. 这一轮做了什么（都已提交，无需重做）
 
@@ -86,6 +86,17 @@ git rev-list --count main..origin/main 2>/dev/null; git rev-list --count origin/
 - 写计数句时「文件名 + NN 条」要紧邻，别在中间插别的文件名（白名单式正则会误配，本轮踩过）。
 - 只 stage 自己的文件 + `git diff --cached --check`；`git status` 干净再收尾。临时/客户仓的原目录只读，实验一律在 `/tmp` 副本或 worktree。
 
-## 7. 可直接粘给新窗口的开场指令
+## 7. 可直接粘给新窗口的开场指令（**含全部剩余项，按顺序执行**）
 
-> 接手 Atlas（`/Users/sunwenzhe/Desktop/atlas`）。先读 `research/2026-11-01-handoff-next-window.md`，按它 §1 核对现场，然后只做 §3 的第 3 步：派一轮**只读**第三轮复核（范围只看 B1 批级旁路 / B2 逐条取舍是否放宽了重复指纹口径 / M100 内核级钉子在门册里的表述），复核前确认 `git status` 干净、复核后再看一次（评审跑台账会生成 `closure.json`）。第 1 步全量复跑可选、第 2 步 rebase 已完成、第 4 步合并等我点头。做完把结果和失败原文报我，**不要 push、不要发版、不要合并**。
+> 接手 Atlas（`/Users/sunwenzhe/Desktop/atlas`）。先读 `research/2026-11-01-handoff-next-window.md` 全文，然后按下面顺序把**所有**剩余项做完；每项做完简短汇报，撞到需要授权的地方停下来等我，不要自己猜。
+>
+> 0. **核对现场**：`git log --oneline -3`（main 应已包含本交接文档那条 `docs(handoff)` 提交）、`git status --porcelain` 为空、`git worktree list` 含 `/private/tmp/atlas-rfc-20261101-03-20261101-192510`；分支头应为 `d24ae6e`，`git merge-base main HEAD` 应等于 main HEAD（纯 ff 就绪）。
+> 1. **第三轮只读复核**（派 `【示例】代码审查员`，明确 read-only、scratch 只进 `/tmp`）只看三点：B1 批级缺省签字人的旁路是否真尽（还有没有别处用 `str()`/真值判「有人签了」）、B2 中间轮逐条取舍有没有把「重复指纹」口径放软、M100 内核级钉子在 `shared/gates.md` 的表述会不会让后人误以为 CLI 侧已覆盖。复核前后各跑一次 `git status`：跑 `review_closure.py` 会在被扫的报告目录生成 `closure.json`，那是生成物，别提交。
+> 2. **有 blocker 先修**（同 §2 的路径：改代码 → 配钉子 → 四段变异协议只在 `/tmp` 副本跑 → 契约/门册/锚点/两处 changelog 同步 → 全量 `pytest tests/ -q`）。没 blocker 就报告并**等我点头再** `git merge --ff-only rfc-20261101-03-signer-strictness`，合并后再跑一次全量。
+> 3. **消融批次 03**（协议照 `research/2026-11-01-ablation-real-batch-02.md` §8，快照定位与还原步骤见同文 §1）：① **处置面** —— 挑采用方一条长期挂着的 WARN 实际处置一次（改资产或明确接受），留时间戳与动作，这是 C5 误拦/噪声率的第一个真实分子；② **拦截面** —— 只有某个任务状态真能把门跑红才采，**不造假红**、不做整线束 on/off。每轮跑批前后必须：备份 `.atlas/runs` → 跑 → 截断新增事件行 → 逐文件 sha256 还原 → 复核 `git status` 与受保护树零漂移。成本结论只用同轮占比与配对差值（预热 + 交错 + 轮内顺序轮换），别拿绝对 ms 跨批次讲涨跌。产出 `research/2026-11-XX-ablation-real-batch-03.md`，不落项目名 / 绝对路径 / 业务 case ID。
+> 4. **真实项目重装**（只有要测「重装生效」或发版口径时才做）：三棵采用方工作树都有未提交在途改动，**先 dry-run 并等我点头**。批次 02 已确认 P5-A 在三个快照都生效，所以这条优先级低于 3。
+> 5. **nanwang 遗留**：台账在**克隆**里 —— `/tmp/atlas-impl-review-20261031-204905/nanwang/product/reviews/2026-10-31-impl-review-dashboard-topn/BACKFILL.md`（Atlas 仓内没有 `product/reviews/`，别在错处找；`/tmp` 被清就重新克隆装配）。待办：r4 与 scan 补审未经独立复审（4 轮上限已升级登记）、r1 剩 10 条 Minor 未处置、2 条 scan 项延后、克隆仓 7 条**改动前就红**的基线测试。
+> 6. **弱点留出盲区**（`project-weakness-heldout-loop`）：「触发靠自述可被逃」目前只靠独立评审手工对照 —— 先做机制盘点再决定要不要加判据，别一上来建硬门。
+> 7. **P3 消融事务工具**（设计文档 §7 的 P3）：把「物理摘除只在隔离副本」这套手工流程工具化 + 「消融残留」门以 WARN 出生；需 RFC + 坏输入测试 + M 钉，走应然链（方案 → 只读评审 → 主审抽查 → 用户确认）。
+>
+> **需要我说「可以」才动的四件事**：合并、push、发版、真实项目重装。其余（读、跑只读门禁、在 `/tmp` 副本注入与还原、写 `research/` 留痕并本地 commit）可自主连续做完。全程纪律：证据必须真跑；对称断言配反向夹具；M 号引用带所属测试文件；改行为同步契约 / `shared/gates.md` 计数 / `DESIGN.md` / 两处 changelog / `docs/map` 锚点与行数（一致性门会咬）；不要用 `git stash` 复现；只 stage 自己的文件 + `git diff --cached --check`；采用方与客户原目录只读。
