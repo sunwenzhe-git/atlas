@@ -5,13 +5,18 @@
 覆盖：<2 轮 SKIP / carried / unaccounted WARN / resolves 取证 / 缺取证 /
 pre_existing / Major intentional / Critical intentional / unknown resolves /
 重复与坏形状 / 无指纹回退 / 单元文件错位 / 缺根报告 / prior Critical 降级 /
-孤儿单元文件。
+孤儿单元文件 / **中间轮关闭跨轮持久**（resolves@rN、re-reported-closed@rN、
+更晚又 open 作废、轮次倒挂不作数、缺取证不作数、Critical intentional 不作数、
+冗余声明进 warnings）/ **--emit-skeleton 义务骨架**。
 
 变异证明（编号属本文件）：M1 摘掉 unaccounted 收集 ⇒ `test_unaccounted_warns` 红；
 M2 把缺取证的 resolves 当已关闭 ⇒ `test_resolves_without_evidence_warns` 红；
 M3 把 Critical 的 intentional/ignored 当关闭 ⇒ `test_critical_intentional_resolve_warns` 红；
 M4 关闭判定改回按新一轮级别 ⇒ `test_prior_critical_downgraded_is_not_closed` 红；
-M5 孤儿文件重新静默跳过 ⇒ `test_orphan_unit_file_warns` 红。
+M5 孤儿文件重新静默跳过 ⇒ `test_orphan_unit_file_warns` 红；
+M6 只认最新轮证据（摘掉中间轮）⇒ `test_intermediate_resolves_persists_to_later_rounds` 等三条红；
+M7 去掉「最后一次证据」判据（轮次单调与 open 重置失效）⇒ 重置与倒挂两条红；
+M8 骨架不写文件 ⇒ `test_emit_skeleton_lists_unaccounted` 红。
 """
 from __future__ import annotations
 
@@ -35,14 +40,16 @@ def finding(fp: str, *, level: str = "Critical", target: str = "a.py:1",
 
 
 def write_report(root: Path, rounds: dict[int, list[dict]], resolves=None,
-                 unit: str = "U") -> Path:
+                 unit: str = "U", declares: dict[int, list[dict]] | None = None) -> Path:
     d = root / "report"
     (d / "findings").mkdir(parents=True, exist_ok=True)
     latest = max(rounds)
     for rnd, checks in rounds.items():
+        data = {"unit": unit, "round": rnd, "checks": checks, "other": []}
+        if declares and rnd in declares:
+            data["resolves"] = declares[rnd]
         (d / "findings" / f"{unit}.r{rnd}.json").write_text(
-            json.dumps({"unit": unit, "round": rnd, "checks": checks, "other": []},
-                       ensure_ascii=False), encoding="utf-8")
+            json.dumps(data, ensure_ascii=False), encoding="utf-8")
     data = {"unit": unit, "round": latest, "checks": rounds[latest], "other": []}
     if resolves is not None:
         data["resolves"] = resolves
@@ -50,9 +57,9 @@ def write_report(root: Path, rounds: dict[int, list[dict]], resolves=None,
     return d
 
 
-def run(d: Path) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, str(SCRIPT), "--dir", str(d)],
-                          capture_output=True, text=True, timeout=120)
+def run(d: Path, extra: list[str] | None = None) -> subprocess.CompletedProcess:
+    cmd = [sys.executable, str(SCRIPT), "--dir", str(d)] + (extra or [])
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
 
 def closure(d: Path) -> dict:
@@ -269,3 +276,116 @@ def test_orphan_unit_file_warns() -> None:
         c = closure(d)
         assert c["status"] == "WARN" and len(c["warnings"]) == 1
         assert "OTHER-REQ.r1.json" in c["warnings"][0]
+
+
+# ── 2026-11-01 RFC-20261101-01 D5-a：跨轮关闭持久化 ────────────────────────────────
+def fixed_decl(fp: str, **kw) -> dict:
+    entry = {"fingerprint": fp, "status": "fixed", "by": "lead", "evidence": "test green"}
+    entry.update(kw)
+    return entry
+
+
+def test_intermediate_resolves_persists_to_later_rounds() -> None:
+    """M6：中间轮正式关闭的项，后续轮不得再要求交代（关闭是历史事实，不靠每轮重贴）。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A", level="Major")], 2: [], 3: [finding("B")]},
+                         declares={2: [fixed_decl("A")]})
+        p = run(d)
+        assert p.returncode == 0 and "PASS" in p.stdout, p.stdout
+        c = closure(d)
+        assert c["status"] == "PASS" and c["unaccounted"] == []
+        assert len(c["resolved"]) == 1
+        assert c["resolved"][0]["via"] == "resolves@r2"
+        assert c["resolved"][0]["declared_in_round"] == 2
+
+
+def test_intermediate_rereported_closure_persists() -> None:
+    """中间轮同指纹重报并带签字取证关闭 ⇒ 同样算历史事实（via=re-reported-closed@rN）。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {
+            1: [finding("A", level="Major")],
+            2: [finding("A", level="Major", disposition="fixed", disposition_by="lead",
+                        disposition_evidence="green")],
+            3: [finding("B")],
+        })
+        p = run(d)
+        assert p.returncode == 0 and "PASS" in p.stdout, p.stdout
+        c = closure(d)
+        assert c["resolved"][0]["via"] == "re-reported-closed@r2"
+
+
+def test_reopen_after_intermediate_close_is_unaccounted() -> None:
+    """M7：关过之后更晚一轮又 open ⇒ 早先关闭不作数（重置回未交代）。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {
+            1: [finding("A", level="Major")], 2: [],
+            3: [finding("A", level="Major")], 4: [finding("B")],
+        }, declares={2: [fixed_decl("A")]})
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        c = closure(d)
+        assert [u["fingerprint"] for u in c["unaccounted"]] == ["A"]
+
+
+def test_declare_earlier_than_obligation_does_not_count() -> None:
+    """M7：轮次单调 —— r1 的声明关不掉 r2 才出现的义务。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [], 2: [finding("A", level="Major")], 3: [finding("B")]},
+                         declares={1: [fixed_decl("A")]})
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        assert [u["fingerprint"] for u in closure(d)["unaccounted"]] == ["A"]
+
+
+def test_intermediate_close_without_evidence_does_not_count() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A", level="Major")], 2: [], 3: [finding("B")]},
+                         declares={2: [{"fingerprint": "A", "status": "fixed"}]})
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        assert [u["fingerprint"] for u in closure(d)["unaccounted"]] == ["A"]
+
+
+def test_intermediate_critical_intentional_does_not_count() -> None:
+    """Critical 不因中间轮的 intentional/ignored 而关闭（与最新轮同一判据）。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A")], 2: [], 3: [finding("B")]},
+                         declares={2: [{"fingerprint": "A", "status": "intentional"}]})
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        assert [u["fingerprint"] for u in closure(d)["unaccounted"]] == ["A"]
+
+
+def test_stale_intermediate_declare_warns_but_not_loudly() -> None:
+    """匹配不到义务的历史声明进 warnings（可见），但不额外抬状态。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A", level="Major")], 2: [], 3: [finding("B")]},
+                         declares={2: [fixed_decl("A"), fixed_decl("GHOST")]})
+        p = run(d)
+        assert p.returncode == 0 and "PASS" in p.stdout, p.stdout
+        c = closure(d)
+        assert c["status"] == "PASS" and len(c["warnings"]) == 1
+        assert "GHOST" in c["warnings"][0]
+
+
+def test_intermediate_declare_bad_shape_fails() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A", level="Major")], 2: [], 3: [finding("B")]},
+                         declares={2: [{"fingerprint": "A", "status": "done"}]})
+        p = run(d)
+        assert p.returncode == 2 and "status" in p.stderr, p.stderr
+
+
+def test_emit_skeleton_lists_unaccounted() -> None:
+    """M8：义务骨架 —— 指纹/轮次/定位预填，status/by/evidence 待填。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A", level="Major")], 2: [finding("B")]})
+        out = Path(td) / "skeleton.json"
+        p = run(d, ["--emit-skeleton", str(out)])
+        assert p.returncode == 0 and "骨架" in p.stdout, p.stdout
+        sk = json.loads(out.read_text(encoding="utf-8"))
+        assert sk["by"] == "" and len(sk["resolves"]) == 1
+        entry = sk["resolves"][0]
+        assert entry["fingerprint"] == "A" and entry["status"] == ""
+        assert entry["prior_round"] == 1 and entry["target"]
+        assert entry["by"] == "" and entry["evidence"] == ""

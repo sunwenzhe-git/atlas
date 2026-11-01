@@ -91,6 +91,39 @@ def _parse_paths(value: str | None) -> list[str]:
     return review_policy.normalize_paths([p for p in value.split(",") if p.strip()])
 
 
+def load_resolves(path_str: str) -> list[dict]:
+    """读 `--resolves` 文件：`[...]` 或 `{"by": 缺省签字人, "resolves": [...]}`。
+
+    形状判据单源在 `review_policy.resolves_shape_errors`（与 `review_closure.py` 同一套）；
+    语义（能不能算关闭、对上哪条义务）归 `review_closure.py`，本器不判。
+    """
+    src = Path(path_str)
+    try:
+        raw = json.loads(src.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise SystemExit(die(f"读 --resolves {src} 失败：{e}"))
+    default_by = ""
+    if isinstance(raw, dict):
+        default_by = str(raw.get("by") or "").strip()
+        entries = raw.get("resolves")
+    elif isinstance(raw, list):
+        entries = raw
+    else:
+        raise SystemExit(die("--resolves 文件必须是数组或 {by, resolves} 对象"))
+    if not entries:
+        raise SystemExit(die("--resolves 文件里没有任何声明（不给就不写该键）"))
+    errs = review_policy.resolves_shape_errors(entries, "resolves")
+    if errs:
+        raise SystemExit(die(errs[0]))
+    out: list[dict] = []
+    for item in entries:
+        entry = dict(item)
+        if not str(entry.get("by") or "").strip() and default_by:
+            entry["by"] = default_by          # 整批缺省签字人继承（真实手写实测逐条重复 13 次）
+        out.append(entry)
+    return out
+
+
 def convert(payload: dict) -> tuple[list[dict], list[dict], int, bool, list[dict], dict]:
     """returns (checks, other, reviewed, budget_exceeded, warnings, coverage)"""
     summary = payload.get("summary")
@@ -141,6 +174,10 @@ def convert(payload: dict) -> tuple[list[dict], list[dict], int, bool, list[dict
             raise SystemExit(die("CLI coverage.completed 为空且无 findings —— 没有发生审查，拒绝产出"))
     else:
         reviewed = summary["files_reviewed"]
+        # 无 coverage ⇒ M 只剩自评（`ocr scan` 通道就不产 coverage），点名而不静默
+        warnings.append({"file": "<coverage>", "type": "coverage",
+                         "message": "无 manifest.coverage ⇒ 实审数取 CLI 自评 "
+                                    "summary.files_reviewed（无权威，M 可被高估）"})
         if cli_status == "failed" and not checks and not other:
             raise SystemExit(die("CLI status=failed 且无 findings —— 没有发生审查，拒绝产出"))
     return checks, other, reviewed, bool(summary.get("budget_exceeded")), warnings, cov
@@ -165,6 +202,7 @@ def main() -> int:
     ap.add_argument("--base-sha", help="差量评审对比基线 HEAD SHA")
     ap.add_argument("--head-sha", help="差量评审的止点 SHA（v3 delta 必填；不得用 --to 兼取）")
     ap.add_argument("--reviewed-files", help="逗号分隔的实际审阅文件列表（v3 delta 无 coverage 时必填）")
+    ap.add_argument("--resolves", help="跨轮关闭声明文件（[...] 或 {by, resolves}）；语义归 review_closure")
     args = ap.parse_args()
     root = Path(args.root).resolve()
     schema_version = args.schema_version if args.schema_version is not None else (
@@ -196,6 +234,8 @@ def main() -> int:
     except (OSError, json.JSONDecodeError) as e:
         return die(f"读输入 {src} 失败：{e}")
     checks, other, reviewed, budget, warnings, cov = convert(payload)
+    # 声明在落盘前读完：形状错就不留半截产物
+    resolves_entries = load_resolves(args.resolves) if args.resolves else []
     cli_status = cov["cli_status"]
     selected_files = cov["selected"]
     failed_files = cov["failed"]
@@ -256,6 +296,8 @@ def main() -> int:
         review["reused_files"] = reused_files
     if args.escalate_to:
         review["escalation"] = {"to": args.escalate_to, "reason": args.escalate_reason}
+    if resolves_entries:
+        review["resolves"] = resolves_entries
     if args.delta_only:
         review["delta_only"] = True
         if args.base_sha:
@@ -281,6 +323,12 @@ def main() -> int:
     lines += [f"  - 复用文件：`{p}`" for p in reused_files]
     lines += [f"  - `{w.get('file', '?')}` [{w.get('type', '?')}] {w.get('message', '')}"
               for w in warnings]
+    if args.escalate_to:
+        lines += [f"- **升级复议（round ≥ {args.round} 收敛上限）**：→ `{args.escalate_to}`："
+                  f"{args.escalate_reason}"]
+    if resolves_entries:
+        lines += [f"- 跨轮关闭声明：{len(resolves_entries)} 条（`resolves`，由 "
+                  f"`review_closure.py` 对账；非门，不改变本报告状态）"]
     if args.delta_only:
         all_delta = delta_issues + delta_notes
         lines += [f"- delta：base `{args.base_sha or '—'}` → head `{head_sha or '—'}`；"

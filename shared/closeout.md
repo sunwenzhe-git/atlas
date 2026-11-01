@@ -120,7 +120,7 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
   3. `<cli> review --audience agent --format json --output <报告目录>/cli.json --background-file <bg> --from main --to <分支>`（CLI 名取 `impl_review.cli`）；
   4. `python3 .atlas/scripts/cli_review_convert.py --input <报告目录>/cli.json --out <报告目录> --unit <需求ID> --round <N> --expected-files <preview 的 Will review 数>`；差量复审（r2+）追加 `--delta-only --base-sha <r1-head> --head-sha <修复后 head>`；`reviewed_files` 默认取 CLI `manifest.coverage.completed`，无 coverage 时用 `--reviewed-files a,b,c`（v3 delta 缺 `head_sha`/`reviewed_files` 拒绝产出）；
   5. `python3 .atlas/scripts/validate_review_report.py --dir <报告目录>`（报告形态 + 应审/实审对账门，2026-10-06 起；FAIL ⇒ 修复产出侧后重出，不得带病收口）。
-  6. `python3 .atlas/scripts/review_closure.py --dir <报告目录>`（D5 跨轮闭环 observer：prior open Critical/Major 未 carried/resolves ⇒ WARN；跨轮必须同 `--unit`，否则孤儿文件 WARN；<2 轮 SKIP；不阻断；不替代步骤 5）。
+  6. `python3 .atlas/scripts/review_closure.py --dir <报告目录> [--emit-skeleton <file>]`（D5 跨轮闭环 observer：prior open Critical/Major 未 carried/resolves ⇒ WARN；关闭按该指纹最后一次证据判，中间轮关过不必重贴；跨轮必须同 `--unit`，否则孤儿文件 WARN；<2 轮 SKIP；不阻断；不替代步骤 5。待填声明用 `--emit-skeleton` 出骨架，填完经转换器 `--resolves` 落盘）。
 - **报告落点**：`product/reviews/<日期>-impl-review-<范围>/`（`cli.json` 留档为输入侧证据）。
 - **门禁**：有 `Critical` ⇒ 域不收口，修复回流 Trellis Execute、改完重跑（round +1）；`M < N` ⇒ 查静默跳过；finding 判明「AC / 断言本身错」⇒ 回退环改判 `prd` / `e2e` 入 backfill 队列。
 

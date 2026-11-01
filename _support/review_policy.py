@@ -13,8 +13,12 @@ import re
 
 LEVELS = ("Critical", "Major", "Minor")
 DISPOSITIONS = ("open", "fixed", "false_positive", "intentional", "ignored")
+# `resolves` 声明只接受「关闭」四类（open 不是关闭）；取证面 = fixed / false_positive
+RESOLVES_STATUSES = ("fixed", "false_positive", "intentional", "ignored")
+RESOLVES_EVIDENCE_REQUIRED = ("fixed", "false_positive")
 VERIFICATION_STATUSES = ("confirmed", "rejected", "inconclusive")
-CLI_STATUSES = ("complete", "completed", "partial", "failed", "skipped", "unknown")
+# `success` 是 `ocr scan`（整文件补审通道）的完成态：与 review 通道的 `complete` 同义，两家词表不同源
+CLI_STATUSES = ("complete", "completed", "success", "partial", "failed", "skipped", "unknown")
 
 _LINE_STRIP_RE = re.compile(r":\d+(?:-\d+)?$")
 
@@ -181,6 +185,36 @@ def delta_notes(data: dict) -> list[str]:
         if not str(data.get("head_sha") or "").strip():
             return ["v2 delta 缺 head_sha（兼容模式，仅提示，不改变 report status）"]
     return []
+
+
+def resolves_shape_errors(raw: object, where: str = "resolves") -> list[str]:
+    """`resolves` 声明列表的形状判据（单源）：调用方决定是 exit 2 还是记错。
+
+    语义判定（取证、Critical 是否可豁免、匹配哪条义务）不在此处 —— 归 `review_closure.py`。
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        return [f"{where} 必须为数组"]
+    errs: list[str] = []
+    seen: set[str] = set()
+    for i, item in enumerate(raw):
+        label = f"{where}[{i}]"
+        if not isinstance(item, dict):
+            errs.append(f"{label} 必须为对象")
+            continue
+        fp = item.get("fingerprint")
+        if not (isinstance(fp, str) and fp.strip()):
+            errs.append(f"{label}.fingerprint 必须为非空字符串")
+        elif fp in seen:
+            errs.append(f"{where} 出现重复 fingerprint：{fp}")
+        else:
+            seen.add(fp)
+        if item.get("status") not in RESOLVES_STATUSES:
+            errs.append(f"{label}.status={item.get('status')!r} 不在闭集 {RESOLVES_STATUSES}")
+        if "round" in item and (not isinstance(item["round"], int) or item["round"] < 1):
+            errs.append(f"{label}.round 必须为 ≥1 的整数")
+    return errs
 
 
 def validate_v2_finding(c: dict, idx: int) -> list[str]:

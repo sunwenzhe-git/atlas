@@ -3,7 +3,13 @@
 
 每条用例 = 一个「喂坏输入必红 / 喂好输入必绿」的证明：
 未知严重度 / 缺实审数 / 缺应审口径 / 覆盖旧轮 ⇒ 各自 exit 2（响亮，不静默）；
-Critical ⇒ exit 1 + FAIL；M<N ⇒ WARN；other 不计门禁；产物三件形态。
+Critical ⇒ exit 1 + FAIL；M<N ⇒ WARN；other 不计门禁；产物三件形态；
+delta v3（head_sha / reviewed_files / selected / target 成员）；
+`--resolves` 两形态与坏形状（拒绝且不留半截产物）；README 渲染升级复议与跨轮声明条数；
+`ocr scan` 的 `success` 完成态；无 coverage ⇒ 点名「实审数取自评」。
+变异证明（编号属本文件）：**M42** 摘 `resolves` 落键 / **M43** 无 coverage 不点名 /
+**M44** README 不渲染 ⇒ 各自红；**M45**（`_support/review_policy.py` 摘 `success` 词表）
+⇒ 本文件与 `test_review_report.py` 各红一条。
 """
 from __future__ import annotations
 
@@ -529,3 +535,97 @@ def test_delta_v3_selected_empty_warns(tmp_path: Path) -> None:
     assert any("selected_files" in w for w in review["delta_warnings"])
     assert review["status"] == "WARN"
 
+
+
+# ── 2026-11-01 RFC-20261101-01：--resolves 输入、scan 词表、无 coverage 点名、README ─────
+def _write(tmp_path: Path, name: str, content) -> str:
+    p = tmp_path / name
+    p.write_text(json.dumps(content, ensure_ascii=False), encoding="utf-8")
+    return str(p)
+
+
+def test_resolves_array_form(tmp_path: Path) -> None:
+    """M42：`--resolves` 数组形态原样落 `review.json.resolves`（语义留给 review_closure）。"""
+    src = _write(tmp_path, "resolves.json",
+                 [{"fingerprint": "A", "status": "fixed", "by": "lead", "evidence": "green"}])
+    payload = ok_payload([], files_reviewed=1, coverage=coverage(completed=("src/a.ts",)))
+    r = run(tmp_path, payload, extra=["--expected-files", "1", "--resolves", src])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert review["resolves"] == [{"fingerprint": "A", "status": "fixed", "by": "lead",
+                                   "evidence": "green"}]
+    assert review["status"] == "PASS"  # 声明不改变本报告状态（非门）
+
+
+def test_resolves_object_form_inherits_default_signer(tmp_path: Path) -> None:
+    src = _write(tmp_path, "resolves.json", {
+        "by": "lead",
+        "resolves": [{"fingerprint": "A", "status": "fixed", "evidence": "green"},
+                     {"fingerprint": "B", "status": "false_positive", "by": "other",
+                      "evidence": "e"}],
+    })
+    payload = ok_payload([], files_reviewed=1, coverage=coverage(completed=("src/a.ts",)))
+    r = run(tmp_path, payload, extra=["--expected-files", "1", "--resolves", src])
+    assert r.returncode == 0, r.stderr
+    entries = _review(tmp_path)["resolves"]
+    assert entries[0]["by"] == "lead" and entries[1]["by"] == "other"
+
+
+def test_resolves_bad_shape_refused(tmp_path: Path) -> None:
+    payload = ok_payload([], files_reviewed=1, coverage=coverage(completed=("src/a.ts",)))
+    for name, content, needle in (
+        ("r1.json", "x", "--resolves"),
+        ("r2.json", [], "没有任何声明"),
+        ("r3.json", [{"fingerprint": "A", "status": "done"}], "status"),
+        ("r4.json", [{"fingerprint": "", "status": "fixed"}], "fingerprint"),
+        ("r5.json", [{"fingerprint": "A", "status": "fixed", "by": "l", "evidence": "e"},
+                     {"fingerprint": "A", "status": "fixed", "by": "l", "evidence": "e"}], "重复"),
+    ):
+        src = _write(tmp_path, name, content)
+        r = run(tmp_path, payload, extra=["--expected-files", "1", "--resolves", src])
+        assert r.returncode != 0 and needle in r.stderr, (name, r.stderr)
+
+
+def test_resolves_bad_shape_writes_nothing(tmp_path: Path) -> None:
+    """坏声明必须在落盘前拒绝 —— 不留半截产物（同 (unit, round) 不得覆盖会挡住重跑）。"""
+    src = _write(tmp_path, "resolves.json", [{"fingerprint": "A", "status": "nope"}])
+    payload = ok_payload([], files_reviewed=1, coverage=coverage(completed=("src/a.ts",)))
+    r = run(tmp_path, payload, extra=["--expected-files", "1", "--resolves", src])
+    assert r.returncode != 0, r.stderr
+    assert not (tmp_path / "report" / "review.json").exists()
+
+
+def test_scan_success_status_recorded_faithfully(tmp_path: Path) -> None:
+    """D5-c：`ocr scan` 的 `status="success"` 是完成态，不再假记 unknown、也不抬下限。"""
+    payload = ok_payload([], files_reviewed=1, status="success",
+                         coverage=coverage(completed=("src/a.ts",)))
+    r = run(tmp_path, payload, extra=["--expected-files", "1"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert review["cli_status"] == "success" and review["status"] == "PASS"
+    assert not any("未知 CLI status" in w for w in review["cli_warnings"])
+
+
+def test_missing_coverage_names_self_reported_m(tmp_path: Path) -> None:
+    """M43：无 coverage ⇒ 点名「M 取自评、可被高估」，但只点名不改状态。"""
+    r = run(tmp_path, ok_payload([], files_reviewed=1), extra=["--expected-files", "1"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert any("无 manifest.coverage" in w and "自评" in w for w in review["cli_warnings"])
+    assert review["status"] == "PASS"
+    readme = (tmp_path / "report" / "README.md").read_text(encoding="utf-8")
+    assert "无 manifest.coverage" in readme
+
+
+def test_readme_renders_escalation_and_resolves(tmp_path: Path) -> None:
+    """M44：4 轮上限升级复议与跨轮声明必须在人读的 README 里可见。"""
+    src = _write(tmp_path, "resolves.json",
+                 [{"fingerprint": "A", "status": "fixed", "by": "lead", "evidence": "green"}])
+    payload = ok_payload([], files_reviewed=1, coverage=coverage(completed=("src/a.ts",)))
+    r = run(tmp_path, payload, extra=["--expected-files", "1", "--resolves", src,
+                                      "--escalate-to", "human-owner",
+                                      "--escalate-reason", "达到收敛上限需拍板"])
+    assert r.returncode == 0, r.stderr
+    readme = (tmp_path / "report" / "README.md").read_text(encoding="utf-8")
+    assert "升级复议" in readme and "human-owner" in readme and "达到收敛上限需拍板" in readme
+    assert "跨轮关闭声明：1 条" in readme
