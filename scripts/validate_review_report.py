@@ -148,8 +148,8 @@ def validate_report(d: Path) -> Result:
     exec_val = data.get("executed")
     delta_issues = review_policy.delta_warnings(data, checks, other)
     delta_notes = review_policy.delta_notes(data)
-    warn_floor = (data.get("budget_exceeded") is True) or (
-        _is_int(exp) and _is_int(rev) and rev < exp) or (exec_val is False) or review_policy.cli_warn_floor(data) or bool(delta_issues)
+    warn_floor = (data.get("budget_exceeded") is True) or review_policy.count_floor(rev, exp) or (
+        exec_val is False) or review_policy.cli_warn_floor(data) or bool(delta_issues)
     expect = review_policy.calculate_status(checks, warn_floor=warn_floor,
                                             schema_version=schema_version)
     st, ok = data.get("status"), data.get("ok")

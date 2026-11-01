@@ -77,14 +77,15 @@ def has_evidence(check: dict) -> bool:
 def state_of(check: dict, obligation_level: str | None = None) -> str:
     """open / closed；Critical 的 intentional/ignored 不视为关闭（仍阻断）。
 
-    `obligation_level` 传入**上一轮**该指纹的级别：闭环义务按最严的级别判，否则
-    「新一轮把 Critical 降级成 Major + intentional（无签字）」即可绕开签字取证要求。
+    级别取 `obligation_level`（该问题在**所有出现里最严的一档**）与本条 `level` 的
+    较严者：只按义务首现级别判 ⇒ `Major 升级为 Critical` 一侧可免签关掉；只按本轮级别判
+    ⇒ `Critical 降级为 Major` 一侧可免签关掉（`43dca7f` 修的是后者，本批补上前者）。
     """
     disp = str(check.get("disposition") or "").strip()
     if disp in EVIDENCE_REQUIRED:
         return "closed" if has_evidence(check) else "open"
     if disp in ("intentional", "ignored"):
-        level = obligation_level or check.get("level")
+        level = review_policy.worst_level(obligation_level, check.get("level"))
         return "closed" if level != "Critical" else "open"
     return "open"
 
@@ -132,17 +133,25 @@ def load_prior_rounds(report_dir: Path, unit: str,
     return sorted(rounds, key=lambda item: item[0]), orphans
 
 
-def round_declares(path: Path, data: dict) -> list[dict]:
-    """某一轮文件里的 `resolves` 声明：形状错 ⇒ exit 2（判据单源在 review_policy）。"""
+def round_declares(path: Path, data: dict) -> tuple[list[dict], list[str]]:
+    """某一轮文件里的 `resolves` 声明 + 形状错误列表。
+
+    中间轮**不因坏形状而 exit 2**：`(unit, round)` 文件按契约不得覆盖，历史里一个写歪的
+    `status` 会把闭环永久钉死。形状错 ⇒ 该条不作关闭证据 + 记入 warnings 并抬 WARN
+    （响亮但不阻断）。最新轮仍走 exit 2（那是操作者本轮自己要落的声明）。
+    """
     raw = data.get("resolves")
-    errs = review_policy.resolves_shape_errors(raw, f"{path} 的 resolves")
+    errs = review_policy.resolves_shape_errors(raw, f"{path.name} 的 resolves")
     if errs:
-        raise SystemExit(die(errs[0]))
-    return list(raw or [])
+        return [], errs
+    return list(raw or []), []
 
 
 def declares_close(entry: dict, obligation_level: str | None) -> bool:
-    """一条 `resolves` 声明是否构成关闭：取证要求 + Critical 不接受 intentional/ignored（按义务级别）。"""
+    """一条 `resolves` 声明是否构成关闭：取证要求 + Critical 不接受 intentional/ignored。
+
+    `obligation_level` 是义务在**所有出现里最严的一档**（见 `worst_level`），两个方向都挡住。
+    """
     status = entry.get("status")
     if status not in CLOSED:
         return False
@@ -239,6 +248,7 @@ def run(report_dir: Path) -> tuple[str, dict]:
     # fp → [(轮次, 证据类型, 原始条目)]：中间轮的关闭/重开都是证据，闭合按最后一次判
     events: dict[str, list[tuple[int, str, dict]]] = {}
     declared_earlier: set[str] = set()
+    prior_shape_errors: list[str] = []
     for rnd, path, data in prior_rounds:
         checks = data.get("checks")
         if not isinstance(checks, list):
@@ -251,12 +261,19 @@ def run(report_dir: Path) -> tuple[str, dict]:
             if not relevant(c):
                 continue
             if fp in prior_fps:
+                # 同一问题跨轮重复出现是常态（carried 形态）：义务级别取最严的一档，
+                # 否则 Major 升级为 Critical 后可被无签字的 intentional 关掉
+                for known in prior:
+                    if known["fingerprint"] == fp:
+                        known["level"] = review_policy.worst_level(known.get("level"), c.get("level"))
                 warnings.append(f"prior fingerprint 重复：{fp}（round {rnd}）")
                 continue
             prior_fps.add(fp)
             prior.append({"prior_round": rnd, "fingerprint": fp,
                           "level": c.get("level"), "target": c.get("target")})
-        for entry in round_declares(path, data):
+        entries, errs = round_declares(path, data)
+        prior_shape_errors.extend(errs)
+        for entry in entries:
             fp = str(entry.get("fingerprint") or "").strip()
             events.setdefault(fp, []).append((rnd, "resolves", entry))
             declared_earlier.add(fp)
@@ -306,11 +323,13 @@ def run(report_dir: Path) -> tuple[str, dict]:
 
     stale = sorted(declared_earlier - prior_fps)
     if stale:
-        warnings.append(f"中间轮有 {len(stale)} 条 resolves 声明匹配不到义务"
-                        f"（历史冗余或指纹写错）：{stale[:5]}")
+        warnings.append(f"中间轮有 {len(stale)} 个指纹匹配不到任何义务"
+                        f"（历史冗余声明或指纹写错）：{stale[:5]}")
 
-    status = "WARN" if (unaccounted or unknown_resolves or invalid_resolves
-                        or orphans or downgraded) else "PASS"
+    if prior_shape_errors:
+        warnings.extend(f"中间轮 resolves 形状错（该条不作关闭证据）：{e}" for e in prior_shape_errors)
+    status = "WARN" if (unaccounted or unknown_resolves or invalid_resolves or orphans
+                        or downgraded or prior_shape_errors) else "PASS"
     result = {"schema_version": 1, "unit": unit, "latest_round": latest_round,
               "rounds": [r for r, _, _ in prior_rounds] + [latest_round],
               "prior_relevant": len(prior), "carried": carried, "resolved": resolved,

@@ -44,6 +44,7 @@ SEVERITY_MAP = {"critical": "Critical", "high": "Major", "medium": "Major", "low
 KNOWN_CATEGORIES = {"bug", "security", "performance", "maintainability",
                     "test", "style", "documentation"}
 
+ROUND_CAP = 4  # D129 过程收敛上限：达到即必须登记升级复议
 UNIT_RE = re.compile(r"^[\w.-]+$")
 
 STATUS_SUMMARY = {"PASS": "通过", "WARN": "需修改", "FAIL": "需重大调整"}
@@ -214,9 +215,9 @@ def main() -> int:
         return die("round 必须 ≥ 1")
     # 轮次上限属**过程收敛纪律**（D129），与报告形态版本无关 ⇒ 不因 --schema-version 1 而放行
     # （校验器侧仍只对新落盘的 v2 报告判 escalation，避免回扫历史 v1 报告造成永久红门）。
-    if args.round >= 4:
+    if args.round >= ROUND_CAP:
         if not (args.escalate_to and args.escalate_reason):
-            return die(f"round={args.round} 达到 4 轮收敛上限：必须提供 --escalate-to 与 --escalate-reason 登记升级复议")
+            return die(f"round={args.round} 达到 {ROUND_CAP} 轮收敛上限：必须提供 --escalate-to 与 --escalate-reason 登记升级复议")
     if not UNIT_RE.fullmatch(args.unit):
         return die(f"unit「{args.unit}」含文件名不安全字符")
     if bool(args.ref_from) != bool(args.ref_to):
@@ -234,6 +235,10 @@ def main() -> int:
     except (OSError, json.JSONDecodeError) as e:
         return die(f"读输入 {src} 失败：{e}")
     checks, other, reviewed, budget, warnings, cov = convert(payload)
+    # 先判「同 (unit, round) 不得覆盖」再读 --resolves：坏声明不该盖住重复轮次这条报错
+    dup_unit_file = root / args.out / "findings" / f"{args.unit}.r{args.round}.json"
+    if dup_unit_file.is_file():
+        return die(f"{dup_unit_file} 已存在 —— 同 (unit, round) 不得覆盖，round 必须递增（骨架 §4）")
     # 声明在落盘前读完：形状错就不留半截产物
     resolves_entries = load_resolves(args.resolves) if args.resolves else []
     cli_status = cov["cli_status"]
@@ -269,7 +274,7 @@ def main() -> int:
 
     # 状态映射（D129 统一策略内核 + Batch A：CLI partial/failed 只抬 WARN，不降级 Critical
     # + Batch B：delta 数量/成员/selected 对账只抬 WARN）
-    warn_floor = reviewed < expected or budget or review_policy.cli_warn_floor(
+    warn_floor = review_policy.count_floor(reviewed, expected) or budget or review_policy.cli_warn_floor(
         {"cli_status": cli_status, "failed_files": failed_files}) or bool(delta_issues)
     status = review_policy.calculate_status(checks, warn_floor=warn_floor,
                                             schema_version=schema_version)
@@ -278,8 +283,6 @@ def main() -> int:
     findings = outdir / "findings"
     findings.mkdir(parents=True, exist_ok=True)
     unit_file = findings / f"{args.unit}.r{args.round}.json"
-    if unit_file.is_file():
-        return die(f"{unit_file} 已存在 —— 同 (unit, round) 不得覆盖，round 必须递增（骨架 §4）")
 
     review = {"schema_version": schema_version, "ok": status != "FAIL", "status": status,
               "root": str(root), "scope": args.scope, "unit": args.unit, "round": args.round,
@@ -324,8 +327,8 @@ def main() -> int:
     lines += [f"  - `{w.get('file', '?')}` [{w.get('type', '?')}] {w.get('message', '')}"
               for w in warnings]
     if args.escalate_to:
-        lines += [f"- **升级复议（round ≥ {args.round} 收敛上限）**：→ `{args.escalate_to}`："
-                  f"{args.escalate_reason}"]
+        lines += [f"- **升级复议（{ROUND_CAP} 轮收敛上限，本轮 round {args.round}）**："
+                  f"→ `{args.escalate_to}`：{args.escalate_reason}"]
     if resolves_entries:
         lines += [f"- 跨轮关闭声明：{len(resolves_entries)} 条（`resolves`，由 "
                   f"`review_closure.py` 对账；非门，不改变本报告状态）"]

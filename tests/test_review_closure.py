@@ -368,12 +368,16 @@ def test_stale_intermediate_declare_warns_but_not_loudly() -> None:
         assert "GHOST" in c["warnings"][0]
 
 
-def test_intermediate_declare_bad_shape_fails() -> None:
+def test_intermediate_declare_bad_shape_warns_not_blocks() -> None:
+    """S1：中间轮坏形状不 exit 2 —— `(unit, round)` 文件不得覆盖，钉死历史就永久跑不动。"""
     with tempfile.TemporaryDirectory() as td:
         d = write_report(Path(td), {1: [finding("A", level="Major")], 2: [], 3: [finding("B")]},
                          declares={2: [{"fingerprint": "A", "status": "done"}]})
         p = run(d)
-        assert p.returncode == 2 and "status" in p.stderr, p.stderr
+        assert p.returncode == 0, p.stdout + p.stderr
+        c = closure(d)
+        assert c["status"] == "WARN" and any("形状错" in w for w in c["warnings"])
+        assert [x["fingerprint"] for x in c["unaccounted"]] == ["A"]
 
 
 def test_emit_skeleton_lists_unaccounted() -> None:
@@ -389,3 +393,36 @@ def test_emit_skeleton_lists_unaccounted() -> None:
         assert entry["fingerprint"] == "A" and entry["status"] == ""
         assert entry["prior_round"] == 1 and entry["target"]
         assert entry["by"] == "" and entry["evidence"] == ""
+
+
+def test_escalated_obligation_still_requires_signature() -> None:
+    """M9：义务级别取所有出现里最严的一档 —— Major 升级为 Critical 后不得无签字关闭。
+
+    方向与 M4 相反：M4 挡「Critical 降级成 Major + intentional」，本条挡
+    「同指纹在中间轮被升成 Critical，再挂 intentional（无 by / 无取证）」。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {
+            1: [finding("F1", level="Major")],
+            2: [finding("F1", level="Critical", pre_existing=True, disposition="intentional")],
+            3: [finding("F2")],
+        })
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        c = closure(d)
+        assert [x["fingerprint"] for x in c["unaccounted"]] == ["F1"]
+        assert c["resolved"] == []
+
+
+def test_escalation_widening_keeps_legitimate_closure() -> None:
+    """正例对照：升级后的 Critical 只要带签字取证，仍然算关闭（不得把正常收口刷红）。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {
+            1: [finding("F1", level="Major")],
+            2: [finding("F1", level="Critical", disposition="fixed",
+                        disposition_by="lead", disposition_evidence="green")],
+            3: [finding("F2")],
+        })
+        p = run(d)
+        assert p.returncode == 0 and "PASS" in p.stdout, p.stdout
+        assert closure(d)["resolved"][0]["via"] == "re-reported-closed@r2"

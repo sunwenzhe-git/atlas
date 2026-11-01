@@ -20,6 +20,27 @@ VERIFICATION_STATUSES = ("confirmed", "rejected", "inconclusive")
 # `success` 是 `ocr scan`（整文件补审通道）的完成态：与 review 通道的 `complete` 同义，两家词表不同源
 CLI_STATUSES = ("complete", "completed", "success", "partial", "failed", "skipped", "unknown")
 
+
+def worst_level(left: object, right: object) -> str | None:
+    """取更严的一档（`LEVELS` 序：Critical > Major > Minor）；不认识的一侧让另一侧说话。
+
+    闭环「能否算关闭」必须按同一问题**所有出现里最严的级别**判：只看义务首现级别 ⇒
+    `Major 升级为 Critical` 一侧可免签关掉；只看新一轮级别 ⇒ `Critical 降级为 Major`
+    一侧可免签关掉（`43dca7f` 修的是后者）。两个方向都要挡住。
+    """
+    ranks = {lvl: i for i, lvl in enumerate(LEVELS)}
+    rl, rr = ranks.get(left), ranks.get(right)
+    if rl is None:
+        return right if isinstance(right, str) else None
+    if rr is None:
+        return left
+    return left if rl <= rr else right
+
+
+def count_floor(reviewed: object, expected: object) -> bool:
+    """N/M 只要不相等就抬 WARN 下限：M<N 是静默少审，M>N 是多报（无 coverage 时只剩自评）。"""
+    return isinstance(reviewed, int) and isinstance(expected, int) and reviewed != expected
+
 _LINE_STRIP_RE = re.compile(r":\d+(?:-\d+)?$")
 
 
@@ -206,6 +227,8 @@ def resolves_shape_errors(raw: object, where: str = "resolves") -> list[str]:
         fp = item.get("fingerprint")
         if not (isinstance(fp, str) and fp.strip()):
             errs.append(f"{label}.fingerprint 必须为非空字符串")
+        elif fp != fp.strip():
+            errs.append(f"{label}.fingerprint 带首尾空白（先规范化再声明，不猜）")
         elif fp in seen:
             errs.append(f"{where} 出现重复 fingerprint：{fp}")
         else:

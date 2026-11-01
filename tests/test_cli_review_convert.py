@@ -96,7 +96,8 @@ def test_same_unit_round_refuses_overwrite(tmp_path: Path) -> None:
 
 
 def test_other_category_not_gated(tmp_path: Path) -> None:
-    r = run(tmp_path, ok_payload([dict(C, severity="low", category="other")]),
+    # files_reviewed 必须与 --expected-files 相等：M>N 现在同样抬下限（见 test_reviewed_exceeds_expected）
+    r = run(tmp_path, ok_payload([dict(C, severity="low", category="other")], files_reviewed=1),
             extra=["--expected-files", "1"])
     assert r.returncode == 0
     review = json.loads((tmp_path / "report" / "review.json").read_text())
@@ -615,6 +616,18 @@ def test_missing_coverage_names_self_reported_m(tmp_path: Path) -> None:
     assert review["status"] == "PASS"
     readme = (tmp_path / "report" / "README.md").read_text(encoding="utf-8")
     assert "无 manifest.coverage" in readme
+
+
+def test_reviewed_exceeds_expected_warns(tmp_path: Path) -> None:
+    """M46：无 coverage 时 CLI 自评可把 M 报大 —— M>N 同样抬 WARN 下限，不静默通过。"""
+    payload = ok_payload([], files_reviewed=999)
+    r = run(tmp_path, payload, extra=["--expected-files", "2"])
+    assert r.returncode == 0, r.stderr
+    review = _review(tmp_path)
+    assert review["reviewed"] == 999 and review["expected"] == 2
+    assert review["status"] == "WARN" and review["ok"] is True
+    readme = (tmp_path / "report" / "README.md").read_text(encoding="utf-8")
+    assert "应审 2 / 实审 999" in readme
 
 
 def test_readme_renders_escalation_and_resolves(tmp_path: Path) -> None:
