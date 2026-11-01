@@ -230,6 +230,28 @@ python3 scripts/review_closure.py --dir <四轮报告目录> --emit-skeleton /tm
 
 **第三轮后的实况数**：`wc -l` = `review_closure.py` **405**、`cli_review_convert.py` 366、`_support/review_policy.py` 343、`validate_review_report.py` 221、`shared/gates.md` 170；用例 = 37 / 49 / 41（收集 1015，main 987 ⇒ +28）；全量 **1010 passed / 5 skipped**、`test_canonical_consistency` + `test_map_anchors` 17 passed、安装自检 PASS；三轮四段协议日志 `mutation-proof.log` / `-round2.log` / `-round3.log`。
 
+### 4.10 回路验证：`--emit-skeleton` → 填 → `--resolves` 在真实四轮语料上跑通（2026-11-01 补）
+
+前三轮的 `--resolves` 只有夹具级证明（核心通道「未实测」不该写进门册），本条补真数据回路。
+驱动脚本 = `/tmp/atlas-loop-proof.py`，全程在 `/tmp` 副本上跑，真实语料目录零写入。
+
+1. **r3 落盘前**（只放 `findings/…r1.json` + `…r2.json`，`review.json` = r2）⇒
+   `review_closure … WARN rounds 2 prior 12 unaccounted 12`，`--emit-skeleton` 出 **12 条**待填义务
+   （指纹 / 义务所在轮 / 定位预填，`status`/`by`/`evidence` 留空，**不含 `level`**）。
+2. **填骨架**：`status` / `evidence` 取自当初手写的 `resolves-r3.json` 真值（12 条全覆盖，无需新判断），
+   `by` 提到顶层一次（12 条各自留空）⇒ 测继承路径。
+3. **转换器 `--resolves` 落 r3** ⇒ `应审 5 / 实审 5`、`checks 3`，台账 `PASS rounds 3 prior 13 resolved 13 unaccounted 0`。
+4. **r4 三条声明同法**（含 `--escalate-to/--escalate-reason` 满足 4 轮上限）⇒ `PASS 应审 4 / 实审 4`，
+   台账 `PASS rounds 4 prior 16 carried 0 resolved 16 unaccounted 0`。
+5. **与「手注入 review.json」的原结果对账**：16 条 `(fingerprint, via)` 映射**逐条一致**
+   （13× `resolves@r3` + 3× `resolves`），`unaccounted` 均为空 ⇒ 新入口复刻手写路径，不是新行为。
+6. `review.json.resolves` 里 13 条的 `by` 全部等于顶层声明值 ⇒ 继承生效（0 条手写 `by`）。
+
+**回路暴露的一条真实约束（已写进契约 §11，不当 bug 处理）**：声明只在「本轮落盘」这一刻生效 ——
+`(unit, round)` 文件按契约不得覆盖，所以事后补账只能手改 `review.json` 或随下一轮一起给。
+刻意不加「事后追加声明」通道：那会让声明与报告脱钩、无人负责。若真实使用中发现确实需要，
+按 §5 第 5 条另案（候选 = 台账侧 `--resolves-file` 只对本次判定生效、不落报告，代价是留痕分裂）。
+
 ## 5. 开放问题
 
 1. 义务去重目前按「最早出现轮次」锚定（`k` = 第一次未关闭出现的轮）。隔轮重复出现是否该以最近一次为准，
@@ -238,3 +260,4 @@ python3 scripts/review_closure.py --dir <四轮报告目录> --emit-skeleton /tm
    等真有消费方再定。
 3. 第 5 轮（超出上限的复验）如何登记，本批只保证 `--round 5` 仍走「必须登记升级」；「升级后是否要求台账默认 WARN」未定（真实 r4 案例：义务未清但报告 PASS，只有台账红）。
 4. scan 通道的 M 无权威：若将来 OCR 给 scan 也产 coverage，转换器无需改动（`cov["present"]` 自动走权威侧）。
+5. 事后补声明的通道：本批刻意不提供（§4.10）。若真实使用证明「必须能补」，候选是台账侧 `--resolves-file`（只影响本次判定、不落 `review.json`），代价是留痕分裂 ⇒ 需另批拍板。
