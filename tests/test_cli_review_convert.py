@@ -7,9 +7,8 @@ Critical ⇒ exit 1 + FAIL；M<N ⇒ WARN；other 不计门禁；产物三件形
 delta v3（head_sha / reviewed_files / selected / target 成员）；
 `--resolves` 两形态与坏形状（拒绝且不留半截产物）；README 渲染升级复议与跨轮声明条数；
 `ocr scan` 的 `success` 完成态；无 coverage ⇒ 点名「实审数取自评」。
-变异证明（编号属本文件）：**M42** 摘 `resolves` 落键 / **M43** 无 coverage 不点名 /
-**M44** README 不渲染 ⇒ 各自红；**M45**（`_support/review_policy.py` 摘 `success` 词表）
-⇒ 本文件与 `test_review_report.py` 各红一条。
+变异证明（编号属本文件）：**M42** 摘 `resolves` 落键 / **M43** 无 coverage 不点名 / **M46** N/M 下限退回 `M<N` 单边（多报静默通过）/
+**M44** README 不渲染 ⇒ 各自红；**M45**（`_support/review_policy.py` 摘 `success` 词表，编号属本文件）⇒ 本文件与 `test_review_report.py` 各红一条。
 """
 from __future__ import annotations
 
@@ -538,7 +537,7 @@ def test_delta_v3_selected_empty_warns(tmp_path: Path) -> None:
 
 
 
-# ── 2026-11-01 RFC-20261101-01：--resolves 输入、scan 词表、无 coverage 点名、README ─────
+# ── 2026-11-01 RFC-20261101-02：--resolves 输入、scan 词表、无 coverage 点名、README ─────
 def _write(tmp_path: Path, name: str, content) -> str:
     p = tmp_path / name
     p.write_text(json.dumps(content, ensure_ascii=False), encoding="utf-8")

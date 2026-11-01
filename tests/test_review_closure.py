@@ -16,7 +16,12 @@ M4 关闭判定改回按新一轮级别 ⇒ `test_prior_critical_downgraded_is_n
 M5 孤儿文件重新静默跳过 ⇒ `test_orphan_unit_file_warns` 红；
 M6 只认最新轮证据（摘掉中间轮）⇒ `test_intermediate_resolves_persists_to_later_rounds` 等三条红；
 M7 去掉「最后一次证据」判据（轮次单调与 open 重置失效）⇒ 重置与倒挂两条红；
-M8 骨架不写文件 ⇒ `test_emit_skeleton_lists_unaccounted` 红。
+M8 骨架不写文件 ⇒ `test_emit_skeleton_lists_unaccounted` 红；
+M9 级别退回「义务侧覆盖本轮级别」⇒ `test_escalated_obligation_still_requires_signature` 红
+   （`Major` 在中间轮升为 `Critical` + 无签字 `intentional` 不得算已关；正例对照
+   `test_escalation_widening_keeps_legitimate_closure` 保证不刷红正常收口）；
+M10 中间轮坏形状退回 exit 2 ⇒ `test_intermediate_declare_bad_shape_warns_not_blocks` 等三条红
+   （`(unit, round)` 文件不得覆盖 ⇒ 钉死历史就永久跑不动）。
 """
 from __future__ import annotations
 
@@ -278,7 +283,7 @@ def test_orphan_unit_file_warns() -> None:
         assert "OTHER-REQ.r1.json" in c["warnings"][0]
 
 
-# ── 2026-11-01 RFC-20261101-01 D5-a：跨轮关闭持久化 ────────────────────────────────
+# ── 2026-11-01 RFC-20261101-02 D5-a：跨轮关闭持久化 ────────────────────────────────
 def fixed_decl(fp: str, **kw) -> dict:
     entry = {"fingerprint": fp, "status": "fixed", "by": "lead", "evidence": "test green"}
     entry.update(kw)

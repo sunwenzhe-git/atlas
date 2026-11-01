@@ -406,7 +406,7 @@ def test_v3_delta_selected_files_shape_fails() -> None:
         assert p.returncode == 1 and "selected_files" in p.stdout, p.stdout
 
 
-# ── 2026-11-01 RFC-20261101-01：D5-c scan 通道状态词表 ─────────────────────────────
+# ── 2026-11-01 RFC-20261101-02：D5-c scan 通道状态词表 ─────────────────────────────
 def test_cli_status_success_shape_accepted() -> None:
     """`success`（`ocr scan` 完成态）在形态门的 cli_status 闭集内，不判错。"""
     with tempfile.TemporaryDirectory() as td:

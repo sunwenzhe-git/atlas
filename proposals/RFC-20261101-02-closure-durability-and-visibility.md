@@ -1,6 +1,6 @@
 # 跨轮闭环持久化 + 升级可见性 + scan 通道词表（D5-a/b/c）
 
-> 提案编号：RFC-20261101-01
+> 提案编号：RFC-20261101-02
 > 提案作者：@sunwenzhe-git
 > 关联状态：已定案 (Accepted)（用户 2026-11-01 拍板「都按你建议的来」；批次 rfc-20261101-01-closure-durability）
 > 影响范围：脚本工具 (scripts) | 契约 (shared/independent-review.md) | 门册观测面 (shared/gates.md)
