@@ -10,6 +10,9 @@
   - 最新轮同指纹仍在（open）⇒ `carried`（仍可见，不告警）；
   - 最新轮同指纹已带签字+取证关闭，或 `resolves` 声明关闭 ⇒ `resolved`；
   - 二者都没有 ⇒ `unaccounted`，WARN。
+关闭是否成立按**上一轮的级别**从严判：prior Critical 被新一轮降级成 Major 再挂
+`intentional`（无签字取证）不算关闭；即便仍按 open 重报，「Critical 变低级」也单独记 WARN。
+`findings/` 里出现非本 unit 的孤儿文件也判 WARN——跨轮换 unit 名会让闭环义务凭空清零。
 不进入 `atlas_check`，不建 FAIL 门；输入形状错误才 exit 2。
 
 用法：
@@ -65,13 +68,18 @@ def has_evidence(check: dict) -> bool:
         str(check.get("disposition_evidence") or "").strip())
 
 
-def state_of(check: dict) -> str:
-    """open / closed；Critical 的 intentional/ignored 不视为关闭（仍阻断）。"""
+def state_of(check: dict, obligation_level: str | None = None) -> str:
+    """open / closed；Critical 的 intentional/ignored 不视为关闭（仍阻断）。
+
+    `obligation_level` 传入**上一轮**该指纹的级别：闭环义务按最严的级别判，否则
+    「新一轮把 Critical 降级成 Major + intentional（无签字）」即可绕开签字取证要求。
+    """
     disp = str(check.get("disposition") or "").strip()
     if disp in EVIDENCE_REQUIRED:
         return "closed" if has_evidence(check) else "open"
     if disp in ("intentional", "ignored"):
-        return "closed" if check.get("level") != "Critical" else "open"
+        level = obligation_level or check.get("level")
+        return "closed" if level != "Critical" else "open"
     return "open"
 
 
@@ -83,11 +91,18 @@ def relevant(check: dict) -> bool:
     return state_of(check) != "closed"
 
 
-def load_prior_rounds(report_dir: Path, unit: str, latest_round: int) -> list[tuple[int, Path, dict]]:
+def load_prior_rounds(report_dir: Path, unit: str,
+                      latest_round: int) -> tuple[list[tuple[int, Path, dict]], list[str]]:
+    """上一轮单元文件 + **孤儿文件**（`findings/` 里不属于本 unit 的 json）。
+
+    孤儿不得静默跳过：跨轮 `--unit` 改名（或一个目录塞了多个 unit）会让闭环义务凭空清零，
+    正是本器要治的「悄悄变绿」。孤儿 ⇒ 调用侧抬 WARN。
+    """
     findings = report_dir / "findings"
     if not findings.is_dir():
-        return []
+        return [], []
     rounds: list[tuple[int, Path, dict]] = []
+    orphans: list[str] = []
     seen: dict[int, Path] = {}
     for path in sorted(findings.glob("*.json")):
         name = path.stem
@@ -96,6 +111,7 @@ def load_prior_rounds(report_dir: Path, unit: str, latest_round: int) -> list[tu
         elif name.startswith(unit + ".r") and name[len(unit) + 2:].isdigit():
             rnd = int(name[len(unit) + 2:])
         else:
+            orphans.append(path.name)
             continue
         data = load_json(path)
         if str(data.get("unit") or "") not in ("", unit):
@@ -107,7 +123,7 @@ def load_prior_rounds(report_dir: Path, unit: str, latest_round: int) -> list[tu
         seen[rnd] = path
         if rnd < latest_round:
             rounds.append((rnd, path, data))
-    return sorted(rounds, key=lambda item: item[0])
+    return sorted(rounds, key=lambda item: item[0]), orphans
 
 
 def parse_resolves(data: dict, prior_fps: set[str]) -> tuple[list[dict], list[str], list[str]]:
@@ -146,6 +162,20 @@ def parse_resolves(data: dict, prior_fps: set[str]) -> tuple[list[dict], list[st
     return resolved, unknown, invalid
 
 
+def base_result(unit: str, latest_round: int, rounds: list[int],
+                warnings: list[str], status: str) -> dict:
+    return {"schema_version": 1, "unit": unit, "latest_round": latest_round,
+            "rounds": rounds, "prior_relevant": 0,
+            "carried": [], "resolved": [], "unaccounted": [],
+            "level_downgraded": [], "unknown_resolves": [], "invalid_resolves": [],
+            "warnings": warnings, "status": status}
+
+
+def orphan_warning(orphans: list[str]) -> str:
+    return (f"findings/ 有 {len(orphans)} 个非本 unit 的单元文件未纳入闭环"
+            f"（跨轮 unit 改名或一目录多 unit）：{orphans[:5]}")
+
+
 def run(report_dir: Path) -> tuple[str, dict]:
     root = load_json(report_dir / "review.json")
     unit = root.get("unit")
@@ -155,23 +185,20 @@ def run(report_dir: Path) -> tuple[str, dict]:
     if not isinstance(latest_round, int) or latest_round < 1:
         raise SystemExit(die("review.json 缺有效 round"))
     if latest_round < 2:
-        return "SKIP", {"schema_version": 1, "unit": unit, "latest_round": latest_round,
-                        "rounds": [latest_round], "prior_relevant": 0,
-                        "carried": [], "resolved": [], "unaccounted": [],
-                        "unknown_resolves": [], "invalid_resolves": [],
-                        "warnings": ["少于 2 轮，无法做跨轮闭环"], "status": "SKIP"}
+        return "SKIP", base_result(unit, latest_round, [latest_round],
+                                   ["少于 2 轮，无法做跨轮闭环"], "SKIP")
 
-    prior_rounds = load_prior_rounds(report_dir, unit, latest_round)
+    prior_rounds, orphans = load_prior_rounds(report_dir, unit, latest_round)
     if not prior_rounds:
-        return "SKIP", {"schema_version": 1, "unit": unit, "latest_round": latest_round,
-                        "rounds": [latest_round], "prior_relevant": 0,
-                        "carried": [], "resolved": [], "unaccounted": [],
-                        "unknown_resolves": [], "invalid_resolves": [],
-                        "warnings": ["没有上一轮 unit 文件"], "status": "SKIP"}
+        if orphans:
+            return "WARN", base_result(unit, latest_round, [latest_round],
+                                       [orphan_warning(orphans)], "WARN")
+        return "SKIP", base_result(unit, latest_round, [latest_round],
+                                   ["没有上一轮 unit 文件"], "SKIP")
 
     prior: list[dict] = []
     prior_fps: set[str] = set()
-    warnings: list[str] = []
+    warnings: list[str] = [orphan_warning(orphans)] if orphans else []
     for rnd, path, data in prior_rounds:
         checks = data.get("checks")
         if not isinstance(checks, list):
@@ -198,14 +225,21 @@ def run(report_dir: Path) -> tuple[str, dict]:
     carried: list[dict] = []
     resolved: list[dict] = []
     unaccounted: list[dict] = []
+    downgraded: list[dict] = []
     for item in prior:
         fp = item["fingerprint"]
         latest = latest_by_fp.get(fp)
         if latest:
-            if any(state_of(c) == "closed" for c in latest):
+            if any(state_of(c, item.get("level")) == "closed" for c in latest):
                 resolved.append({**item, "via": "re-reported", "status": "closed"})
             else:
                 carried.append(item)
+                if item.get("level") == "Critical" and all(
+                        c.get("level") != "Critical" for c in latest):
+                    downgraded.append({**item, "latest_level": latest[0].get("level")})
+                    warnings.append(
+                        f"prior Critical（round {item['prior_round']} `{item.get('target')}`）"
+                        f"新一轮降级为 {latest[0].get('level')!r} —— 仍按未关闭跟踪")
             continue
         if fp in resolved_by_fp:
             resolve = resolved_by_fp[fp]
@@ -218,11 +252,13 @@ def run(report_dir: Path) -> tuple[str, dict]:
         else:
             unaccounted.append(item)
 
-    status = "WARN" if (unaccounted or unknown_resolves or invalid_resolves) else "PASS"
+    status = "WARN" if (unaccounted or unknown_resolves or invalid_resolves
+                        or orphans or downgraded) else "PASS"
     result = {"schema_version": 1, "unit": unit, "latest_round": latest_round,
               "rounds": [r for r, _, _ in prior_rounds] + [latest_round],
               "prior_relevant": len(prior), "carried": carried, "resolved": resolved,
-              "unaccounted": unaccounted, "unknown_resolves": unknown_resolves,
+              "unaccounted": unaccounted, "level_downgraded": downgraded,
+              "unknown_resolves": unknown_resolves,
               "invalid_resolves": invalid_resolves, "warnings": warnings, "status": status}
     return status, result
 
@@ -241,7 +277,10 @@ def main() -> int:
     print(f"review_closure @ {report_dir}   {status}   rounds {len(result['rounds'])} "
           f"prior {result['prior_relevant']} carried {len(result['carried'])} "
           f"resolved {len(result['resolved'])} unaccounted {len(result['unaccounted'])} "
-          f"unknown {len(result['unknown_resolves'])} invalid {len(result['invalid_resolves'])}")
+          f"unknown {len(result['unknown_resolves'])} invalid {len(result['invalid_resolves'])} "
+          f"warnings {len(result['warnings'])}")
+    for w in result["warnings"]:
+        print(f"  · {w}")
     return 0
 
 

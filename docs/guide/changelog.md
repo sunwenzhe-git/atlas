@@ -16,8 +16,9 @@
 ### 🧭 跨轮 finding 闭环台账（D5，RFC-20261031-02）
 
 * **新增（观察面）**：`scripts/review_closure.py` WARN observer——prior open Critical/Major 未 carried/resolves ⇒ WARN；<2 轮 SKIP；不进 `atlas_check`。
+* **两条防「悄悄变绿」**：关闭与否按**上一轮级别**从严（prior Critical 被降级后挂 `intentional` 不免责，降级本身也 WARN）；`findings/` 里有非本 unit 的孤儿文件 ⇒ WARN（跨轮请保持同一 `--unit`）。
 * **真实报告**：r1/r2 首跑 12 条 prior Major unaccounted；r2-v3 单轮 SKIP。
-* **测试/设计**：`tests/test_review_closure.py` 16 条；`DESIGN.md` D179；契约 §11 / closeout 步骤 10 / gates §4。
+* **测试/设计**：`tests/test_review_closure.py` 19 条（M1–M5）；`DESIGN.md` D179；契约 §11 / closeout 步骤 10 / gates §4。
 
 ## [v0.2.0-beta.25] - 2026-10-31
 

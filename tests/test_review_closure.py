@@ -4,11 +4,14 @@
 夹具 = 报告目录：最新 `review.json` + `findings/<unit>.r<round>.json`。
 覆盖：<2 轮 SKIP / carried / unaccounted WARN / resolves 取证 / 缺取证 /
 pre_existing / Major intentional / Critical intentional / unknown resolves /
-重复与坏形状 / 无指纹回退 / 单元文件错位 / 缺根报告。
+重复与坏形状 / 无指纹回退 / 单元文件错位 / 缺根报告 / prior Critical 降级 /
+孤儿单元文件。
 
-变异证明：M1 摘掉 unaccounted 收集 ⇒ `test_unaccounted_warns` 红；
+变异证明（编号属本文件）：M1 摘掉 unaccounted 收集 ⇒ `test_unaccounted_warns` 红；
 M2 把缺取证的 resolves 当已关闭 ⇒ `test_resolves_without_evidence_warns` 红；
-M3 把 Critical 的 intentional/ignored 当关闭 ⇒ `test_critical_intentional_resolve_warns` 红。
+M3 把 Critical 的 intentional/ignored 当关闭 ⇒ `test_critical_intentional_resolve_warns` 红；
+M4 关闭判定改回按新一轮级别 ⇒ `test_prior_critical_downgraded_is_not_closed` 红；
+M5 孤儿文件重新静默跳过 ⇒ `test_orphan_unit_file_warns` 红。
 """
 from __future__ import annotations
 
@@ -216,3 +219,53 @@ def test_missing_root_fails() -> None:
         (d / "findings" / "U.r1.json").write_text("{}", encoding="utf-8")
         p = run(d)
         assert p.returncode == 2 and "review.json" in p.stderr
+
+
+def test_prior_critical_downgraded_is_not_closed() -> None:
+    """M4：关闭与否按**上一轮级别**判 ⇒ prior Critical 降级成 Major 挂 intentional（无签字）不算关闭。"""
+    with tempfile.TemporaryDirectory() as td:
+        # 变体一：降级 + intentional（无 disposition_by / evidence）
+        d = write_report(Path(td), {
+            1: [finding("A")],
+            2: [finding("A", level="Major", disposition="intentional")],
+        })
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        c = closure(d)
+        assert c["status"] == "WARN" and c["resolved"] == []
+        assert len(c["carried"]) == 1 and len(c["level_downgraded"]) == 1
+        assert "降级" in "".join(c["warnings"])
+
+        # 变体二：仅降级、仍 open ⇒ 仍按未关闭跟踪并 WARN
+        d2 = write_report(Path(td) / "r2", {
+            1: [finding("A")],
+            2: [finding("A", level="Major")],
+        })
+        p2 = run(d2)
+        assert p2.returncode == 0 and "WARN" in p2.stdout, p2.stdout
+        c2 = closure(d2)
+        assert c2["status"] == "WARN" and len(c2["carried"]) == 1
+        assert c2["level_downgraded"][0]["latest_level"] == "Major"
+
+
+def test_prior_critical_rereported_as_critical_passes() -> None:
+    """正例对照：级别未变且仍 open ⇒ carried、PASS（不得把正常重报刷红）。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A")], 2: [finding("A")]})
+        p = run(d)
+        assert p.returncode == 0 and "PASS" in p.stdout, p.stdout
+        assert closure(d)["level_downgraded"] == []
+
+
+def test_orphan_unit_file_warns() -> None:
+    """M5：`findings/` 里的非本 unit 文件不得静默跳过 ⇒ 闭环义务凭空清零要可见。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {2: [finding("B")]})
+        (d / "findings" / "OTHER-REQ.r1.json").write_text(
+            json.dumps({"unit": "OTHER-REQ", "round": 1, "checks": [finding("A")]},
+                       ensure_ascii=False), encoding="utf-8")
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        c = closure(d)
+        assert c["status"] == "WARN" and len(c["warnings"]) == 1
+        assert "OTHER-REQ.r1.json" in c["warnings"][0]

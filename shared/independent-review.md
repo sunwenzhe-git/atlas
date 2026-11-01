@@ -236,6 +236,8 @@ atlas-grill（提炼刺痛代价与致命冲突） → 用户拍板关键抉择
 
 - **触发**：报告目录有 ≥2 轮 `findings/<unit>.r*.json`；`python3 .atlas/scripts/review_closure.py --dir <报告目录>`。
 - **规则**：上一轮未关闭的 `Critical|Major`（`pre_existing` 除外）必须在最新轮同指纹重报（`carried`）或在最新 `review.json.resolves` 声明关闭；否则 `unaccounted` WARN。
+- **级别从严**：是否算关闭按**上一轮的级别**判——prior `Critical` 在新一轮被降级成 `Major` 再挂 `intentional`/`ignored`（无签字取证）**不算关闭**，仍按 `carried` 跟踪；且「Critical 变低级」单独记 WARN（`level_downgraded`），防逐轮洗级别。
+- **孤儿文件**：`findings/` 里出现不属于本 `unit` 的单元文件 ⇒ WARN（跨轮改 `--unit` 名、或一个目录塞多个 unit，都会让闭环义务凭空清零）。
 - **`resolves`**：`[{fingerprint, status, by?, evidence?, round?}]`；`status ∈ {fixed,false_positive,intentional,ignored}`；`fixed`/`false_positive` 必须带 `by`+`evidence`；Critical 只接受 fixed/false_positive；Major 可 intentional/ignored；unknown fingerprint ⇒ WARN；重复/坏形状 ⇒ exit 2。
 - **非门**：WARN observer，不进 `atlas_check`；<2 轮 `SKIP`；`carried` 是「仍可见」，不是关闭；不强制同指纹重报（与 §4「同一问题跨轮不得重复贴」不冲突）。
 

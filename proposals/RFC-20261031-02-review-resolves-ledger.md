@@ -4,7 +4,7 @@
 > 提案作者：@sunwenzhe-git  
 > 关联状态：已定案 (Accepted)（D5 已实现、待合并）  
 > 影响范围：脚本工具 (scripts) | 契约 (shared/independent-review.md) | 门册观测面 (shared/gates.md)  
-> 关联取证：2026-10-31 真实 r1/r2 报告（12 条 prior Major 无交代）+ 16 条夹具
+> 关联取证：2026-10-31 真实 r1/r2 报告（12 条 prior Major 无交代）+ 19 条夹具
 
 ---
 
@@ -38,6 +38,8 @@ rounds 2  prior 12  carried 0  resolved 0  unaccounted 12
   * 不在最新轮，但 `review.json.resolves` 声明关闭 ⇒ `resolved`（via resolves）；
   * 两者都没有 ⇒ `unaccounted` WARN。
 * `resolves` 形状：`[{fingerprint, status, by?, evidence?, round?}]`；`status ∈ {fixed,false_positive,intentional,ignored}`；`fixed`/`false_positive` 必须带 `by`+`evidence`；**Critical 只接受 fixed/false_positive**（intentional/ignored 不算关闭）；Major 可 intentional/ignored。unknown fingerprint ⇒ WARN；重复/坏形状 ⇒ exit 2。
+* **级别从严（修订 R1）**：是否算关闭按**上一轮的级别**判，不按新一轮声明的级别——否则「先把 Critical 降成 Major，再挂 intentional」即可免签。prior Critical 在新一轮不再是 Critical 时，除 `carried` 外另记 `level_downgraded` WARN。
+* **孤儿文件（修订 R2）**：`findings/` 里不属于本 `unit` 的单元文件不得静默跳过 ⇒ WARN。跨轮改 `--unit` 名会让闭环义务凭空清零并退化成 `SKIP`，正是本器要治的形态。
 * 输出：报告目录 `closure.json` + 一行摘要；退出码 0（PASS/WARN/SKIP），2（输入错误）；<2 轮 SKIP。
 * 非门：不进入 `atlas_check`；`shared/closeout.md` 步骤 10 在报告形态门之后手动跑；能力成熟后再议升档。
 
@@ -57,8 +59,8 @@ rounds 2  prior 12  carried 0  resolved 0  unaccounted 12
 
 ## 3. 改动面
 
-- [x] `scripts/review_closure.py`（新增，WARN observer）
-- [x] `tests/test_review_closure.py`（16 条；M1/M2/M3）
+- [x] `scripts/review_closure.py`（新增，WARN observer；288 行）
+- [x] `tests/test_review_closure.py`（19 条；M1–M5）
 - [x] `shared/independent-review.md` §11（新增跨轮闭环契约）
 - [x] `shared/closeout.md` 步骤 10（报告形态门后跑 closure）
 - [x] `shared/gates.md` §4（候选观测面，非门）
@@ -73,15 +75,72 @@ pytest tests/
 python3 tests/test_install_selfcheck.py
 ```
 
-* **结果（2026-10-31）**：D5 测试 **16 passed**；全量 **978 passed, 5 skipped**；安装自检 **PASS**；map **8 passed**；`git diff --check` 干净。
+* **结果（2026-10-31 首版）**：D5 测试 **16 passed**；全量 **978 passed, 5 skipped**；安装自检 **PASS**；map **8 passed**；`git diff --check` 干净。
+* **结果（2026-11-01 修订 R1/R2 后）**：D5 测试 **19 passed**；全量 **981 passed, 5 skipped**；`review_closure.py` 288 行。
 * **真实报告**：r1/r2 → `WARN prior 12 unaccounted 12`；r2-v3 单轮目录 → `SKIP`。
 * **M1/M2/M3 四段协议**：M1 摘掉 unaccounted 收集 ⇒ `test_unaccounted_warns` 红；M2 把缺取证的 resolves 当已关闭 ⇒ `test_resolves_without_evidence_warns` 红；M3 把 Critical 的 intentional/ignored 当关闭 ⇒ `test_critical_intentional_resolve_warns` 红；均 sha256 还原复绿，日志在 `/tmp/atlas-d5-evidence/`。
+* **M4/M5 四段协议（修订后补）**：基线 `19 passed` → 注入 M4（`state_of(c, item.get("level"))` 退回 `state_of(c)`）⇒ `test_prior_critical_downgraded_is_not_closed` 红、18 绿 → 注入 M5（删 `orphans.append(path.name)`）⇒ `test_orphan_unit_file_warns` 红、18 绿 → sha256 `ba4ef58…46cb2c` 逐字节还原 → `19 passed` 复绿。
 
 ### 4.5 留出验证
 
 * 新增观测面，无既有判据可回归；不触发 D156 判据级留出。
 * 外部留出：真实 r1/r2 报告（12 条 prior Major）与单轮 r2-v3 目录（SKIP）均不是测试夹具，作为真实语料验证；夹具只证链路。
 * 反面包：pre_existing、carried、Major intentional、无指纹回退、坏形状各有用例。
+
+### 4.6 只读评审发现的两条静默绕过（2026-11-01 修订）
+
+首版实现有两处可把 D5 的结论「悄悄变绿」，均由只读评审提出、主审在真实代码上复现后修复。
+
+**R1 —— 关闭判定只看新一轮级别 ⇒ 降级即免签。**
+
+`state_of()` 的 Critical 保护读的是**最新轮** `level`，于是 r1 的 open `Critical` 只要在 r2 用同一指纹
+把 `level` 写成 `Major` + `disposition=intentional`（无 `disposition_by`/`disposition_evidence`），
+就被判 `resolved`、整体 `PASS`：
+
+```text
+# 修复前：r1 Critical(FP-A) / r2 同指纹 Major+intentional
+review_closure @ .../d5-verify-b1   PASS   rounds 2 prior 1 carried 0 resolved 1 unaccounted 0
+```
+
+修法：`state_of(check, obligation_level)` 用**上一轮的级别**判关闭（prior Critical 只接受带取证
+的 `fixed`/`false_positive`）；另把「prior Critical 在新一轮不再是 Critical」单独记
+`level_downgraded` + WARN——否则级别可以一轮一轮往下洗而无痕。修复后同一夹具：
+
+```text
+review_closure @ .../d5-verify-b1   WARN   rounds 2 prior 1 carried 1 resolved 0 unaccounted 0 warnings 1
+  · prior Critical（round 1 `a.ts:10-12`）新一轮降级为 'Major' —— 仍按未关闭跟踪
+```
+
+**R2 —— `findings/` 里非本 unit 的文件被静默 `continue` ⇒ 闭环义务凭空清零。**
+
+`load_prior_rounds()` 只认 `<unit>.r<N>.json`，其余文件名一律跳过；而 `--unit` 每轮自由传入。
+r1 用 `REQ-1`、r2 写成 `REQ-1-delta` ⇒ 没有上一轮文件可读 ⇒ **`SKIP`，零告警**，磁盘上那条未关闭
+`Critical` 无人认领：
+
+```text
+# 修复前：findings/REQ-1.r1.json 有 open Critical；review.json unit=REQ-1-delta round=2
+review_closure @ .../d5-verify-b2   SKIP   rounds 1 prior 0 ... unaccounted 0
+```
+
+修法：不匹配本 unit 的文件收进 `orphans`，有孤儿即 WARN（`prior_rounds` 为空时不再退化成 SKIP），
+摘要行打印 `warnings N` 与逐条明细。修复后同一夹具：
+
+```text
+review_closure @ .../d5-verify-b2   WARN   rounds 1 prior 0 ... warnings 1
+  · findings/ 有 1 个非本 unit 的单元文件未纳入闭环（跨轮 unit 改名或一目录多 unit）：['REQ-1.r1.json']
+```
+
+**新增钉子（编号属本文件）**：M4 = 把关闭判定改回按新一轮级别 ⇒ `test_prior_critical_downgraded_is_not_closed` 红；
+M5 = 孤儿文件重新静默跳过 ⇒ `test_orphan_unit_file_warns` 红。四段协议（基线绿 → 注入红 → sha256 逐字节还原 → 复绿）
+日志在 `/tmp/atlas-d5-evidence/`；`test_prior_critical_rereported_as_critical_passes` 为正例对照，防止把正常重报刷红。
+
+**评审提出但未在本批改的（记录理由）**：
+
+* prior `level` 非闭集（小写/缺失）会放过义务 —— 形态门 `validate_review_report` 对 `level` 闭集已经 FAIL，属既有防线覆盖。
+* `resolves` 在 <2 轮的 SKIP 路径不校验形状 —— 无义务项时校验只制造噪声；输入错误面维持「有声明才判」。
+* `closure.json` 写盘无异常保护 —— 与 `cli_review_convert` 写 `review.json` 同一假设（报告目录可写），不做单独兜底。
+* converter 加 `--resolves` 入口 —— 属 §5 第 1 条另案，不在本批。
+* 跨轮 unit 一致性没有硬约束 —— 先按 WARN 观察；升档与 §5 第 3 条同轨。
 
 ## 5. 开放问题
 

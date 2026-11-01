@@ -18,8 +18,9 @@
 ### 🧭 跨轮 finding 闭环台账（D5，RFC-20261031-02）
 
 * **新增（观察面）**：`scripts/review_closure.py` WARN observer——读多轮 `findings/<unit>.r*.json` + 最新 `review.json.resolves`；prior open Critical/Major（`pre_existing` 除外）未 `carried`/`resolved` ⇒ WARN；<2 轮 SKIP；不进 `atlas_check`。
+* **是否算关闭按上一轮级别从严**：prior `Critical` 在新一轮降级成 `Major` 再挂 `intentional`/`ignored`（无签字取证）不免责，仍按 `carried` 跟踪，且降级本身记 `level_downgraded` WARN；`findings/` 出现非本 unit 的孤儿文件 ⇒ WARN（跨轮改 `--unit` 名会让闭环义务凭空清零）。
 * **真实报告**：r1/r2 首跑 **12 条 prior Major unaccounted**；r2-v3 单轮目录 SKIP。
-* **测试/设计**：`tests/test_review_closure.py` 16 条、M1–M3；`DESIGN.md` D179；契约 `shared/independent-review.md` §11、`shared/closeout.md` 步骤 10、`shared/gates.md` §4。
+* **测试/设计**：`tests/test_review_closure.py` 19 条、M1–M5；`DESIGN.md` D179；契约 `shared/independent-review.md` §11、`shared/closeout.md` 步骤 10、`shared/gates.md` §4。
 
 ## [v0.2.0-beta.25] - 2026-10-31
 
