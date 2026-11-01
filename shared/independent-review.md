@@ -200,7 +200,7 @@ atlas-grill（提炼刺痛代价与致命冲突） → 用户拍板关键抉择
 
 ### 10.2 应审 N / 实审 M（硬；§6 第 8 条在此实例的落地）
 
-- N = **CLI `--preview` 的 Will review 数**（`.md` 等不支持扩展名会被 CLI 排除——契约与文档面本就不属实例 ⑤ 的对象，**不得**用 git diff 全量计数，会假 `WARN`）；M = **CLI `manifest.coverage.completed[]` 的去重文件数**（coverage 存在时；无 coverage 才回退 `summary.files_reviewed`；`reused` 暂不计入）。**M < N、预算击穿、`cli_status=partial|failed` 或 `failed_files` 非空 ⇒ `WARN` 起步**；coverage 缺 `completed[]` / CLI 不报实审数 ⇒ 转换器**拒绝产出**（缺权威输入不得给「通过」，骨架 §2.6）。
+- N = **CLI `--preview` 的 Will review 数**（`.md` 等不支持扩展名会被 CLI 排除——契约与文档面本就不属实例 ⑤ 的对象，**不得**用 git diff 全量计数，会假 `WARN`）；M = **CLI `manifest.coverage.completed[]` 的去重文件数**（coverage 存在时；无 coverage 才回退 `summary.files_reviewed`）。`reused`/`waived`/`failed` 均**不计入 M**——OCR v1.13.3 自身口径为 `selected = completed + reused + failed + waived` 四态互斥分区，`reused` = resume 会话沿用上一轮的审查结果、`waived` = 带非空理由的显式豁免（CLI 自己强制 `waived item requires a non-empty reason`），两者本轮**都没有再审**。**M < N、预算击穿、`cli_status=partial|failed` 或 `failed_files` 非空 ⇒ `WARN` 起步**；coverage 缺 `completed[]` / CLI 不报实审数 ⇒ 转换器**拒绝产出**（缺权威输入不得给「通过」，骨架 §2.6）。
 - **delta v3**：`head_sha` 必备；`reviewed_files` = coverage completed 或 `--reviewed-files`；`selected_files` 记录 coverage；数量/成员/selected 对账只 WARN。v2 delta 缺 `head_sha` 只 WARN（兼容）。
 - 动机：实测取证——CLI 会对超大 diff **静默跳过文件**，属「静默少审」族（`3509 §B100`）。对账不是附加项，是**接入前提**。
 

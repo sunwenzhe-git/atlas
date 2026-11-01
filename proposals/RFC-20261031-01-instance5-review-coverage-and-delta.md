@@ -271,13 +271,13 @@ python3 tests/test_install_selfcheck.py
 
 ## 5. 开放问题与风险 (Open Questions)
 
-1. **`reused` 的语义**：OCR coverage 的 `reused` 是「复用已审结果」还是「复用缓存但未审」？未确认前**只算 completed**，`reused_files` 只记录；确认后再决定是否并入 reviewed。
-2. **`waived` 的语义**：`waived` 是规则豁免还是未审？本批只记录 `waived_files`，不计 reviewed；若不透明，报告行点名。
+1. **`reused` 的语义**（**已结 2026-11-01**）：OCR v1.13.3 原生二进制 `strings` 命中 `Coverage:  %d selected = %d completed + %d reused + %d failed + %d waived` 与 `[ocr] Resume %s: reusing %d file(s), reviewing %d file(s)` ⇒ `reused` = **resume 会话沿用上一轮的审查结果，本轮没再审**（四态互斥分区）。故「不计 M」不是保守猜测而是照生产者口径，`reused_files` 只记录即可，**不并入 reviewed**。
+2. **`waived` 的语义**（**已结 2026-11-01**）：同一二进制命中 `manifest: waived item %s requires a non-empty reason` / `waived item %s missing reason` ⇒ `waived` = **带非空理由的显式豁免**，理由由 CLI 自己强制，Atlas 侧只记录 `waived_files`、不计 reviewed；`delta_warnings` 已把 waived 纳入 selected 分区解释，finding target 落在 waived 会点名。
 3. **`head_sha` 的兼容**：新 delta 报告 v3；v2 历史报告保持旧语义、不回扫。若外部项目有 v2 delta 报告，缺 `head_sha` 只 WARN。
 4. **数量/成员不一致 WARN vs FAIL**：首版 WARN；若真实仓再次出现 1/3 且 WARN 被忽略，再按证据升 FAIL。
 5. **`skipped` 的出口**：本批只记录 + 依赖 M<N；不把合法 SKIP 一律 exit 2。若 CLI 未来支持「合法跳过」，需新增区分字段，不靠状态名猜。
 6. **coverage 字段稳定性**：OCR v1.13.3 的 `manifest.coverage.{selected,completed,reused,failed,waived}` 是否跨版本稳定；不稳定时以 `--reviewed-files` 显式通道为准。
-7. **跨轮闭环**：`resolves` 台账的字段、触发条件、WARN/FAIL 分级另案；本批不实现，避免与「同一问题跨轮不得重复贴」冲突。
+7. **跨轮闭环**（**已另案落地 2026-10-31**）：`RFC-20261031-02` = `scripts/review_closure.py` WARN observer（`resolves` 台账，见该 RFC §2.1/§4.6）；本批不实现，避免与「同一问题跨轮不得重复贴」冲突。
 8. **`selected` 与 expected 的最终口径**：N 仍以 preview Will review 为准；coverage `selected` 只作对账信号，不一致先 WARN，不改 N。
 9. **v2 delta 兼容通道**：显式 `--schema-version 2` 的 delta 报告只用于历史兼容；新调用与 `closeout.md` 步骤 10 固定 v3。v2 缺 `head_sha` 只 WARN，但不得成为新报告的常规路径；若被当绕过通道，另案收窄。
 
