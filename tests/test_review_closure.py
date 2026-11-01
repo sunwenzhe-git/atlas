@@ -4,7 +4,7 @@
 夹具 = 报告目录：最新 `review.json` + `findings/<unit>.r<round>.json`。
 覆盖：<2 轮 SKIP / carried / unaccounted WARN / resolves 取证 / 缺取证 /
 pre_existing / Major intentional / Critical intentional / unknown resolves /
-重复与坏形状 / 无指纹回退 / 单元文件错位 / 缺根报告 / prior Critical 降级 /
+重复与坏形状（重复指纹整组作废）/ 无指纹回退 / 单元文件错位 / 缺根报告 / prior Critical 降级 /
 孤儿单元文件 / **中间轮关闭跨轮持久**（resolves@rN、re-reported-closed@rN、
 更晚又 open 作废、轮次倒挂不作数、缺取证不作数、Critical intentional 不作数、
 冗余声明进 warnings）/ **--emit-skeleton 义务骨架**。
@@ -35,6 +35,10 @@ M17 签字判据退回 `bool(str(...))` 宽松 ⇒ `test_numeric_signature_does_
 M98 中间轮一条坏形状退回**整批没收** ⇒ `test_intermediate_bad_entry_does_not_void_valid_siblings` 红
    （同轮合法声明被一起清零 = 假失忆；正例对照
    `test_resolves_entry_with_string_signer_closes` 保证合法签字照常收口）。
+M102 中间轮重复指纹退回「只留第一条」⇒ `test_intermediate_duplicate_fingerprint_voids_whole_group`
+   与 `test_intermediate_duplicate_with_bad_entry_still_voids_group` 红
+   （冲突声明按书写顺序挑赢家 = 重复指纹口径被改松；整组作废只影响该指纹，
+   其他指纹的同轮合法声明照常承重 —— 不退回 M98 的整批没收）。
    注：`M15` / `M16` 编号属 `tests/test_validators.py`（`_code(e)` 与 `validate()` 调用面）。
 """
 from __future__ import annotations
@@ -421,6 +425,55 @@ def test_intermediate_bad_entry_does_not_void_valid_siblings() -> None:
         assert "B" in {x["fingerprint"] for x in c["unaccounted"]}, c
         assert any("resolves[1].by" in w for w in c["warnings"]), c["warnings"]
         assert c["status"] == "WARN", c["warnings"]
+
+
+def test_intermediate_duplicate_fingerprint_voids_whole_group() -> None:
+    """M102：中间轮同一指纹的多条形状合法声明 ⇒ 整组不作关闭证据。
+
+    冲突声明不能按书写顺序挑第一条承重：`fixed` 在前、`intentional` 在后时，
+    「只留第一条」会把该义务刷成已关闭；顺序互换又变成未关闭 —— 同一份历史两种结论。
+    """
+    scenarios = [
+        ([fixed_decl("A"), fixed_decl("A")], "两条相同 fixed"),
+        ([fixed_decl("A"), {"fingerprint": "A", "status": "intentional"}], "fixed 在前"),
+        ([{"fingerprint": "A", "status": "intentional"}, fixed_decl("A")], "intentional 在前"),
+    ]
+    for declares, label in scenarios:
+        with tempfile.TemporaryDirectory() as td:
+            d = write_report(Path(td), {1: [finding("A")], 2: [], 3: [finding("B")]},
+                             declares={2: declares})
+            p = run(d)
+            assert p.returncode == 0, f"{label}: {p.stdout}{p.stderr}"
+            c = closure(d)
+            assert c["status"] == "WARN", f"{label}: {c}"
+            assert [x["fingerprint"] for x in c["unaccounted"]] == ["A"], f"{label}: {c}"
+            assert c["resolved"] == [], f"{label}: {c}"
+            assert any("重复 fingerprint" in w for w in c["warnings"]), (label, c["warnings"])
+
+
+def test_intermediate_duplicate_with_bad_entry_still_voids_group() -> None:
+    """M102：坏条目与合法条目同指纹 ⇒ 整组不作关闭证据，但其他指纹照常承重。
+
+    `wontfix` 不在 status 闭集，是坏条目；它的 fingerprint 仍参与重复检测，与最新轮
+    `resolves_shape_errors` 同口径。同轮的另一个指纹 B 不受影响（B2 的逐条取舍保留）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {
+            1: [finding("A", level="Major"), finding("B", level="Major")],
+            2: [], 3: [],
+        }, declares={2: [
+            {"fingerprint": "A", "status": "wontfix"},
+            fixed_decl("A"),
+            fixed_decl("B"),
+        ]})
+        p = run(d)
+        assert p.returncode == 0, p.stdout + p.stderr
+        c = closure(d)
+        assert "A" in {x["fingerprint"] for x in c["unaccounted"]}, c
+        assert "B" in {x["fingerprint"] for x in c["resolved"]}, c
+        assert c["status"] == "WARN", c["warnings"]
+        assert any("wontfix" in w for w in c["warnings"]), c["warnings"]
+        assert any("重复 fingerprint" in w for w in c["warnings"]), c["warnings"]
 
 
 def test_emit_skeleton_lists_unaccounted() -> None:

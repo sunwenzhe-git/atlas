@@ -141,30 +141,38 @@ def round_declares(path: Path, data: dict) -> tuple[list[dict], list[str]]:
     `status` 会把闭环永久钉死。形状错 ⇒ 该条不作关闭证据 + 记入 warnings 并抬 WARN
     （响亮但不阻断）。最新轮仍走 exit 2（那是操作者本轮自己要落的声明）。
 
-    **逐条取舍，不整批没收**：一条写歪只作废它自己；同轮其余合法声明照常承重。否则历史里
-    一个 `by: 123` 会把该轮所有合法关闭声明一起清零 —— 那是「假失忆」，比响亮更糟。
+    **逐条取舍，不整批没收**：一条写歪只作废它自己（不同 fingerprint）；同轮其余合法声明照常
+    承重。否则历史里一个 `by: 123` 会把该轮所有合法关闭声明一起清零 —— 那是「假失忆」，比响亮更糟。
+
+    **重复指纹整组作废**：同一 fingerprint 出现多次是同一义务的冲突声明，不能按书写顺序挑第一条
+    承重（`fixed` 在前就关、`intentional` 在前就不关）。该指纹的**全部**条目都不作关闭证据，
+    其余指纹照常承重。重复检测对坏条目同样计数，与最新轮 `resolves_shape_errors` 同口径。
     """
     raw = data.get("resolves")
     if raw is None:
         return [], []
     if not isinstance(raw, list):
         return [], review_policy.resolves_shape_errors(raw, f"{path.name} 的 resolves")
-    kept: list[dict] = []
+    valid: list[dict] = []
     errs: list[str] = []
-    seen: set[str] = set()
+    fp_order: list[str] = []
+    fp_counts: dict[str, int] = {}
     for i, item in enumerate(raw):
         label = f"{path.name} 的 resolves[{i}]"
         entry_errs = review_policy.resolves_entry_errors(item, label)
         if entry_errs:
             errs.extend(entry_errs)
-            continue
-        fp = item["fingerprint"]
-        if fp in seen:
-            errs.append(f"{path.name} 的 resolves 出现重复 fingerprint：{fp}")
-            continue
-        seen.add(fp)
-        kept.append(item)
-    return kept, errs
+        else:
+            valid.append(item)
+        fp = item.get("fingerprint") if isinstance(item, dict) else None
+        if isinstance(fp, str) and fp.strip() and fp == fp.strip():
+            if fp not in fp_counts:
+                fp_order.append(fp)
+            fp_counts[fp] = fp_counts.get(fp, 0) + 1
+    dups = {fp for fp in fp_order if fp_counts[fp] > 1}
+    errs.extend(f"{path.name} 的 resolves 出现重复 fingerprint：{fp}"
+                for fp in fp_order if fp in dups)
+    return [item for item in valid if item["fingerprint"] not in dups], errs
 
 
 def declares_close(entry: dict, obligation_level: str | None) -> bool:

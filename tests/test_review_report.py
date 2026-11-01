@@ -19,7 +19,7 @@ M41 让 CLI WARN 下限降级 Critical ⇒ `test_cli_partial_does_not_downgrade_
 ⇒ `test_numeric_disposition_by_fails_validator` 红；M99 `verification.evidence` 同处退回宽松
 ⇒ `test_verification_evidence_must_be_string` 红（同对象里 `by` 已严、`evidence` 曾松的口径分裂）；
 M100 `is_blocking_critical` 退回 `bool(str(...))` ⇒ `test_blocking_critical_requires_string_signer` 红
-（**内核级钉子**：CLI 侧非字符串签字先被 M48 的形状判据拒掉，注入实测本文件 + 另两文件 131 条仍全绿）；
+（**内核级钉子**：CLI 侧非字符串签字先被 M48 的形状判据拒掉，注入实测当时三文件 131 条仍全绿；现三文件 138 条中 M100 单红、其余 137 绿）；
 M101 `escalation.approved_by` 退回宽松 ⇒ `test_escalation_approved_by_must_be_string` 红。
 """
 from __future__ import annotations
@@ -488,8 +488,8 @@ def test_blocking_critical_requires_string_signer() -> None:
     """M100：`is_blocking_critical` 的签字判据必须走 `signed_str`（内核级钉子）。
 
     CLI 侧钉不住这一层：非字符串签字会先被形状判据（M48）拒掉，所以把本函数退回
-    `bool(str(...))` 宽松版，`test_review_report.py` + 另两个文件共 131 条仍全绿
-    （只读评审第 2 轮 Major 实测）。这里对内核直接断言，把两层解耦：
+    `bool(str(...))` 宽松版，当时 `test_review_report.py` + 另两个文件共 131 条仍全绿
+    （只读评审第 2 轮 Major 实测；现三文件 138 条中本钉单红）。这里对内核直接断言，把两层解耦：
 
       - `disposition_by: 123` + 取证文本 ⇒ **仍阻断**（数字不是签名）；
       - `disposition_by: "lead"` ⇒ 不阻断（反向对照，防把正常收口刷红）。

@@ -41,7 +41,7 @@
 
 - [x] `_support/review_policy.py`（`signed_str` / `has_signed_disposition` + 五处改齐 + `resolves` 形状 + 逐条判据 `resolves_entry_errors`）
 - [x] `scripts/review_closure.py`（`has_evidence` / `declares_close` 走内核）
-- [x] `tests/test_review_closure.py`（M17 数字签名不算关闭 + 字符串签名的正例对照）
+- [x] `tests/test_review_closure.py`（M17 数字签名不算关闭 + 字符串签名的正例对照；M98 中间轮逐条取舍；M102 重复指纹整组作废）
 - [x] `tests/test_review_report.py`（M48 形态门两侧：`by` 数字、`evidence` 为 0）
 - [x] `tests/test_cli_review_convert.py`（`--resolves` 非字符串签名 ⇒ 拒绝产出）
 - [x] 契约 §3 字段条 / §11、`shared/gates.md` 两行 + §4 条、`DESIGN.md` D181、两处 changelog、`docs/map/*`
@@ -51,12 +51,12 @@
 - **零回扫风险**（实测）：全仓 + 真实四轮语料的 `review.json` / `findings/*.rN.json` 里
   非字符串签名或取证字段命中 **0 处** ⇒ 收紧属「纠错」而非「破坏存量」；语料台账仍
   `PASS rounds 4 prior 16 resolved 16`、形态门仍 `PASS`。
-- 用例数（合并前两路评审补账后的**终值**，见 §4.2）：`test_review_closure.py` 37 → **40**（M17 / M98 / 正例改名）、
+- 用例数（第三轮复核后的**终值**，见 §4.2 / §4.3）：`test_review_closure.py` 37 → **42**（M17 / M98 / M102 / 正例改名）、
   `test_review_report.py` 41 → **45**（M48 / M99 / M100 / M101）、`test_cli_review_convert.py` 49 → **51**（M49 / M51）。
-- 行数（终值）：`_support/review_policy.py` **371**、`scripts/review_closure.py` **423**、
+- 行数（终值）：`_support/review_policy.py` **371**、`scripts/review_closure.py` **431**、
   `scripts/cli_review_convert.py` **372**；锚点 `signed_str:45` / `has_signed_disposition:55` /
   `count_floor:61` / `compute_fingerprint:98` / `resolves_entry_errors:230` / `resolves_shape_errors:254` /
-  `state_of:77` / `load_prior_rounds:101` / `last_close:183`。
+  `state_of:77` / `load_prior_rounds:101` / `round_declares:137` / `last_close:191`。
 - 四段变异协议：M17 把 `has_signed_disposition` 退回 `str()` 宽松 ⇒ 数字签名用例红；
   M48 同理退回 ⇒ 形态门用例红；日志 `/tmp/atlas-rfc03-evidence/`。
 - 全量 / 安装自检 / 真实语料回路复跑见 §4.1。
@@ -115,6 +115,32 @@
   ⇒ 计数句保持「文件名 + 条数」紧邻，交叉引用另起一句。
 - **复核**：五枚新钉四段协议（基线 136 绿 → 注入 → sha256 逐字节还原 → 复绿）在隔离副本
   `/tmp/atlas-mut-rfc03r2` 里 **5/5 按预期红且还原一致**；blocker 复现脚本在修后转换器 rc=2 且不留产物。
+
+### 4.3 第三轮只读复核与修复（2026-11-01）
+
+第三轮只读复核只问三件事：B1 是否还有批级旁路、B2 逐条取舍是否把「重复指纹」口径改松、
+M100 门册表述是否会误导。结论：B1 通过（顶层/条目级数字、数组、布尔、纯空白全部拒绝且不留
+半截产物；无残留 `str()` 签字旁路）；**B2 的重复指纹口径被改松**（Major）；M100 钉子有效，
+但门册「131 条」与同文件计数冲突、「遮蔽」措辞易误读（Minor）。
+
+- **R1（Major，已修）**：`round_declares` 对重复指纹此前「只留第一条」⇒ `fixed`+`intentional`
+  按书写顺序得到相反结论（`fixed` 在前算关闭、`intentional` 在前不算）。现改为**重复指纹整组作废**：
+  同一 fingerprint 的全部条目都不作关闭证据，其他指纹照常承重；坏条目同样计入重复检测，与最新轮
+  `resolves_shape_errors` 同口径。新钉 **M102**（两条相同 fixed / fixed+intentional 两顺序 /
+  坏条目同指纹不连坐其他指纹）。修后中间轮重复指纹仍抬 WARN、不 exit 2；最新轮仍 exit 2。
+- **R2（测试空洞，已补）**：原 `test_duplicate_resolves_fails` 只覆盖最新轮；M98 只覆盖不同指纹。
+  中间轮重复指纹行为由 M102 的两条用例钉住。
+- **R4（Minor，已修）**：门册 M100 表述改为「加钉前基线三文件 131 条；现三文件 138 条中 M100
+  单红、其余 137 绿」，并说明 CLI 路径在到达 `is_blocking_critical` 前已被 M48 形状判据拒绝。
+- **R7（Minor，已修）**：`shared/independent-review.md` 的「重复/坏形状 ⇒ exit 2」限定为最新轮，
+  中间轮口径与实现统一；`resolves` 条目规则补「同一 fingerprint 多条 ⇒ 整组不作关闭证据」。
+- **暂不修（不阻塞，已登记）**：R3 `--emit-skeleton` 的顶层 `by: ""` 不能直接回喂（文档已写明
+  未填直接喂回是形状错）；R5 顶层 `by: null` 视作「未给」；R6 台账 exit 2 时旧 `closure.json` 残留。
+- **验证**：`tests/test_review_closure.py` **42** 条；三审查测试文件 **138** 条全绿；M102 四段协议
+  （基线 42 绿 → 注入 first-wins 恰 2 红 / 40 绿 → sha256 逐字节还原 → 42 绿）日志
+  `/tmp/atlas-rfc03r3-evidence/mutation-proof.log`；M100 现状口径复跑 1 红 / 137 绿、还原 138 绿
+  （`/tmp/atlas-rfc03r3-evidence/m100-current.log`）；全量 `pytest tests/` ⇒ **1021 passed / 5 skipped**
+  （13:57；较第二轮 1019 多出的 2 条即 M102 用例）。
 
 ## 5. 开放问题
 

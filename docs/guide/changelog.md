@@ -7,9 +7,9 @@
 ### 🧭 签字与取证必须是非空字符串（RFC-20261101-03）
 
 * **收紧**：`disposition_by` / `disposition_evidence` / `resolves[].by` / `resolves[].evidence` / `verification.by` 此前经 `str()` 判非空 ⇒ `by: 123`、`evidence: ["x"]` 算「已签字取证」；而 Critical 脱断与台账判 `resolved` 都吃这一条。新增单源 `review_policy.signed_str` / `has_signed_disposition`，五处调用改齐。**合并前评审补第二批**：`--resolves` 顶层**批级缺省签字人**同判据（`{"by": 123}` 曾被 `str()` 洗成 `"123"` 并继承进每一条 ⇒ Critical 被数字签名关掉，端到端复现后修掉）、`verification.evidence`、`escalation.approved_by` 一并走 `signed_str`。
-* **形状层**：`--resolves` 里 `by`/`evidence` 给了就必须是字符串 ⇒ 转换器拒绝产出、中间轮**逐条取舍**（坏的那条不作关闭证据 + warnings，同轮合法声明照常承重；整批没收＝假失忆）、最新轮 exit 2。
+* **形状层**：`--resolves` 里 `by`/`evidence` 给了就必须是字符串 ⇒ 转换器拒绝产出、中间轮**逐条取舍**（坏的那条不作关闭证据 + warnings，同轮合法声明照常承重；整批没收＝假失忆）、**重复指纹整组作废**（同一 fingerprint 多条冲突声明不按书写顺序挑赢家，其他指纹照常承重）、最新轮 exit 2。
 * **零回扫**：实测全仓 + 真实四轮语料的非字符串签名命中 0 处，语料台账 `PASS resolved 16` 与形态门 `PASS` 均不变。
-* **测试/设计**：`tests/test_review_closure.py` 37 → 40（M17 / M98）、`tests/test_review_report.py` 41 → 45（M48 / M99 / M100 / M101）、`tests/test_cli_review_convert.py` 49 → 51（M49 / M51）；五枚新钉四段协议 5/5 按预期红并逐字节还原；`DESIGN.md` D181；契约 §3/§11、`shared/gates.md`、`docs/map` 快照。
+* **测试/设计**：`tests/test_review_closure.py` 37 → 42（M17 / M98 / M102）、`tests/test_review_report.py` 41 → 45（M48 / M99 / M100 / M101）、`tests/test_cli_review_convert.py` 49 → 51（M49 / M51）；第二批五枚新钉四段协议 5/5 按预期红并逐字节还原，第三轮复核补 M102（重复指纹整组作废）单钉红/还原复绿；`DESIGN.md` D181；契约 §3/§11、`shared/gates.md`、`docs/map` 快照。
 
 ### 🧭 非门约束登记 + C-03 基线不写钉（RFC-20261101-01）
 

@@ -513,7 +513,7 @@ review: {sum:'实例⑤独立审查(应审 N / 实审 M 对账)+ closeout 收口
   files:[['shared/independent-review.md','独立审查契约:实例⑤规程与「应审 N / 实审 M」对账纪律'],
          ['scripts/cli_review_convert.py','CLI 审查输出 → review.json 契约转换 + N/M 对账(缺实审数拒绝产出)'],
          ['scripts/validate_review_report.py','审查报告落盘形态门:状态映射复算 / fingerprint 去重 / 签字取证'],
-         ['scripts/review_closure.py','跨轮闭环台账 423 行:resolves 跨轮持久 + 上一轮级别从严 + 孤儿文件 + 义务骨架(WARN observer)'],
+         ['scripts/review_closure.py','跨轮闭环台账 431 行:resolves 跨轮持久 + 上一轮级别从严 + 重复指纹整组作废 + 孤儿文件 + 义务骨架(WARN observer)'],
          ['scripts/closeout_derive.py','收口步骤派生器:按 diff 匹配触发表,输出本轮必跑清单']],
   blind:'审查质量本身(发现的问题对不对、漏没漏)机器不判——不在门口信任模型结论;指纹去重不防「同一问题换措辞重报」',doc:'review.md',sub:'review'},
 shared: {sum:'8 份 markdown 是规则/程序契约的单一落点(frontend-reuse 非门、非真相源),改机器判据必同步这里的契约正文。',
