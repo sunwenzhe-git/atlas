@@ -140,12 +140,31 @@ def round_declares(path: Path, data: dict) -> tuple[list[dict], list[str]]:
     中间轮**不因坏形状而 exit 2**：`(unit, round)` 文件按契约不得覆盖，历史里一个写歪的
     `status` 会把闭环永久钉死。形状错 ⇒ 该条不作关闭证据 + 记入 warnings 并抬 WARN
     （响亮但不阻断）。最新轮仍走 exit 2（那是操作者本轮自己要落的声明）。
+
+    **逐条取舍，不整批没收**：一条写歪只作废它自己；同轮其余合法声明照常承重。否则历史里
+    一个 `by: 123` 会把该轮所有合法关闭声明一起清零 —— 那是「假失忆」，比响亮更糟。
     """
     raw = data.get("resolves")
-    errs = review_policy.resolves_shape_errors(raw, f"{path.name} 的 resolves")
-    if errs:
-        return [], errs
-    return list(raw or []), []
+    if raw is None:
+        return [], []
+    if not isinstance(raw, list):
+        return [], review_policy.resolves_shape_errors(raw, f"{path.name} 的 resolves")
+    kept: list[dict] = []
+    errs: list[str] = []
+    seen: set[str] = set()
+    for i, item in enumerate(raw):
+        label = f"{path.name} 的 resolves[{i}]"
+        entry_errs = review_policy.resolves_entry_errors(item, label)
+        if entry_errs:
+            errs.extend(entry_errs)
+            continue
+        fp = item["fingerprint"]
+        if fp in seen:
+            errs.append(f"{path.name} 的 resolves 出现重复 fingerprint：{fp}")
+            continue
+        seen.add(fp)
+        kept.append(item)
+    return kept, errs
 
 
 def declares_close(entry: dict, obligation_level: str | None) -> bool:
@@ -196,8 +215,8 @@ def parse_resolves(data: dict, prior_fps: set[str]) -> tuple[list[dict], list[st
     for item in (raw or []):
         fp = str(item.get("fingerprint") or "").strip()
         status = item.get("status")
-        if status in EVIDENCE_REQUIRED and not (
-                str(item.get("by") or "").strip() and str(item.get("evidence") or "").strip()):
+        if status in EVIDENCE_REQUIRED and not review_policy.has_signed_disposition(item,
+                                                                                    "by", "evidence"):
             invalid.append(fp)
             continue
         if fp not in prior_fps:

@@ -15,6 +15,12 @@ M47 应审/实审对账行退回单边 `rev < exp` ⇒ `test_reviewed_exceeds_ex
 M36 把「缺对账字段」降为放行 ⇒ `test_missing_counts_fail` 红。
 Batch A（RFC-20261031-01）：M40 摘掉 `cli_warn_floor` ⇒ `test_cli_partial_warns` 红；
 M41 让 CLI WARN 下限降级 Critical ⇒ `test_cli_partial_does_not_downgrade_critical` 红。
+签名严格化（RFC-20261101-03）：M48 `disposition_by` / `disposition_evidence` 退回 `str()` 宽松
+⇒ `test_numeric_disposition_by_fails_validator` 红；M99 `verification.evidence` 同处退回宽松
+⇒ `test_verification_evidence_must_be_string` 红（同对象里 `by` 已严、`evidence` 曾松的口径分裂）；
+M100 `is_blocking_critical` 退回 `bool(str(...))` ⇒ `test_blocking_critical_requires_string_signer` 红
+（**内核级钉子**：CLI 侧非字符串签字先被 M48 的形状判据拒掉，注入实测本文件 + 另两文件 131 条仍全绿）；
+M101 `escalation.approved_by` 退回宽松 ⇒ `test_escalation_approved_by_must_be_string` 红。
 """
 from __future__ import annotations
 
@@ -447,3 +453,57 @@ def test_numeric_disposition_by_fails_validator() -> None:
                 "disposition_by": "lead", "disposition_evidence": 0}
         p2 = run(mk_report(Path(td) / "r2", {**GOOD, "schema_version": 2, "checks": [bad2]}))
         assert p2.returncode == 1 and "disposition_evidence" in p2.stdout, p2.stdout
+
+
+def test_verification_evidence_must_be_string() -> None:
+    """M99：`verification.evidence` 也要非空字符串（同一对象里 `by` 已严、`evidence` 曾松）。
+
+    该字段不喂关闭、不喂阻断判定（只作取证核验），所以这条是**口径分裂**修正，不是漏关修补；
+    但「谁确认的、凭什么确认」与处置签字是同一类承重件，不该一侧严格一侧宽松。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        bad = {**GOOD["checks"][0], "level": "Minor",
+               "verification": {"status": "confirmed", "by": "lead", "evidence": ["test green"]}}
+        p = run(mk_report(Path(td), {**GOOD, "schema_version": 2, "checks": [bad]}))
+        assert p.returncode == 1 and "verification" in p.stdout, p.stdout
+        good = {**GOOD["checks"][0], "level": "Minor",
+                "verification": {"status": "confirmed", "by": "lead", "evidence": "test green"}}
+        p2 = run(mk_report(Path(td) / "r2", {**GOOD, "schema_version": 2, "checks": [good]}))
+        assert p2.returncode == 0, p2.stdout
+
+
+def test_escalation_approved_by_must_be_string() -> None:
+    """M101：升级复议的拍板人 `approved_by` 同属签字类字段 ⇒ 数字不算拍板。"""
+    with tempfile.TemporaryDirectory() as td:
+        esc = {"to": "architecture-team", "reason": "争议边界需拍板", "approved_by": 123}
+        p = run(mk_report(Path(td), {**GOOD, "schema_version": 2, "round": 4, "escalation": esc}))
+        assert p.returncode == 1 and "approved_by" in p.stdout, p.stdout
+        esc2 = {**esc, "approved_by": "lead"}
+        p2 = run(mk_report(Path(td) / "r2", {**GOOD, "schema_version": 2, "round": 4,
+                                             "escalation": esc2}))
+        assert p2.returncode == 0, p2.stdout
+
+
+def test_blocking_critical_requires_string_signer() -> None:
+    """M100：`is_blocking_critical` 的签字判据必须走 `signed_str`（内核级钉子）。
+
+    CLI 侧钉不住这一层：非字符串签字会先被形状判据（M48）拒掉，所以把本函数退回
+    `bool(str(...))` 宽松版，`test_review_report.py` + 另两个文件共 131 条仍全绿
+    （只读评审第 2 轮 Major 实测）。这里对内核直接断言，把两层解耦：
+
+      - `disposition_by: 123` + 取证文本 ⇒ **仍阻断**（数字不是签名）；
+      - `disposition_by: "lead"` ⇒ 不阻断（反向对照，防把正常收口刷红）。
+    """
+    sys.path.insert(0, str(PKG_ROOT / "_support"))
+    try:
+        import review_policy as rp
+    finally:
+        sys.path.pop(0)
+    fake = {"level": "Critical", "disposition": "false_positive", "disposition_by": 123,
+            "disposition_evidence": "复核记录见 EVIDENCE.md"}
+    real = {**fake, "disposition_by": "lead"}
+    assert rp.is_blocking_critical(fake, schema_version=2) is True
+    assert rp.is_blocking_critical(real, schema_version=2) is False
+    assert rp.calculate_status([fake], schema_version=2) == "FAIL"
+    # 合法签字只是「不阻断」，Critical 仍把下限抬到 WARN —— 不得静默 PASS
+    assert rp.calculate_status([real], schema_version=2) == "WARN"

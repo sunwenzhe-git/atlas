@@ -227,6 +227,30 @@ def delta_notes(data: dict) -> list[str]:
     return []
 
 
+def resolves_entry_errors(item: object, label: str) -> list[str]:
+    """**单条** `resolves` 声明的形状判据（列表级 = 本函数 + 重复指纹，见 `resolves_shape_errors`）。
+
+    拆到逐条是为了跨轮台账：中间轮一条写歪，不该没收同轮其它合法声明的关闭证据 —— 那样
+    「响亮但不阻断」就退化成「整轮凭空失忆」。语义判定仍归 `review_closure.py`。
+    """
+    if not isinstance(item, dict):
+        return [f"{label} 必须为对象"]
+    errs: list[str] = []
+    fp = item.get("fingerprint")
+    if not (isinstance(fp, str) and fp.strip()):
+        errs.append(f"{label}.fingerprint 必须为非空字符串")
+    elif fp != fp.strip():
+        errs.append(f"{label}.fingerprint 带首尾空白（先规范化再声明，不猜）")
+    if item.get("status") not in RESOLVES_STATUSES:
+        errs.append(f"{label}.status={item.get('status')!r} 不在闭集 {RESOLVES_STATUSES}")
+    if "round" in item and (not isinstance(item["round"], int) or item["round"] < 1):
+        errs.append(f"{label}.round 必须为 ≥1 的整数")
+    for key in ("by", "evidence"):
+        if key in item and not isinstance(item[key], str):
+            errs.append(f"{label}.{key} 必须为字符串（签字与取证要可追责，不给数字/数组面子）")
+    return errs
+
+
 def resolves_shape_errors(raw: object, where: str = "resolves") -> list[str]:
     """`resolves` 声明列表的形状判据（单源）：调用方决定是 exit 2 还是记错。
 
@@ -239,26 +263,13 @@ def resolves_shape_errors(raw: object, where: str = "resolves") -> list[str]:
     errs: list[str] = []
     seen: set[str] = set()
     for i, item in enumerate(raw):
-        label = f"{where}[{i}]"
-        if not isinstance(item, dict):
-            errs.append(f"{label} 必须为对象")
-            continue
-        fp = item.get("fingerprint")
-        if not (isinstance(fp, str) and fp.strip()):
-            errs.append(f"{label}.fingerprint 必须为非空字符串")
-        elif fp != fp.strip():
-            errs.append(f"{label}.fingerprint 带首尾空白（先规范化再声明，不猜）")
-        elif fp in seen:
-            errs.append(f"{where} 出现重复 fingerprint：{fp}")
-        else:
-            seen.add(fp)
-        if item.get("status") not in RESOLVES_STATUSES:
-            errs.append(f"{label}.status={item.get('status')!r} 不在闭集 {RESOLVES_STATUSES}")
-        if "round" in item and (not isinstance(item["round"], int) or item["round"] < 1):
-            errs.append(f"{label}.round 必须为 ≥1 的整数")
-        for key in ("by", "evidence"):
-            if key in item and not isinstance(item[key], str):
-                errs.append(f"{label}.{key} 必须为字符串（签字与取证要可追责，不给数字/数组面子）")
+        errs.extend(resolves_entry_errors(item, f"{where}[{i}]"))
+        fp = item.get("fingerprint") if isinstance(item, dict) else None
+        if isinstance(fp, str) and fp.strip() and fp == fp.strip():
+            if fp in seen:
+                errs.append(f"{where} 出现重复 fingerprint：{fp}")
+            else:
+                seen.add(fp)
     return errs
 
 
@@ -291,8 +302,8 @@ def validate_v2_finding(c: dict, idx: int) -> list[str]:
                 errs.append(f"checks[{idx}].verification.status={st!r} 不在闭集 {VERIFICATION_STATUSES}")
             if not signed_str(v, "by"):
                 errs.append(f"checks[{idx}].verification 必须带非空 by")
-            if not str(v.get("evidence") or "").strip():
-                errs.append(f"checks[{idx}].verification 必须带非空 evidence")
+            if not signed_str(v, "evidence"):
+                errs.append(f"checks[{idx}].verification 必须带非空 evidence（字符串；数组/数字不算取证）")
     return errs
 
 
@@ -315,8 +326,8 @@ def validate_v2_report_fields(data: dict) -> list[str]:
         esc = data["escalation"]
         if not isinstance(esc, dict):
             errs.append("`escalation` 若存在必须为对象")
-        elif "approved_by" in esc and not str(esc.get("approved_by") or "").strip():
-            errs.append("`escalation.approved_by` 若存在必须为非空字符串")
+        elif "approved_by" in esc and not signed_str(esc, "approved_by"):
+            errs.append("`escalation.approved_by` 若存在必须为非空字符串（拍板人可追责，不给数字面子）")
     if "cli_status" in data:
         cs = data["cli_status"]
         if not isinstance(cs, str) or cs not in CLI_STATUSES:

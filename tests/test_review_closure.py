@@ -27,7 +27,15 @@ M11 级别加宽只读 `relevant()` 放行的条目 ⇒ 两条 `pre_existing_esc
 M12 `worst_level` 不做 `isinstance` 防护 ⇒ `test_broken_level_does_not_crash_the_ledger` 红
    （历史 `level` 为 list/dict 时抛裸 traceback、退出码 1，违背「只有 0 与 2」）；
 M13 最新轮同指纹 open+closed 混排按 `any(closed)` 放行 ⇒ `test_open_and_closed_twin_in_latest_round_carries` 红
-   （与中间轮口径不一致，且形态门的去重排除了 fixed 条目、不会替它出声）。
+   （与中间轮口径不一致，且形态门的去重排除了 fixed 条目、不会替它出声）；
+M14 轮次后缀改回宽匹配（认全角/带字母）⇒ `test_non_ascii_round_suffix_becomes_orphan_not_crash` 红
+   （`r２` 被当成第 2 轮 ⇒ 闭环义务悄悄清零，比崩更糟）；
+M17 签字判据退回 `bool(str(...))` 宽松 ⇒ `test_numeric_signature_does_not_close` 红
+   （`disposition_by: 123` / `disposition_evidence: ["x"]` 不是可追责签名）；
+M98 中间轮一条坏形状退回**整批没收** ⇒ `test_intermediate_bad_entry_does_not_void_valid_siblings` 红
+   （同轮合法声明被一起清零 = 假失忆；正例对照
+   `test_resolves_entry_with_string_signer_closes` 保证合法签字照常收口）。
+   注：`M15` / `M16` 编号属 `tests/test_validators.py`（`_code(e)` 与 `validate()` 调用面）。
 """
 from __future__ import annotations
 
@@ -391,6 +399,30 @@ def test_intermediate_declare_bad_shape_warns_not_blocks() -> None:
         assert [x["fingerprint"] for x in c["unaccounted"]] == ["A"]
 
 
+def test_intermediate_bad_entry_does_not_void_valid_siblings() -> None:
+    """M98：中间轮一条写歪只作废它自己 —— 同轮合法声明必须继续承重。
+
+    反例（只读评审第 2 轮的 Major）：r2 同时有合法的 `A/by:"lead"` 与坏掉的 `B/by:123`，
+    整批没收会让 A 的关闭凭空消失（实测 `unaccounted 2`）⇒「响亮但不阻断」退化成**假失忆**，
+    正是本器要治的那一类。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A", level="Major"), finding("B", level="Major")],
+                                    2: [], 3: []},
+                         declares={2: [{"fingerprint": "A", "status": "false_positive",
+                                        "by": "lead", "evidence": "复核为误报，附对照记录"},
+                                       {"fingerprint": "B", "status": "fixed", "by": 123,
+                                        "evidence": "e"}]})
+        p = run(d)
+        assert p.returncode == 0, p.stdout + p.stderr
+        c = closure(d)
+        assert "A" in {x["fingerprint"] for x in c["resolved"]}, c
+        assert "B" not in {x["fingerprint"] for x in c["resolved"]}, c
+        assert "B" in {x["fingerprint"] for x in c["unaccounted"]}, c
+        assert any("resolves[1].by" in w for w in c["warnings"]), c["warnings"]
+        assert c["status"] == "WARN", c["warnings"]
+
+
 def test_emit_skeleton_lists_unaccounted() -> None:
     """M8：义务骨架 —— 指纹/轮次/定位预填，status/by/evidence 待填。"""
     with tempfile.TemporaryDirectory() as td:
@@ -577,8 +609,13 @@ def test_numeric_signature_does_not_close() -> None:
         assert c["resolved"] == [] and [x["fingerprint"] for x in c["carried"]] == ["A"]
 
 
-def test_resolves_entry_still_needs_string_signer() -> None:
-    """同方向在声明侧：`resolves[].by` 是数字 ⇒ 该条不算关闭（形状层已拒，见转换器用例）。"""
+def test_resolves_entry_with_string_signer_closes() -> None:
+    """反向对照（正例）：**合法字符串签字**的 `resolves` 声明正常关闭 Critical 义务。
+
+    原文件名写的是「数字签字仍需要字符串」，但体内用的是 `by: "lead"` ⇒ 它从来不是拒绝侧
+    钉子（只读评审指出）。拒绝侧由 M98（中间轮坏条目不作数）与转换器 M49 / M51（形状层直接
+    拒）钉住；本用例只保证「收紧签字判据」不把正常收口刷红。
+    """
     with tempfile.TemporaryDirectory() as td:
         d = write_report(Path(td), {1: [finding("A", level="Critical")], 2: [finding("B")]},
                          resolves=[{"fingerprint": "A", "status": "false_positive",

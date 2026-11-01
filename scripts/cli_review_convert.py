@@ -105,7 +105,13 @@ def load_resolves(path_str: str) -> list[dict]:
         raise SystemExit(die(f"读 --resolves {src} 失败：{e}"))
     default_by = ""
     if isinstance(raw, dict):
-        default_by = str(raw.get("by") or "").strip()
+        # 顶层缺省签字人**同样**要过非空字符串判据：`str(123)`→`"123"` 会把数字洗成
+        # 合法签名，而缺省值会被继承进每一条声明 ⇒  laundering 面上移到入口。
+        if raw.get("by") is not None:
+            if not review_policy.signed_str(raw, "by"):
+                raise SystemExit(die("--resolves 顶层 `by` 必须是非空字符串"
+                                     "（数字 / 数组 / 纯空白都不算签字，缺省就不给该键）"))
+            default_by = raw["by"].strip()
         entries = raw.get("resolves")
     elif isinstance(raw, list):
         entries = raw
@@ -119,7 +125,7 @@ def load_resolves(path_str: str) -> list[dict]:
     out: list[dict] = []
     for item in entries:
         entry = dict(item)
-        if not str(entry.get("by") or "").strip() and default_by:
+        if not review_policy.signed_str(entry, "by") and default_by:
             entry["by"] = default_by          # 整批缺省签字人继承（真实手写实测逐条重复 13 次）
         out.append(entry)
     return out

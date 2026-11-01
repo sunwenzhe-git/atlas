@@ -8,7 +8,11 @@ delta v3（head_sha / reviewed_files / selected / target 成员）；
 `--resolves` 两形态与坏形状（拒绝且不留半截产物）；README 渲染升级复议与跨轮声明条数；
 `ocr scan` 的 `success` 完成态；无 coverage ⇒ 点名「实审数取自评」。
 变异证明（编号属本文件）：**M42** 摘 `resolves` 落键 / **M43** 无 coverage 不点名 / **M46** N/M 下限退回 `M<N` 单边（多报静默通过）/
-**M44** README 不渲染 ⇒ 各自红；**M45**（`_support/review_policy.py` 摘 `success` 词表，编号属本文件）⇒ 本文件与 `test_review_report.py` 各红一条。
+**M44** README 不渲染 ⇒ 各自红；**M45**（`_support/review_policy.py` 摘 `success` 词表，编号属本文件）⇒ 本文件与 `test_review_report.py` 各红一条；
+**M49** 形状层摘掉 `by`/`evidence` 的字符串判据 ⇒ `test_resolves_numeric_signer_refused` 红；
+**M51** 批级缺省签字人退回 `str()` 洗白 ⇒ `test_resolves_default_signer_must_be_string` 红
+（`{"by": 123}` 变 `"123"` 后继承进每一条声明 ⇒ Critical 被数字签名关掉；合法缺省继承的正例对照
+= `test_resolves_object_form_inherits_default_signer`）。
 """
 from __future__ import annotations
 
@@ -650,3 +654,23 @@ def test_resolves_numeric_signer_refused(tmp_path: Path) -> None:
     payload = ok_payload([], files_reviewed=1, coverage=coverage(completed=("src/a.ts",)))
     r = run(tmp_path, payload, extra=["--expected-files", "1", "--resolves", src])
     assert r.returncode != 0 and "字符串" in r.stderr, r.stderr
+
+
+def test_resolves_default_signer_must_be_string(tmp_path: Path) -> None:
+    """M51：**顶层缺省签字人**也要过非空字符串判据（只读评审的 blocker）。
+
+    `{"by": 123}` 经 `str()` 变成 `"123"` 后被**继承进每一条声明** ⇒ 数字签名在批级路径复活：
+    实测 r1 的 Critical 由 `by:"123"` + `status:"fixed"` 关掉、台账 `PASS resolved 1`。
+    M49 只钉了条目级，顶层当时无任何钉。合法缺省的继承由
+    `test_resolves_object_form_inherits_default_signer` 反向保证。
+    """
+    payload = ok_payload([], files_reviewed=1, coverage=coverage(completed=("src/a.ts",)))
+    entry = {"fingerprint": "A", "status": "fixed", "evidence": "已修 + 回归测试"}
+    for name, content in (("n1.json", {"by": 123, "resolves": [entry]}),
+                          ("n2.json", {"by": ["lead"], "resolves": [entry]}),
+                          ("n3.json", {"by": "   ", "resolves": [entry]}),
+                          ("n4.json", {"by": True, "resolves": [entry]})):
+        src = _write(tmp_path, name, content)
+        r = run(tmp_path, payload, extra=["--expected-files", "1", "--resolves", src])
+        assert r.returncode != 0 and "顶层" in r.stderr, (name, r.stderr)
+        assert not (tmp_path / "report" / "review.json").exists(), f"{name} 留了半截产物"
