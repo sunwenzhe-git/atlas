@@ -21,7 +21,13 @@ M9 级别退回「义务侧覆盖本轮级别」⇒ `test_escalated_obligation_s
    （`Major` 在中间轮升为 `Critical` + 无签字 `intentional` 不得算已关；正例对照
    `test_escalation_widening_keeps_legitimate_closure` 保证不刷红正常收口）；
 M10 中间轮坏形状退回 exit 2 ⇒ `test_intermediate_declare_bad_shape_warns_not_blocks` 等三条红
-   （`(unit, round)` 文件不得覆盖 ⇒ 钉死历史就永久跑不动）。
+   （`(unit, round)` 文件不得覆盖 ⇒ 钉死历史就永久跑不动）；
+M11 级别加宽只读 `relevant()` 放行的条目 ⇒ 两条 `pre_existing_escalation_*` 红
+   （升级那一轮标 `pre_existing` 就跳过加宽 ⇒ 声明侧与重报侧都能免签关掉；第二轮评审的残留方向）；
+M12 `worst_level` 不做 `isinstance` 防护 ⇒ `test_broken_level_does_not_crash_the_ledger` 红
+   （历史 `level` 为 list/dict 时抛裸 traceback、退出码 1，违背「只有 0 与 2」）；
+M13 最新轮同指纹 open+closed 混排按 `any(closed)` 放行 ⇒ `test_open_and_closed_twin_in_latest_round_carries` 红
+   （与中间轮口径不一致，且形态门的去重排除了 fixed 条目、不会替它出声）。
 """
 from __future__ import annotations
 
@@ -431,3 +437,73 @@ def test_escalation_widening_keeps_legitimate_closure() -> None:
         p = run(d)
         assert p.returncode == 0 and "PASS" in p.stdout, p.stdout
         assert closure(d)["resolved"][0]["via"] == "re-reported-closed@r2"
+
+
+def test_pre_existing_escalation_still_widens_level() -> None:
+    """M11：升级那一轮顺手标 `pre_existing` 也必须把义务级别加宽。
+
+    加宽此前挂在 `relevant()` 之后 ⇒ `pre_existing=True` 直接跳过，义务仍按陈旧 Major 判，
+    最新轮一条无签字无取证的 `intentional` 声明就能把它算成已关（评审打出的残留方向）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {
+            1: [finding("F1", level="Major")],
+            2: [finding("F1", level="Critical", pre_existing=True)],
+            3: [finding("F2", level="Major")],
+        }, resolves=[{"fingerprint": "F1", "status": "intentional"}])
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        c = closure(d)
+        assert [x["fingerprint"] for x in c["unaccounted"]] == ["F1"]
+        assert "F1" in c["invalid_resolves"] and c["resolved"] == []
+
+
+def test_pre_existing_escalation_blocks_rereported_laundering() -> None:
+    """同方向的另一条路径：最新轮把升级后的条目降成 Major + `intentional` 重报。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {
+            1: [finding("F1", level="Major")],
+            2: [finding("F1", level="Critical", pre_existing=True)],
+            3: [finding("F1", level="Major", disposition="intentional")],
+        })
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        c = closure(d)
+        assert c["resolved"] == [] and [x["fingerprint"] for x in c["carried"]] == ["F1"]
+
+
+def test_broken_level_does_not_crash_the_ledger() -> None:
+    """M12：历史里 `level` 是 list / dict（不可哈希）不得抛裸 traceback。
+
+    本族脚本退出码只有 0 与 2；损坏条目按「不认识的一侧不参与加严」处理，
+    仍要给出义务判定，而不是把工具打死（与 S1 同族：历史不得钉死工具）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {
+            1: [finding("F1", level="Major")],
+            2: [finding("F1", level=["Critical"])],           # 形态损坏的升级尝试
+            3: [finding("F2", level="Major")],
+        }, resolves=[{"fingerprint": "F1", "status": "fixed", "by": "lead", "evidence": "e"}])
+        p = run(d)
+        assert p.returncode == 0, p.stdout + p.stderr
+        c = closure(d)
+        assert c["status"] == "PASS" and c["resolved"][0]["via"] == "resolves"
+
+
+def test_open_and_closed_twin_in_latest_round_carries() -> None:
+    """M13：同一指纹在最新轮同时出现 open 与已关闭条目 ⇒ 按未关闭跟踪并出声。
+
+    否则 `any(closed)` 会把它算成 resolved，而同样形态在中间轮是被拒的（口径不一致）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {
+            1: [finding("F1", level="Major")],
+            2: [finding("F1", level="Major"),
+                finding("F1", level="Major", disposition="fixed",
+                        disposition_by="lead", disposition_evidence="e")],
+        })
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        c = closure(d)
+        assert c["resolved"] == [] and [x["fingerprint"] for x in c["carried"]] == ["F1"]
+        assert any("形态矛盾" in w for w in c["warnings"])

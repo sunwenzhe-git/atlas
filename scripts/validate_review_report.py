@@ -13,10 +13,10 @@
   2. §3 必备键齐且类型对：`ok`(bool) / `status` / `root` / `scope` / `unit`(非空) / `round`(int ≥1) / `checks`[] / `other`[]。
   3. 分级闭集：`checks[].level ∈ {Critical, Major, Minor}`；每条 finding 必带非空 `rollback`（骨架 §2.4）。
   4. 状态映射复算（§3 写死 + §6 第 8 条 WARN 下限，cli_review_convert 同规则）：有 Critical ⇒
-     FAIL；否则有 Major 或 M<N 或 budget_exceeded 或 CLI partial/failed ⇒ WARN；否则 PASS；
+     FAIL；否则有 Major 或 M≠N（少审或多报）或 budget_exceeded 或 CLI partial/failed ⇒ WARN；否则 PASS；
      且 `ok == (status != "FAIL")`。
   5. 应审/实审对账（§6 第 8 条）：`expected` / `reviewed` **必填**（单审查者实例记 1/1）——
-     缺一或缺二 ⇒ FAIL（缺权威输入不得给「通过」）；`reviewed < expected` 或 `budget_exceeded` ⇒ WARN。
+     缺一或缺二 ⇒ FAIL（缺权威输入不得给「通过」）；`reviewed != expected`（少审或多报）或 `budget_exceeded` ⇒ WARN。
   6. CLI coverage 失败面（Batch A）：`cli_status=partial/failed` 或 `failed_files` 非空 ⇒ WARN，
      只抬下限、不降级 Critical；`skipped/unknown` 只记录。
 
@@ -143,7 +143,7 @@ def validate_report(d: Path) -> Result:
             ("；".join(bad_lv))[:200] if bad_lv else f"{len(checks)} 条 finding 闭集与回退环齐")
 
     # 应审/实审先解析（映射复算要把 §6 第 8 条的 WARN 下限算进去 —— cli_review_convert 同规则：
-    # Critical ⇒ FAIL；否则 Major 或 M<N 或预算击穿 ⇒ WARN；否则 PASS）
+    # Critical ⇒ FAIL；否则 Major 或 M≠N 或预算击穿 ⇒ WARN；否则 PASS）
     exp, rev = data.get("expected"), data.get("reviewed")
     exec_val = data.get("executed")
     delta_issues = review_policy.delta_warnings(data, checks, other)
@@ -187,6 +187,9 @@ def validate_report(d: Path) -> Result:
     elif rev < exp:
         res.add("应审/实审对账（§6 第 8 条）", "WARN",
                 f"应审 {exp} / 实审 {rev} —— 少审 M<N，查静默跳过（§6 第 8 条）")
+    elif rev > exp:
+        res.add("应审/实审对账（§6 第 8 条）", "WARN",
+                f"应审 {exp} / 实审 {rev} —— 多报 M>N，无 coverage 时实审数只剩 CLI 自评")
     elif data.get("budget_exceeded"):
         res.add("应审/实审对账（§6 第 8 条）", "WARN",
                 "budget_exceeded —— 预算击穿（§6 第 6 条熔断），结论覆盖面受限")

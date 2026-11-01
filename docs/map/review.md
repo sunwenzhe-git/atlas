@@ -14,7 +14,7 @@
 | `scripts/validate_review_report.py` | 报告落盘形态门:分级闭集 / fingerprint 去重 / 签字取证 / CLI 状态行(`validate_report`,`scripts/validate_review_report.py:74`) |
 | `scripts/review_closure.py` | 跨轮 finding 闭环台账:prior open Critical/Major ⇔ carried/resolves;关闭按所有出现里最严的级别判(`state_of`,`scripts/review_closure.py:77`)、**按该指纹最后一次证据判**(中间轮关过就算关,`last_close`,`scripts/review_closure.py:164`)、孤儿单元文件也 WARN(`load_prior_rounds`,`scripts/review_closure.py:101`);WARN observer、非门 |
 | `scripts/closeout_derive.py` | 按本轮 git diff 匹配触发表路径族,派生收口必跑步骤(`ATLAS_OWNED_PREFIXES`,`scripts/closeout_derive.py:52`) |
-| `_support/review_policy.py` | 审查策略单源内核:三级闭集与处置枚举(`LEVELS`,`_support/review_policy.py:14`)、级别取最严档(`worst_level`,`_support/review_policy.py:24`)、N/M 下限(`count_floor`,`_support/review_policy.py:40`)、指纹去重(`compute_fingerprint`,`_support/review_policy.py:77`)、`resolves` 形状单源(`resolves_shape_errors`,`_support/review_policy.py:211`)、CLI WARN 下限(`cli_warn_floor`)、delta 对账(`delta_warnings`) |
+| `_support/review_policy.py` | 审查策略单源内核:三级闭集与处置枚举(`LEVELS`,`_support/review_policy.py:14`)、级别取最严档(`worst_level`,`_support/review_policy.py:25`)、N/M 下限(`count_floor`,`_support/review_policy.py:45`)、指纹去重(`compute_fingerprint`,`_support/review_policy.py:82`)、`resolves` 形状单源(`resolves_shape_errors`,`_support/review_policy.py:216`)、CLI WARN 下限(`cli_warn_floor`)、delta 对账(`delta_warnings`) |
 
 ## 两条对账平面
 

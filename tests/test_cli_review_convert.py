@@ -626,7 +626,7 @@ def test_reviewed_exceeds_expected_warns(tmp_path: Path) -> None:
     assert review["reviewed"] == 999 and review["expected"] == 2
     assert review["status"] == "WARN" and review["ok"] is True
     readme = (tmp_path / "report" / "README.md").read_text(encoding="utf-8")
-    assert "应审 2 / 实审 999" in readme
+    assert "应审 2 / 实审 999" in readme and "多报" in readme
 
 
 def test_readme_renders_escalation_and_resolves(tmp_path: Path) -> None:

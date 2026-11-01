@@ -261,11 +261,6 @@ def run(report_dir: Path) -> tuple[str, dict]:
             if not relevant(c):
                 continue
             if fp in prior_fps:
-                # 同一问题跨轮重复出现是常态（carried 形态）：义务级别取最严的一档，
-                # 否则 Major 升级为 Critical 后可被无签字的 intentional 关掉
-                for known in prior:
-                    if known["fingerprint"] == fp:
-                        known["level"] = review_policy.worst_level(known.get("level"), c.get("level"))
                 warnings.append(f"prior fingerprint 重复：{fp}（round {rnd}）")
                 continue
             prior_fps.add(fp)
@@ -277,6 +272,14 @@ def run(report_dir: Path) -> tuple[str, dict]:
             fp = str(entry.get("fingerprint") or "").strip()
             events.setdefault(fp, []).append((rnd, "resolves", entry))
             declared_earlier.add(fp)
+
+    # 级别加宽读**全部出现**（含被标 pre_existing、已关闭、非本池级别的条目）：
+    # 加宽若挂在 relevant() 之后，「升级那一轮顺手标 pre_existing」就跳过加宽，
+    # 义务仍按陈旧 Major 判 ⇒ 声明侧与重报侧都能免签关掉（评审打出的 B1 残留方向）
+    for item in prior:
+        for _rnd, kind, entry in events.get(item["fingerprint"], []):
+            if kind == "check":
+                item["level"] = review_policy.worst_level(item.get("level"), entry.get("level"))
 
     latest_checks = root.get("checks") if isinstance(root.get("checks"), list) else []
     latest_by_fp: dict[str, list[dict]] = {}
@@ -290,11 +293,17 @@ def run(report_dir: Path) -> tuple[str, dict]:
     resolved: list[dict] = []
     unaccounted: list[dict] = []
     downgraded: list[dict] = []
+    contradictions: list[str] = []
     for item in prior:
         fp = item["fingerprint"]
         latest = latest_by_fp.get(fp)
         if latest:
-            if any(state_of(c, item.get("level")) == "closed" for c in latest):
+            still_open = [c for c in latest if state_of(c, item.get("level")) == "open"]
+            if still_open and len(still_open) < len(latest):
+                contradictions.append(fp)
+                warnings.append(f"同指纹在最新轮同时出现 open 与已关闭条目：{fp}"
+                                "（形态矛盾，需 triage 归一）⇒ 按未关闭跟踪")
+            if not still_open:
                 resolved.append({**item, "via": "re-reported", "status": "closed"})
             else:
                 carried.append(item)
@@ -329,7 +338,7 @@ def run(report_dir: Path) -> tuple[str, dict]:
     if prior_shape_errors:
         warnings.extend(f"中间轮 resolves 形状错（该条不作关闭证据）：{e}" for e in prior_shape_errors)
     status = "WARN" if (unaccounted or unknown_resolves or invalid_resolves or orphans
-                        or downgraded or prior_shape_errors) else "PASS"
+                        or downgraded or prior_shape_errors or contradictions) else "PASS"
     result = {"schema_version": 1, "unit": unit, "latest_round": latest_round,
               "rounds": [r for r, _, _ in prior_rounds] + [latest_round],
               "prior_relevant": len(prior), "carried": carried, "resolved": resolved,
@@ -369,9 +378,9 @@ def main() -> int:
         print(f"  · {w}")
     if args.emit_skeleton:
         out = Path(args.emit_skeleton)
-        entries = skeleton(result)["resolves"]
-        out.write_text(json.dumps(skeleton(result), ensure_ascii=False, indent=1) + "\n",
-                       encoding="utf-8")
+        sk = skeleton(result)
+        entries = sk["resolves"]
+        out.write_text(json.dumps(sk, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
         print(f"  骨架 → {out}（{len(entries)} 条待填 status/by/evidence）")
     return 0
 

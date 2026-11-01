@@ -12,6 +12,7 @@ import hashlib
 import re
 
 LEVELS = ("Critical", "Major", "Minor")
+ROUND_CAP = 4  # D129 过程收敛上限（转换器 / 形态门 / 台账共用同一个数）
 DISPOSITIONS = ("open", "fixed", "false_positive", "intentional", "ignored")
 # `resolves` 声明只接受「关闭」四类（open 不是关闭）；取证面 = fixed / false_positive
 RESOLVES_STATUSES = ("fixed", "false_positive", "intentional", "ignored")
@@ -29,11 +30,15 @@ def worst_level(left: object, right: object) -> str | None:
     一侧可免签关掉（`43dca7f` 修的是后者）。两个方向都要挡住。
     """
     ranks = {lvl: i for i, lvl in enumerate(LEVELS)}
-    rl, rr = ranks.get(left), ranks.get(right)
+    # 只认字符串档位：损坏历史里的 level 可能是 list / dict（不可哈希），
+    # 内核不得因此抛裸 traceback（本族脚本的退出码只有 0 与 2）
+    lk = left if isinstance(left, str) else None
+    rk = right if isinstance(right, str) else None
+    rl, rr = ranks.get(lk), ranks.get(rk)
     if rl is None:
-        return right if isinstance(right, str) else None
+        return rk
     if rr is None:
-        return left
+        return lk
     return left if rl <= rr else right
 
 
@@ -117,7 +122,7 @@ def calculate_status(checks: list[dict], warn_floor: bool = False,
 
     状态映射规则（§3 写死 + §6 下限 + D129 处置）：
       - 存在阻断性 Critical ⇒ FAIL
-      - 存在存量 Critical、Major、或 warn_floor 为 True（M<N、预算熔断、executed=False 等）⇒ WARN
+      - 存在存量 Critical、Major、或 warn_floor 为 True（M≠N（少审或多报）、预算熔断、executed=False 等）⇒ WARN
       - 否则 PASS
     """
     valid_checks = [c for c in checks if isinstance(c, dict)]
@@ -135,7 +140,7 @@ def cli_warn_floor(data: dict) -> bool:
     """CLI 失败面 ⇒ 状态下限 WARN（工具失败 ≠ 代码 finding，不直接 FAIL）。
 
     `partial` / `failed` 或 `failed_files` 非空都算「本次审查没跑全」；
-    `skipped` / `unknown` 不额外抬升，交给 `reviewed < expected` 等既有下限。
+    `skipped` / `unknown` 不额外抬升，交给 `count_floor`（M≠N）等既有下限。
     """
     status = str(data.get("cli_status") or "").strip().lower()
     failed = data.get("failed_files")
@@ -278,10 +283,10 @@ def validate_v2_report_fields(data: dict) -> list[str]:
     """校验 v2 报告级扩展字段与轮次收敛规则。"""
     errs: list[str] = []
     r = data.get("round")
-    if isinstance(r, int) and r >= 4:
+    if isinstance(r, int) and r >= ROUND_CAP:
         esc = data.get("escalation")
         if not isinstance(esc, dict) or not str(esc.get("to") or "").strip() or not str(esc.get("reason") or "").strip():
-            errs.append(f"round={r} 达到或超过 4 轮收敛上限，必须登记有效 escalation（需含 to 与 reason）")
+            errs.append(f"round={r} 达到或超过 {ROUND_CAP} 轮收敛上限，必须登记有效 escalation（需含 to 与 reason）")
     if "delta_only" in data:
         if not isinstance(data["delta_only"], bool):
             errs.append("`delta_only` 必须为 bool")

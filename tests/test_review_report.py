@@ -9,7 +9,9 @@
   4. 状态映射写死复算（有 Critical 而 status=PASS ⇒ FAIL）；
   5. 应审/实审对账（缺 ⇒ FAIL / 缺一半 ⇒ FAIL / M<N ⇒ WARN / 预算击穿 ⇒ WARN / 齐 ⇒ PASS）。
 
-变异证明（`gates.md` 2.1 行）：M35 摘掉状态映射复算 ⇒ `test_status_mapping_mismatch_fails` 红；
+变异证明（编号属本文件）：M35 摘掉状态映射复算 ⇒ `test_status_mapping_mismatch_fails` 红；
+M47 应审/实审对账行退回单边 `rev < exp` ⇒ `test_reviewed_exceeds_expected_row_warns` 红
+（多报时报告状态 WARN 而行显示 PASS，读报告的人会以为 N/M 齐）；
 M36 把「缺对账字段」降为放行 ⇒ `test_missing_counts_fail` 红。
 Batch A（RFC-20261031-01）：M40 摘掉 `cli_warn_floor` ⇒ `test_cli_partial_warns` 红；
 M41 让 CLI WARN 下限降级 Critical ⇒ `test_cli_partial_does_not_downgrade_critical` 红。
@@ -414,3 +416,18 @@ def test_cli_status_success_shape_accepted() -> None:
         p = run(mk_report(Path(td), payload))
         assert p.returncode == 0, p.stdout
         assert "不在闭集" not in p.stdout, p.stdout
+
+
+def test_reviewed_exceeds_expected_row_warns() -> None:
+    """M47：多报（M>N）的对账行必须 WARN 且可见，不能只靠状态映射抬下限。
+
+    转换器侧同口径（`review_policy.count_floor`），但形态门若仍按 `rev < exp` 出文案，
+    报告状态是 WARN 而对账行显示 PASS —— 读报告的人会以为「N/M 齐」。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        payload = {**GOOD, "schema_version": 2, "status": "WARN", "ok": True,
+                   "expected": 3, "reviewed": 4}
+        p = run(mk_report(Path(td), payload))
+        assert p.returncode == 0, p.stdout + p.stderr
+        assert "多报 M>N" in p.stdout, p.stdout
+        assert "[WARN] 应审/实审对账" in p.stdout, p.stdout

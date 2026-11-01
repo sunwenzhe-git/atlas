@@ -25,7 +25,7 @@
 * **新增（观察面）**：`scripts/review_closure.py` WARN observer——prior open Critical/Major 未 carried/resolves ⇒ WARN；<2 轮 SKIP；不进 `atlas_check`。
 * **两条防「悄悄变绿」**：关闭与否按**上一轮级别**从严（prior Critical 被降级后挂 `intentional` 不免责，降级本身也 WARN）；`findings/` 里有非本 unit 的孤儿文件 ⇒ WARN（跨轮请保持同一 `--unit`）。
 * **真实报告**：r1/r2 首跑 12 条 prior Major unaccounted；r2-v3 单轮 SKIP。
-* **测试/设计**：`tests/test_review_closure.py` 该批 19 条（经评审修订与 `RFC-20261101-02` 扩至 30 条、M1–M10）；`DESIGN.md` D179（D180 续）；契约 §11 / closeout 步骤 10 / gates §4。
+* **测试/设计**：`tests/test_review_closure.py` 该批 19 条（经评审修订与 `RFC-20261101-02` 扩至 34 条、M1–M13）；`DESIGN.md` D179（D180 续）；契约 §11 / closeout 步骤 10 / gates §4。
 
 ### 🧭 跨轮关闭持久化 + 升级可见性 + scan 通道词表（D5-a/b/c，RFC-20261101-02）
 
@@ -34,7 +34,7 @@
 * **scan 通道（D5-c）**：`CLI_STATUSES` 加 `success`（`ocr scan` 完成态，不再假记 `unknown`）；无 `manifest.coverage` 时落 `cli_warnings` 点名「实审数取自评、可被高估」（只点名，不改状态）。
 * **入口**：`cli_review_convert.py --resolves <file>`（`[...]` 或 `{by, resolves}`，条目缺 `by` 继承顶层缺省）；`review_closure.py --emit-skeleton <file>` 输出待填义务骨架。
 * **单源**：`resolves` 形状判据下沉 `_support/review_policy.resolves_shape_errors`（转换器与闭环共用）。
-* **测试/设计**：`tests/test_review_closure.py` 19 → 30（M6/M7/M8/M9/M10）、`tests/test_cli_review_convert.py` 41 → 49（M42/M43/M44/M46）、`tests/test_review_report.py` 39 → 40（M45）；`DESIGN.md` D180；契约 §11 / closeout 步骤 10 / gates §4 / docs+map 快照。
+* **测试/设计**：`tests/test_review_closure.py` 19 → 34（M6–M13）、`tests/test_cli_review_convert.py` 41 → 49（M42–M46）、`tests/test_review_report.py` 39 → 41（M45 编号属转换器 / M47）；`DESIGN.md` D180；契约 §11 / closeout 步骤 10 / gates §4 / docs+map 快照。
 
 ## [v0.2.0-beta.25] - 2026-10-31
 

@@ -44,7 +44,7 @@ SEVERITY_MAP = {"critical": "Critical", "high": "Major", "medium": "Major", "low
 KNOWN_CATEGORIES = {"bug", "security", "performance", "maintainability",
                     "test", "style", "documentation"}
 
-ROUND_CAP = 4  # D129 过程收敛上限：达到即必须登记升级复议
+ROUND_CAP = review_policy.ROUND_CAP  # 收敛上限单源在内核
 UNIT_RE = re.compile(r"^[\w.-]+$")
 
 STATUS_SUMMARY = {"PASS": "通过", "WARN": "需修改", "FAIL": "需重大调整"}
@@ -315,10 +315,16 @@ def main() -> int:
     (outdir / "review.json").write_text(json.dumps(review, ensure_ascii=False, indent=1) + "\n",
                                         encoding="utf-8")
 
+    if reviewed < expected:
+        nm_note = "（少审！见问题清单末尾）"
+    elif reviewed > expected:
+        nm_note = "（多报！无 coverage 时实审数只剩 CLI 自评，见 CLI warnings）"
+    else:
+        nm_note = ""
     lines = [f"# 实现代码独立审查 —— {args.scope or args.unit}",
              "", "## 1. 审查总结", "",
              f"- 结论：**{STATUS_SUMMARY[status]}**（`{status}`；round {args.round}）",
-             f"- **应审 {expected} / 实审 {reviewed}**" + ("（少审！见问题清单末尾）" if reviewed < expected else ""),
+             f"- **应审 {expected} / 实审 {reviewed}**" + nm_note,
              f"- CLI 状态：`{cli_status}`；失败文件：{len(failed_files)} 个；"
              f"预算击穿：{'是' if budget else '否'}；CLI warnings：{len(warnings)} 条"]
     lines += [f"  - 失败文件：`{p}`" for p in failed_files]

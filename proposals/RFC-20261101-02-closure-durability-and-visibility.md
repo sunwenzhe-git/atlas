@@ -2,7 +2,7 @@
 
 > 提案编号：RFC-20261101-02
 > 提案作者：@sunwenzhe-git
-> 关联状态：已定案 (Accepted)（用户 2026-11-01 拍板「都按你建议的来」；批次 rfc-20261101-01-closure-durability）
+> 关联状态：已定案 (Accepted)（用户 2026-11-01 拍板「都按你建议的来」；批次 rfc-20261101-02-closure-durability。初稿曾编号 -01，与 main `a5dfd71` 撞号后改）
 > 影响范围：脚本工具 (scripts) | 契约 (shared/independent-review.md) | 门册观测面 (shared/gates.md)
 > 关联取证：2026-10-31→11-01 真实实例⑤四轮运行（`2026083101.462`，nanwang 克隆）
 > 　`/tmp/atlas-impl-review-20261031-204905/nanwang/product/reviews/2026-10-31-impl-review-dashboard-topn/EVIDENCE-r1-r4.md`
@@ -176,6 +176,29 @@ python3 scripts/review_closure.py --dir <四轮报告目录> --emit-skeleton /tm
 * H3（误红侧）：真实四轮报告——修前 `WARN unaccounted 13`，修后应 `PASS unaccounted 0`。
 * H4（不得放水侧）：同一份 r4 报告，把 r3 的某条声明换成**更晚轮又 open** 的形态 ⇒ 应回到 `unaccounted`。
   两者都不是既有夹具只改路径可得（既有夹具最多两轮）。
+
+### 4.8 第二轮只读评审与再修订（2026-11-01）
+
+复审专打第一轮的修复本身，打出 **1 条阻塞 + 6 项风险**，逐条复现成立后全修（含上一轮我自己声明但未兑现的一项）。
+
+| 编号 | 判据 | 我的复现 | 修法 | 钉 |
+|---|---|---|---|---|
+| **B1 残留（阻塞）** | 级别加宽挂在 `relevant()` **之后** ⇒ 升级那一轮只要标 `pre_existing=true` 就跳过加宽，义务仍按陈旧 `Major` 判；两条关闭路径（声明侧 `declares_close`、重报侧 `resolved_by_fp`）都按它放行 | `/tmp/b1-e2`（r1 `Major` → r2 同指纹 `Critical`+`pre_existing` → r3 无签字 `intentional` 声明）：修前 `PASS resolved 1`，修后 `WARN unaccounted 1 invalid 1`；改成「最新轮降级重报」形态则修前 `PASS resolved`、修后 `carried` + 矛盾告警 | 加宽改读 `events[fp]` 的**全部 check 出现**（含被标 `pre_existing`、已关闭的条目），移出 `relevant()` 分支 | **M11**（声明侧 + 重报侧两条用例） |
+| R1 | 历史里 `level` 是 `list`/`dict` ⇒ `ranks.get()` 抛 `TypeError`、**裸 traceback rc=1**（本族脚本退出码只有 0 与 2），`closure.json` 不落盘 | 评审夹具 `e3`（r2 `level: ["Critical"]`）⇒ 修前 rc=1 | `worst_level` 只认字符串档位，不可哈希的一侧不参与加严 | **M12** |
+| R2 | `M>N` 只由状态映射抬下限，但形态门的对账行仍按 `rev < exp` 出文案 ⇒ 报告 `WARN` 而行显示 `[PASS]`、README 只标「少审」 | 构造 `expected=3 / reviewed=4`：修前该行 `[PASS]` | 门侧补「多报 `M>N`」分支；README 同步 `nm_note` 三态（少审 / 多报 / 齐） | **M47** |
+| R3 | 文案未随 `count_floor` 同步：契约 §3 的字段条、门册形态门行、两个脚本的 docstring 仍写单边 `reviewed < expected`；契约的 `cli_status` 词表也漏了 `success` | 逐处 grep | 全部改为 `M≠N`（并注明两侧含义）；词表补 `success` 并标其为 `ocr scan` 完成态 | 由 `test_canonical_consistency` 与新增用例覆盖 |
+| R4 | 上一轮我声明「`skeleton()` 单次计算」但没做 | `grep` 到两处调用 | 改为算一次并复用 | **M8** 既有钉覆盖 |
+| R5 | `ROUND_CAP` 没单源：内核 `validate_v2_report_fields` 仍硬编码 `r >= 4`，转换器另定义一个 | 读码 | 内核定义 `ROUND_CAP = 4`，转换器 `ROUND_CAP = review_policy.ROUND_CAP`，报错文案与 README 都用它 | **M44**/既有钉覆盖 |
+| R6 | 同一指纹在最新轮同时出现 open 与带签字 `fixed` ⇒ `any(closed)` 判 `resolved`；而中间轮同形态被 `best <= last_open` 拒 ⇒ 口径不一致，且形态门的指纹去重排除了 `fixed` 条目、不会报重复 | 评审夹具 `E7` | 最新轮改为「有 open 即未关闭」：混排 ⇒ `carried` + 矛盾告警 + **抬 WARN**（与 `downgraded`/孤儿同档） | **M13** |
+| R7 | 改号只落文件面：分支名与 RFC 头部「批次 rfc-20261101-01…」仍带 `-01` | `git branch --show-current` | 分支改名 `rfc-20261101-02-closure-durability`，RFC 头部标注入稿曾撞号 | — |
+
+**第二轮后的实况数**：`tests/test_review_closure.py` **34** 条（M1–M13）、`tests/test_cli_review_convert.py` **49** 条（M42–M46，M45 编号属该文件）、`tests/test_review_report.py` **41** 条（M35/M36/M40/M41/M47）；全量 **1007 passed / 5 skipped**（收集 1012；main 987 ⇒ +25）；`wc -l` = `review_closure.py` 389、`cli_review_convert.py` 366、`_support/review_policy.py` 343、`validate_review_report.py` 221、`shared/gates.md` 170；`test_canonical_consistency` + `test_map_anchors` 17 passed；安装自检 PASS。
+
+**七枚钉子第二轮四段协议**（M9/M10/M11/M12/M13/M46/M47）：基线 124 passed → 逐条注入各红 1–3 条（红目与预期完全对得上，无「注入无人红」的哑钉）→ 每次 `sha256 逐字节一致` 还原 → 复绿 124 passed。日志 `/tmp/atlas-rfc01-evidence/mutation-proof-round2.log`。
+
+**真实四轮语料未被后续修复带坏**：`PASS rounds 4 prior 16 carried 0 resolved 16 unaccounted 0`（`via` = 13× `resolves@r3` + 3× `resolves`）；删一条中间声明仍回 `unaccounted 1`。全仓 `reviewed > expected` 的存量报告 = **0**（`count_floor` 收紧不回扫打红），语料 5 份报告 validator 全 `rc=0`。
+
+**本轮教训（写进流程）**：第一轮我修的是「降级」方向并自称两个方向都挡住——实际加宽挂在 `relevant()` 之后，`pre_existing` 一标就整条跳过。**「对称方向都覆盖」这种话必须配一条反向夹具**，否则就是自我表扬。M11 就是那条反向夹具。
 
 ## 5. 开放问题
 
