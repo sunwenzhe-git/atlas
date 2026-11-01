@@ -557,3 +557,32 @@ def test_declared_round_mismatch_is_audible() -> None:
         c = closure(d)
         assert c["status"] == "PASS" and len(c["resolved"]) == 1   # 关闭仍成立
         assert any("round=7" in w and "不一致" in w for w in c["warnings"]), c["warnings"]
+
+
+def test_numeric_signature_does_not_close() -> None:
+    """M17：`disposition_by: 123` + `disposition_evidence: ["x"]` 不是签字。
+
+    这两处此前经 `str()` 判「非空」即算带取证关闭 —— 承重件（谁签的、凭什么关）不能给数字/数组面子。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {
+            1: [finding("A", level="Critical")],
+            2: [finding("A", level="Critical", disposition="false_positive",
+                        disposition_by=123, disposition_evidence=["外层网关已校验"])],
+        })
+        p = run(d)
+        assert p.returncode == 0, p.stdout + p.stderr
+        c = closure(d)
+        # 数字签名不算关闭 ⇒ 回到 carried（仍可见，按设计不抬 WARN）；resolved 必须为空
+        assert c["resolved"] == [] and [x["fingerprint"] for x in c["carried"]] == ["A"]
+
+
+def test_resolves_entry_still_needs_string_signer() -> None:
+    """同方向在声明侧：`resolves[].by` 是数字 ⇒ 该条不算关闭（形状层已拒，见转换器用例）。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A", level="Critical")], 2: [finding("B")]},
+                         resolves=[{"fingerprint": "A", "status": "false_positive",
+                                    "by": "lead", "evidence": "e"}])
+        p = run(d)
+        assert p.returncode == 0 and "PASS" in p.stdout, p.stdout
+        assert closure(d)["resolved"][0]["status"] == "false_positive"

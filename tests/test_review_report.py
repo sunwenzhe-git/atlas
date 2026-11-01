@@ -431,3 +431,19 @@ def test_reviewed_exceeds_expected_row_warns() -> None:
         assert p.returncode == 0, p.stdout + p.stderr
         assert "多报 M>N" in p.stdout, p.stdout
         assert "[WARN] 应审/实审对账" in p.stdout, p.stdout
+
+
+def test_numeric_disposition_by_fails_validator() -> None:
+    """M48：`disposition_by` / `disposition_evidence` 必须是非空字符串。
+
+    取 Minor 级隔离形状判据（不让阻断性 Critical 的状态复算混进来）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        bad = {**GOOD["checks"][0], "level": "Minor", "disposition": "fixed",
+               "disposition_by": 123, "disposition_evidence": ["test green"]}
+        p = run(mk_report(Path(td), {**GOOD, "schema_version": 2, "checks": [bad]}))
+        assert p.returncode == 1 and "disposition_by" in p.stdout, p.stdout
+        bad2 = {**GOOD["checks"][0], "level": "Minor", "disposition": "fixed",
+                "disposition_by": "lead", "disposition_evidence": 0}
+        p2 = run(mk_report(Path(td) / "r2", {**GOOD, "schema_version": 2, "checks": [bad2]}))
+        assert p2.returncode == 1 and "disposition_evidence" in p2.stdout, p2.stdout

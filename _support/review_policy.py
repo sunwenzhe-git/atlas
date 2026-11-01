@@ -42,6 +42,22 @@ def worst_level(left: object, right: object) -> str | None:
     return left if rl <= rr else right
 
 
+def signed_str(container: dict, key: str) -> bool:
+    """该字段是**非空字符串**才算数。
+
+    `by: 123` / `evidence: ["x"]` 经 `str()` 也「非空」，但那就不是可追责的签名；
+    台账与阻断性 Critical 的承重件正是「谁签的、凭什么关」，宽松等于把免签通道换个写法留下。
+    """
+    value = container.get(key)
+    return isinstance(value, str) and bool(value.strip())
+
+
+def has_signed_disposition(container: dict, by_key: str = "disposition_by",
+                           evidence_key: str = "disposition_evidence") -> bool:
+    """签字 + 取证齐备且都是非空字符串。"""
+    return signed_str(container, by_key) and signed_str(container, evidence_key)
+
+
 def count_floor(reviewed: object, expected: object) -> bool:
     """N/M 只要不相等就抬 WARN 下限：M<N 是静默少审，M>N 是多报（无 coverage 时只剩自评）。"""
     return isinstance(reviewed, int) and isinstance(expected, int) and reviewed != expected
@@ -109,9 +125,7 @@ def is_blocking_critical(check: dict, schema_version: int = 2) -> bool:
         return False
     disp = check.get("disposition")
     if disp in ("fixed", "false_positive"):
-        has_signer = bool(str(check.get("disposition_by") or "").strip())
-        has_evidence = bool(str(check.get("disposition_evidence") or "").strip())
-        if has_signer and has_evidence:
+        if has_signed_disposition(check):
             return False
     return True
 
@@ -242,6 +256,9 @@ def resolves_shape_errors(raw: object, where: str = "resolves") -> list[str]:
             errs.append(f"{label}.status={item.get('status')!r} 不在闭集 {RESOLVES_STATUSES}")
         if "round" in item and (not isinstance(item["round"], int) or item["round"] < 1):
             errs.append(f"{label}.round 必须为 ≥1 的整数")
+        for key in ("by", "evidence"):
+            if key in item and not isinstance(item[key], str):
+                errs.append(f"{label}.{key} 必须为字符串（签字与取证要可追责，不给数字/数组面子）")
     return errs
 
 
@@ -260,10 +277,10 @@ def validate_v2_finding(c: dict, idx: int) -> list[str]:
         if disp not in DISPOSITIONS:
             errs.append(f"checks[{idx}].disposition={disp!r} 不在闭集 {DISPOSITIONS}")
         elif disp in ("fixed", "false_positive"):
-            if not str(c.get("disposition_by") or "").strip():
-                errs.append(f"checks[{idx}].disposition={disp} 必须带非空 disposition_by 签名")
-            if not str(c.get("disposition_evidence") or "").strip():
-                errs.append(f"checks[{idx}].disposition={disp} 必须带非空 disposition_evidence 取证")
+            if not signed_str(c, "disposition_by"):
+                errs.append(f"checks[{idx}].disposition={disp} 必须带非空字符串 disposition_by 签名")
+            if not signed_str(c, "disposition_evidence"):
+                errs.append(f"checks[{idx}].disposition={disp} 必须带非空字符串 disposition_evidence 取证")
     if "verification" in c:
         v = c["verification"]
         if not isinstance(v, dict):
@@ -272,7 +289,7 @@ def validate_v2_finding(c: dict, idx: int) -> list[str]:
             st = v.get("status")
             if st not in VERIFICATION_STATUSES:
                 errs.append(f"checks[{idx}].verification.status={st!r} 不在闭集 {VERIFICATION_STATUSES}")
-            if not str(v.get("by") or "").strip():
+            if not signed_str(v, "by"):
                 errs.append(f"checks[{idx}].verification 必须带非空 by")
             if not str(v.get("evidence") or "").strip():
                 errs.append(f"checks[{idx}].verification 必须带非空 evidence")

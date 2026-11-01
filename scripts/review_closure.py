@@ -70,8 +70,8 @@ def fingerprint(check: dict) -> str:
 
 
 def has_evidence(check: dict) -> bool:
-    return bool(str(check.get("disposition_by") or "").strip()) and bool(
-        str(check.get("disposition_evidence") or "").strip())
+    """签字 + 取证（单源判据；非字符串的「签名」不算）。"""
+    return review_policy.has_signed_disposition(check)
 
 
 def state_of(check: dict, obligation_level: str | None = None) -> str:
@@ -157,8 +157,7 @@ def declares_close(entry: dict, obligation_level: str | None) -> bool:
     if status not in CLOSED:
         return False
     if status in EVIDENCE_REQUIRED:
-        return bool(str(entry.get("by") or "").strip()
-                    and str(entry.get("evidence") or "").strip())
+        return review_policy.has_signed_disposition(entry, "by", "evidence")
     return obligation_level != "Critical"
 
 

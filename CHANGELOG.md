@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+### 🧭 签字与取证必须是非空字符串（RFC-20261101-03）
+
+* **收紧**：`disposition_by` / `disposition_evidence` / `resolves[].by` / `resolves[].evidence` / `verification.by` 此前经 `str()` 判非空 ⇒ `by: 123`、`evidence: ["x"]` 算「已签字取证」；而 Critical 脱断与台账判 `resolved` 都吃这一条。新增单源 `review_policy.signed_str` / `has_signed_disposition`，五处调用改齐。
+* **形状层**：`--resolves` 里 `by`/`evidence` 给了就必须是字符串 ⇒ 转换器拒绝产出、中间轮该条不作关闭证据、最新轮 exit 2。
+* **零回扫**：实测全仓 + 真实四轮语料的非字符串签名命中 0 处，语料台账 `PASS resolved 16` 与形态门 `PASS` 均不变。
+* **测试/设计**：`tests/test_review_closure.py` 37 → 39（M17）、`tests/test_review_report.py` 41 → 42（M48）、`tests/test_cli_review_convert.py` 49 → 50；`DESIGN.md` D181；契约 §3/§11、`shared/gates.md`、`docs/map` 快照。
+
 ### 🧭 非门约束登记 + C-03 基线不写钉（RFC-20261101-01）
 
 * **新增（非门）**：`shared/gates.md` §4.1 约束登记表，8 条代码/设计孤岛约束；不参与判定、不计入门总数、不进 `atlas_check`；不新建 shared 文件。

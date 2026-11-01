@@ -641,3 +641,12 @@ def test_readme_renders_escalation_and_resolves(tmp_path: Path) -> None:
     readme = (tmp_path / "report" / "README.md").read_text(encoding="utf-8")
     assert "升级复议" in readme and "human-owner" in readme and "达到收敛上限需拍板" in readme
     assert "跨轮关闭声明：1 条" in readme
+
+
+def test_resolves_numeric_signer_refused(tmp_path: Path) -> None:
+    """M49：`--resolves` 的 `by` / `evidence` 给了数字或数组 ⇒ 形状错，拒绝产出。"""
+    src = _write(tmp_path, "bad.json", {"resolves": [{"fingerprint": "A", "status": "fixed",
+                                                     "by": 123, "evidence": "e"}]})
+    payload = ok_payload([], files_reviewed=1, coverage=coverage(completed=("src/a.ts",)))
+    r = run(tmp_path, payload, extra=["--expected-files", "1", "--resolves", src])
+    assert r.returncode != 0 and "字符串" in r.stderr, r.stderr

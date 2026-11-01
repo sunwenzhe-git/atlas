@@ -228,7 +228,7 @@ python3 scripts/review_closure.py --dir <四轮报告目录> --emit-skeleton /tm
 
 **三轮累计的教训（进流程）**：① 自称「两个方向都挡住」必须两侧各有一条反向夹具（M4 降级 / M9 升级 / M11 `pre_existing` 绕加宽，三枚都是同一课）；② 提交信息里声明的改动必须当时就落地（R-4「skeleton 单次计算」曾在提交信息里声称而未做）；③ 文档口径与实现漂移是新功能的默认副产品，合批前必须逐条对着实码读一遍（本轮 4 处全是这个）。
 
-**第三轮后的实况数**：`wc -l` = `review_closure.py` **405**、`cli_review_convert.py` 366、`_support/review_policy.py` 343、`validate_review_report.py` 221、`shared/gates.md` 170；用例 = 37 / 49 / 41（收集 1015，main 987 ⇒ +28）；全量 **1010 passed / 5 skipped**、`test_canonical_consistency` + `test_map_anchors` 17 passed、安装自检 PASS；三轮四段协议日志 `mutation-proof.log` / `-round2.log` / `-round3.log`。
+**第三轮后的实况数**：`wc -l` = `review_closure.py` **405**、`cli_review_convert.py` 366、`_support/review_policy.py` 343、`validate_review_report.py` 221、`shared/gates.md` 170；用例 = 37 / 49 / 41（本批合入时实况；`RFC-20261101-03` 后为 39 / 50 / 42；收集 1015，main 987 ⇒ +28）；全量 **1010 passed / 5 skipped**（`RFC-20261101-03` 后为 1014）、`test_canonical_consistency` + `test_map_anchors` 17 passed、安装自检 PASS；三轮四段协议日志 `mutation-proof.log` / `-round2.log` / `-round3.log`。
 
 ### 4.10 回路验证：`--emit-skeleton` → 填 → `--resolves` 在真实四轮语料上跑通（2026-11-01 补）
 
