@@ -11,6 +11,11 @@
 * **零回扫**：实测全仓 + 真实四轮语料的非字符串签名命中 0 处，语料台账 `PASS resolved 16` 与形态门 `PASS` 均不变。
 * **测试/设计**：`tests/test_review_closure.py` 37 → 42（M17 / M98 / M102）、`tests/test_review_report.py` 41 → 45（M48 / M99 / M100 / M101）、`tests/test_cli_review_convert.py` 49 → 51（M49 / M51）；第二批五枚新钉四段协议 5/5 按预期红并逐字节还原，第三轮复核补 M102（重复指纹整组作废）单钉红/还原复绿；`DESIGN.md` D181；契约 §3/§11、`shared/gates.md`、`docs/map` 快照。
 
+### 🧭 留出验证自述盲区硬化（D156 补强）
+
+* **触发 (b) 取证**：作者侧 §4.5 / closeout 定档必须粘贴 `git diff --name-only` 与 `scripts/closeout_derive.py` 的原始输出；评审侧 §9 必须自行重跑并留原文，不得只引作者自述。
+* **不新增机器判据**：语义映射不可机判，维持 `shared/gates.md` §2.5 流程门；本次只加固取证形状，不建硬门。
+
 ### 🧭 非门约束登记 + C-03 基线不写钉（RFC-20261101-01）
 
 * **新增（非门）**：`shared/gates.md` §4.1 约束登记表，8 条代码/设计孤岛约束；不参与判定、不计入门总数、不进 `atlas_check`；不新建 shared 文件。
