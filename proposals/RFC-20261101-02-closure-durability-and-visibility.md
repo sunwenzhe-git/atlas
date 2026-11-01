@@ -47,7 +47,7 @@ review_closure …  WARN  rounds 4 prior 16 carried 0 resolved  3 unaccounted 13
 ### 附带诉求（同批，成本低）
 
 真实手写 13 条 `resolves` 的体量：93 行 / 4849 字节，机械字段（指纹 + 轮次 + status + 签字人）
-占输入字符 **23%**、`by` 逐条重复 13 次，证据正文占 77%（证据不可自动机生成，指纹可以）。
+机械字段（指纹 + 轮次 + status + 签字人）611 字符、证据正文 2086 字符（占比随口径在 17%–29% 浮动，**不作为论据**）、`by` 逐条重复 13 次（证据不可自动机生成，指纹与轮次可以）。
 ⇒ 需要 `--resolves` 输入 + 义务骨架输出。
 
 ## 2. 决策与权衡
@@ -130,11 +130,11 @@ python3 scripts/review_closure.py --dir <四轮报告目录>
 python3 scripts/review_closure.py --dir <四轮报告目录> --emit-skeleton /tmp/skeleton.json
 ```
 
-## 4.1 结果实录（2026-11-01，分支 `0ad624f`）
+## 4.1 结果实录（2026-11-01 首版）
 
-* **全量**：`pytest tests/` ⇒ **998 passed, 5 skipped**（合批前 981 + 17 条新用例）；`test_install_selfcheck` PASS；`test_canonical_consistency` + `test_map_anchors` 17 passed。
+* **全量**：首版 `pytest tests/` ⇒ 998 passed / 5 skipped；经 §4.7 修订并 rebase 到 main `a5dfd71` 后 ⇒ **1002 passed / 5 skipped**（收集 1007；main 收集 987 ⇒ 本批 +20）。`test_install_selfcheck` PASS；`test_canonical_consistency` + `test_map_anchors` 17 passed。
 * **用例增量**：`tests/test_review_closure.py` 19 → **28**；`tests/test_cli_review_convert.py` 41 → **48**；`tests/test_review_report.py` 39 → **40**。
-* **七枚钉子四段协议**（基线绿 → 注入红 → sha256 逐字节还原 → 复绿，日志 `/tmp/atlas-rfc01-evidence/mutation-proof.log`）：
+* **十枚钉子四段协议**（首版七枚 + §4.7 新增 M9/M10/M46）（基线绿 → 注入红 → sha256 逐字节还原 → 复绿，日志 `/tmp/atlas-rfc01-evidence/mutation-proof.log`）：
   * **M6**（`closer = None`，等于只认最新轮）⇒ 3 红：`test_intermediate_resolves_persists_to_later_rounds`、`test_intermediate_rereported_closure_persists`、`test_stale_intermediate_declare_warns_but_not_loudly`。
   * **M7**（去掉 `best[0] <= last_open` 的轮次判据）⇒ 2 红：`test_reopen_after_intermediate_close_is_unaccounted`、`test_declare_earlier_than_obligation_does_not_count`（**不放水侧**）。
   * **M8**（骨架不写文件）⇒ `test_emit_skeleton_lists_unaccounted` 红。
@@ -148,6 +148,27 @@ python3 scripts/review_closure.py --dir <四轮报告目录> --emit-skeleton /tm
 * **H4（真实语料，不放水侧）**：把 H3 那份四轮报告复制成 `/tmp/atlas-rfc01-h4`，仅**删掉 r3 里 `aff7ef9e83b103e4` 这一条关闭声明** ⇒ `WARN rounds 4 prior 16 resolved 15 unaccounted 1`（持久化不是「只要历史上出现过声明就永远算关」，也不是把义务集缩小）。
 * **H4b（重置侧，夹具）**：`test_reopen_after_intermediate_close_is_unaccounted` —— 中间轮关过、更晚一轮同指纹又 open ⇒ 回到 `unaccounted`；`test_declare_earlier_than_obligation_does_not_count` —— 声明轮次早于义务出现轮 ⇒ 不作数。
 * **留出独立性（D156 三条）**：①判据输出翻转（`unaccounted 13 → 0`、`resolved 3 → 16`、`via` 新增形态）；②变异增量杀伤（M6/M7 注入后既有 19 条钉全绿而新钉红）；③结构不可达（既有夹具最多两轮，无「中间轮声明 + 最新轮未提」形态；H3 用真实四轮语料）。⇒ 三态结论 = **闭族**。
+
+### 4.7 只读评审与修订（2026-11-01；主审逐条独立复现后才动手）
+
+只读评审打出 **1 条阻塞 + 4 条非阻塞**，六条我全部复现成立；按「非阻塞也全修再提交」处理。
+
+| 编号 | 判据（评审原话压缩） | 我的独立复现 | 修法 | 钉 |
+|---|---|---|---|---|
+| **B1 阻塞** | `state_of` 用 `obligation_level` **覆盖**本轮级别 ⇒ 只挡 `Critical→Major` 降级，反向 `Major→Critical` 升级后可被**无签字无取证**的 `intentional` 判成 `re-reported-closed@r2` 且整体 `PASS`；同一夹具 main 是 `WARN unaccounted 1` ⇒ 本批把响亮降成静默；docstring 却自称「按最严的级别判」 | `python3 scripts/review_closure.py --dir /tmp/atlas-b1-verify/report` ⇒ 分支 `PASS resolved 1`、main `WARN unaccounted 1` | 新增 `review_policy.worst_level(left,right)`；`state_of` 取较严档；义务 `level` 在重复指纹处按最严加宽 ⇒ 同一夹具改判 `WARN unaccounted 1`，而真实四轮仍 `PASS 16/16` | **M9**；配正例 `test_escalation_widening_keeps_legitimate_closure`（带取证的升级关闭仍算关，不刷红） |
+| S1 | 中间轮 `resolves` 坏形状 ⇒ `exit 2`；`(unit, round)` 文件按契约不得覆盖 ⇒ 历史里一个写歪的 `status` 把闭环永久钉死 | 构造 r2 `status:"done"`：分支 rc=2，main 同夹具仍可跑出 WARN | 中间轮 ⇒「该条不作关闭证据 + warnings + 抬 WARN」；最新轮仍 `exit 2` | **M10** ⇒ 3 条红 |
+| S2 | `M>N` 不判：无 coverage 时自评 `files_reviewed=999` 配 `--expected-files 2` 仍 `PASS` | 自家夹具即中招（`test_other_category_not_gated` 自评 2 / 应审 1 却判 PASS） | `review_policy.count_floor(reviewed, expected)` ⇒ `M≠N` 一律抬下限，转换器与形态门同口径；先核全仓现存报告 `M>N` = 0（不回扫不误伤） | **M46** ⇒ `test_reviewed_exceeds_expected_warns` 红 |
+| S3 | 单源化后指纹带首尾空白被归一，声明由 main 的 `unknown + WARN` 变成 `resolved + PASS` | 评审夹具 `f12_space_fp` | 带首尾空白 = 形状错，显式失败（不猜、不归一后放行） | 并入 `resolves_shape_errors` 判据面 |
+| S4 | 措辞与顺序：stale 提示的「N 条」实为去重指纹数；README `round ≥ {args.round}` 在 `--round 5` 会印 5；`skeleton()` 调两次；`--resolves` 形状门早于「同轮不得覆盖」，坏声明盖住重复轮次报错 | 逐条读码确认 | 改「N 个指纹」；提 `ROUND_CAP=4` 常量并标本轮 round；单次计算；同轮检查前置 | 由既有钉与新增用例覆盖 |
+
+**编号撞车（评审同时发现）**：本提案初稿占用 `RFC-20261101-01`，而 main 的 `a5dfd71`（非门约束登记）已用同号 ⇒ 本批改号 **RFC-20261101-02**，引用面（DESIGN D180 / `shared/gates.md` 两行与 §4 条 / 两处 changelog / concepts / iron-gates / 契约 §11 / 三个测试文件注释）逐处辨主后改，main 自有引用 3 处未被误改（已核对 `main:shared/gates.md` 第 53/54 行原本不含该编号）。
+
+**M45 编号归属**：摘 `CLI_STATUSES` 中 `success` 这一变异只记在 `tests/test_cli_review_convert.py` 名下，但它同时使 `tests/test_review_report.py` 红一条；门册两行已写明「编号属 `test_cli_review_convert.py`」，避免引用面歧义。
+
+**对 §4.1 首版自述的两处更正（诚实优先）**：
+
+1. 首版写「七次注入全部还原逐字节一致」——首跑日志里 **M43 因锚点命中 2 次而未能注入**（同批日志含 `无效钉子/异常计数 = 1`），换唯一锚点重试后才成立。逐文件 sha256 复核现已在协议输出里逐条打印（`还原 sha256 一致`），但首版把「一次重试后成功」写成「七次全绿」不准确。
+2. 「机械字段占 23%」随口径不同落在 17%–29%，属软陈述；`--resolves` 的必要性改由可核数支撑（13 条 / 93 行 / 4849 字节 + `by` 逐条重复 + 实测指纹写错会落 `unknown_resolves`）。
 
 ### 4.5 留出验证（D156）
 
