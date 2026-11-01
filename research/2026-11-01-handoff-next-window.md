@@ -88,6 +88,8 @@ git rev-list --count main..origin/main 2>/dev/null; git rev-list --count origin/
 
 ## 7. 可直接粘给新窗口的开场指令（**含全部剩余项，按顺序执行**）
 
+> **执行状态（同日 21:40 追加，别重复已完成的步骤）**：第 0/1/2 步（核对现场、第三轮只读复核、有 blocker 先修）**已做完**，且**已 ff 合并进 main** —— 第三轮复核抓到 B2 的残留：中间轮重复指纹保留第一条形状合法声明，`fixed` + `intentional` 的关/开取决于数组顺序；已按「整组指纹一起作废」修掉并配 **M102**（main 含 `b10b5cc`，四段变异协议 + 门册/契约/锚点/changelog 同步）。第 4 步（真实项目重装）仍等发版口径。**新窗口从第 3 步（消融批次 03）开始，剩余 = 3、5、6、7。**
+
 > 接手 Atlas（`/Users/sunwenzhe/Desktop/atlas`）。先读 `research/2026-11-01-handoff-next-window.md` 全文，然后按下面顺序把**所有**剩余项做完；每项做完简短汇报，撞到需要授权的地方停下来等我，不要自己猜。
 >
 > 0. **核对现场**：`git log --oneline -3`（main 应已包含本交接文档那条 `docs(handoff)` 提交）、`git status --porcelain` 为空、`git worktree list` 含 `/private/tmp/atlas-rfc-20261101-03-20261101-192510`；分支头应为 `d24ae6e`，`git merge-base main HEAD` 应等于 main HEAD（纯 ff 就绪）。
