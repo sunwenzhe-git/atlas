@@ -2,7 +2,7 @@
 
 > 提案编号：RFC-20261031-02  
 > 提案作者：@sunwenzhe-git  
-> 关联状态：已定案 (Accepted)（D5 已实现、待合并）  
+> 关联状态：已合并 (Merged)（`8ae589d` + 评审修订 `43dca7f`，ff 入 main）  
 > 影响范围：脚本工具 (scripts) | 契约 (shared/independent-review.md) | 门册观测面 (shared/gates.md)  
 > 关联取证：2026-10-31 真实 r1/r2 报告（12 条 prior Major 无交代）+ 19 条夹具
 
