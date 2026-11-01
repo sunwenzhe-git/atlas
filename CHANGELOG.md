@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+### 🧭 非门约束登记 + C-03 基线不写钉（RFC-20261101-01）
+
+* **新增（非门）**：`shared/gates.md` §4.1 约束登记表，8 条代码/设计孤岛约束；不参与判定、不计入门总数、不进 `atlas_check`；不新建 shared 文件。
+* **测试**：`tests/test_validate_ac_alignment.py` 62 → 63；新增 FAIL / parse_errors / PASS 三态基线不写钉；变异 M162a/M162b。
+* **编号卫生**：graph 非 git 变异 M59 → M161，消除与装配版本 M59 重号。
+* **同步面**：`docs/map` 行数 153 → 170、`atlas-map.html` 计数；`shared/gates.md` AC 行 62 → 63。
+
 ### 🧭 实例⑤审查报告 coverage 权威 + CLI 失败面（Batch A/B，RFC-20261031-01）
 
 * **修复**：`cli_review_convert.py` 以 CLI `manifest.coverage.completed[]` 为实审 M 权威（无 coverage 才回退 `summary.files_reviewed`）；`summary` 与 coverage 冲突以 coverage 为准并写入 `cli_warnings`；报告新增 `cli_status` / `failed_files` / `waived_files` / `reused_files` / `cli_warnings`。

@@ -98,6 +98,59 @@ def test_valid_case():
     assert checks["AC覆盖对账"] == "PASS"
 
 
+def test_baseline_not_written_on_fail_or_parse_error(tmp_path: Path):
+    """C-03：FAIL / parse_errors 不写 AC 基线快照；PASS 对照必须写。
+
+    反事实 M162a（总写 ⇒ FAIL 分支红）/ M162b（摘 not parse_errors ⇒ parse_errors 分支红）。
+    """
+    baseline = ".atlas/runs/backend-ac-alignment.json"
+
+    fail_proj = create_minimal_project(
+        tmp_path / "fail",
+        prd_acs=["AC-TEST-001"],
+        test_code="""
+import pytest
+
+@pytest.mark.ac("AC-GHOST-999")
+def test_fake_case():
+    assert True
+""",
+    )
+    fail_res = validate_ac_alignment(fail_proj)
+    assert fail_res.status == "FAIL"
+    fail_check = [c for c in fail_res.checks if c["check"] == "无主AC拦截"][0]
+    assert fail_check["status"] == "FAIL"
+    assert "AC-GHOST-999" in fail_check["detail"]
+    assert not (fail_proj / baseline).exists()
+
+    parse_proj = create_minimal_project(
+        tmp_path / "parse",
+        prd_acs=["AC-TEST-001"],
+        test_code="def broken(:\n",
+    )
+    parse_res = validate_ac_alignment(parse_proj)
+    assert parse_res.status == "WARN"
+    parse_check = [c for c in parse_res.checks if c["check"] == "测试提取完整性"][0]
+    assert parse_check["status"] == "WARN"
+    assert "[PARSE]" in parse_check["detail"]
+    assert not (parse_proj / baseline).exists()
+
+    ok_proj = create_minimal_project(
+        tmp_path / "ok",
+        prd_acs=["AC-TEST-001"],
+        test_code="""
+import pytest
+
+@pytest.mark.ac("AC-TEST-001")
+def test_valid_case():
+    assert True
+""",
+    )
+    ok_res = validate_ac_alignment(ok_proj)
+    assert ok_res.status == "PASS"
+    assert (ok_proj / baseline).exists()
+
+
 def test_dangling_ac_fails(tmp_path: Path):
     # 测试引用的 AC 在 PRD 中不存在 -> 必须 FAIL
     test_code = """
