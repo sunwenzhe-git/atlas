@@ -236,13 +236,13 @@ atlas-grill（提炼刺痛代价与致命冲突） → 用户拍板关键抉择
 
 - **触发**：报告目录有 ≥2 轮 `findings/<unit>.r*.json`；`python3 .atlas/scripts/review_closure.py --dir <报告目录>`。
 - **规则**：上一轮未关闭的 `Critical|Major`（`pre_existing` 除外）必须在最新轮同指纹重报（`carried`）或在最新 `review.json.resolves` 声明关闭；否则 `unaccounted` WARN。
-- **级别从严**：是否算关闭按**上一轮的级别**判——prior `Critical` 在新一轮被降级成 `Major` 再挂 `intentional`/`ignored`（无签字取证）**不算关闭**，仍按 `carried` 跟踪；且「Critical 变低级」单独记 WARN（`level_downgraded`），防逐轮洗级别。
+- **级别从严**：是否算关闭按**该问题所有出现里最严的一档**判（`worst_level`：义务最严档 ⇄ 本条级别取严者）——`Critical` 在新一轮被降级成 `Major` 再挂 `intentional`/`ignored`（无签字取证）**不算关闭**，仍按 `carried` 跟踪；**反向同理**：`Major` 在中间轮升级为 `Critical` 后也不能靠无签字的 `intentional`/`ignored` 关掉（含把升级那一轮标成 `pre_existing` 想绕过加宽的写法——加宽读**全部出现**，不只读仍算义务的那些）。且「Critical 变低级」单独记 WARN（`level_downgraded`），防逐轮洗级别。
 - **孤儿文件**：`findings/` 里出现不属于本 `unit` 的单元文件 ⇒ WARN（跨轮改 `--unit` 名、或一个目录塞多个 unit，都会让闭环义务凭空清零）。
-- **`resolves`**：`[{fingerprint, status, by?, evidence?, round?}]`；`status ∈ {fixed,false_positive,intentional,ignored}`；`fixed`/`false_positive` 必须带 `by`+`evidence`；Critical 只接受 fixed/false_positive；Major 可 intentional/ignored；unknown fingerprint ⇒ WARN；重复/坏形状 ⇒ exit 2。
-- **跨轮持久**（`RFC-20261101-02`）：闭合按**该指纹最后一次证据**判——任一中间轮（`k < r < latest`）正式关闭过即算 `resolved`（`via` 记 `resolves@rN` / `re-reported-closed@rN`），**不要求每轮重贴历史声明**；更晚一轮又以 open 出现 ⇒ 早先关闭作废、回到 `unaccounted`；声明轮次必须晚于最后一次 open 的轮次（历史不能倒着关）。中间轮的判据与最新轮同源（`fixed`/`false_positive` 要 `by`+`evidence`；Critical 不接受 `intentional`/`ignored`；形状错 exit 2）。
-- **入口**：转换器 `--resolves <file>`（`[...]` 或 `{by, resolves}`，条目缺 `by` 继承顶层缺省）；`review_closure.py --emit-skeleton <file>` 把 `unaccounted` 义务打成待填骨架（指纹/轮次/定位预填）。骨架属纯输出，未填直接喂回是形状错，不静默当空声明。
+- **`resolves`**：`[{fingerprint, status, by?, evidence?, round?}]`；`status ∈ {fixed,false_positive,intentional,ignored}`；`fixed`/`false_positive` 必须带 `by`+`evidence`；`round` 只作人读标注（判定按文件所在轮，与义务轮不一致时出声）；`fingerprint` 必须已规范化（带首尾空白 = 形状错）；Critical 只接受 fixed/false_positive；Major 可 intentional/ignored；unknown fingerprint ⇒ WARN；重复/坏形状 ⇒ exit 2。
+- **跨轮持久**（`RFC-20261101-02`）：闭合按**该指纹最后一次证据**判——任一中间轮（`k < r < latest`）正式关闭过即算 `resolved`（`via` 记 `resolves@rN` / `re-reported-closed@rN`），**不要求每轮重贴历史声明**；更晚一轮又以 open 出现 ⇒ 早先关闭作废、回到 `unaccounted`；声明轮次必须晚于最后一次 open 的轮次（历史不能倒着关）。中间轮的判据与最新轮同源（`fixed`/`false_positive` 要 `by`+`evidence`；Critical 不接受 `intentional`/`ignored`；**坏形状 ⇒ 该条不作关闭证据 + `warnings` + 抬 WARN**，不再 exit 2 —— `(unit, round)` 文件按契约不得覆盖，钉死历史等于闭环永久跑不动；只有**最新轮**的坏形状才 exit 2）。
+- **入口**：转换器 `--resolves <file>`（`[...]` 或 `{by, resolves}`，条目缺 `by` 继承顶层缺省；坏声明 ⇒ 拒绝产出且不留半截产物）；`review_closure.py --emit-skeleton <file>` 把 `unaccounted` 义务打成待填骨架（预填指纹/义务所在轮/定位，`status`/`by`/`evidence` 留空，不含 `level`）。骨架属纯输出，未填直接喂回是形状错，不静默当空声明。
 - **scan 通道**（整文件补审）：`ocr scan` 的 `status="success"` 是完成态（`CLI_STATUSES` 已含），但 scan **不产 `manifest.coverage`** ⇒ M 只剩 CLI 自评，转换器会落一条 `cli_warnings` 点名「M 可被高估」（只点名，不改状态）。
-- **非门**：WARN observer，不进 `atlas_check`；<2 轮 `SKIP`；`carried` 是「仍可见」，不是关闭；不强制同指纹重报（与 §4「同一问题跨轮不得重复贴」不冲突）。`escalation`（round ≥ 4）与跨轮声明条数一并渲染进 README，不只留在 `review.json`。
+- **健壮性**：轮次文件名只认纯 ASCII 数字后缀（`U.r².json` 这类会被当孤儿文件响亮出声，不会 `int()` 裸崩，也不会让全角 `U.r２.json` 静默冒充 round 2 充当关闭证据）；`closure.json` 写不出去 ⇒ `exit 2` 带错误，不抛裸 traceback（本器退出码只有 0 与 2）。`carried` 是「仍可见」，不是关闭；不强制同指纹重报（与 §4「同一问题跨轮不得重复贴」不冲突）。`escalation`（round ≥ 4）与跨轮声明条数一并渲染进 README，不只留在 `review.json`。
 
 ## Guidance
 

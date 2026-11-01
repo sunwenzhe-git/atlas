@@ -113,10 +113,11 @@ def load_prior_rounds(report_dir: Path, unit: str,
     seen: dict[int, Path] = {}
     for path in sorted(findings.glob("*.json")):
         name = path.stem
+        suffix = name[len(unit) + 2:] if name.startswith(unit + ".r") else ""
         if name == unit:
             rnd = 1
-        elif name.startswith(unit + ".r") and name[len(unit) + 2:].isdigit():
-            rnd = int(name[len(unit) + 2:])
+        elif suffix.isdigit() and suffix.isascii():   # 全角 / 上标数字不认（见上注）
+            rnd = int(suffix)
         else:
             orphans.append(path.name)
             continue
@@ -330,6 +331,18 @@ def run(report_dir: Path) -> tuple[str, dict]:
             else:
                 unaccounted.append(item)
 
+    for entry in (root.get("resolves") or []):
+        if not isinstance(entry, dict):
+            continue
+        declared_round = entry.get("round")
+        fp = str(entry.get("fingerprint") or "")
+        obligation = next((x for x in prior if x["fingerprint"] == fp), None)
+        if isinstance(declared_round, int) and obligation and declared_round != obligation["prior_round"]:
+            warnings.append(
+                f"resolves 声明的 round={declared_round} 与义务所在轮 "
+                f"r{obligation['prior_round']} 不一致（{fp}）"
+                "⇒ 判定按文件轮次，声明里的 round 只作人读标注")
+
     stale = sorted(declared_earlier - prior_fps)
     if stale:
         warnings.append(f"中间轮有 {len(stale)} 个指纹匹配不到任何义务"
@@ -367,8 +380,11 @@ def main() -> int:
         print(f"ERROR: 报告目录不存在：{report_dir}", file=sys.stderr)
         return 2
     status, result = run(report_dir)
-    (report_dir / "closure.json").write_text(
-        json.dumps(result, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    try:
+        (report_dir / "closure.json").write_text(
+            json.dumps(result, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    except OSError as exc:
+        return die(f"写 {report_dir / 'closure.json'} 失败：{exc}")
     print(f"review_closure @ {report_dir}   {status}   rounds {len(result['rounds'])} "
           f"prior {result['prior_relevant']} carried {len(result['carried'])} "
           f"resolved {len(result['resolved'])} unaccounted {len(result['unaccounted'])} "

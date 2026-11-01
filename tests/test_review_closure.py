@@ -507,3 +507,53 @@ def test_open_and_closed_twin_in_latest_round_carries() -> None:
         c = closure(d)
         assert c["resolved"] == [] and [x["fingerprint"] for x in c["carried"]] == ["F1"]
         assert any("形态矛盾" in w for w in c["warnings"])
+
+
+def test_non_ascii_round_suffix_becomes_orphan_not_crash() -> None:
+    """M14：轮次后缀只认纯 ASCII 数字。
+
+    `isdigit()` 对上标 `²` 为真但 `int()` 抛 ValueError ⇒ 裸 traceback、退出码 1（本器只允许 0/2）；
+    对全角 `２` 为真且 `int()` 成功 ⇒ 会被静默当成 round 2 甚至充当关闭证据。
+    两者都必须落到「孤儿文件」这条响亮路径上。
+    """
+    for suffix, label in (("²", "上标"), ("２", "全角")):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td) / "report"
+            (d / "findings").mkdir(parents=True)
+            (d / "findings" / "U.r1.json").write_text(json.dumps(
+                {"unit": "U", "round": 1, "other": [],
+                 "checks": [finding("A", level="Major")]}, ensure_ascii=False), encoding="utf-8")
+            (d / "findings" / f"U.r{suffix}.json").write_text(
+                json.dumps({"unit": "U", "round": 2, "other": [], "checks": []}), encoding="utf-8")
+            (d / "review.json").write_text(json.dumps(
+                {"unit": "U", "round": 3, "other": [], "checks": []}, ensure_ascii=False),
+                encoding="utf-8")
+            p = run(d)
+            assert p.returncode == 0, f"{label}: rc={p.returncode} {p.stdout}{p.stderr}"
+            c = closure(d)
+            assert c["status"] == "WARN", f"{label}: {c}"
+            assert f"U.r{suffix}.json" in "".join(c["warnings"]), (label, c["warnings"])
+            assert [x["fingerprint"] for x in c["unaccounted"]] == ["A"], (label, c)
+
+
+def test_unwritable_report_dir_exits_2_not_traceback() -> None:
+    """R-2：`closure.json` 写不出去 ⇒ 响亮 exit 2，不抛裸 PermissionError（退出码只有 0 与 2）。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A", level="Major")], 2: [finding("B")]})
+        (d / "closure.json").mkdir()          # 与属主无关的确定性写失败
+        p = run(d)
+        assert p.returncode == 2, p.stdout + p.stderr
+        assert "closure.json" in p.stderr, p.stderr
+
+
+def test_declared_round_mismatch_is_audible() -> None:
+    """R-3：`resolves[].round` 不是死字段 —— 与义务所在轮不一致时出声（判定仍按文件轮次）。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A", level="Major")], 2: [finding("B")]},
+                         resolves=[{"fingerprint": "A", "status": "fixed", "by": "lead",
+                                    "evidence": "green", "round": 7}])
+        p = run(d)
+        assert p.returncode == 0, p.stdout + p.stderr
+        c = closure(d)
+        assert c["status"] == "PASS" and len(c["resolved"]) == 1   # 关闭仍成立
+        assert any("round=7" in w and "不一致" in w for w in c["warnings"]), c["warnings"]

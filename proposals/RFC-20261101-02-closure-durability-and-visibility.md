@@ -94,7 +94,7 @@ review_closure …  WARN  rounds 4 prior 16 carried 0 resolved  3 unaccounted 13
 * `--resolves <file>`：接受 `[...]` 或 `{"by": "<缺省签字人>", "resolves": [...]}`；
   条目缺 `by` 时继承顶层缺省；形状错误 ⇒ 显式失败（与 `--from/--to`、`--head-sha` 同类的输入门）。
 * `review_closure.py --emit-skeleton <file>`：把当轮 `unaccounted` 义务打成待填骨架
-  （`fingerprint` / `prior_round` / `level` / `target` 预填，`status`/`by`/`evidence` 留空）。
+  （预填 `fingerprint` / `prior_round` / `target`，留空 `status`/`by`/`evidence`；**不含 `level`** —— 级别是判定输入不是待填项，骨架里带它反而会诱导手改）。
   纯输出，不参与判定，不改状态。
 
 ### 2.5 被否方案
@@ -192,7 +192,7 @@ python3 scripts/review_closure.py --dir <四轮报告目录> --emit-skeleton /tm
 | R6 | 同一指纹在最新轮同时出现 open 与带签字 `fixed` ⇒ `any(closed)` 判 `resolved`；而中间轮同形态被 `best <= last_open` 拒 ⇒ 口径不一致，且形态门的指纹去重排除了 `fixed` 条目、不会报重复 | 评审夹具 `E7` | 最新轮改为「有 open 即未关闭」：混排 ⇒ `carried` + 矛盾告警 + **抬 WARN**（与 `downgraded`/孤儿同档） | **M13** |
 | R7 | 改号只落文件面：分支名与 RFC 头部「批次 rfc-20261101-01…」仍带 `-01` | `git branch --show-current` | 分支改名 `rfc-20261101-02-closure-durability`，RFC 头部标注入稿曾撞号 | — |
 
-**第二轮后的实况数**：`tests/test_review_closure.py` **34** 条（M1–M13）、`tests/test_cli_review_convert.py` **49** 条（M42–M46，M45 编号属该文件）、`tests/test_review_report.py` **41** 条（M35/M36/M40/M41/M47）；全量 **1007 passed / 5 skipped**（收集 1012；main 987 ⇒ +25）；`wc -l` = `review_closure.py` 389、`cli_review_convert.py` 366、`_support/review_policy.py` 343、`validate_review_report.py` 221、`shared/gates.md` 170；`test_canonical_consistency` + `test_map_anchors` 17 passed；安装自检 PASS。
+**第二轮后的实况数（本轮快照，最终数见 §4.9）**：`tests/test_review_closure.py` **34** 条（M1–M13）、`tests/test_cli_review_convert.py` **49** 条（M42–M46，M45 编号属该文件）、`tests/test_review_report.py` **41** 条（M35/M36/M40/M41/M47）；全量 **1007 passed / 5 skipped**（收集 1012；main 987 ⇒ +25）；`wc -l` = `review_closure.py` 389、`cli_review_convert.py` 366、`_support/review_policy.py` 343、`validate_review_report.py` 221、`shared/gates.md` 170；`test_canonical_consistency` + `test_map_anchors` 17 passed；安装自检 PASS。
 
 **七枚钉子第二轮四段协议**（M9/M10/M11/M12/M13/M46/M47）：基线 124 passed → 逐条注入各红 1–3 条（红目与预期完全对得上，无「注入无人红」的哑钉）→ 每次 `sha256 逐字节一致` 还原 → 复绿 124 passed。日志 `/tmp/atlas-rfc01-evidence/mutation-proof-round2.log`。
 
@@ -200,11 +200,41 @@ python3 scripts/review_closure.py --dir <四轮报告目录> --emit-skeleton /tm
 
 **本轮教训（写进流程）**：第一轮我修的是「降级」方向并自称两个方向都挡住——实际加宽挂在 `relevant()` 之后，`pre_existing` 一标就整条跳过。**「对称方向都覆盖」这种话必须配一条反向夹具**，否则就是自我表扬。M11 就是那条反向夹具。
 
+### 4.9 第三轮只读评审（2026-11-01）：判据侧无阻塞，修 4 处文档口径 + 3 条健壮性
+
+第三轮专找残留洗白路径，结论 **可合并 / 无阻塞**：208 例 `disposition × 取证 × 四条关闭路径` 全扫 + 300 例随机差分 fuzz ⇒ **Critical 免证关闭 0 例**、`rc∉{0,2}` **0 例**、且**分支从不比 main 更静**（0 例 main=WARN 而 branch=PASS）；非门纪律复核（`atlas_check` / `validators/` / `.github/` 零引用，台账只写 `closure.json`，语料副本的 `review.json`/`README`/`findings` 逐字节不变）。
+
+**必修（文档 ⇔ 实码口径，4 处，全部已改）**：
+
+1. 契约 §11 的「级别从严」条仍写「按**上一轮**的级别」⇒ 改为「按**所有出现里最严的一档**」并写明 `pre_existing` 绕加宽这一路；中间轮坏形状那句从「exit 2」改成「warnings + 抬 WARN」（实现早在 §4.7-S1 已改，文档没跟上）。
+2. `DESIGN.md` D180 停在第一轮的数（19→28）与说法（形状错 exit 2、机械字段占 23%）⇒ 随三轮实况重写，钉子列到 M6–M16。
+3. `shared/gates.md` §4 的「34 条、M1–M10」⇒ 37 条、M1–M16。
+4. RFC §2.4 说骨架预填 `level` ⇒ 实现不填（级别是判定输入，骨架带它反而诱导手改）。
+
+**顺带修掉的 3 条健壮性（评审列为非阻塞，但都违背本器自己写的契约）**：
+
+| 编号 | 判据 | 复现 | 修法 | 钉 |
+|---|---|---|---|---|
+| R-1 | 轮次文件名只校验 `isdigit()` ⇒ `U.r².json` 触发 `int()` 裸崩（`ValueError`、**rc=1**、`closure.json` 不落盘）；`U.r２.json`（全角）`int()` 会成功 ⇒ **静默冒充 round 2** 甚至充当关闭证据 | 夹具两枚；main 同样红（`review_closure.py:119`） | 后缀必须 `isdigit() and isascii()`，否则落「孤儿文件」这条响亮路径 | **M14** |
+| R-2 | 报告目录不可写 ⇒ 裸 `PermissionError`、**rc=1**（本器退出码只有 0 与 2） | 把 `closure.json` 做成同名目录（与属主无关的确定性失败） | 包住写入 ⇒ `die()` 走 **exit 2** 并带路径 | **M15** |
+| R-3 | `resolves[].round` 被形状门收、却不参与判定 ⇒ 可写「倒签轮次」而台账不出声（死字段） | `round=7` 指向 `r1` 的义务 ⇒ 修前无告警 | 与义务所在轮不一致 ⇒ 出声（判定仍按文件轮次，`round` 只作人读标注） | **M16** |
+
+**明确不改的（判据级，理由记下）**：
+
+* `Major` + `intentional/ignored` 免签字免取证即算关闭 —— 这是 D129 既有语义（只有 Critical 需要取证关闭），不是本批引入。
+* 逐轮换报告目录 ⇒ `SKIP` —— 跨目录不并集是 §2.3 边界（真实语料 `-r2-v3` 单目录就是这个形态）；跨轮换 `--unit` 留在同一目录的情形已被孤儿规则挡住。
+* 最新轮同指纹 open 时，其 `resolves` 声明被忽略 —— `carried` 本就是更响的结论，不再重复告警。
+* `disposition_by: 123` / `disposition_evidence: [1]` 经 `str()` 即算签字 —— 形态门收的是「非空」，真实性归独立审查与人（§2.3）。
+
+**三轮累计的教训（进流程）**：① 自称「两个方向都挡住」必须两侧各有一条反向夹具（M4 降级 / M9 升级 / M11 `pre_existing` 绕加宽，三枚都是同一课）；② 提交信息里声明的改动必须当时就落地（R-4「skeleton 单次计算」曾在提交信息里声称而未做）；③ 文档口径与实现漂移是新功能的默认副产品，合批前必须逐条对着实码读一遍（本轮 4 处全是这个）。
+
+**第三轮后的实况数**：`wc -l` = `review_closure.py` **405**、`cli_review_convert.py` 366、`_support/review_policy.py` 343、`validate_review_report.py` 221、`shared/gates.md` 170；用例 = 37 / 49 / 41（收集 1015，main 987 ⇒ +28）；全量 **1010 passed / 5 skipped**、`test_canonical_consistency` + `test_map_anchors` 17 passed、安装自检 PASS；三轮四段协议日志 `mutation-proof.log` / `-round2.log` / `-round3.log`。
+
 ## 5. 开放问题
 
 1. 义务去重目前按「最早出现轮次」锚定（`k` = 第一次未关闭出现的轮）。隔轮重复出现是否该以最近一次为准，
    等真实数据出现歧义再定。
 2. `via` 字符串会被 `closure.json` 消费方读到；新增 `…@rN` 形态是否需要结构化字段（`declared_in_round`），
    等真有消费方再定。
-3. 第 5 轮（超出上限的复验）如何登记，本批只保证 `--round 5` 仍走「必须登记升级」。
+3. 第 5 轮（超出上限的复验）如何登记，本批只保证 `--round 5` 仍走「必须登记升级」；「升级后是否要求台账默认 WARN」未定（真实 r4 案例：义务未清但报告 PASS，只有台账红）。
 4. scan 通道的 M 无权威：若将来 OCR 给 scan 也产 coverage，转换器无需改动（`cov["present"]` 自动走权威侧）。
