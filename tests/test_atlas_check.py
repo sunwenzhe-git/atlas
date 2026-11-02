@@ -1419,3 +1419,185 @@ def test_ac_gate_precondition_accepts_domain_only_prd_dir(tmp_path: Path) -> Non
     path, _reason = mod._gate_preconditions(tmp_path)["validate_ac_alignment"]
     assert path == "product/prd", path
     assert (tmp_path / path).exists()
+
+
+# ---- P3 消融残留门（RFC-20261101-04；M163 属本文件）---------------------------
+
+def _ablation_state(root: Path, state: Path, *, status: str = "active",
+                    started: str | None = None, marker_id: str = "t1",
+                    current: str = "after", drop_before_manifest: bool = False,
+                    active_text: str | None = None) -> None:
+    import hashlib
+    from datetime import datetime, timedelta
+
+    (root / ".atlas").mkdir(parents=True, exist_ok=True)
+    (root / "x.txt").write_text(current, encoding="utf-8")
+    h = hashlib.sha256(str(root.resolve()).encode("utf-8")).hexdigest()[:16]
+    root_dir = state / "roots" / h
+    id_dir = root_dir / "t1"
+    (id_dir / "before").mkdir(parents=True, exist_ok=True)
+
+    def entry(text: str) -> dict:
+        data = text.encode("utf-8")
+        return {"type": "file", "sha256": hashlib.sha256(data).hexdigest(),
+                "size": len(data), "mode": "0o644"}
+
+    (id_dir / "before" / "x.txt").write_text("before", encoding="utf-8")
+    before = {"schema_version": 1, "entries": {"x.txt": entry("before")}}
+    after = {"schema_version": 1, "entries": {"x.txt": entry("after")}}
+    if not drop_before_manifest:
+        (id_dir / "manifest.before.json").write_text(json.dumps(before), encoding="utf-8")
+    (id_dir / "manifest.after.json").write_text(json.dumps(after), encoding="utf-8")
+    started = started or datetime.now().astimezone().isoformat(timespec="seconds")
+    active = {
+        "schema_version": 1, "status": status, "id": "t1",
+        "root": str(root.resolve()), "root_id": f"{root.stat().st_dev}:{root.stat().st_ino}",
+        "state_dir": str(id_dir), "host_mode": "unknown", "host_warning": None,
+        "scope": "test", "owner": "t", "started": started, "timebox_min": 60,
+        "plan": str(id_dir / "plan.json"),
+        "before_manifest": str(id_dir / "manifest.before.json"),
+        "after_manifest": str(id_dir / "manifest.after.json"),
+    }
+    (id_dir / "plan.json").write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
+    if active_text is not None:
+        (root_dir / "active.json").write_text(active_text, encoding="utf-8")
+    else:
+        (root_dir / "active.json").write_text(json.dumps(active), encoding="utf-8")
+    (root / ".atlas" / "ABLATION").write_text(json.dumps({
+        "schema_version": 1, "id": marker_id, "scope": "test",
+        "started": started, "timebox_min": 60}), encoding="utf-8")
+
+
+def _gate_row(out: str) -> dict:
+    payload = json.loads(out[out.index("{"):])
+    rows = {r["name"]: r for r in payload["rows"]}
+    return rows["消融残留"]
+
+
+def test_ablation_gate_na_without_active(tmp_path, monkeypatch) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setenv("ATLAS_ABLATION_HOME", str(state))
+    code, out = run(["--root", str(root), "--fast", "--json"], cwd=root)
+    assert code == 0, out
+    row = _gate_row(out)
+    assert row["status"] == "N/A", row
+
+
+def test_ablation_gate_stale_marker_warns(tmp_path, monkeypatch) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".atlas").mkdir()
+    (root / ".atlas" / "ABLATION").write_text('{"id":"t1"}', encoding="utf-8")
+    monkeypatch.setenv("ATLAS_ABLATION_HOME", str(state))
+    code, out = run(["--root", str(root), "--fast", "--json"], cwd=root)
+    assert code == 0, out
+    row = _gate_row(out)
+    assert row["status"] == "WARN" and "真相源" in row["detail"], row
+
+
+def test_ablation_gate_healthy_active_is_ok(tmp_path, monkeypatch) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+    _ablation_state(root, state)
+    monkeypatch.setenv("ATLAS_ABLATION_HOME", str(state))
+    code, out = run(["--root", str(root), "--fast", "--json"], cwd=root)
+    assert code == 0, out
+    row = _gate_row(out)
+    assert row["status"] == "ok" and "进行中" in row["detail"], row
+
+
+def test_ablation_gate_expired_warns(tmp_path, monkeypatch) -> None:
+    from datetime import datetime, timedelta
+    state = tmp_path / "state"
+    state.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+    started = (datetime.now().astimezone() - timedelta(hours=2)).isoformat(timespec="seconds")
+    _ablation_state(root, state, started=started)
+    monkeypatch.setenv("ATLAS_ABLATION_HOME", str(state))
+    code, out = run(["--root", str(root), "--fast", "--json"], cwd=root)
+    assert code == 0, out
+    row = _gate_row(out)
+    assert row["status"] == "WARN" and "超时" in row["detail"], row
+
+
+def test_ablation_gate_marker_mismatch_warns(tmp_path, monkeypatch) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+    _ablation_state(root, state, marker_id="other")
+    monkeypatch.setenv("ATLAS_ABLATION_HOME", str(state))
+    code, out = run(["--root", str(root), "--fast", "--json"], cwd=root)
+    assert code == 0, out
+    assert _gate_row(out)["status"] == "WARN", _gate_row(out)
+
+
+def test_ablation_gate_missing_manifest_warns(tmp_path, monkeypatch) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+    _ablation_state(root, state, drop_before_manifest=True)
+    monkeypatch.setenv("ATLAS_ABLATION_HOME", str(state))
+    code, out = run(["--root", str(root), "--fast", "--json"], cwd=root)
+    assert code == 0, out
+    assert _gate_row(out)["status"] == "WARN", _gate_row(out)
+
+
+def test_ablation_gate_third_party_change_warns(tmp_path, monkeypatch) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+    _ablation_state(root, state, current="third")
+    monkeypatch.setenv("ATLAS_ABLATION_HOME", str(state))
+    code, out = run(["--root", str(root), "--fast", "--json"], cwd=root)
+    assert code == 0, out
+    row = _gate_row(out)
+    assert row["status"] == "WARN" and "第三人" in row["detail"], row
+
+
+def test_ablation_gate_bad_active_json_warns(tmp_path, monkeypatch) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+    _ablation_state(root, state, active_text="{not-json")
+    monkeypatch.setenv("ATLAS_ABLATION_HOME", str(state))
+    code, out = run(["--root", str(root), "--fast", "--json"], cwd=root)
+    assert code == 0, out
+    assert _gate_row(out)["status"] == "WARN", _gate_row(out)
+
+
+def test_ablation_gate_pending_warns(tmp_path, monkeypatch) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+    _ablation_state(root, state, status="pending")
+    monkeypatch.setenv("ATLAS_ABLATION_HOME", str(state))
+    code, out = run(["--root", str(root), "--fast", "--json"], cwd=root)
+    assert code == 0, out
+    assert _gate_row(out)["status"] == "WARN", _gate_row(out)
+
+
+def test_ablation_gate_other_root_is_na(tmp_path, monkeypatch) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    _ablation_state(other, state)
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setenv("ATLAS_ABLATION_HOME", str(state))
+    code, out = run(["--root", str(root), "--fast", "--json"], cwd=root)
+    assert code == 0, out
+    assert _gate_row(out)["status"] == "N/A", _gate_row(out)

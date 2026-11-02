@@ -620,6 +620,32 @@ def check_write_claims(root: Path, rows: Row) -> None:
              "claims 是运行态，不进 git 历史）")
 
 
+def check_ablation_residue(root: Path, rows: Row) -> None:
+    """「消融残留」门（P3 首切片；RFC-20261101-04）。
+
+    只读项目外 active 真相源：无 active + 无项目标记 ⇒ N/A；健康 active（未超时、
+    marker/manifest/备份/触达文件全一致）⇒ ok + 剩余时间；其余异常 ⇒ WARN。
+    **出生 WARN，永不 FAIL**；不自动 restore、不写项目。schema/读取单源在
+    `scripts/ablation.py` 的 `inspect_root()`。
+    """
+    started = time.monotonic()
+    try:
+        from ablation import inspect_root  # noqa: E402  同目录单源
+    except ImportError:
+        rows.add("消融残留", "SKIP", "无 scripts/ablation.py（旧装配；纪律照旧）",
+                 duration_ms=_elapsed_ms(started))
+        return
+    try:
+        res = inspect_root(root)
+    except Exception as exc:  # 坏输入不能把检查判红
+        rows.add("消融残留", "WARN", f"状态不可核（{type(exc).__name__}）",
+                 duration_ms=_elapsed_ms(started))
+        return
+    status = {"na": "N/A", "ok": "ok", "warn": "WARN"}.get(res.get("status"), "WARN")
+    rows.add("消融残留", status, str(res.get("detail", "")),
+             duration_ms=_elapsed_ms(started))
+
+
 def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     # 整门 wall time：含 reset / TCP 探测 / runner / browser probe / 真跑；
     # 早退 SKIP 行没有执行段，duration_ms 保持 None。
@@ -870,6 +896,9 @@ def main() -> int:
         check_write_claims(root, rows)
         if not args.fast:
             check_e2e(root, rows, args.page)
+
+    # 消融残留读项目外状态，不依赖项目布局；布局缺失也要可见。
+    check_ablation_residue(root, rows)
 
     _write_check_event(root, rows, fast=args.fast, page=args.page)
 
