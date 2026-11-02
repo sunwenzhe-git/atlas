@@ -63,7 +63,8 @@ E2E 真跑[<单页>]                       FAIL   376531ms   14 failed 2 passed
   - Timeout 20000ms exceeded while waiting on the predicate
   ```
   14/16 条用例同时因「页面未渲染」失败；另 2 条通过。**未做任何注入、未做整线束 on/off**。
-- **`.atlas/tests` 失败**：`test_docs_map_snapshot_matches_reality` 读 `.atlas/docs/map/index.md` 时文件不存在（安装副本未带该文件）；另一条同族测试同因。属**安装副本完整性**问题，与 E2E 页面失败不是同一根因；本批只记录、未改安装副本。
+- **`.atlas/tests` 失败**：`test_docs_map_snapshot_matches_reality` 读 `.atlas/docs/map/index.md` 时文件不存在（安装副本未带该文件）；另一条同族测试同因。属**安装副本完整性**问题，与 E2E 页面失败不是同一根因。**2026-11-02 已定向刷新快照 C 的 `.atlas/tests/test_map_anchors.py`（源包已有缺席守卫）⇒ 6 passed / 2 skipped**；A/B 副本本就有守卫。完整 `install.sh --update` 仍待重装授权。
+- **根因 triage（2026-11-02）**：快照 C 的 `.atlas-auth/state.json` 内 Keycloak token `exp=1792825433`（2026-10-24）已过期；`atlas-auth.setup.ts` 在文件存在时跳过刷新，且项目 `app_login.mode=fabricated` 与真实应用不符。只读 Playwright 探针在「过期 state」与「fabricated token」两种输入下都停在 AgentScope 登录页（`TESTIDS []`，body 含「登录」）⇒ **根因 = 鉴权态过期/模式错配，不是页面/路由产品缺陷**。修复条件 = 真实重新登录（`mode: real` + 凭据）或提供新 token；E2E 门正确拦截了登录页。
 - **同轮成本（仅同轮口径）**：E2E 真跑占该轮已计时门总和 **76.3%**，`.atlas/tests` 占 **22.6%**；该轮是 full 模式，**不与 fast 轮或批次 02 的绝对 ms 比较**。
 - **还原**：见 §1（53 回写 / 45 移除 / 0 冲突 / 0 漂移）。
 
@@ -75,7 +76,7 @@ E2E 真跑[<单页>]                       FAIL   376531ms   14 failed 2 passed
 - **理由**：这是采用期的**预期基线状态**（独立审查尚未启动），不是当前任务的缺陷；项目尚未进入 E2E 独立审查轮，此时补齐审查属项目排期，不属 Atlas 误拦。
 - **再入口**：项目启动独立 E2E 审查轮（`gen_e2e_scripts.py --bootstrap-review` 后交独立审查）时重新评估；若届时基线仍 WARN，则按真实缺口处理。
 - **分类（不粉饰）**：该样本计入**处置分母**（1 条 WARN 被人工处置），但**不计入 C5 误拦分子**——它是真实状态，不是假红；C5 误拦分子仍为 **0**。
-- **未处置**：快照 A 的 `validate_walkthrough` WARN 是真实格式缺陷（两条任务的 `atlas-apply.md` 用表格写第 2 问，而解析器只认 `2.`/`第 2 问` 行首形态），本批只记录、不改采用方文档；留作下一次「改资产」型处置的真实候选。
+- **已处置（2026-11-02）**：快照 A 的 `validate_walkthrough` WARN 是真实格式缺陷（两条任务的 `atlas-apply.md` 用表格写第 2 问，而解析器只认 `2.`/`第 2 问` 行首形态）。已补两行机器可读第 2 问，并把 PRD 确认行改为「单日期 + 范围另起一行」；`validate_walkthrough` **WARN→ok**（fast rc=0，运行期还原 1 行、0 漂移、git 一致）。
 
 ## 5. 影子门（继续观察）
 
@@ -100,7 +101,7 @@ E2E 真跑[<单页>]                       FAIL   376531ms   14 failed 2 passed
 **不能说明：**
 
 - 不能算 C5 误拦率：本批唯一处置是预期状态，不是误拦；误拦分子仍 0。
-- 不能判断 E2E 14 failed 的产品根因（页面未渲染可能是路由/鉴权/环境/数据；本批只证明门真的拦住了，不做产品缺陷归因）。
+- E2E 14 failed 已 triage 为**鉴权态过期/模式错配**（真实 token 过期 + fabricated 模式与真实应用不符），不是产品缺陷；真实登录需要凭据，本批未代做。
 - 不能把 `.atlas/tests` 的 2 failed 与 E2E 失败合并成同一事件；前者是安装副本缺 `docs/map/index.md`，后者是页面未渲染。
 - 不能跨批次比绝对 ms；只能比同轮占比与配对差值。
 
