@@ -1426,7 +1426,8 @@ def test_ac_gate_precondition_accepts_domain_only_prd_dir(tmp_path: Path) -> Non
 def _ablation_state(root: Path, state: Path, *, status: str = "active",
                     started: str | None = None, marker_id: str = "t1",
                     current: str = "after", drop_before_manifest: bool = False,
-                    active_text: str | None = None) -> None:
+                    active_text: str | None = None,
+                    host_warning: str | None = None) -> None:
     import hashlib
     from datetime import datetime, timedelta
 
@@ -1452,7 +1453,7 @@ def _ablation_state(root: Path, state: Path, *, status: str = "active",
     active = {
         "schema_version": 1, "status": status, "id": "t1",
         "root": str(root.resolve()), "root_id": f"{root.stat().st_dev}:{root.stat().st_ino}",
-        "state_dir": str(id_dir), "host_mode": "unknown", "host_warning": None,
+        "state_dir": str(id_dir), "host_mode": "unknown", "host_warning": host_warning,
         "scope": "test", "owner": "t", "started": started, "timebox_min": 60,
         "plan": str(id_dir / "plan.json"),
         "before_manifest": str(id_dir / "manifest.before.json"),
@@ -1601,3 +1602,16 @@ def test_ablation_gate_other_root_is_na(tmp_path, monkeypatch) -> None:
     code, out = run(["--root", str(root), "--fast", "--json"], cwd=root)
     assert code == 0, out
     assert _gate_row(out)["status"] == "N/A", _gate_row(out)
+
+
+def test_ablation_gate_host_warning_warns(tmp_path, monkeypatch) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+    _ablation_state(root, state, host_warning="source 模式消融落在 .atlas/")
+    monkeypatch.setenv("ATLAS_ABLATION_HOME", str(state))
+    code, out = run(["--root", str(root), "--fast", "--json"], cwd=root)
+    assert code == 0, out
+    row = _gate_row(out)
+    assert row["status"] == "WARN" and "host" in row["detail"], row

@@ -1,7 +1,7 @@
 # 消融事务工具 + 「消融残留」WARN 门（P3 首切片）
 
 > 提案编号：RFC-20261101-04
-> 状态：**Draft v2（已完成一轮只读评审 + 主审抽查；待用户确认后实现）**
+> 状态：**已确认；P3-a 已合并、P3-b 已实现（待合并）**
 > 关联：`research/2026-10-23-ablation-differential.md` §5.1–§5.8（F1–F7 / 四条不变式 / 事务协议 / 三道锁 / 不要做的四件事）、§7 P3；`DESIGN.md` D137、D156、拟 D182
 > 影响面：新 `scripts/ablation.py`；改 `scripts/atlas_check.py`；新 `tests/test_ablation.py`；改 `tests/test_atlas_check.py`；`shared/gates.md`、`DESIGN.md`、两处 changelog、`docs/map/*`、`install.sh`（仅自检行）
 
@@ -28,7 +28,7 @@
 | Major：D156 | §4.5 是承诺不是证据 | 实现批重跑原始命令并粘贴；按 `单案修复（无留出集）` **仅当评审确认**；附 QUEUE 观察行 + 残留风险；不称闭族 |
 | 范围 | 全局 map / run / install 互锁过重 | per-root 目录；run/install 互锁/`status --json` 范围见 §7；MVP 只做 begin/restore/status + 内置门 |
 
-**主审抽查（2026-11-01）**：确认 RFC v1 的 apply 后清理、restore 无备份校验、等价面缺失属实；实现后实况计数已核：`tests/` **45** 个测试文件、`tests/test_atlas_check.py` **59** 条、`tests/test_ablation.py` **17** 条、`install.sh` **63** 条 `check`、编排门 **9 类**、M 系至 **M164**（见 §4）。
+**主审抽查（2026-11-01）**：确认 RFC v1 的 apply 后清理、restore 无备份校验、等价面缺失属实；实现后实况计数已核：`tests/` **45** 个测试文件、`tests/test_atlas_check.py` **60** 条、`tests/test_ablation.py` **23** 条、`install.sh` **63** 条 `check`、编排门 **9 类**、M 系至 **M164**（见 §4）。
 
 ## 1. 现象与证据
 
@@ -46,7 +46,9 @@ P3 不是「自动消融」，而是把**事务边界**工具化，并让未关�
 
 **做**：`ablation begin` / `restore` / `status`；`atlas_check` 内置门「消融残留」；项目外状态根；项目内 `.atlas/ABLATION` 提示；三方还原 + 冲突拒绝；独立 smoke；坏输入测试 + M163/M164。
 
-**不做（P3-b 或永不）**：自动还原；仓内备份；生产级 `ATLAS_ABLATE` 开关；整线束 on/off；自动冲突合并；LLM 分类；`run` 子命令（MVP）；`install.sh --update` 互锁（P3-b）；host_mode 的自动 F5 判据；`status --json`（保留最小文本输出，json 可后加）。
+**P3-b 已实现（2026-11-02）**：`run` 子命令（argv 无 shell / timeout / 输出 cap / 环境注入）；`install.sh --update` 的 active 互锁；`host_warning` 进「消融残留」WARN；`--state` 状态面快照/还原。
+
+**不做（永不）**：自动还原；仓内备份；生产级 `ATLAS_ABLATE` 开关；整线束 on/off；自动冲突合并；LLM 分类；`status --json`（保留最小文本输出）。
 
 ### 2.2 状态布局（per-root，项目外唯一真相）
 
@@ -128,12 +130,12 @@ P3 不是「自动消融」，而是把**事务边界**工具化，并让未关�
 
 | 风险 | v2 防护 | 残留 |
 |---|---|---|
-| F1 | pending active + marker + gate WARN | install 互锁 P3-b；`--update` 仍可能在 active 期间覆盖 `.atlas/` |
+| F1 | pending active + marker + gate WARN | install `--update` 互锁已实现；`--force` + `ATLAS_ALLOW_ABLATION_OVERWRITE=1` 才越过（显式放弃现场） |
 | F2 | before/after sha256 + mode + 备份校验 + 写回复算 + smoke 后复算 | 极端文件系统损坏不可防 |
 | F3 | 三方比对 + 全路径 preflight + conflict.json + 拒绝写入 | **同字节的第三人改动不可区分**（如消融删除、第三人也删除 ⇒ current==after）；这是显式盲区 |
 | F4 | 真相在项目外；项目内 marker 只是提示 | 项目外 state-root 被人删 ⇒ WARN，不可恢复 |
 | F5 | host_mode + host_evidence + status/plan 的 host_warning | **不自动判 F5**；操作者选隔离副本 |
-| F6 | `ATLAS_ABLATION_ID` 注入（操作者手工带）；工具证据在项目外 | 子命令可写项目；`run` 子命令 P3-b |
+| F6 | `run` 子命令注入 `ATLAS_ABLATION_ID/ROOT`，stdout/stderr/rc 落项目外 runs/ | 子命令仍可自行写项目；工具证据只捕获自身输出 |
 | F7 | smoke argv + baseline + 独立性启发式 + smoke 后复算 | `true`/trivial 只能记 `hash_only`，不冒充 F7 |
 
 ## 4. 改动面与计数（实况已核）
@@ -141,7 +143,7 @@ P3 不是「自动消融」，而是把**事务边界**工具化，并让未关�
 - 新 `scripts/ablation.py`；新 `tests/test_ablation.py`；改 `scripts/atlas_check.py`、`tests/test_atlas_check.py`。
 - `shared/gates.md`：
   - §2.2 新门行「消融残留」（出生 WARN；不查什么；测试文件与条数）；
-  - `tests/test_atlas_check.py` 当前 **49 条** → 实现后实收；`tests/test_ablation.py` 新增条数；
+  - `tests/test_atlas_check.py` 49 → **60 条**；`tests/test_ablation.py` **23 条**；
   - `install.sh` 自检 **62** → **63**（加 `check "消融事务工具" "$ATLAS_DEST/scripts/ablation.py"`）。
 - `docs/map/index.md`：编排门 **8 类 → 9 类**；出厂测试文件 **44 → 45**；install 自检 **62 → 63**；`最大单件` 不变（新脚本预计 < 2614 行）。
 - `docs/map/gates.md`：**44 文件 → 45**；**M162 → M164**；门全景加「消融残留」行。
@@ -191,13 +193,13 @@ P3 不是「自动消融」，而是把**事务边界**工具化，并让未关�
 ## 6. 非目标 / 残留风险（v2）
 
 - 自动还原、仓内备份、`ATLAS_ABLATE` 开关、整线束 on/off、自动冲突合并、LLM 分类：不做。
-- `run` 子命令：P3-b（MVP 由操作者手工带 `ATLAS_ABLATION_ID` 跑；工具证据只捕获 begin/restore 自身输出）。
-- `install.sh --update` 互锁：P3-b；**F1 宣称降为「可见、不阻断」**；active 期间 `--update` 可能覆盖 `.atlas/`，restore 会因冲突保留现场；需人工纪律 + QUEUE。
-- host_mode：只记录 + status/plan 的 `host_warning`；不自动判 F5。
+- `run` 子命令：P3-b 已实现（argv 无 shell、timeout、64KB 输出 cap、runs/ 证据）。
+- `install.sh --update` 互锁：P3-b 已实现并实测（active 时 rc=2；`--force` + `ATLAS_ALLOW_ABLATION_OVERWRITE=1` 才放行）。
+- host_mode：`host_warning` 已进「消融残留」门（WARN）；仍不做自动 F5 阻断。
 - F3 同字节第三人改动不可区分（显式盲区）；smoke trivial 不冒充 F7；active.json 损坏只能 WARN，不能恢复。
 - `status --json` 后置；若未来采用者也需要共享契约，再评估新增；`_support` 不新增文件。
 
-## 7. 待用户确认（实现前）
+## 7. 已确认决策（2026-11-02，均按推荐实现）
 
 1. **MVP 范围**：按 §2.1（begin/restore/status + 内置门；run/install 互锁/host F5 门后置）是否同意？
 2. **healthy active 的门状态**：推荐 **ok + detail**（WARN 只留超时/分叉/hash/备份/manifest 异常）；若坚持每轮 WARN，请明确「可见性优先」。
@@ -211,3 +213,11 @@ P3 不是「自动消融」，而是把**事务边界**工具化，并让未关�
 3. M163/M164 + 额外安全钉四段协议（`/tmp` 副本）。
 4. 同步 `shared/gates.md` 计数/行、`DESIGN.md` D182、两处 changelog、`docs/map/*`、`install.sh` 自检行。
 5. 全量 `pytest tests/ -q` + 只读复核；用户确认后再合并（合并/push 仍需单独授权）。
+
+## 9. P3-b 实施补记（2026-11-02）
+
+- `run`：argv 无 shell、timeout、64KB 输出 cap、`ATLAS_ABLATION_ID/ROOT` 注入、`runs/` 证据。
+- `install.sh --update`：active 时拒绝（`--force` + `ATLAS_ALLOW_ABLATION_OVERWRITE=1` 才越过）；真实 dry-run 实测 rc=2 / rc=0。
+- host F5：`active.host_warning` ⇒ 门 WARN。
+- `--state`：运行期产物快照/还原（不参与三方冲突；`restore` 记 `state_restored`）。
+- 测试：`tests/test_ablation.py` **23**、`tests/test_atlas_check.py` **60**；M163/M164 四段协议 + run/state/host/install 用例。

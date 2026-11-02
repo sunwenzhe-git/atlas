@@ -16,8 +16,8 @@
 ### 🧭 消融事务工具 + 消融残留门（RFC-20261101-04）
 
 * **新增**：`scripts/ablation.py`（begin/restore/status；项目外 per-root 状态 + pending/active + 锁/原子写；全路径 preflight、备份校验、smoke 后复算）；`atlas_check` 内置「消融残留」门（无 active=N/A；健康 active=ok+剩余，异常=WARN；出生 WARN、永不 FAIL）。
-* **范围**：MVP 只支持现有普通文件的修改/删除；run/install.sh --update 互锁/host F5 自动判据后置 P3-b。
-* **测试/设计**：`tests/test_ablation.py` 17 条（M164）、`tests/test_atlas_check.py` 49 → 59 条（M163）；`install.sh` 自检 62 → 63；`DESIGN.md` D182；`docs/map` 计数同步。
+* **范围**：P3-a 只支持现有普通文件的修改/删除；P3-b 已补 run / install.sh --update 互锁 / host F5 WARN / --state 状态面。
+* **测试/设计**：`tests/test_ablation.py` 23 条（M164）、`tests/test_atlas_check.py` 49 → 60 条（M163）；`install.sh` 自检 62 → 63；P3-b 的 run/state/host/install 互锁均有用例；`DESIGN.md` D182；`docs/map` 计数同步。
 
 ### 🧭 留出验证自述盲区硬化（D156 补强）
 

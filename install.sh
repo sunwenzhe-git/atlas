@@ -322,6 +322,19 @@ say "  资产根   : $ASSETS_ROOT"
 say "  ADR 根   : $ADR_DIR_REL"
 say ""
 
+# P3-b：active 消融期间拒绝 --update 覆盖 .atlas/（--force + ATLAS_ALLOW_ABLATION_OVERWRITE=1 越过）
+if [ "$IS_UPDATE" -eq 1 ]; then
+  set +e
+  python3 "$SCRIPT_DIR/scripts/ablation.py" status --root "$TARGET" --exit-active --quiet 2>/dev/null
+  ABLATION_STATUS=$?
+  set -e
+  if [ "$ABLATION_STATUS" -eq 10 ] && { [ "$FORCE" -ne 1 ] || [ "${ATLAS_ALLOW_ABLATION_OVERWRITE:-0}" != "1" ]; }; then
+    say "错误：目标存在未关闭的消融事务（ablation active）；先运行 ablation restore；"
+    say "      确需覆盖：--force + ATLAS_ALLOW_ABLATION_OVERWRITE=1（会放弃消融现场）。"
+    exit 2
+  fi
+fi
+
 # ---------------------------------------------------------------- 1. 整包 → .atlas/
 
 say "[1/6] 装配 atlas 包到 .atlas/"

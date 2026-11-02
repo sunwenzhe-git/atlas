@@ -31,6 +31,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -321,7 +322,7 @@ def _entry_at(root: Path, rel: str) -> dict:
             "mode": oct(st.st_mode & 0o777)}
 
 
-def _manifest(root: Path, rels: list[str]) -> dict:
+def _manifest(root: Path, rels, kinds: dict[str, str] | None = None) -> dict:
     entries = {}
     for rel in rels:
         entry = _entry_at(root, rel)
@@ -329,6 +330,7 @@ def _manifest(root: Path, rels: list[str]) -> dict:
             raise AblationError(f"MVP 不支持 symlink：{rel}")
         if entry["type"] == "other":
             raise AblationError(f"MVP 只支持普通文件：{rel}")
+        entry["kind"] = (kinds or {}).get(rel, "code")
         entries[rel] = entry
     return {"schema_version": SCHEMA_VERSION, "entries": entries}
 
@@ -341,11 +343,13 @@ def _entry_equal(left: dict, right: dict) -> bool:
     return all(left.get(k) == right.get(k) for k in ("sha256", "size", "mode"))
 
 
-def _any_changed(before: dict, after: dict) -> bool:
+def _any_changed(before: dict, after: dict, rels=None) -> bool:
     entries_b = before.get("entries", {})
     entries_a = after.get("entries", {})
-    return any(not _entry_equal(entries_b[k], entries_a[k])
-               for k in sorted(set(entries_b) | set(entries_a)))
+    keys = set(rels) if rels is not None else set(entries_b) | set(entries_a)
+    return any(not _entry_equal(entries_b.get(k, {"type": "absent"}),
+                                entries_a.get(k, {"type": "absent"}))
+               for k in sorted(keys))
 
 
 def _backup(root: Path, id_dir: Path, before: dict) -> None:
@@ -369,6 +373,10 @@ def _restore_entry(root: Path, id_dir: Path, rel: str, entry: dict) -> None:
         except FileNotFoundError:
             pass
         return
+    if target.is_symlink() or (target.exists() and not target.is_file()):
+        if target.is_dir():
+            raise AblationError(f"restore 目标不是文件：{rel}")
+        target.unlink()
     src = id_dir / "before" / rel
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, target)
@@ -462,8 +470,17 @@ def cmd_begin(args) -> int:
             target = root / rel
             if target.is_symlink() or not target.is_file():
                 raise AblationError(f"MVP 只支持修改/删除现有普通文件：{rel}")
+        state_rels = sorted({_normalize_rel(root, p) for p in (args.state or [])})
+        if set(state_rels) & set(rels):
+            raise AblationError("--state 与补丁路径重叠")
+        for rel in state_rels:
+            target = root / rel
+            if target.is_symlink() or (target.exists() and not target.is_file()):
+                raise AblationError(f"--state 只支持普通文件或不存在：{rel}")
+        all_rels = sorted(set(rels) | set(state_rels))
+        kinds = {**{r: "code" for r in rels}, **{r: "state" for r in state_rels}}
         mode = _host_mode(root)
-        warning = _host_warning(root, mode, rels)
+        warning = _host_warning(root, mode, all_rels)
         status = _status_records(root)
         touched = set(rels)
         for xy, path in status:
@@ -484,7 +501,7 @@ def cmd_begin(args) -> int:
             "git_head": _git_text(root, "rev-parse", "HEAD").strip(),
             "git_branch": _git_text(root, "rev-parse", "--abbrev-ref", "HEAD").strip(),
             "git_dirty": bool(status), "python_version": sys.version.split()[0],
-            "entries": rels,
+            "entries": all_rels, "state_entries": state_rels,
         }
         id_dir = root_dir / args.id
         if id_dir.exists():
@@ -498,6 +515,7 @@ def cmd_begin(args) -> int:
             "timebox_min": args.timebox, "plan": str(id_dir / "plan.json"),
             "before_manifest": str(id_dir / "manifest.before.json"),
             "after_manifest": str(id_dir / "manifest.after.json"),
+            "state_entries": state_rels,
         }
         try:
             _write_active(root_dir, active)
@@ -508,7 +526,7 @@ def cmd_begin(args) -> int:
             shutil.rmtree(id_dir, ignore_errors=True)
             raise
         try:
-            before = _manifest(root, rels)
+            before = _manifest(root, all_rels, kinds)
             _backup(root, id_dir, before)
             _atomic_json(id_dir / "manifest.before.json", before)
             if smoke:
@@ -517,7 +535,7 @@ def cmd_begin(args) -> int:
                 _atomic_json(id_dir / "plan.json", plan)
                 if baseline["rc"] != 0:
                     raise AblationError(f"baseline smoke 失败（rc={baseline['rc']}）")
-                if _any_changed(before, _manifest(root, rels)):
+                if _any_changed(before, _manifest(root, all_rels, kinds)):
                     raise AblationError("baseline smoke 改动了触达文件")
         except Exception:
             _remove_active(root_dir)
@@ -532,12 +550,12 @@ def cmd_begin(args) -> int:
             if apply.returncode != 0:
                 raise AblationError(f"git apply 失败：{apply.stderr.strip()[-300:]}")
         except Exception:
-            if not _any_changed(before, _manifest(root, rels)):
+            if not _any_changed(before, _manifest(root, all_rels, kinds)):
                 _remove_active(root_dir)
                 _remove_marker(root)
                 shutil.rmtree(id_dir, ignore_errors=True)
             raise
-        after = _manifest(root, rels)
+        after = _manifest(root, all_rels, kinds)
         if not _any_changed(before, after):
             _remove_active(root_dir)
             _remove_marker(root)
@@ -556,7 +574,7 @@ def cmd_begin(args) -> int:
         active.update(status="active", after_manifest=str(id_dir / "manifest.after.json"))
         _write_active(root_dir, active)
         print(f"ablation begin {args.id}: status=active scope={args.scope} "
-              f"timebox={args.timebox}min host={mode} paths={len(rels)}")
+              f"timebox={args.timebox}min host={mode} paths={len(rels)} state={len(state_rels)}")
         print(f"ATLAS_ABLATION_ID={args.id}")
         return 0
     finally:
@@ -591,6 +609,8 @@ def cmd_restore(args) -> int:
         entries_a = after.get("entries", {}) if after else {}
         if not isinstance(entries_b, dict) or not entries_b:
             raise AblationError("before manifest 为空")
+        state_rels = list(active.get("state_entries") or [])
+        code_rels = [r for r in entries_b if r not in state_rels]
         for rel, entry in entries_b.items():
             _normalize_rel(root, rel)
             if entry.get("type") != "file":
@@ -603,9 +623,11 @@ def cmd_restore(args) -> int:
                 print(f"ERROR: {result['error']}", file=sys.stderr)
                 return 2
         result = _result_base(active, "completed")
+        result["state_restored"] = []
         current = {rel: _entry_at(root, rel) for rel in entries_b}
         conflicts = []
-        for rel, cur in current.items():
+        for rel in code_rels:
+            cur = current[rel]
             if _entry_equal(cur, entries_b[rel]):
                 continue
             if after is not None and rel in entries_a and _entry_equal(cur, entries_a[rel]):
@@ -626,11 +648,16 @@ def cmd_restore(args) -> int:
             _write_result(id_dir, result)
             print(f"ERROR: restore 冲突，未写入任何文件：{conflicts[:5]}", file=sys.stderr)
             return 2
-        # 全路径 preflight 通过；写回 before（只写 current == after 的）
-        for rel, entry in entries_b.items():
+        # 全路径 preflight 通过；内存写回 before（只写 current == after 的）
+        for rel in code_rels:
+            entry = entries_b[rel]
             if _entry_equal(current[rel], entry):
                 continue
             _restore_entry(root, id_dir, rel, entry)
+        # 状态面 = 运行期产物：不参与三方冲突，直接回到 before
+        for rel in state_rels:
+            _restore_entry(root, id_dir, rel, entries_b[rel])
+            result["state_restored"].append(rel)
         recheck = {rel: _entry_at(root, rel) for rel in entries_b}
         if any(not _entry_equal(recheck[rel], entries_b[rel]) for rel in entries_b):
             result.update(status="restore_failed", error="写回后哈希不等于 before")
@@ -647,7 +674,7 @@ def cmd_restore(args) -> int:
                 _write_result(id_dir, result)
                 print(f"ERROR: smoke 失败（rc={run['rc']}）", file=sys.stderr)
                 return 2
-            if _any_changed(before, _manifest(root, entries_b.keys())):
+            if _any_changed(before, _manifest(root, code_rels), code_rels):
                 result.update(status="restore_failed", error="smoke 改动了触达文件")
                 _write_result(id_dir, result)
                 print("ERROR: smoke 改动了触达文件", file=sys.stderr)
@@ -665,14 +692,68 @@ def cmd_restore(args) -> int:
         _unlock(lock)
 
 
+def cmd_run(args) -> int:
+    root = Path(args.root).expanduser().resolve()
+    state = _state_root(args.state_root)
+    root_dir = _root_dir(state, root)
+    lock = _lock(root_dir)
+    try:
+        active = _read_active(root_dir)
+        if active is None:
+            raise AblationError("该 root 没有 active 消融")
+        if args.id and active.get("id") != args.id:
+            raise AblationError(f"active id={active.get('id')} 与 --id={args.id} 不一致")
+        if active.get("status") != "active":
+            raise AblationError(f"事务状态={active.get('status')}（只在 active 时允许 run）")
+        id_dir = Path(active["state_dir"]).resolve()
+        try:
+            id_dir.relative_to(root_dir.resolve())
+        except ValueError as exc:
+            raise AblationError("active.state_dir 越出 state-root") from exc
+        command = list(args.command)
+        if command and command[0] == "--":
+            command = command[1:]
+        if not command:
+            raise AblationError("run 需要 -- <命令...>")
+        runs = id_dir / "runs"
+        runs.mkdir(parents=True, exist_ok=True)
+        env = dict(os.environ, ATLAS_ABLATION_ID=active["id"],
+                   ATLAS_ABLATION_ROOT=str(state))
+        started = time.monotonic()
+        try:
+            p = subprocess.run(command, cwd=str(root), env=env,
+                               capture_output=True, text=True, timeout=args.timeout)
+            rc, out, err = p.returncode, p.stdout[-65536:], p.stderr[-65536:]
+        except FileNotFoundError as exc:
+            rc, out, err = 127, "", str(exc)
+        except subprocess.TimeoutExpired as exc:
+            rc, out, err = 124, "", f"timeout: {exc}"
+        elapsed = round((time.monotonic() - started) * 1000)
+        rec = {"schema_version": SCHEMA_VERSION, "id": active["id"],
+               "argv": command, "rc": rc, "elapsed_ms": elapsed,
+               "stdout": out, "stderr": err, "finished": _now_iso()}
+        seq = len(list(runs.glob("*.json"))) + 1
+        _atomic_json(runs / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{seq}.json", rec)
+        print(f"ablation run {active['id']}: rc={rc} elapsed={elapsed}ms "
+              f"out={len(out)}B err={len(err)}B")
+        return rc
+    finally:
+        _unlock(lock)
+
+
 def cmd_status(args) -> int:
     root = Path(args.root).expanduser().resolve()
     state = _state_root(args.state_root)
     root_dir = _root_dir(state, root)
     active = _read_active(root_dir) if root_dir.exists() else None
     if active is None:
-        print(f"no active ablation for {root}")
+        if not args.quiet:
+            print(f"no active ablation for {root}")
         return 0
+    if args.exit_active:
+        if not args.quiet:
+            print(f"active ablation {active.get('id')}")
+        return 10
     if args.id and active.get("id") != args.id:
         raise AblationError(f"active id={active.get('id')} 与 --id={args.id} 不一致")
     try:
@@ -729,6 +810,12 @@ def inspect_root(root: Path, state_root: str | None = None) -> dict:
         entries_a = after.get("entries", {})
         if not isinstance(entries_b, dict) or not entries_b:
             return {"status": "warn", "detail": "before manifest 为空"}
+        state_rels = set(active.get("state_entries") or [])
+        code_rels = [r for r in entries_b if r not in state_rels]
+        if not code_rels:
+            return {"status": "warn", "detail": "manifest 没有 code 路径"}
+        if active.get("host_warning"):
+            return {"status": "warn", "detail": f"host 面不一致：{active['host_warning']}"}
         id_dir = Path(active["state_dir"]).resolve()
         try:
             id_dir.relative_to(root_dir.resolve())
@@ -743,18 +830,18 @@ def inspect_root(root: Path, state_root: str | None = None) -> dict:
                 backup = id_dir / "before" / rel
                 if not backup.is_file() or _sha(backup) != entry.get("sha256"):
                     return {"status": "warn", "detail": f"before 备份缺失/哈希不符：{rel}"}
-        current = {rel: _entry_at(root, rel) for rel in entries_b}
-        all_before = all(_entry_equal(current[rel], entries_b[rel]) for rel in entries_b)
+        current = {rel: _entry_at(root, rel) for rel in code_rels}
+        all_before = all(_entry_equal(current[rel], entries_b[rel]) for rel in code_rels)
         all_after = all(
             rel in entries_a and _entry_equal(current[rel], entries_a[rel])
-            for rel in entries_b)
+            for rel in code_rels)
         if active.get("status") != "active":
             return {"status": "warn",
                     "detail": f"事务状态={active.get('status')}（未完成）"}
         if not all_before and not all_after:
             if any(not (_entry_equal(current[rel], entries_b[rel])
                         or (rel in entries_a and _entry_equal(current[rel], entries_a[rel])))
-                   for rel in entries_b):
+                   for rel in code_rels):
                 return {"status": "warn", "detail": "触达文件被第三人改动"}
             return {"status": "warn", "detail": "部分路径与 after 不一致"}
         if all_before:
@@ -793,6 +880,7 @@ def main() -> int:
     b.add_argument("--smoke", default=None)
     b.add_argument("--owner", default=getpass.getuser())
     b.add_argument("--allow-dirty", action="store_true")
+    b.add_argument("--state", action="append", default=[])
     r = sub.add_parser("restore")
     r.add_argument("--id", required=True)
     r.add_argument("--root", default=".")
@@ -801,12 +889,22 @@ def main() -> int:
     s.add_argument("--id", default=None)
     s.add_argument("--root", default=".")
     s.add_argument("--state-root", default=None)
+    s.add_argument("--exit-active", action="store_true")
+    s.add_argument("--quiet", action="store_true")
+    n = sub.add_parser("run")
+    n.add_argument("--id", default=None)
+    n.add_argument("--root", default=".")
+    n.add_argument("--state-root", default=None)
+    n.add_argument("--timeout", type=int, default=300)
+    n.add_argument("command", nargs=argparse.REMAINDER)
     args = ap.parse_args()
     try:
         if args.cmd == "begin":
             return cmd_begin(args)
         if args.cmd == "restore":
             return cmd_restore(args)
+        if args.cmd == "run":
+            return cmd_run(args)
         return cmd_status(args)
     except AblationError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

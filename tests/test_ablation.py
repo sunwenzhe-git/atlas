@@ -320,7 +320,8 @@ def test_after_manifest_write_failure_keeps_before_and_active(tmp_path, monkeypa
     monkeypatch.setattr(mod, "_atomic_json", failing)
     args = argparse.Namespace(id="t1", root=str(root), patch=str(patch),
                               scope="test", state_root=str(state), timebox=60,
-                              smoke="true", owner="tester", allow_dirty=False)
+                              smoke="true", owner="tester", allow_dirty=False,
+                              state=[])
     try:
         mod.cmd_begin(args)
     except (OSError, mod.AblationError):
@@ -332,3 +333,98 @@ def test_after_manifest_write_failure_keeps_before_and_active(tmp_path, monkeypa
     assert (id_dir / "manifest.before.json").is_file()
     assert (_state_dir(root, state) / "active.json").is_file()
     assert (root / "a.txt").read_text() == "new\n"           # apply 已发生但现场保留
+
+
+def _run_command(root: Path, state: Path, *cmd: str, timeout: str = "5"):
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "run", "--root", str(root),
+         "--state-root", str(state), "--timeout", timeout, "--", *cmd],
+        cwd=str(root), env=_env(state), capture_output=True, text=True, timeout=120)
+
+
+def test_run_captures_env_and_record(tmp_path) -> None:
+    root = _repo(tmp_path)
+    state = tmp_path / "state"
+    assert begin(root, state, _patch(tmp_path, MODIFY)).returncode == 0
+    p = _run_command(root, state, sys.executable, "-c",
+                     "import os; print(os.environ['ATLAS_ABLATION_ID'])")
+    assert p.returncode == 0, p.stdout + p.stderr
+    runs = list((_state_dir(root, state) / "t1" / "runs").glob("*.json"))
+    assert len(runs) == 1
+    rec = json.loads(runs[0].read_text())
+    assert rec["rc"] == 0 and rec["stdout"].strip() == "t1"
+    assert rec["argv"][0] == sys.executable
+
+
+def test_run_returns_child_rc_and_timeout(tmp_path) -> None:
+    root = _repo(tmp_path)
+    state = tmp_path / "state"
+    assert begin(root, state, _patch(tmp_path, MODIFY)).returncode == 0
+    p = _run_command(root, state, sys.executable, "-c", "raise SystemExit(3)")
+    assert p.returncode == 3
+    p2 = _run_command(root, state, sys.executable, "-c",
+                      "import time; time.sleep(5)", timeout="1")
+    assert p2.returncode == 124
+    records = [json.loads(x.read_text()) for x in
+               (_state_dir(root, state) / "t1" / "runs").glob("*.json")]
+    assert {r["rc"] for r in records} == {0, 3, 124} or any(r["rc"] == 124 for r in records)
+
+
+def test_state_snapshot_restores_runtime_output(tmp_path) -> None:
+    root = _repo(tmp_path)
+    state = tmp_path / "state"
+    (root / "state.txt").write_text("before\n", encoding="utf-8")
+    p = begin(root, state, _patch(tmp_path, MODIFY), extra=["--state", "state.txt"])
+    assert p.returncode == 0, p.stdout + p.stderr
+    (root / "state.txt").write_text("run-output\n", encoding="utf-8")
+    p2 = run(root, state, "restore", "--id", "t1")
+    assert p2.returncode == 0, p2.stdout + p2.stderr
+    assert (root / "state.txt").read_text() == "before\n"
+    assert _result(root, state)["state_restored"] == ["state.txt"]
+
+
+def test_state_absent_before_is_removed(tmp_path) -> None:
+    root = _repo(tmp_path)
+    state = tmp_path / "state"
+    p = begin(root, state, _patch(tmp_path, MODIFY), extra=["--state", "new.txt"])
+    assert p.returncode == 0, p.stdout + p.stderr
+    (root / "new.txt").write_text("run-output\n", encoding="utf-8")
+    p2 = run(root, state, "restore", "--id", "t1")
+    assert p2.returncode == 0, p2.stdout + p2.stderr
+    assert not (root / "new.txt").exists()
+
+
+def test_status_exit_active(tmp_path) -> None:
+    root = _repo(tmp_path)
+    state = tmp_path / "state"
+    assert begin(root, state, _patch(tmp_path, MODIFY)).returncode == 0
+    p = run(root, state, "status", "--exit-active", "--quiet")
+    assert p.returncode == 10 and p.stdout == ""
+    assert run(root, state, "restore", "--id", "t1").returncode == 0
+    p2 = run(root, state, "status", "--exit-active", "--quiet")
+    assert p2.returncode == 0
+
+
+def test_install_update_refuses_active_ablation(tmp_path) -> None:
+    pkg = SCRIPT.parents[1]
+    if not (pkg / "install.sh").is_file():
+        import pytest
+        pytest.skip("装配副本态（无 install.sh）= 采纳仓内，源包安装互锁测试不适用")
+    root = tmp_path / "target"
+    (root / ".atlas").mkdir(parents=True)
+    (root / ".trellis").mkdir()
+    state = tmp_path / "state"
+    h = hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:16]
+    state_dir = state / "roots" / h
+    state_dir.mkdir(parents=True)
+    (state_dir / "active.json").write_text(json.dumps({
+        "schema_version": 1, "status": "active", "id": "t1",
+        "root": str(root.resolve()), "started": "2026-11-02T00:00:00+08:00",
+        "timebox_min": 60,
+    }), encoding="utf-8")
+    env = {**os.environ, "ATLAS_ABLATION_HOME": str(state)}
+    p = subprocess.run(["bash", str(pkg / "install.sh"), "--target", str(root),
+                        "--update", "--dry-run"], cwd=str(pkg), env=env,
+                       capture_output=True, text=True, timeout=120)
+    assert p.returncode == 2, p.stdout + p.stderr
+    assert "消融事务" in p.stdout + p.stderr
