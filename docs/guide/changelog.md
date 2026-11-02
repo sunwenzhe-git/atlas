@@ -2,7 +2,7 @@
 
 本文档记录了 **Atlas** 每个版本的重要特性变更、架构治理与问题修复。遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范。
 
-## [Unreleased]
+## [v0.2.0-beta.26] - 2026-11-02
 
 ### 🧭 签字与取证必须是非空字符串（RFC-20261101-03）
 
