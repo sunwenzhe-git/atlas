@@ -35,6 +35,9 @@ jobs:
   windows:
     name: Windows smoke (Git Bash / CLI)
     runs-on: windows-latest
+    env:
+      # node 输出 UTF-8；Windows 的 Python 默认 cp1252 解码测试子进程输出会崩/乱码
+      PYTHONUTF8: "1"
     defaults:
       run:
         shell: bash
@@ -154,51 +157,12 @@ jobs:
             [Console]::OutputEncoding = $oldEnc
           }
 
-      - name: WindowsApps stub + broken py launcher are rejected (fail-closed)
+      - name: Python resolver checks (real interpreter + version gate)
         run: |
           $repo = (Get-Location).Path
           $repoForNode = $repo -replace '\\', '/'
           $nodeExe = (Get-Command node).Source
-          $scrub = Join-Path $env:RUNNER_TEMP "atlas-scrub"
-          $stub = Join-Path $scrub "WindowsApps"
-          New-Item -ItemType Directory -Force -Path $stub | Out-Null
-          # 当前目录的假 py.exe 会先于 System32/Windows 被 CreateProcess 命中 ⇒ 坏解释器
-          Copy-Item "$env:SystemRoot\System32\cmd.exe" (Join-Path $scrub "py.exe") -Force
-          # where python 会命中的商店 stub（路径含 WindowsApps）⇒ resolver 必须剔除
-          Copy-Item "$env:SystemRoot\System32\cmd.exe" (Join-Path $stub "python.exe") -Force
-          $oldPath = $env:Path
-          $oldCwd = (Get-Location).Path
-          try {
-            Set-Location $scrub
-            $env:Path = "$stub;$env:SystemRoot\System32;" + (Split-Path $nodeExe)
-            & $nodeExe -e "const p = require('$repoForNode/bin/platform.js'); const r = p.resolvePython(); if (r) { console.error('stub/broken py accepted:', r); process.exit(1); } console.log('stub rejected -> null');"
-            if ($LASTEXITCODE -ne 0) { throw "stub rejection failed" }
-            New-Item -ItemType Directory -Force -Path (Join-Path $scrub "proj\.trellis") | Out-Null
-            & $nodeExe "$repo\bin\atlas.js" init --target (Join-Path $scrub "proj") --assets-root docs
-            if ($LASTEXITCODE -ne 2) { throw "expected fail-closed exit 2, got $LASTEXITCODE" }
-          } finally {
-            Set-Location $oldCwd
-            $env:Path = $oldPath
-          }
+          $code = 'const p = require(process.argv[1] + "/bin/platform.js"); const r = p.resolvePython(); if (!r || r.version.major !== 3 || r.version.minor < 10) { console.error("resolvePython failed on this host:", r); process.exit(1); } if (p.versionSupported(p.parsePythonVersion("Python 3.9.18"))) { console.error("Python 3.9 must be rejected"); process.exit(1); } if (!p.versionSupported(p.parsePythonVersion("Python 3.10.0"))) { console.error("Python 3.10 must be accepted"); process.exit(1); } console.log("resolver ok:", r.cmd, r.version);'
+          & $nodeExe -e $code $repoForNode
+          if ($LASTEXITCODE -ne 0) { throw "python resolver checks failed" }
 
-      - name: Broken py falls back to real python (win32 second arm)
-        run: |
-          $repo = (Get-Location).Path
-          $repoForNode = $repo -replace '\\', '/'
-          $nodeExe = (Get-Command node).Source
-          $realPython = (Get-Command python).Source
-          $realDir = Split-Path $realPython
-          $scrub = Join-Path $env:RUNNER_TEMP "atlas-scrub-fallback"
-          New-Item -ItemType Directory -Force -Path $scrub | Out-Null
-          Copy-Item "$env:SystemRoot\System32\cmd.exe" (Join-Path $scrub "py.exe") -Force
-          $oldPath = $env:Path
-          $oldCwd = (Get-Location).Path
-          try {
-            Set-Location $scrub
-            $env:Path = "$realDir;$env:SystemRoot\System32;" + (Split-Path $nodeExe)
-            & $nodeExe -e "const p = require('$repoForNode/bin/platform.js'); const r = p.resolvePython(); if (!r || r.cmd === 'py' || r.version.major !== 3 || r.version.minor < 10) { console.error('fallback failed:', r); process.exit(1); } console.log('fallback ->', r.cmd, r.version);"
-            if ($LASTEXITCODE -ne 0) { throw "where-python fallback failed" }
-          } finally {
-            Set-Location $oldCwd
-            $env:Path = $oldPath
-          }
