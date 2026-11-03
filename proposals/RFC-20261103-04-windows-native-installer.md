@@ -106,7 +106,7 @@ Trellis 的对照实现（本机 v0.7.0-beta.4 实证）：
 - [x] **项目接线（已先行落地）**：`patches/project-wiring/apply-wiring.py` 钩子命令按平台写 `python`/`python3`，幂等/迁移判据改为 `HOOK_CORE` 脚本路径段。
 - [x] **可执行面收敛（代码面已落地 2026-11-03）**：`extensions/pi.ts` 按平台取解释器（支持 `ATLAS_PYTHON` 覆盖）、`adapters/tests.py` 的 `RUN_PYTEST` 平台化。**剩余**：`AGENTS.md` 指针段一行「Windows: `python` 替代 `python3`」。
 - [x] **CI（已先行落地）**：`.github/workflows/tests.yml` 的 windows-latest 作业（平台探针、exit-code 烟测、无 POSIX 环境的 fail-closed 模拟、Git Bash 装配链路 advisory）。
-- [ ] **测试**：跨平台钩子与 Python 探测用例已加（`test_project_wiring.py` 16、`test_cli_commands.py` 18）；**剩余** = 安装器 golden harness。
+- [ ] **测试**：跨平台钩子与 Python 探测用例已加；**golden harness 已录基线**（`proposals/RFC-20261103-04-installer-golden/`，8 场景 `--record`/`--check`）；**剩余** = `install.py` 对同一基线 `--check` 全绿 + AGENTS.md 平台约定一行。
 - [ ] **契约/文档**：README 平台支持矩阵、`CHANGELOG` 两份、`docs/map` 行数与文件清单。
 
 ---
@@ -152,7 +152,7 @@ python3 tests/test_install_selfcheck.py
 
 1. **B-lite（已落地）**：钩子平台化 + 幂等键收窄；windows-latest CI 烟测与 fail-closed 模拟。
 2. **Python 探测单点（已完成 2026-11-03）**：`platform.js` 增 `resolvePython`，接入 `bin/atlas.js` 四处 spawn 与 `extensions/pi.ts` / `adapters/tests.py`——先终结 `atlas check` 的 Windows 断面；安装器仍要求 `python3`，由第 4 步解除。
-3. **golden harness**：POSIX 基线先行，覆盖 §4.1 六类场景。
+3. **golden harness（已完成 2026-11-03）**：`proposals/RFC-20261103-04-installer-golden/harness.py`，8 场景（fresh / update / dry-run-fresh / guard-dirty / guard-untracked / ablation-active / invalid-config / missing-layout）已录基线且 `--check` 确定性自检 8/8 绿。**纪律：harness 与基线必须留在装配集之外**（proposals/）——放 `scripts/` 里加一行就会改源包摘要，把要冻结的基线自己冲掉（当日实证）。包内容变更后需重录。
 4. **`install.py` 1:1 + `install.sh` wrapper**：全 spawn 注入 `PYTHONUTF8=1`；`trellis init` 的 win32 spawn 分支并入；写盘点锁 `newline`。
 5. **钩子跨 OS 用例**：`atlas update` 在解释器漂移时归一（已加用例，实施批补 golden）。
 6. **文档收敛 + 真机收尾**：AGENTS.md 平台约定、README 支持矩阵、真机 bare PowerShell init。

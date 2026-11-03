@@ -1,0 +1,32 @@
+{
+  "installer": [
+    "bash",
+    "/private/tmp/atlas-main-golden/install.sh"
+  ],
+  "runs": [
+    {
+      "args": [
+        "--target",
+        "<ROOT>",
+        "--assets-root",
+        "docs"
+      ],
+      "exit": 1,
+      "output": [
+        "atlas installer",
+        "  包目录 : <PKG>",
+        "  目标项目: <ROOT>",
+        "",
+        "警告：未探测到任何平台 skill 目录，默认创建 .agents/skills/。",
+        "错误：源包缺少 _support/layout.py，无法解析项目级资产根。"
+      ]
+    }
+  ],
+  "scenario": "missing-layout",
+  "tree": {
+    "dirs": [
+      ".trellis"
+    ],
+    "files": {}
+  }
+}

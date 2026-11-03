@@ -27,6 +27,13 @@
 * **边界**：`install.sh` 仍在 bash 内调用 `python3`（第 4 步 Python 化后解除）；本步先终结 `atlas check` 在 Windows 上的 ENOENT 断面。
 * **测试**：`tests/test_cli_commands.py` 15 → 18（Python 候选顺序 / 版本解析 / 本地解释器）；`tests/test_tools.py` 断言改为平台口径。
 
+### 🧭 装配器 golden 快照 harness（RFC-20261103-04 第 3 步）
+
+* **新增**：`proposals/RFC-20261103-04-installer-golden/harness.py`——8 场景（fresh / update / dry-run-fresh / guard-dirty / guard-untracked / ablation-active / invalid-config / missing-layout）跑当前 bash 安装器，记录退出码 + 归一化输出（绝对路径 / 时间戳 / 版本号 → 占位符）+ 目标树逐文件 sha256（`.git/` 除外；`.atlas/VERSION` 时间与源包路径行、`.atlas/ABLATION` 的 started 时间戳归一化）。
+* **基线**：同目录 8 份 JSON（约 248K）；`--check` 确定性自检 8/8 PASS。移植后用 `--check --installer install.py` 对同一基线比对。
+* **纪律**：harness 与基线必须留在装配集之外（proposals/ 不进 `.atlas/`）——放 `scripts/` 里加一行就会改源包摘要，把要冻结的基线自己冲掉（当日实证）。包内容变更后需 `--record` 重录。
+* **定位**：移植期安全绳，非长期 CI 门。
+
 ## [v0.2.0-beta.26] - 2026-11-02
 
 ### 🧭 签字与取证必须是非空字符串（RFC-20261101-03）
