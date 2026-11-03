@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+### 🧭 atlas eval 跑分器（RFC-20261103-06）
+
+* **新增**：`atlas eval run/gate`——同一组 case、base/candidate 两 commit 的 `git worktree --detach` 对照跑分，出机读 ledger；case 命令 `shlex`+`shell=False`（与 ablation 同口径）+ 逐 case timeout；worktree 默认清理、`--keep-worktrees` 留现场；同 sha 拒绝。
+* **判据**：回归门只判三条——pass→fail（error/timeout 视 fail 侧）、锚缺失（不静默 SKIP）、gate_green 下降（解析不到 ok/PASS ⇒ null+WARN 跳过）；fail2fail 只 WARN；锚缺失 case 不参与 pass/fail 分类。**不宣称净收益/反事实**；ledger 继承「单项目单环境、不可外推」腿注。
+* **case 源**：注册表只存稳定锚（`DESIGN.md` D 行片段 / pytest 节点）；`bugs.md` 出库即删，不作 case 源。门登记 `shared/gates.md` 2.1（独立 CLI，不进 atlas_check）。
+* **测试**：新增 `tests/test_atlas_eval.py` 10 条；变异 M171（摘 pass→fail）/ M172（摘锚缺失）四段协议各红、逐字节还原。
+
 ### 🧭 实例⑤审查一键编排（RFC-20261103-05）
 
 * **新增**：`atlas review --unit <需求ID> --from <ref> --to <ref>` 把 closeout 步骤 10 的 6 步收成一个入口：inputs（可选）→ 指针化 background → preview 取 N → CLI review → scope manifest（coverage.completed / `--reviewed-files`）→ converter → validator（带 `--scope-manifest`）→ closure。只编排不重写判据；子步失败按原退出码透传；`--dry-run` 只读预览；`--cli` 可覆盖 `impl_review.cli`。

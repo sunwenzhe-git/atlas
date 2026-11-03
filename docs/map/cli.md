@@ -13,7 +13,7 @@
 
 | 文件 | 行数 | 角色 |
 |---|---|---|
-| `bin/atlas.js` | 442 | CLI 入口:命令面总表见 `printHelp`(`bin/atlas.js:18`)= init / update / upgrade / check / review / console / report / version,分派在同文件 `switch (command)`;平台探测拆到 `bin/platform.js`(Trellis 用 which/where、bash 只认 Git Bash、Python 按平台探测 3.10+) |
+| `bin/atlas.js` | 458 | CLI 入口:命令面总表见 `printHelp`(`bin/atlas.js:18`)= init / update / upgrade / check / review / eval / console / report / version,分派在同文件 `switch (command)`;平台探测拆到 `bin/platform.js`(Trellis 用 which/where、bash 只认 Git Bash、Python 按平台探测 3.10+) |
 | `install.sh` | 741 | 装配器:白名单目录拷贝 + 版本戳 + manifest + 64 条自检 |
 | `scripts/pkg_digest.py` | — | 内容摘要算法单点(`ASSEMBLY_COVER_DIRS`,`scripts/pkg_digest.py:52`):装配版本门两侧共用,防双端漂移 |
 | `scripts/backflow.py` | — | 副本 ⇄ 源包三态回灌(`diff_trees`,`scripts/backflow.py:60`;`apply`,`scripts/backflow.py:97`) |
