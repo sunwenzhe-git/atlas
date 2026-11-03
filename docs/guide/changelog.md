@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### 🧭 证据面 ⇄ 判分面 + 门登记表瘦身（RFC-20261103-02 / -03）
+
+* **契约（新增）**：`shared/global-rules.md` §17「证据面 ⇄ 判分面（硬）」——证据载体（失败回放 / 截图）与判分载体（含通过结论与期望值的文件）必须可区分且有清单；面向改进 / 诊断 / 执行的消费者只读证据面。**纪律面、无机器门**，升格条件 = 第一个此类消费者出现，或运行目录出现清单外第三类载体。`rings/e2e/reference.md` §7.1 补 `.atlas-run/` 二分表（证据面 = `trace.zip` / `test-failed-*.png` / `*.webm`；判分面 = `results.json` / `.last-run.json`），`shared/single-source.md` 登记为唯一清单；`proposals/BACKLOG-execution-layer.md` §5 记判分载体物理落点待定界。
+* **契约（瘦身）**：`shared/gates.md` `E2E 真跑` 行 11,696 → 1,597 字符——判据格前 914 字节与基线逐字节一致（含原尾随空格），历轮咬合流水归 `DESIGN.md` D 行，控制台 / 生成器侧判据指针化到 `rings/e2e/reference.md` §5.5 §7.1 §10 与 D110–D174。同批修 3 处格内游离竖线（`validate_stack_profile` / `cli_review_convert` / `atlas_eval`），全表 53 行均可按未转义 `|` 稳定切成 6 格。`shared/global-rules.md` §13 补「门登记表同口径」：登记行只写判据 + 等级 + 一行锚，流水不进表。
+* **测试**：新增 `tests/test_gate_registry.py` 3 钉（`E2E 真跑` 行 ≤1,600 且唯一 / 全行恰 6 格 / 无空格格）+ 登记行解析函数；`tests/test_duty_bug_families.py` 基线复冻到 2026-11-03（#31 成为首条带 `〔…〕` 字段的库内条目）。
+* **缺陷登记**：`duty-review/bugs.md` #31 —— `results.json` 未被指纹免疫闭集排除（`e2e_console.py` 目录族不含 `.atlas-run`），真跑后控制台已审条目假 `stale`，违反 D128 立条目标；实证 = `REVIEW-20261103-01` Major-2，修复另案。
+* **评审**：`REVIEW-20261103-01/02` 双「修后通过」；必修项已落（`.last-run.json` 归类依据改引 `DESIGN.md:597` + 机器面闭集、`DESIGN.md` D144 补 M149/M150 咬合叙述与 D103 回指改口、判据格逐字节恢复）。
+
+
 ### 🧭 Windows 装配入口 fail-closed + Trellis 探测平台自适（2026-11-03 外部现场）
 
 * **修复**：Windows 原生 PowerShell 下 `atlas init` 用 `which trellis` 判依赖（原生 Windows 没有 `which`）⇒ 已装 Trellis 仍报「未检测到」；随后 `bash` 落到 `C:\Windows\System32\bash.exe`（WSL 中继壳），未装发行版时抛 `execvpe(/bin/bash) failed`，`install.sh` 一步未跑；而 `res.status || 0` 在 spawn 失败（status = null）时还会洗成 0（假成功）。

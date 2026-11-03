@@ -54,6 +54,7 @@
 - **Playwright 脚本生成与执行**：`scripts/gen_e2e_scripts.py`、`e2e_console.py`、`atlas_verify.py`（D150/D151）。
 - **独立审查执行器**：现由 `stack-profile` 声明、宿主子代理执行；执行层若接管，须保留 fresh context、档位不低于生成者、扇出上限 4、预算熔断。
 - **项目数据准备钩子**：`atlas-prepare.mjs` 的内容归项目，调度归执行层；`ATLAS_CASE_ID` 语义不得改。
+- **E2E 运行目录判分载体落点**：`results.json` / `.last-run.json` 现与失败留证（trace / 截图）同目录（`.atlas-run/`）；证据面 ⇄ 判分面已契约化（`RFC-20261103-02`，`shared/global-rules.md` §17），物理**迁出 / 保留 / 双轨**待定界——升格条件 = 第一个自动改进 / 诊断消费者出现，**或出现清单外第三类载体**。**指纹面未免疫**：`results.json` 现仍计入 `scripts_hash`（`REVIEW-20261103-01` Major-2 / `bugs.md` #31），修复前勿引用「判分载体均已指纹免疫」的表述。
 
 ## 6. 明确不采 / 缓行（防止二次引入）
 

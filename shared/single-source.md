@@ -27,6 +27,7 @@
 | **人工缺口清单 / 修订批次**（无需求卡的应然资产修订） | `product/reviews/<日期>-<主题>/`：`README.md`（缺口清单 + 决策表 + 验收标准）+ `plans/`（分域修订方案） | 与上一行**不同角色**：上行是机器 / 独立审查产出，本行是人机协同收集的修订批次（`3507 P2`） |
 | **项目级长效架构决策 (ADR)** | `product/adr/`（唯一权威，按 `NNNN-<slug>.md` 编号） | 域级 PRD 引用架构决策编号；单需求内微观取舍归域级 PRD；修订批次细节归 `product/reviews/` |
 | **独立审查校准账本** | `product/reviews/calibration.jsonl`（**append-only**，跨实例共用） | 三条指标：一致率 / 漏报率 / 分歧率；形态与回退规则见 `shared/independent-review.md` §7 |
+| **运行目录（`.atlas-run/`）文件归属清单** | `rings/e2e/reference.md` §7.1「运行目录二分」表 | `shared/global-rules.md` §17 只写通则、不复制清单；改进 / 诊断 / 执行类消费者按表定读取面 |
 
 ## 3. 迁移纪律（真相源搬家 = 一等事件）
 
