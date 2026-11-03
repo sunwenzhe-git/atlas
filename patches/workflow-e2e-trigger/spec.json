@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "description": "把 E2E 触发段挂进 Trellis workflow.md（通用包）：Phase 2 **最后一轮**质量检查之前执行 `e2e_trigger.py`（只归因 + 委托既有执行器；不生成脚本、不绕过 E2E 环独立审查门），3.5 收尾处给出控制台命令（人工 review），[workflow-state:in_progress] 两个面包屑变体各加一行提醒。块形态与判据同 workflow-plan-apply（锚点式版本化：指纹相同⇒skipped，不同⇒整块替换，旧式块⇒升级/替换）。",
+  "target_prefix": "",
+  "patches": [
+    {
+      "id": "e2e-trigger-before-final-pass",
+      "issue": "RFC-20261103-07",
+      "file": ".trellis/workflow.md",
+      "mode": "insert_before",
+      "anchor": "**Final pass (before Phase 3.4 commit)**",
+      "snippet": "e2e-trigger-before-final-pass.insert.md",
+      "note": "Phase 2 末、最后一轮质量检查之前执行 E2E 触发段。锚点为模板英文行、全文件唯一；miss 时安装器只 WARN，故补丁另有 [workflow-state:in_progress] 面包屑作为常驻提醒。"
+    },
+    {
+      "id": "e2e-console-at-3-5",
+      "issue": "RFC-20261103-07",
+      "file": ".trellis/workflow.md",
+      "mode": "insert_after",
+      "anchor": "#### 3.5 Wrap-up reminder",
+      "snippet": "e2e-console-at-3-5.insert.md",
+      "note": "收尾处给出控制台命令（人工 review），不自动启动。锚点全文件唯一。"
+    },
+    {
+      "id": "e2e-breadcrumb-in-progress",
+      "issue": "RFC-20261103-07",
+      "file": ".trellis/workflow.md",
+      "mode": "insert_before",
+      "anchor": "[/workflow-state:in_progress]",
+      "snippet": "breadcrumb-in-progress.insert.md",
+      "note": "执行期每轮提醒 E2E 触发段（子代理平台口径）。锚点全文件唯一，且不是 [/workflow-state:in_progress-inline] 的子串。"
+    },
+    {
+      "id": "e2e-breadcrumb-in-progress-inline",
+      "issue": "RFC-20261103-07",
+      "file": ".trellis/workflow.md",
+      "mode": "insert_before",
+      "anchor": "[/workflow-state:in_progress-inline]",
+      "snippet": "breadcrumb-in-progress-inline.insert.md",
+      "note": "Codex inline 变体同样加提醒（主会话自加载口径）。"
+    }
+  ]
+}

@@ -113,10 +113,14 @@ class Row:
 
     def add(self, name: str, status: str, detail: str = "",
             command: str = "", full_output: str = "", code: int | None = None,
-            duration_ms: int | None = None) -> None:
+            duration_ms: int | None = None, extra: dict | None = None) -> None:
         # duration_ms 是观测字段，不参与任何判据；None = 该行没有可计时的执行段，或尚未接入计时。
-        self.rows.append({"name": name, "status": status, "detail": detail,
-                          "duration_ms": duration_ms})
+        row = {"name": name, "status": status, "detail": detail,
+               "duration_ms": duration_ms}
+        # extra = 机读附加字段（如 E2E 行的 skip_reason）；人读输出只取 name/status/detail。
+        if extra:
+            row.update(extra)
+        self.rows.append(row)
         if status == "FAIL":
             self.failures.append({
                 "name": name,
@@ -646,6 +650,71 @@ def check_ablation_residue(root: Path, rows: Row) -> None:
              duration_ms=_elapsed_ms(started))
 
 
+# E2E 就绪归因（RFC-20261103-07 D1）：机读分类，用于区分「设计不接 / 缺决策 /
+# 缺工作 / 环境未起」——这四者在人读输出里同为 SKIP，读不出归因。
+E2E_SKIP_REASONS = (
+    "gate_off",              # 无分片且无脚本目录：本环未接入
+    "not_declared",          # e2e.app_base_url 为空
+    "not_generated",         # 有分片/用例，页面脚本不存在
+    "app_login_undeclared",  # 靶场已声明、登录形态未声明（提示，不单独构成跳过）
+    "env_not_ready",         # 靶场不可达
+)
+
+
+def _profile_scalar(text: str, key: str) -> str:
+    """取 profile 顶层标量值（剥行内注释）；缺失 / 空 / null 返回空串。"""
+    m = re.search(rf"^[^\S\n]*{re.escape(key)}:[^\S\n]*(\S*)", text, re.M)
+    if not m:
+        return ""
+    v = strip_inline_comment(m.group(1)).strip()
+    return "" if v in ("null", "~", '""', "''") else v
+
+
+def app_login_declared(text: str) -> bool:
+    """`e2e.app_login` 段是否已声明：行内非空值，或其后缩进的 `mode:` 子键。"""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        m = re.match(r"^([^\S\n]*)app_login:", line)
+        if not m:
+            continue
+        rest = strip_inline_comment(line.split(":", 1)[1]).strip()
+        if rest and rest not in ("null", "~", '""', "''"):
+            return True
+        indent = len(m.group(1))
+        for nxt in lines[i + 1:]:
+            if not nxt.strip():
+                continue
+            if len(nxt) - len(nxt.lstrip()) <= indent:
+                return False
+            if re.match(r"^[^\S\n]*mode:", nxt):
+                return True
+        return False
+    return False
+
+
+def e2e_readiness(text: str, cases_dir: Path, scripts_dir: Path, page: str | None,
+                  reachable: bool | None = None) -> str | None:
+    """就绪归因：`None` = 可跑；否则返回 `E2E_SKIP_REASONS` 之一。
+
+    优先级 = 「先看是否接入，再看缺什么」：gate_off → not_declared →
+    not_generated → app_login_undeclared → env_not_ready。
+    `reachable=None` 表示尚未探测（早退分支用）：此时不产出 env_not_ready。
+    """
+    has_cases = cases_dir.is_dir() and any(cases_dir.glob("*.md"))
+    has_scripts = scripts_dir.is_dir() and any(scripts_dir.glob("*.spec.ts"))
+    if not has_cases and not scripts_dir.is_dir():
+        return "gate_off"
+    if not _profile_scalar(text, "app_base_url"):
+        return "not_declared"
+    if (page and not (scripts_dir / f"{page}.spec.ts").is_file()) or (has_cases and not has_scripts):
+        return "not_generated"
+    if not app_login_declared(text):
+        return "app_login_undeclared"
+    if reachable is False:
+        return "env_not_ready"
+    return None
+
+
 def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     # 整门 wall time：含 reset / TCP 探测 / runner / browser probe / 真跑；
     # 早退 SKIP 行没有执行段，duration_ms 保持 None。
@@ -657,20 +726,24 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     # 键名当成值（2026-10-04 门禁负向用例 #2：`app_base_url:` 空值后跟 `reset:` ⇒ 被误读成已声明）。
     m = re.search(r"^[^\S\n]*cases_dir:[^\S\n]*(\S+)", text, re.M)
     scripts = lay.e2e_scripts_dir
+    _reason = e2e_readiness(text, lay.e2e_cases_dir, scripts, page)
     if not scripts.is_dir():
-        rows.add("E2E 真跑", "SKIP", "无脚本目录（门控态）")
+        rows.add("E2E 真跑", "SKIP", "无脚本目录（门控态）",
+                 extra={"skip_reason": _reason or "gate_off"})
         return
     # 页面脚本扩展名（单轨 node-playwright，3507 BO 单轨化）
     _ext = ".spec.ts"
     target = scripts if not page else scripts / f"{page}{_ext}"
     if page and not Path(target).is_file():
-        rows.add("E2E 真跑", "SKIP", f"无 {page}{_ext}（{strip_inline_comment(m.group(1)) if m else 'cases_dir'} 未建？）")
+        rows.add("E2E 真跑", "SKIP", f"无 {page}{_ext}（{strip_inline_comment(m.group(1)) if m else 'cases_dir'} 未建？）",
+                 extra={"skip_reason": _reason or "not_generated"})
         return
     # E1 单段：真实栈由业务侧拉起，atlas_check 不再起原型静态服务。
     mbase = re.search(r"^[^\S\n]*app_base_url:[^\S\n]*(\S+)", text, re.M)
     if not mbase or strip_inline_comment(mbase.group(1)) in ("null", "~", '""', "''"):
         rows.add("E2E 真跑", "SKIP",
-                 "e2e.app_base_url 为空（单段执行：真实栈地址未声明；业务侧拉起后重跑）")
+                 "e2e.app_base_url 为空（单段执行：真实栈地址未声明；业务侧拉起后重跑）",
+                 extra={"skip_reason": _reason or "not_declared"})
         return
     # 地址已声明但**靶场不可达** ⇒ 同为「未就绪」，不是失败（`gates.md` 2.2 本行的「不查什么」
     # = 真栈没起来时的任何结论，那时只报 SKIP）：少这一步就会把整批 `goto` 失败记成 FAIL
@@ -679,7 +752,8 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     if not _ok:
         rows.add("E2E 真跑", "SKIP",
                  f"ENV_ISSUE：e2e.app_base_url 不可达（{strip_inline_comment(mbase.group(1))}；{_why}）"
-                 "——真实栈未就绪，非用例失败")
+                 "——真实栈未就绪，非用例失败",
+                 extra={"skip_reason": "env_not_ready"})
         return
     # 靶场重置（2026-09-30，台账 P4）：零步基线与用例前提假设种子初始态，真栈持久化
     # 跨 run 残留 ⇒ 声明了 `e2e.reset`（shell 命令串）就在真跑前执行；非零 ⇒ FAIL

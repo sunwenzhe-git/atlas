@@ -1,0 +1,1 @@
+**E2E 触发段（实现完成即执行，平台无关注）**：Phase 2 实现完成、静态检查通过后，在**最后一轮**质量检查（`**Final pass (before Phase 3.4 commit)**`）**之前**执行 `python3 .atlas/scripts/e2e_trigger.py --root . --run`。它只做就绪归因并委托既有执行器（`atlas_verify.py`）：未就绪时打印缺哪一项并退出 0（**不阻塞**提交）；已就绪时按 `--run` 真跑。**不得**由它调用生成器的 `--apply`（生成前必须有 E2E 环独立审查报告，`rings/e2e/reference.md` §12），也**不**替你启动控制台。只在确认这是最后一轮质量检查时触发；迭代中途不跑。

@@ -243,6 +243,7 @@ apply 只对**本次受影响集合**落笔，**不整文件覆盖**任何项目
   - 步骤 `#### 1.6 项目级资产更新（atlas apply）` `[required · once]`（沿用 `X.Y` 编号，`get_step` 可解析；**不重命名** `## Phase 1: Plan` 边界标题）；
   - `[workflow-state:planning]` 与 `[workflow-state:planning-inline]` 面包屑块各加一条 **enforcement 行**，使其**每轮自动提醒**（`DESIGN.md` §8.2）。
   - 两者由 `patches/workflow-plan-apply/` 的锚点**版本化**补丁落下（§9）。
+- **E2E 触发段（2026-11-03，`RFC-20261103-07`）**：Phase 2 实现完成后，由 `patches/workflow-e2e-trigger/` 落下的步骤在**最后一轮**质量检查之前执行 `scripts/e2e_trigger.py`（归因 + 委托既有执行器；**不生成脚本、不替代真跑门**，详见 `rings/e2e/reference.md` §10.2）；收尾只给控制台命令，人工 review 不代劳。
 - **不新增 Trellis 状态**（B3）：只用 `planning` / `in_progress` / `completed` 三态；不改状态机、不改 hook 解析逻辑、不使用 `set-status`。
 - **失败 / 部分完成回报**：
   - 任一参与环失败、或影响面无法确定且用户未答 → **停在 planning**，输出结构化报告（§8 格式），**不得进入实现**；

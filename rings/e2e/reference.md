@@ -695,6 +695,27 @@ testid:
 
 ---
 
+## 10.2 E2E 触发段与就绪归因（2026-11-03，`RFC-20261103-07`）
+
+**触发段**：`scripts/e2e_trigger.py`，由 `patches/workflow-e2e-trigger/` 挂进 Trellis 工作流的 **Phase 2 最后一轮质量检查之前**；收尾（3.5）只给控制台命令。
+
+- 它**只归因 + 委托**：就绪时调用既有执行器（`atlas_verify.py`；`--page` 时退到 `atlas_check --page`），**不**调用生成器 `--apply`（生成前必须有 §12 独立审查报告），**不**启动控制台；未就绪只打印待办并 `exit 0`，不阻塞收尾。
+- 触发点只在**最后一轮** 2.2（2.2 是 `[required · repeatable]`，迭代中途不跑）。
+
+**就绪归因**：`atlas_check --json` 的 E2E 行新增机读字段 `skip_reason`（人读 `detail` 与 `SKIP` 判定不变）。枚举与判据：
+
+| `skip_reason` | 判据 | 归属 |
+|---|---|---|
+| `gate_off` | 无分片且无脚本目录 | 设计结论（本环未接入） |
+| `not_declared` | `e2e.app_base_url` 为空 | 缺决策 |
+| `not_generated` | 已有分片，页面脚本不存在 | 缺工作 |
+| `app_login_undeclared` | 靶场已声明、`app_login` 段未声明（人工会话可兜底，不单独构成跳过） | 缺决策 |
+| `env_not_ready` | `app_base_url` 不可达 | 环境 |
+
+优先级按「先看是否接入，再看缺什么」：`gate_off → not_declared → not_generated → app_login_undeclared → env_not_ready`；不得按早退分支顺序推断（同一分支在不同资产状态下可对应不同归因）。
+
+---
+
 ## 11. 报告格式
 
 1. **范围**：本次涉及页面与 AC 数。
