@@ -1,7 +1,7 @@
 # 消融事务工具 + 「消融残留」WARN 门（P3 首切片）
 
 > 提案编号：RFC-20261101-04
-> 状态：**已确认；P3-a 已合并、P3-b 已实现（待合并）**
+> 状态：**已确认；P3-a / P3-b 均已合并（`ad8ade5` / `44741bf`）**
 > 关联：`research/2026-10-23-ablation-differential.md` §5.1–§5.8（F1–F7 / 四条不变式 / 事务协议 / 三道锁 / 不要做的四件事）、§7 P3；`DESIGN.md` D137、D156、拟 D182
 > 影响面：新 `scripts/ablation.py`；改 `scripts/atlas_check.py`；新 `tests/test_ablation.py`；改 `tests/test_atlas_check.py`；`shared/gates.md`、`DESIGN.md`、两处 changelog、`docs/map/*`、`install.sh`（仅自检行）
 

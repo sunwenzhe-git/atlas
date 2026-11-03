@@ -142,27 +142,95 @@ python3 tests/test_install_selfcheck.py
 * `windows` 作业：平台探针 + CLI exit-code + Git Bash 轨（装配器用例已转正）；
 * `windows-native` 作业（纯 PowerShell）：bare `atlas init` → `check --fast`（占位符项目**断言 fail-closed exit 1**）→ `update --dry-run`（断言 VERSION 逐字节不变）、GBK(936) 控制台不崩、Python resolver 断言（本机解析到 3.10+；版本门拒 3.9、收 3.10）。
 
-**真机验收清单（发外部用户，5 分钟）**：
+**给使用者的验收步骤（可直接转发；约 5 分钟）**：
+
+### Atlas Windows 安装验收
+
+**开始前请确认**（在 PowerShell 里逐条运行）：
+
 ```powershell
-# 1) 环境取证
-node --version; python --version; where python; py -3 --version   # py 可能不存在，允许失败
-
-# 2) 全局安装 + 首次装配（全新目录）
-npm i -g atlas-project-harness
-mkdir C:\atlas-smoke; cd C:\atlas-smoke
-mkdir .trellis
-atlas init --assets-root docs
-
-# 3) 期望
-#    - 退出码 0；出现「装配完成」与「首次开户（二选一）」
-#    - .atlas\VERSION、.atlas\MANIFEST.json、docs\stack-profile.yaml 存在
-atlas check --fast          # 全新脚手架：占位符 profile 未填 ⇒ exit 1 属预期
-#    判据：输出应是 validate_stack_profile / validate_prd 的「占位符」FAIL；
-#    把 docs/stack-profile.yaml 换成真实画像后应转 0（否则才是真缺陷）
-atlas update --dry-run      # 期望 exit 0，且 .atlas\VERSION 内容不变
-
-# 4) 提交前把以下输出发回：atlas version、python --version、where python、init 完整输出
+node --version
+python --version
 ```
+
+- Node.js 需要 18 或更高；Python 需要 3.10 或更高。
+- 如果 `python` 提示找不到，重装 Python 时勾选 “Add python.exe to PATH”。
+- 还需要 Trellis：`npm install -g @mindfoldhq/trellis`
+
+**1. 安装 Atlas**
+
+```powershell
+npm install -g atlas-project-harness
+```
+
+**2. 建一个空目录并初始化**
+
+```powershell
+mkdir C:\atlas-smoke
+cd C:\atlas-smoke
+atlas init
+```
+
+- 询问「项目级资产根目录」时，直接按回车（默认 `product`）即可。
+- 看到「装配完成」和「首次开户（二选一）」就说明初始化成功；这次验收不需要真的开户。
+- 如果提示没有 Trellis：先 `npm install -g @mindfoldhq/trellis` 再重试；仍然卡住就用 `atlas init --force`。
+
+**3. 确认关键文件已经生成**
+
+```powershell
+Test-Path .atlas\VERSION
+Test-Path .atlas\MANIFEST.json
+```
+
+两条都应返回 `True`。
+
+**4. 跑一次体检**
+
+```powershell
+atlas check --fast
+```
+
+- **会看到几项 FAIL，这是正常的**：刚建好的项目里，技术栈画像还是空白模板，也没有 PRD，体检会如实指出来；**此时退出码为 1 也是预期**（占位符画像未填）。
+- 这一步只确认它能完整跑完、没有崩溃或乱码；不需要现在就把项目填完整。
+- 如果你愿意继续：让 Agent 带你核对 `product\stack-profile.yaml` 和 PRD，再跑一次 `atlas check --fast`，这时应全部通过（退出码 0）；**真实画像下仍非 0 才是真缺陷**。
+
+**5. 试一次「刷新预览」（不改文件）**
+
+```powershell
+$before = Get-Content .atlas\VERSION -Raw
+atlas update --dry-run
+$after = Get-Content .atlas\VERSION -Raw
+"文件未被修改: $($before -eq $after)"
+```
+
+最后一行应输出 `文件未被修改: True`。
+
+**6. 试一次真实刷新**
+
+```powershell
+atlas update
+echo $LASTEXITCODE
+```
+
+应看到「刷新完成」，并且退出码为 `0`。
+
+**7. 如果任何一步报错，请把这些发回**
+
+```powershell
+atlas version
+node --version
+python --version
+where python
+```
+
+再把**出错那一步的完整输出**复制成文字（截图也可以），并说明：
+
+- Windows 版本（如 Windows 11 23H2）
+- 是否中文系统
+- 是否在公司网络 / 装了安全软件
+
+> 输出里如有业务代码或密钥，请先删掉再发。
+
 * 真机重点覆盖 CI 覆盖不到的：中文系统 locale、企业策略（WindowsApps/AppLocker）、无 Python 裸机报错文案、长路径与杀软文件锁。
 
 ### 4.5 留出验证

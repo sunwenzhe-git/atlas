@@ -1,7 +1,7 @@
 # 实例⑤审查一键编排（atlas review）
 
 > 提案编号：RFC-20261103-05
-> 状态：已实现（Implemented，待评审/合并）
+> 状态：已合并 (Merged)（2026-11-03，`c80182c`，随 beta.27 发版）
 > 影响范围：脚本工具（scripts/）· 共享内核（_support/）· 契约（shared/）· 模板（templates/）· CLI（bin/）
 > 关联：`RFC-20261103-01`（v4 scope manifest，本 RFC 的输入）；`shared/closeout.md` 步骤 10；`shared/independent-review.md` §10。
 > 并行批避号：同日 `RFC-20261103-02/03/04` 已由另一会话占用，本批取 `-05`。

@@ -2,7 +2,7 @@
 
 > 提案编号：RFC-20261103-01
 > 提案作者：Atlas 维护批（用户 2026-11-03 拍板「可以」）
-> 关联状态：已实现（Implemented，待评审/合并）
+> 关联状态：已合并 (Merged)（2026-11-03，`c80182c`，随 beta.27 发版）
 > 影响范围：脚本工具（scripts/）· 共享内核（_support/）· 契约（shared/）· 测试（tests/）
 > 关联：`RFC-20261031-01`（实例⑤ coverage / delta）、`RFC-20261031-02`/`RFC-20261101-02`（跨轮闭环）、`RFC-20261101-03`（签字取证严格化）；`shared/independent-review.md` §3/§11、`shared/closeout.md` 步骤 10、`shared/gates.md` 2.1「实现代码 ⇔ 应然资产」行。
 > 外部参照：`didi/helixharness` 的 `archive-preflight --review-choice` / `accept-review-drift`（只借「内容快照 + 受控确认」语义，不引入其流程状态机）。

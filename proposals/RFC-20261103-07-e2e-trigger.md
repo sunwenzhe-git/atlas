@@ -2,7 +2,7 @@
 
 > 提案编号：RFC-20261103-07
 > 提案作者：@sunwenzhe
-> 关联状态：草案 (Draft)，已过一轮独立设计评审（2026-11-03）
+> 关联状态：已合并 (Merged)（2026-11-03，`bd4bc3d`，随 beta.28 发版）
 > 影响范围：门册/契约（rings/e2e、apply、gates）· 脚本工具 (scripts) · 工作流补丁 (patches/workflow-e2e-trigger) · 测试 (tests)
 
 ---

@@ -1,7 +1,7 @@
 # atlas eval：消融对照跑分器
 
 > 提案编号：RFC-20261103-06
-> 状态：已实现 + 独立评审「修后落地」结论已回（2026-11-03，tech-proposal-reviewer；B1/B2/M1–M5 已修，m2 口径归 gates 行后续批，m7 帮助注记已加）
+> 状态：已合并 (Merged)（2026-11-03，`f17bc82` + 评审修复 `0fae0be`，随 beta.27 发版；独立评审「修后落地」B1/B2/M1–M5 与 m2/m7 均已落）
 > 影响范围：脚本工具（scripts/）· CLI（bin/）· 契约（shared/gates.md 登记）· 测试（tests/）
 > 关联：`RFC-20261101-04`（消融事务工具）、`research/2026-10-25-net-contribution-ledger.md`（30 案三档证据）、`research/2026-11-01-ablation-real-batch-02.md`（真实批次）、`shared/gates.md` 2.5（流程门）。
 > 外部参照：HelixHarness 的 base/candidate + 同一 Case 集 + regression gate 闭环；**只借闭环形状，不借其 UI / mock 演示**。
@@ -133,7 +133,7 @@ $ python3 -m pytest tests/ -q        # 工作树落定态（含 gate-registry �
 ### 4.5 留出验证与独立评审记录（合并版；替代此前两段各自为政的 §4.5）
 
 - **触发面核对**：新增独立评测 CLI，未改 `atlas_check` / 既有校验器判据，未挂收口；触发 (a) 无引子族锚、无 ≥3 条独立审查重复 finding，触发 (b) 是**新增门**而非改既有判据（D156 ③ 明拒「每 RFC 强制留出」）⇒ **不适用**，如实声明而非逃检。
-- **独立评审记录（2026-11-03，tech-proposal-reviewer，只读）**：结论「修后落地」。B1（锚收集 `"error"` 子串误杀合法锚——已实测复现）/ B2（提交态 `test_gate_registry` 形态门先在红，验收自报不实）/ M1（p→f 无复跑防抖）/ M2（新增即红落 f2f-WARN）/ M3（worktree 三条泄漏路径）/ M4（锚收集器解释器错位）/ M5（文档-实现五处漂移）/ m1–m8。**处置**：B1、M1、M2、M3、M5 与 m4/m5/m6/m8 已在本批修掉并加钉（上表 M173；`--retries` / `new_red` / `--worktree-root` / `anchor_collector` 均为评审直接产出）；m1（kind 砍闭集）、m2（fragment 登记口径）、m3（砍 --baseline 幽灵 + 注册表指纹）、m7（并发覆盖帮助注记）同步落。**未修项**：gates 行的 fragment 口径注记待与 gate-registry 批的在途重写合并（工作树由他会话占用，本批不碰共享文件正文）。
+- **独立评审记录（2026-11-03，tech-proposal-reviewer，只读）**：结论「修后落地」。B1（锚收集 `"error"` 子串误杀合法锚——已实测复现）/ B2（提交态 `test_gate_registry` 形态门先在红，验收自报不实）/ M1（p→f 无复跑防抖）/ M2（新增即红落 f2f-WARN）/ M3（worktree 三条泄漏路径）/ M4（锚收集器解释器错位）/ M5（文档-实现五处漂移）/ m1–m8。**处置**：B1、M1、M2、M3、M5 与 m4/m5/m6/m8 已在本批修掉并加钉（上表 M173；`--retries` / `new_red` / `--worktree-root` / `anchor_collector` 均为评审直接产出）；m1（kind 砍闭集）、m2（fragment 登记口径）、m3（砍 --baseline 幽灵 + 注册表指纹）、m7（并发覆盖帮助注记）同步落。**原未修项已清**：gates 行的 fragment 口径注记已随 gate-registry 批（`44e9fde`）落在 `shared/gates.md` 2.1 行。
 - **B2 如实记录**：`f17bc82` 提交态 `shared/gates.md` 的 `E2E 真跑` 行超长（11,696 字符）+ 三行 7 格，`test_gate_registry` 形态门在该 commit 先在红——**先在红，非 eval 行引入**（parent `60511d0` 同样红；eval 行自身 6 格、1,296 字符合规）；在途 gate-registry 批已把这些行修到合规（归属他案）。本批修后以**工作树落定态**全量复跑留痕：1127 passed / 5 skipped；修前一轮全量曾因 eval 行计数 `10 ≠ 18` 红（已回填），playground 单轮 flake 一次（单测复跑与全量均绿）。验收「全量绿」以落定态为准。
 - **已知残留**：case 命令依赖 worktree 内环境（缺 pytest ⇒ error；两侧同缺 = f2f 只 WARN）；`gate_command` 在源包态无意义（null 跳过），适合装配后的采纳仓；并发同 `--out` 会覆盖 ledger（帮助注记，单用户工具）。
 
