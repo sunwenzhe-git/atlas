@@ -140,7 +140,7 @@ python3 tests/test_install_selfcheck.py
 
 **CI（`windows-latest`，2026-11-03 落地）**：
 * `windows` 作业：平台探针 + CLI exit-code + Git Bash 轨（装配器用例已转正）；
-* `windows-native` 作业（纯 PowerShell、最小 PATH 剔除 Git）：bare `atlas init` → `check --fast` → `update --dry-run`（断言 VERSION 逐字节不变）、GBK(936) 控制台不崩、`WindowsApps` stub + 坏 `py` 被拒（exit 2）、坏 py 回退 `where python` 真实路径。
+* `windows-native` 作业（纯 PowerShell）：bare `atlas init` → `check --fast`（占位符项目**断言 fail-closed exit 1**）→ `update --dry-run`（断言 VERSION 逐字节不变）、GBK(936) 控制台不崩、Python resolver 断言（本机解析到 3.10+；版本门拒 3.9、收 3.10）。
 
 **真机验收清单（发外部用户，5 分钟）**：
 ```powershell
@@ -149,14 +149,16 @@ node --version; python --version; where python; py -3 --version   # py 可能不
 
 # 2) 全局安装 + 首次装配（全新目录）
 npm i -g atlas-project-harness
-mkdir C:tlas-smoke; cd C:tlas-smoke
+mkdir C:\atlas-smoke; cd C:\atlas-smoke
 mkdir .trellis
 atlas init --assets-root docs
 
 # 3) 期望
 #    - 退出码 0；出现「装配完成」与「首次开户（二选一）」
 #    - .atlas\VERSION、.atlas\MANIFEST.json、docs\stack-profile.yaml 存在
-atlas check --fast          # 期望 exit 0（占位符未填时个别门 FAIL 属预期，见 README）
+atlas check --fast          # 全新脚手架：占位符 profile 未填 ⇒ exit 1 属预期
+#    判据：输出应是 validate_stack_profile / validate_prd 的「占位符」FAIL；
+#    把 docs/stack-profile.yaml 换成真实画像后应转 0（否则才是真缺陷）
 atlas update --dry-run      # 期望 exit 0，且 .atlas\VERSION 内容不变
 
 # 4) 提交前把以下输出发回：atlas version、python --version、where python、init 完整输出
@@ -177,7 +179,7 @@ atlas update --dry-run      # 期望 exit 0，且 .atlas\VERSION 内容不变
 3. **golden harness（已完成 2026-11-03）**：`proposals/RFC-20261103-04-installer-golden/harness.py`，8 场景（fresh / update / dry-run-fresh / guard-dirty / guard-untracked / ablation-active / invalid-config / missing-layout）已录基线且 `--check` 确定性自检 8/8 绿。**纪律：harness 与基线必须留在装配集之外**（proposals/）——放 `scripts/` 里加一行就会改源包摘要，把要冻结的基线自己冲掉（当日实证）。包内容变更后需重录。
 4. **`install.py` 1:1 + `install.sh` wrapper（已完成 2026-11-03）**：全 spawn 注入 `PYTHONUTF8=1`；写盘点锁 `newline`；`install.sh` 45 行 thin wrapper；`bin/atlas.js` 切 `resolvePython`；golden 双轨 8/8。
 5. **钩子跨 OS 用例**：`atlas update` 在解释器漂移时归一（已加用例，实施批补 golden）。
-6. **文档收敛 + 真机收尾（文档面已完成 2026-11-03；真机待外部）**：AGENTS.md 指针段平台约定一行、README 支持矩阵已落地；CI 新增 windows-native 作业（bare PowerShell 全流程 + GBK 编码 + WindowsApps stub 拒绝 + where python 回退）；**剩真机一次 bare PowerShell 全流程**（清单见 §4.3）。
+6. **文档收敛 + 真机收尾（文档面已完成 2026-11-03；真机待外部）**：AGENTS.md 指针段平台约定一行、README 支持矩阵已落地；CI 新增 windows-native 作业（bare PowerShell 全流程 + GBK 编码 + resolver 版本门断言）；**剩真机一次 bare PowerShell 全流程**（清单见 §4.3）。
 
 **回滚**：`install.sh` wrapper 保留 ⇒ 删除 `install.py` 引用即可回到 bash 路径；`runInstaller` 改动是单点。
 
