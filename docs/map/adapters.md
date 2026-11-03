@@ -16,7 +16,7 @@
 | `adapters/routes.py` | 785 | 路由适配器:文件式路由 + `pyxle_route`(`adapters/routes.py:124`)的 JSX `<Route>` 两种形态,`load_apps`(`adapters/routes.py:75`)解析 apps 段并合成挂载前缀 |
 | `adapters/api.py` | 571 | API 适配器:OpenAPI/Swagger 描述文件(`DESCRIPTOR_FILES`,`adapters/api.py:46`)+ 运行时 schema 构造调用判定(AST)+ Python/JS/Java Spring/NestJS-Midway/Go 路由双通道 |
 | `adapters/models.py` | 740 | 模型适配器:AST 解析(`_index_columns`,`adapters/models.py:138`),SQLModel 继承/TS/JPA/MyBatis-Plus(走 `_jpa.py`)/Go struct |
-| `adapters/tests.py` | 217 | 测试盘点适配器:`PY_TEST_RE` / `JS_TEST_RE` / `JAVA_TEST_RE` / `GO_TEST_RE`(`adapters/tests.py:38`)识别 pytest / Playwright / Vitest / JUnit / Go 与 Maven/Gradle/Go 运行命令 |
+| `adapters/tests.py` | 219 | 测试盘点适配器:`PY_TEST_RE` / `JS_TEST_RE` / `JAVA_TEST_RE` / `GO_TEST_RE`(`adapters/tests.py:38`)识别 pytest / Playwright / Vitest / JUnit / Go 与 Maven/Gradle/Go 运行命令 |
 | `adapters/_jpa.py` | 291 | JPA 跨文件类图:`@MappedSuperclass` 继承合并 + `@Embeddable` 内嵌字段展开(不猜命名策略) |
 | `adapters/_lib.py` | 137 | 适配器共享件:文件遍历 / apps 解析 / `write_json`(`adapters/_lib.py:88`)落盘约定 |
 | `adapters/_scaffold.py` | 80 | 新适配器脚手架:`CATEGORY`(`adapters/_scaffold.py:25`)占位待改 |

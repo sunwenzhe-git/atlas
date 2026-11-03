@@ -51,6 +51,74 @@ function resolveBash(platform = process.platform) {
   return bashCandidates(platform).find((p) => fs.existsSync(p)) || null;
 }
 
+// ---------------------------------------------------------------- Python 探测
+// Atlas 校验器要求 Python 3.10+。Windows 原生没有 python3（python.org 只装
+// python.exe / py.exe；`python3.exe` 多为 WindowsApps 商店 stub），所以：
+//   * win32  : py -3 → where python（排除 WindowsApps）→ 实跑 --version 验版式
+//   * POSIX  : python3 → python
+// 只认能跑出 `Python 3.10+` 的解释器；版本不符或 stub 一律跳过。
+
+const PYTHON_MIN = 10;
+
+function pythonCandidates(platform = process.platform) {
+  if (platform === 'win32') {
+    return [
+      { cmd: 'py', args: ['-3'] },
+      { cmd: 'python', args: [] },
+    ];
+  }
+  return [
+    { cmd: 'python3', args: [] },
+    { cmd: 'python', args: [] },
+  ];
+}
+
+function parsePythonVersion(output) {
+  const m = /Python\s+(\d+)\.(\d+)\.(\d+)/i.exec(output || '');
+  if (!m) return null;
+  return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]) };
+}
+
+function versionSupported(version) {
+  return !!version && version.major === 3 && version.minor >= PYTHON_MIN;
+}
+
+/** Windows: `where python` 的真实路径，剔除 WindowsApps 商店 stub。 */
+function windowsPythonPaths(env = process.env) {
+  const res = spawnSync('where', ['python'], { encoding: 'utf8', env, timeout: 5000 });
+  if (res.status !== 0) return [];
+  return (res.stdout || '')
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter((p) => p && !/\\windowsapps\\/i.test(p));
+}
+
+/** 实跑 `--version`，返回可用的解释器描述；没有 3.10+ 返回 null。 */
+function resolvePython(platform = process.platform, env = process.env) {
+  const candidates = [];
+  for (const cand of pythonCandidates(platform)) {
+    if (platform === 'win32' && cand.cmd === 'python') {
+      // 裸 `python` 可能是 WindowsApps stub（会弹商店）；只认真实路径。
+      for (const p of windowsPythonPaths(env)) candidates.push({ cmd: p, args: [] });
+    } else {
+      candidates.push(cand);
+    }
+  }
+  for (const cand of candidates) {
+    const res = spawnSync(cand.cmd, [...cand.args, '--version'], {
+      encoding: 'utf8',
+      env,
+      timeout: 5000,
+    });
+    if (res.error || res.status !== 0) continue;
+    const version = parsePythonVersion(`${res.stdout || ''}${res.stderr || ''}`);
+    if (versionSupported(version)) {
+      return { cmd: cand.cmd, args: cand.args, version };
+    }
+  }
+  return null;
+}
+
 /**
  * 传给 bash 的参数：Windows 路径的反斜杠会被 bash 当转义符吃掉，
  * 只把「路径型参数」的值换成正斜杠（其余参数原样保留）。
@@ -93,4 +161,8 @@ module.exports = {
   resolveBash,
   normalizeBashArgs,
   detectTrellis,
+  pythonCandidates,
+  parsePythonVersion,
+  versionSupported,
+  resolvePython,
 };

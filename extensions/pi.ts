@@ -21,6 +21,13 @@ import { spawnSync } from "node:child_process";
 const EXTENSION_NAME = "atlasharness";
 
 /**
+ * Python 解释器口径（与 `bin/platform.js` 的 resolvePython 同向，但本文件会被单独
+ * 拷到 `.pi/extensions/atlas/index.ts`，不能跨包 require）：Windows 原生没有
+ * `python3`（python.org 只装 `python.exe`）；`ATLAS_PYTHON` 可显式覆盖。
+ */
+const PYTHON = process.env.ATLAS_PYTHON || (process.platform === "win32" ? "python" : "python3");
+
+/**
  * 开户态（2026-10-15 补）：**装配 ≠ 开户**。
  *
  * `atlas init` 只装配线束（`.atlas/` / 资产根骨架（默认 `product/`） / AGENTS.md 指针 / Trellis 接线）；
@@ -53,7 +60,7 @@ function layoutValue(cwd: string, key: string, absolute: boolean): string | null
   const script = join(cwd, ".atlas", "_support", "layout.py");
   if (!existsSync(script)) return null;
   const flag = absolute ? "--print-abs" : "--print";
-  const res = spawnSync("python3", [script, "--root", cwd, flag, key], { encoding: "utf8" });
+  const res = spawnSync(PYTHON, [script, "--root", cwd, flag, key], { encoding: "utf8" });
   if (res.status !== 0) return null;
   const out = (res.stdout || "").trim();
   return out || null;
@@ -72,7 +79,7 @@ function detectAtlasStatus(cwd: string): AtlasProjectStatus {
   const hasTrellis = existsSync(join(cwd, ".trellis"));
   const layoutReady = !hasConfig || layoutValue(cwd, "assets_root", false) !== null;
   const layoutNote = hasConfig && !layoutReady
-    ? "自定义布局未解析（python3 缺席 / 旧装配 / 配置非法），按默认 product 判定"
+    ? "自定义布局未解析（Python 缺席 / 旧装配 / 配置非法），按默认 product 判定"
     : undefined;
 
   // 开户产物 = 上面 Onboarding 注里点名的两个文件
@@ -162,7 +169,7 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.notify("正在执行 Atlas 全流程门禁体检...", "info");
           const checkScript = join(ctx.cwd, ".atlas", "scripts", "atlas_check.py");
           const cmdArgs = existsSync(checkScript)
-            ? ["python3", checkScript, "--root", ctx.cwd]
+            ? [PYTHON, checkScript, "--root", ctx.cwd]
             : ["atlas", "check", "--fast"];
 
           try {
@@ -299,7 +306,7 @@ export default function (pi: ExtensionAPI) {
 
     // 只做轻量校验（若支持 --fast）
     try {
-      const res = await pi.exec("python3", [checkScript, "--root", ctx.cwd, "--fast"], {
+      const res = await pi.exec(PYTHON, [checkScript, "--root", ctx.cwd, "--fast"], {
         timeout: 10_000,
       });
       if (res.code !== 0) {

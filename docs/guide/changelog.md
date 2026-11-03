@@ -18,6 +18,13 @@
 * **测试**：`tests/test_project_wiring.py` 12 → 16；`tests/test_cli_commands.py` 两条直传 bash 临时路径的用例在 win32 跳过（Windows 由 CLI 轨覆盖）。
 * **未决**：装配器 Python 化（`proposals/RFC-20261103-04-windows-native-installer.md`）。
 
+### 🧭 Python 探测单点收敛（RFC-20261103-04 第 2 步）
+
+* **新增**：`bin/platform.js` 增 `resolvePython`——Windows 先 `py -3`，再用 `where python` 的真实路径（剔除 WindowsApps 商店 stub），实跑 `--version` 校验 3.10+；POSIX `python3` → `python`。只认能跑到版本的真实解释器。
+* **接线**：`bin/atlas.js` 的 check / console / report 与 init 资产根校验统一走 `runPython`；`extensions/pi.ts`（`/atlas status` 与 turn_end 守卫）按平台取解释器并支持 `ATLAS_PYTHON` 覆盖；`adapters/tests.py` 的 `RUN_PYTEST` 按平台取名。
+* **边界**：`install.sh` 仍在 bash 内调用 `python3`（第 4 步 Python 化后解除）；本步先终结 `atlas check` 在 Windows 上的 ENOENT 断面。
+* **测试**：`tests/test_cli_commands.py` 15 → 18（Python 候选顺序 / 版本解析 / 本地解释器）；`tests/test_tools.py` 断言改为平台口径。
+
 ## [v0.2.0-beta.26] - 2026-11-02
 
 ### 🧭 签字与取证必须是非空字符串（RFC-20261101-03）

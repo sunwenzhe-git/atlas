@@ -7,6 +7,7 @@ const readline = require('readline');
 const {
   IS_WIN,
   resolveBash,
+  resolvePython,
   normalizeBashArgs,
   detectTrellis,
 } = require('./platform.js');
@@ -62,6 +63,20 @@ function requireBash() {
   process.exit(2);
 }
 
+/** 统一 Python 入口：win32 `py -3`/真实 python，POSIX python3——校验 3.10+。 */
+function requirePython() {
+  const py = resolvePython();
+  if (py) return py;
+  console.error('\n[Atlas] 错误: 未找到可用的 Python 3.10+（python3 / python / py -3）。');
+  console.error('        POSIX 请确认 `python3 --version`；Windows 请安装 Python 3.10+ 并确认 `python --version` 可用。\n');
+  process.exit(2);
+}
+
+function runPython(scriptArgs, opts = {}) {
+  const py = requirePython();
+  return spawnSync(py.cmd, [...py.args, ...scriptArgs], { env: process.env, ...opts });
+}
+
 function runInstaller(argv, extraEnv = {}) {
   const installScript = path.join(PKG_ROOT, 'install.sh');
   const env = { ...process.env, ...extraEnv };
@@ -70,8 +85,9 @@ function runInstaller(argv, extraEnv = {}) {
   if (IS_WIN) {
     const py = spawnSync(bash, ['-c', 'command -v python3'], { encoding: 'utf8', env });
     if (py.status !== 0) {
-      console.error('\n[Atlas] 错误: bash 环境中未找到 python3（Atlas 校验器要求 Python 3.10+）。');
-      console.error('        请在 Git Bash 中确认 `python3 --version` 可用，或改用 WSL2 运行。\n');
+      console.error('\n[Atlas] 错误: 安装器当前阶段仍在 bash 内调用 python3，但 Git Bash 里找不到 python3。');
+      console.error('        请提供 python3 命令（Python 3.10+），或改用 WSL2 运行。');
+      console.error('        注：`atlas check/console/report` 已支持 python / py -3；安装器本身当前仍要求 python3。\n');
       process.exit(2);
     }
   }
@@ -164,16 +180,12 @@ switch (command) {
         (answer) => {
           rl.close();
           const value = (answer || '').trim() || 'product';
-          const validation = spawnSync(
-            'python3',
+          const validation = runPython(
             [path.join(PKG_ROOT, '_support', 'layout.py'),
              '--root', targetDir, '--validate-value', 'assets_root', value],
             { encoding: 'utf8' },
           );
-          if (validation.error && IS_WIN) {
-            // Windows 上 python3 可能只在 bash 环境里可见；install.sh 的
-            // --assets-root 分支会再验一次，不在 Node 侧误报「无效资产根」。
-          } else if (validation.status !== 0) {
+          if (validation.status !== 0) {
             console.error('[Atlas] 无效资产根：' + (validation.stderr || '').trim());
             process.exit(2);
           }
@@ -335,11 +347,10 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
     const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_check.py');
     const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
 
-    const res = spawnSync('python3', [runScript, '--root', targetDir, ...passthroughArgs], {
+    const res = runPython([runScript, '--root', targetDir, ...passthroughArgs], {
       stdio: 'inherit',
-      env: process.env,
     });
-    exitWithResult(res, 'python3');
+    exitWithResult(res, 'python');
     break;
   }
 
@@ -351,11 +362,10 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
     const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
 
     console.log(`正在启动 E2E 用例评审控制台... (目标目录: ${targetDir})`);
-    const res = spawnSync('python3', [runScript, '--root', targetDir, ...passthroughArgs], {
+    const res = runPython([runScript, '--root', targetDir, ...passthroughArgs], {
       stdio: 'inherit',
-      env: process.env,
     });
-    exitWithResult(res, 'python3');
+    exitWithResult(res, 'python');
     break;
   }
 
@@ -366,11 +376,10 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
     const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_report.py');
     const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
 
-    const res = spawnSync('python3', [runScript, '--root', targetDir, ...passthroughArgs], {
+    const res = runPython([runScript, '--root', targetDir, ...passthroughArgs], {
       stdio: 'inherit',
-      env: process.env,
     });
-    exitWithResult(res, 'python3');
+    exitWithResult(res, 'python');
     break;
   }
 

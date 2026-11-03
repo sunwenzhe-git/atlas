@@ -164,6 +164,36 @@ def test_resolve_bash_never_falls_back_to_system_bash():
     assert node_json("p.resolveBash('win32')") is None
 
 
+def test_python_candidates_are_platform_ordered():
+    assert node_json("p.pythonCandidates('win32')") == [
+        {"cmd": "py", "args": ["-3"]},
+        {"cmd": "python", "args": []},
+    ]
+    assert node_json("p.pythonCandidates('darwin')") == [
+        {"cmd": "python3", "args": []},
+        {"cmd": "python", "args": []},
+    ]
+
+
+def test_python_version_parser_requires_310():
+    assert node_json("p.parsePythonVersion('Python 3.12.3')") == {
+        "major": 3,
+        "minor": 12,
+        "patch": 3,
+    }
+    assert node_json("p.parsePythonVersion('garbage')") is None
+    assert node_json("p.versionSupported(p.parsePythonVersion('Python 3.9.18'))") is False
+    assert node_json("p.versionSupported(p.parsePythonVersion('Python 3.10.0'))") is True
+    assert node_json("p.versionSupported(p.parsePythonVersion('Python 2.7.18'))") is False
+
+
+def test_resolve_python_finds_local_interpreter():
+    py = node_json("p.resolvePython()")
+    assert py is not None, "本机必须有 Python 3.10+ 才能跑 Atlas 测试"
+    assert py["version"]["major"] == 3
+    assert py["version"]["minor"] >= 10
+
+
 def test_normalize_bash_args_rewrites_windows_paths_only():
     out = node_json(
         "p.normalizeBashArgs(['--target', 'C:\\\\Users\\\\demo\\\\proj', '--dry-run'], 'win32')"

@@ -50,7 +50,9 @@ GO_CONFIG = {"go.mod"}
 CONFIG_SUFFIXES = (".py", ".ini", ".toml", ".cfg", ".js", ".ts", ".jsx", ".tsx", ".json", ".xml", ".gradle", ".kts", ".mod")
 TEST_SUFFIXES = (".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go")
 
-RUN_PYTEST = "python3 -m pytest"
+# 运行命令会落到消费方机器的 shell：Windows 原生没有 python3（python.org 只装 python.exe）。
+PYTHON = "python" if sys.platform == "win32" else "python3"
+RUN_PYTEST = f"{PYTHON} -m pytest"
 RUN_PLAYWRIGHT = "npx playwright test"
 RUN_VITEST = "npx vitest run"
 RUN_JEST = "npx jest"

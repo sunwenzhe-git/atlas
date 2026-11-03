@@ -15,6 +15,8 @@ import tempfile
 from pathlib import Path
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
+# adapters/tests.py 的运行命令按平台取名（Windows 原生没有 python3）
+PYTEST_CMD = "python -m pytest" if sys.platform == "win32" else "python3 -m pytest"
 
 
 def load(name: str, rel: str):
@@ -196,7 +198,7 @@ def test_f23_tests_adapter_python3_m_pytest() -> None:
         data = json.loads(out_json.read_text(encoding="utf-8"))
         assert data["adapter_version"] == "0.4.0"
         assert len(data["items"]) == 1
-        assert data["items"][0]["run_command"] == "python3 -m pytest"
+        assert data["items"][0]["run_command"] == PYTEST_CMD
 
 
 def test_f30_assembly_cover_in_sync_with_install_sh() -> None:
@@ -370,7 +372,7 @@ def test_f40_root_config_found_under_app_scope() -> None:
         (root / "svc" / "test_notes.py").write_text("def test_x(): pass\n", encoding="utf-8")
         _, data = _run_tests_adapter(root, "--app", "svc")
         assert [i["location"] for i in data["items"]] == ["svc/test_notes.py"], data["items"]
-        assert data["items"][0]["run_command"] == "python3 -m pytest", data["items"][0]
+        assert data["items"][0]["run_command"] == PYTEST_CMD, data["items"][0]
 
 
 def test_rfc20261023_02_manifest_lists_assembly_files_and_matches_digest() -> None:

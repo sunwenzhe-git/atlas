@@ -102,11 +102,11 @@ Trellis 的对照实现（本机 v0.7.0-beta.4 实证）：
 ## 3. 改动面清单
 
 - [ ] **安装器**：新增 `install.py`（单源编排）；`install.sh` 退化为 wrapper；`bin/atlas.js` 的 `runInstaller` 切 Python 探测。
-- [ ] **平台探测**：`bin/platform.js` 增 `resolvePython`（`py -3` → `python` → `where python` 排除 WindowsApps；`--version` 校验）。
+- [x] **平台探测（已落地 2026-11-03）**：`bin/platform.js` 增 `resolvePython`（`py -3` → `where python` 排除 WindowsApps；`--version` 校验 3.10+），并接入 `bin/atlas.js` / `extensions/pi.ts` / `adapters/tests.py`。
 - [x] **项目接线（已先行落地）**：`patches/project-wiring/apply-wiring.py` 钩子命令按平台写 `python`/`python3`，幂等/迁移判据改为 `HOOK_CORE` 脚本路径段。
-- [ ] **可执行面收敛**：`extensions/pi.ts`、`adapters/tests.py:53` 改用统一探测；`AGENTS.md` 指针段加一行「Windows: `python` 替代 `python3`」。
+- [x] **可执行面收敛（代码面已落地 2026-11-03）**：`extensions/pi.ts` 按平台取解释器（支持 `ATLAS_PYTHON` 覆盖）、`adapters/tests.py` 的 `RUN_PYTEST` 平台化。**剩余**：`AGENTS.md` 指针段一行「Windows: `python` 替代 `python3`」。
 - [x] **CI（已先行落地）**：`.github/workflows/tests.yml` 的 windows-latest 作业（平台探针、exit-code 烟测、无 POSIX 环境的 fail-closed 模拟、Git Bash 装配链路 advisory）。
-- [ ] **测试**：`tests/test_project_wiring.py` 跨平台钩子用例（已加）；`tests/test_cli_commands.py` 的 Python 探测/安装器 golden 用例；golden harness。
+- [ ] **测试**：跨平台钩子与 Python 探测用例已加（`test_project_wiring.py` 16、`test_cli_commands.py` 18）；**剩余** = 安装器 golden harness。
 - [ ] **契约/文档**：README 平台支持矩阵、`CHANGELOG` 两份、`docs/map` 行数与文件清单。
 
 ---
@@ -151,7 +151,7 @@ python3 tests/test_install_selfcheck.py
 ## 5. 分阶段实施（最小批次，6 步）
 
 1. **B-lite（已落地）**：钩子平台化 + 幂等键收窄；windows-latest CI 烟测与 fail-closed 模拟。
-2. **Python 探测单点**：`platform.js` 增 `resolvePython`，接入 `bin/atlas.js` 四处 spawn 与 `extensions/pi.ts` / `adapters/tests.py`——本步独立可发布，先终结 `atlas check` 的 Windows 断面。
+2. **Python 探测单点（已完成 2026-11-03）**：`platform.js` 增 `resolvePython`，接入 `bin/atlas.js` 四处 spawn 与 `extensions/pi.ts` / `adapters/tests.py`——先终结 `atlas check` 的 Windows 断面；安装器仍要求 `python3`，由第 4 步解除。
 3. **golden harness**：POSIX 基线先行，覆盖 §4.1 六类场景。
 4. **`install.py` 1:1 + `install.sh` wrapper**：全 spawn 注入 `PYTHONUTF8=1`；`trellis init` 的 win32 spawn 分支并入；写盘点锁 `newline`。
 5. **钩子跨 OS 用例**：`atlas update` 在解释器漂移时归一（已加用例，实施批补 golden）。
