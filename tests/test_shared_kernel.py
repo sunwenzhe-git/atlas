@@ -114,6 +114,8 @@ def test_profile_golden_expectations() -> None:
     assert e2e["mock"]["api_prefix"] == EXPECT["mock_prefix"]
     assert d["backend_test"]["command"] == EXPECT["bt_command"]
     assert d["backend_test"]["mode"] == EXPECT["bt_mode"]
+    assert d["impl_review"]["cli"] == "ocr"
+    assert d["impl_review"]["llm"] is None
 
 
 def test_profile_scalar_forms() -> None:

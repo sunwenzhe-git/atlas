@@ -674,3 +674,113 @@ def test_resolves_default_signer_must_be_string(tmp_path: Path) -> None:
         r = run(tmp_path, payload, extra=["--expected-files", "1", "--resolves", src])
         assert r.returncode != 0 and "顶层" in r.stderr, (name, r.stderr)
         assert not (tmp_path / "report" / "review.json").exists(), f"{name} 留了半截产物"
+
+
+# ---- v4 内容封口（RFC-20261103-01；M166 属本文件）-------------------------------
+
+SCOPE = Path(__file__).resolve().parents[1] / "scripts" / "review_scope.py"
+
+
+def make_manifest(tmp_path: Path, files: list[str], out: str = "scope.json") -> tuple[Path, dict]:
+    fp = tmp_path / "scope-files.txt"
+    fp.write_text("\n".join(files) + "\n", encoding="utf-8")
+    r = subprocess.run([sys.executable, str(SCOPE), "manifest", "--root", str(tmp_path),
+                        "--reviewed-files-file", str(fp), "--out", str(tmp_path / out)],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    return tmp_path / out, json.loads((tmp_path / out).read_text(encoding="utf-8"))
+
+
+def test_v4_requires_scope_manifest(tmp_path: Path) -> None:
+    (tmp_path / "a.ts").write_text("x\n", encoding="utf-8")
+    r = run(tmp_path, ok_payload(), extra=["--expected-files", "1", "--schema-version", "4"])
+    assert r.returncode == 2 and "scope-manifest" in r.stderr
+
+
+def test_v4_writes_review_scope_and_copies_manifest(tmp_path: Path) -> None:
+    (tmp_path / "a.ts").write_text("x\n", encoding="utf-8")
+    _mp, manifest = make_manifest(tmp_path, ["a.ts"])
+    r = run(tmp_path, ok_payload(files_reviewed=1), extra=[
+        "--expected-files", "1", "--reviewed-files", "a.ts",
+        "--scope-manifest", str(tmp_path / "scope.json")])
+    assert r.returncode == 0, r.stderr
+    review = json.loads((tmp_path / "report" / "review.json").read_text())
+    assert review["schema_version"] == 4
+    assert review["review_scope"]["sha256"] == manifest["scope_sha256"]
+    assert review["review_scope"]["files"][0]["path"] == "a.ts"
+    assert (tmp_path / "report" / "scope-manifest.json").is_file()
+
+
+def test_v4_manifest_set_mismatch_refused(tmp_path: Path) -> None:
+    (tmp_path / "a.ts").write_text("x\n", encoding="utf-8")
+    (tmp_path / "b.ts").write_text("y\n", encoding="utf-8")
+    _mp, _manifest = make_manifest(tmp_path, ["a.ts"])
+    r = run(tmp_path, ok_payload(files_reviewed=1), extra=[
+        "--expected-files", "1", "--reviewed-files", "b.ts",
+        "--scope-manifest", str(tmp_path / "scope.json")])
+    assert r.returncode == 2 and "文件集" in r.stderr
+    assert not (tmp_path / "report" / "review.json").exists()
+
+
+def test_v4_manifest_internal_digest_mismatch_refused(tmp_path: Path) -> None:
+    (tmp_path / "a.ts").write_text("x\n", encoding="utf-8")
+    mp, manifest = make_manifest(tmp_path, ["a.ts"])
+    manifest["scope_sha256"] = "0" * 64
+    mp.write_text(json.dumps(manifest), encoding="utf-8")
+    r = run(tmp_path, ok_payload(files_reviewed=1), extra=[
+        "--expected-files", "1", "--reviewed-files", "a.ts",
+        "--scope-manifest", str(mp)])
+    assert r.returncode == 2 and "内部摘要" in r.stderr
+
+
+def test_v4_stale_manifest_refused(tmp_path: Path) -> None:
+    f = tmp_path / "a.ts"
+    f.write_text("x\n", encoding="utf-8")
+    mp, _manifest = make_manifest(tmp_path, ["a.ts"])
+    f.write_text("y\n", encoding="utf-8")
+    r = run(tmp_path, ok_payload(files_reviewed=1), extra=[
+        "--expected-files", "1", "--reviewed-files", "a.ts",
+        "--scope-manifest", str(mp)])
+    assert r.returncode == 2 and "当前文件内容不一致" in r.stderr
+
+
+def test_accept_scope_drift_requires_user_confirmation(tmp_path: Path) -> None:
+    f = tmp_path / "a.ts"
+    f.write_text("one\n", encoding="utf-8")
+    mp1, m1 = make_manifest(tmp_path, ["a.ts"], "s1.json")
+    run(tmp_path, ok_payload(files_reviewed=1), extra=[
+        "--expected-files", "1", "--reviewed-files", "a.ts", "--scope-manifest", str(mp1)])
+    f.write_text("two\n", encoding="utf-8")
+    mp2, m2 = make_manifest(tmp_path, ["a.ts"], "s2.json")
+    r = run(tmp_path, ok_payload(files_reviewed=1), extra=[
+        "--expected-files", "1", "--reviewed-files", "a.ts", "--round", "2",
+        "--scope-manifest", str(mp2), "--accept-scope-drift", m2["scope_sha256"],
+        "--accept-by", "alice", "--accept-reason", "人工确认"])
+    assert r.returncode == 2 and "user-confirmed" in r.stderr
+
+
+def test_accept_scope_drift_records_reviewed_false(tmp_path: Path) -> None:
+    f = tmp_path / "a.ts"
+    f.write_text("one\n", encoding="utf-8")
+    mp1, _m1 = make_manifest(tmp_path, ["a.ts"], "s1.json")
+    run(tmp_path, ok_payload(files_reviewed=1), extra=[
+        "--expected-files", "1", "--reviewed-files", "a.ts", "--scope-manifest", str(mp1)])
+    f.write_text("two\n", encoding="utf-8")
+    mp2, m2 = make_manifest(tmp_path, ["a.ts"], "s2.json")
+    r = run(tmp_path, ok_payload(files_reviewed=1), extra=[
+        "--expected-files", "1", "--reviewed-files", "a.ts", "--round", "2",
+        "--scope-manifest", str(mp2), "--accept-scope-drift", m2["scope_sha256"],
+        "--accept-by", "alice", "--accept-reason", "人工确认", "--user-confirmed"])
+    assert r.returncode == 0, r.stderr
+    review = json.loads((tmp_path / "report" / "review.json").read_text())
+    assert review["review_scope_drift"]["reviewed"] is False
+    assert review["review_scope_drift"]["accepted_by"] == "alice"
+
+
+def test_v4_scope_count_mismatch_refused(tmp_path: Path) -> None:
+    (tmp_path / "a.ts").write_text("x\n", encoding="utf-8")
+    mp, _manifest = make_manifest(tmp_path, ["a.ts"])
+    r = run(tmp_path, ok_payload(files_reviewed=2), extra=[
+        "--expected-files", "2", "--reviewed-files", "a.ts",
+        "--scope-manifest", str(mp)])
+    assert r.returncode == 2 and "实审集" in r.stderr

@@ -114,13 +114,14 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
 
 - **何时**：域实现落码后、域收口前（不依赖真栈，E2E 真跑前即可跑）。
 - **前置**：`product/stack-profile.yaml` 的 `impl_review.llm` 非空（未配 ⇒ 本步 `SKIP` + 原因，**不是通过**；契约依据 `shared/independent-review.md` §10）。
-- **动作四步**：
+- **动作六步**：
   1. 组 background（Markdown 文件：需求卡摘要 + 受影响域 AC + 相关用例断言 + 审查焦点三问（`shared/independent-review.md` §10.4，只引路径不复制正文）；**不喂整仓**）；该域若有按域审查指引（`shared/independent-review.md` §10.5 的 `product/reviews/REVIEW-<域>.md`）⇒ **同样只给指针**；缺该文件 = 合法降级，按 §10.4 三问审即可，不因此报红；
   2. `<cli> review --preview --from main --to <分支>`，记下 **Will review N**（`.md` 等不支持扩展名会被 CLI 排除 ⇒ N 用 preview 数，**不得**用 git diff 全量计数）；
   3. `<cli> review --audience agent --format json --output <报告目录>/cli.json --background-file <bg> --from main --to <分支>`（CLI 名取 `impl_review.cli`）；
-  4. `python3 .atlas/scripts/cli_review_convert.py --input <报告目录>/cli.json --out <报告目录> --unit <需求ID> --round <N> --expected-files <preview 的 Will review 数>`；差量复审（r2+）追加 `--delta-only --base-sha <r1-head> --head-sha <修复后 head>`；`reviewed_files` 默认取 CLI `manifest.coverage.completed`，无 coverage 时用 `--reviewed-files a,b,c`（v3 delta 缺 `head_sha`/`reviewed_files` 拒绝产出）；
-  5. `python3 .atlas/scripts/validate_review_report.py --dir <报告目录>`（报告形态 + 应审/实审对账门，2026-10-06 起；FAIL ⇒ 修复产出侧后重出，不得带病收口）。
-  6. `python3 .atlas/scripts/review_closure.py --dir <报告目录> [--emit-skeleton <file>]`（D5 跨轮闭环 observer：prior open Critical/Major 未 carried/resolves ⇒ WARN；关闭按该指纹最后一次证据判，中间轮关过不必重贴；跨轮必须同 `--unit`，否则孤儿文件 WARN；<2 轮 SKIP；不阻断；不替代步骤 5。待填声明用 `--emit-skeleton` 出骨架，填完经转换器 `--resolves` 落盘）。
+  4. 先生成实审集内容清单（v4，`RFC-20261103-01`）：`python3 .atlas/scripts/review_scope.py manifest --root . --reviewed-files <实审集> --out <报告目录>/scope-manifest.json`（实审集 = CLI `manifest.coverage.completed` 或显式 `--reviewed-files`，与 step 2 的 preview N 同集；**不收全工作区**）。再跑转换器：`python3 .atlas/scripts/cli_review_convert.py --input <报告目录>/cli.json --out <报告目录> --unit <需求ID> --round <N> --expected-files <preview 的 Will review 数> --scope-manifest <报告目录>/scope-manifest.json`；差量复审（r2+）追加 `--delta-only --base-sha <r1-head> --head-sha <修复后 head>`；`reviewed_files` 默认取 CLI `manifest.coverage.completed`，无 coverage 时用 `--reviewed-files a,b,c`（v3 delta 缺 `head_sha`/`reviewed_files` 拒绝产出）。评审后内容变化且用户**显式确认放行**时，追加 `--accept-scope-drift <当前 scope_sha256> --accept-by <name> --accept-reason <text> --user-confirmed`（报告标记 `reviewed=false`，不伪装成已复审）；
+  5. `python3 .atlas/scripts/validate_review_report.py --dir <报告目录> --scope-manifest <报告目录>/scope-manifest.json`（报告形态 + 应审/实审对账 + v4 内容复算门，2026-10-06 起 / v4 2026-11-03；**只对本轮新产出报告带该参数**，旧轮复验不带 ⇒ WARN 不追溯判红；FAIL ⇒ 修复产出侧后重出，不得带病收口）。
+  6. `python3 .atlas/scripts/review_closure.py --dir <报告目录> [--emit-skeleton <file>]`（D5 跨轮闭环 observer：prior open Critical/Major 未 carried/resolves ⇒ WARN；关闭按该指纹最后一次证据判，中间轮关过不必重贴；跨轮必须同 `--unit`，否则孤儿文件 WARN；v4 跨轮内容漂移（prior 实审文件变了且未纳入最新实审集）⇒ `scope_drift` WARN，`review_scope_drift` 签字齐全 ⇒ `scope_drift_accepted` 不告警；<2 轮 SKIP；不阻断；不替代步骤 5。待填声明用 `--emit-skeleton` 出骨架，填完经转换器 `--resolves` 落盘）。
+- **一键入口（2026-11-03，`RFC-20261103-05`）**：`atlas review --unit <需求ID> --from main --to <分支>` 按上述六步自动走全（`--dry-run` 预览命令与 N）；手工分步仍有效，判据以本步骤为准。
 - **报告落点**：`product/reviews/<日期>-impl-review-<范围>/`（`cli.json` 留档为输入侧证据）。
 - **门禁**：有 `Critical` ⇒ 域不收口，修复回流 Trellis Execute、改完重跑（round +1）；`M < N` ⇒ 查静默跳过；finding 判明「AC / 断言本身错」⇒ 回退环改判 `prd` / `e2e` 入 backfill 队列。
 

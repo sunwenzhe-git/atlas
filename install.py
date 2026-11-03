@@ -717,6 +717,7 @@ def main() -> None:
     c("共享内核（node 运行器判据）", f"{atlas_dest}/_support/pw_runner.py")
     c("共享内核（base query 转发）", f"{atlas_dest}/_support/url_merge.py")
     c("共享内核（审查策略单源）", f"{atlas_dest}/_support/review_policy.py")
+    c("共享内核（审查范围封口）", f"{atlas_dest}/_support/review_scope_core.py")
     c("共享内核（布局解析）", f"{atlas_dest}/_support/layout.py")
     c("共享内核（维度解析）", f"{atlas_dest}/_support/ac_coverage.py")
     c("pi 宿主扩展", f"{atlas_dest}/extensions/pi.ts")

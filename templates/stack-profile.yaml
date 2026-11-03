@@ -95,5 +95,14 @@ e2e:
 #   mode: advisory                  # advisory（缺省）| enforce（仅 AC 挂载缺口硬阻断；维度恒 WARN）
 #   ac_marker: <adapter-specific>   # 挂载形态（可选，由 extractor 解释）
 
+# 实现代码独立审查（实例⑤，可选段，2026-11-03 RFC-20261103-05）。
+# cli = 外部 CLI 审查器名（如 ocr）；llm = 审查模型标识。
+# 段缺失 / null = 未配置：closeout 步骤 10 输出 SKIP + 原因（不是通过）。
+# 契约见 shared/independent-review.md §10 与 shared/stack-profile.md §2。
+# 不启用时整段保持注释。
+# impl_review:
+#   cli: ocr
+#   llm: <model-id>
+
 # 已退役（E1，2026-09-27，原型环移除）：`prototype` 段 —— atlas 不再消费任何字段；
 # 存量项目可保留（历史）或删除。见 shared/stack-profile.md §2 与知识库 `3508 §92`。

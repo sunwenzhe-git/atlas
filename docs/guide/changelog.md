@@ -1,8 +1,31 @@
-# 变更与更新日志 (Changelog)
+# 更新日志 (CHANGELOG)
 
-本文档记录了 **Atlas** 每个版本的重要特性变更、架构治理与问题修复。遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范。
+本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 语义化版本规范与 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 变更记录规范。
+
+---
 
 ## [Unreleased]
+### 🧭 atlas eval 跑分器（RFC-20261103-06）
+
+* **新增**：`atlas eval run/gate`——同一组 case、base/candidate 两 commit 的 `git worktree --detach` 对照跑分，出机读 ledger；case 命令 `shlex`+`shell=False`（与 ablation 同口径）+ 逐 case timeout；worktree 默认清理、`--keep-worktrees` 留现场；同 sha 拒绝。
+* **判据**：回归门只判三条——pass→fail（error/timeout 视 fail 侧）、锚缺失（不静默 SKIP）、gate_green 下降（解析不到 ok/PASS ⇒ null+WARN 跳过）；fail2fail 只 WARN；锚缺失 case 不参与 pass/fail 分类。**不宣称净收益/反事实**；ledger 继承「单项目单环境、不可外推」腿注。
+* **case 源**：注册表只存稳定锚（`DESIGN.md` D 行片段 / pytest 节点）；`bugs.md` 出库即删，不作 case 源。门登记 `shared/gates.md` 2.1（独立 CLI，不进 atlas_check）。
+* **测试**：新增 `tests/test_atlas_eval.py` 18 条；变异 M171（摘 pass→fail）/ M172（摘锚缺失）四段协议各红、逐字节还原。
+* **评审修后（2026-11-03，tech-proposal-reviewer「修后落地」）**：B1 锚收集只按退出码判（节点名含 error 不再被子串误杀，M173）；M1 `--retries` 节拍类复跑确认；M2 `anchor_ok_base` + 新增即红 `new_red` ⇒ FAIL（不再落 f2f-WARN）；M3 worktree 部分失败回滚 + run 前 prune + `--worktree-root`；M5 净贡献措辞 / `--baseline` 幽灵 / 两段 §4.5 合并 / 样例注册表；m4–m8 同批。测试 10 → 18。
+
+### 🧭 实例⑤审查一键编排（RFC-20261103-05）
+
+* **新增**：`atlas review --unit <需求ID> --from <ref> --to <ref>` 把 closeout 步骤 10 的 6 步收成一个入口：inputs（可选）→ 指针化 background → preview 取 N → CLI review → scope manifest（coverage.completed / `--reviewed-files`）→ converter → validator（带 `--scope-manifest`）→ closure。只编排不重写判据；子步失败按原退出码透传；`--dry-run` 只读预览；`--cli` 可覆盖 `impl_review.cli`。
+* **契约/模板**：`shared/stack-profile.md` §2 新增 `impl_review: {cli, llm}`；`templates/stack-profile.yaml` 增注释块；`_support/stack_profile.py` 解析该段；`shared/closeout.md` 步骤 10 增「可用 atlas review」一句（判据正文不复制）。
+* **测试**：新增 `tests/test_atlas_review.py` 13 条（全链 v4 / dry-run 不写盘 / preview 与 review 失败透传 / `llm` 缺 SKIP / `--cli` 覆盖 / delta flags / inputs 失败只 WARN / 指针化 background / **真 CLI flag 形态锁**）；变异 M169（validator 漏带 scope manifest）/ M170（preview N 解析删掉）四段协议已咬合（各红、逐字节还原）。`shared/gates.md` 实例⑤行补一键入口。
+
+### 🧭 评审范围内容封口 + apply 基线（RFC-20261103-01）
+
+* **新增**：`scripts/review_scope.py` + `_support/review_scope_core.py`——对 CLI 实审集生成内容清单（`{path, sha256, status, size}` + 根 `scope_sha256`），支持 `manifest` / `verify` / `baseline` / `baseline-check`；只覆盖实审集（不收全工作区），改一字节/删除必红，只改 mtime 不误伤，绝对路径/`..`/符号链接/目录/缺失文件 exit 2，大文件退 `size_mtime` 并显式标注。
+* **接线**：`review.json` 升 schema v4（`review_scope` 字段；v3 及以下不要求，存量不回扫）；`cli_review_convert.py` 增 `--scope-manifest`（v4 必须，manifest 文件集/内部摘要/stale 内容三面拒产）与 `--accept-scope-drift --accept-by --accept-reason --user-confirmed`（写 `review_scope_drift`，标记 `reviewed=false`）；`validate_review_report.py` 增 `--scope-manifest`（只对**本轮新产出报告**复算；旧轮不带 ⇒ WARN）；`review_closure.py` 增跨轮 `scope_drift` 观察（prior 实审文件变了且未纳入最新实审集 ⇒ WARN，签字确认 ⇒ `scope_drift_accepted`）。
+* **apply 基线**：`review_scope.py baseline` 记录 apply 起始既有 dirty 集到 `.atlas/runs/<unit>/apply-baseline.json`；`baseline-check` 未变化自动排除、与本次改动重叠才 WARN（只告警不阻断，尊重 Trellis 边界）。
+* **测试**：新增 `tests/test_review_scope.py` 9 条；`tests/test_review_report.py` 45 → 51、`tests/test_cli_review_convert.py` 51 → 59、`tests/test_review_closure.py` 42 → 46；变异 M165（校验器复算）/ M166（manifest 文件集对账）/ M167（闭包漂移检测）/ M168（baseline overlap）四段协议待回填。`shared/gates.md` 新增登记行；契约 §3/§11、`docs/concepts/review.md`、`shared/closeout.md` 步骤 10、`docs/map` 计数同步。
+
 
 ### 🧭 Windows 装配入口 fail-closed + Trellis 探测平台自适（2026-11-03 外部现场）
 
@@ -73,14 +96,14 @@
 * **校验**：`validate_review_report.py` 复算 CLI WARN 下限并新增 CLI 状态行；`_support/review_policy.py` 单源 `cli_warn_floor` 与字段形态校验。
 * **测试**：`tests/test_cli_review_convert.py` 12 → 25；`tests/test_review_report.py` 18 → 27。
 * **契约/设计**：`shared/independent-review.md` §3/§10.2、`docs/concepts/review.md` §3、`docs/gates/iron-gates.md` §8、`shared/gates.md`、`DESIGN.md` D178。
-* **Batch B（delta v3）**：`delta_only` 新报告使用 `schema_version=3`，必须 `head_sha` + 非空 `reviewed_files`（coverage completed / 显式 `--reviewed-files`）；`selected_files`/数量/成员/target 对账只 WARN；v2 delta 缺 `head_sha` 只 WARN；clean delta 不再误红（2 completed + 1 reused ⇒ 如实 M<N WARN）。测试 25 → 41 / 27 → 39。
+* **Batch B（delta v3）**：`delta_only` 新报告使用 `schema_version=3`，必须 `head_sha` + 非空 `reviewed_files`（coverage completed / 显式 `--reviewed-files`）；`selected_files`/数量/成员/target 对账只 WARN；v2 delta 缺 `head_sha` 只 WARN（兼容）；clean delta 不再误红（2 completed + 1 reused ⇒ 如实 M<N WARN）。测试 `test_cli_review_convert.py` 25 → 41、`test_review_report.py` 27 → 39。
 
 ### 🧭 跨轮 finding 闭环台账（D5，RFC-20261031-02）
 
-* **新增（观察面）**：`scripts/review_closure.py` WARN observer——prior open Critical/Major 未 carried/resolves ⇒ WARN；<2 轮 SKIP；不进 `atlas_check`。
-* **两条防「悄悄变绿」**：关闭与否按**上一轮级别**从严（prior Critical 被降级后挂 `intentional` 不免责，降级本身也 WARN）；`findings/` 里有非本 unit 的孤儿文件 ⇒ WARN（跨轮请保持同一 `--unit`）。
-* **真实报告**：r1/r2 首跑 12 条 prior Major unaccounted；r2-v3 单轮 SKIP。
-* **测试/设计**：`tests/test_review_closure.py` 该批 19 条（经评审修订与 `RFC-20261101-02` 扩至 34 条、M1–M13）；`DESIGN.md` D179（D180 续）；契约 §11 / closeout 步骤 10 / gates §4。
+* **新增（观察面）**：`scripts/review_closure.py` WARN observer——读多轮 `findings/<unit>.r*.json` + 最新 `review.json.resolves`；prior open Critical/Major（`pre_existing` 除外）未 `carried`/`resolved` ⇒ WARN；<2 轮 SKIP；不进 `atlas_check`。
+* **是否算关闭按上一轮级别从严**：prior `Critical` 在新一轮降级成 `Major` 再挂 `intentional`/`ignored`（无签字取证）不免责，仍按 `carried` 跟踪，且降级本身记 `level_downgraded` WARN；`findings/` 出现非本 unit 的孤儿文件 ⇒ WARN（跨轮改 `--unit` 名会让闭环义务凭空清零）。
+* **真实报告**：r1/r2 首跑 **12 条 prior Major unaccounted**；r2-v3 单轮目录 SKIP。
+* **测试/设计**：`tests/test_review_closure.py` 该批 19 条（经 `43dca7f` 与 `RFC-20261101-02` 扩至 34 条、M1–M13）；`DESIGN.md` D179（D180 续）；契约 `shared/independent-review.md` §11、`shared/closeout.md` 步骤 10、`shared/gates.md` §4。
 
 ### 🧭 跨轮关闭持久化 + 升级可见性 + scan 通道词表（D5-a/b/c，RFC-20261101-02）
 
@@ -95,25 +118,29 @@
 
 ### 🧭 前端复用优先：程序契约 + Trellis 面包屑注入（D177）
 
-* **新增**：`shared/frontend-reuse.md` 执行期契约（适用四档、当前模块交互清点、四层查找、五列复用记录、surface 维度、新模块目录一次性确认；非门、非真相源）。
-* **新增**：`patches/workflow-skill-routing` 扩 4 条面包屑 + 2.2 末注，直接指向契约；不新建 skill / 补丁包。
-* **澄清**：`rings/e2e/reference.md` §4 同一能力的不同 surface 都算必要元素；§5.8 临时打桩不记作 E2E 通过。
-* **同步面**：`tests/test_frontend_reuse_patch.py`、`shared/single-source.md`、`docs/map` 计数（共享契约 8、出厂测试 43）、`DESIGN.md` D177。
+* **新增（执行期契约）**：`shared/frontend-reuse.md` —— 适用四档、当前模块交互清点、四层查找（同面板 sibling → 业务组件 → 公共组件 → 组件库）、五列复用记录、surface 维度、新模块目录一次性确认；明确「非门、非真相源」，普通修复不强制。
+* **新增（Trellis 注入）**：`patches/workflow-skill-routing` 扩 4 条面包屑（planning / in_progress + inline）+ 2.2 末注；直接指向 `.atlas/shared/frontend-reuse.md`，不新建 skill / 补丁包。
+* **澄清（E2E）**：`rings/e2e/reference.md` §4 明确同一能力的不同 surface 都算必要元素；§5.8 明确临时网络打桩只作本地交互核对，不记作 E2E 通过。
+* **测试 / 同步面**：新增 `tests/test_frontend_reuse_patch.py` 9 条；`shared/single-source.md` 登记复用决策记录 owner；`docs/map` 快照同步（共享契约 7→8、出厂测试 42→43）；`DESIGN.md` D177。
 
 ## [v0.2.0-beta.24] - 2026-10-30
 
 ### 🧭 E2E 容忍前提措辞 + PRD 派生字段默认语义（issue #47，D176）
 
-* **新增**：E2E 文本期门新增「容忍前提措辞」WARN（注释尾巴 / `precondition` 命中容忍词表；`容忍: <理由>` 豁免）；PRD 门新增「派生字段默认语义」WARN（可选列 `派生/重置` ⇒ §六 须登记默认值，无列 = N/A）。两条均 WARN、不建 FAIL 门。
-* **测试**：`tests/test_validators.py` 180 → 182；变异 M160a–d。
+* **新增（E2E 文本期门）**：`validate_e2e_index.py` 新增「容忍前提措辞」WARN——`step`/`expected` 注释尾巴与 `precondition` 命中 `存量` / `可能停在` / `视情况` / `随机` / `取决于历史` ⇒ WARN；行内 `容忍: <理由>` 豁免；本项**刻意读注释**（契约 §5.5 唯一例外），代码部分不扫（业务文案不误报）。
+* **新增（PRD 门）**：`validate_prd.py` 新增「派生字段默认语义」WARN——字段规范表可选列 `派生/重置`（表头前缀匹配；模板默认带列，存量无列 = N/A）所声明的字段须在 §六 有一行含该字段名且「采用的默认值」非空；独立 check 行，不并入参数 4 聚合。
+* **契约 / 模板**：`rings/e2e/reference.md` §5.5 + §8.2；`rings/prd/reference.md` §3 字段规范 / §六 / §7 附加机器检查；`templates/prd/domain.md` 字段表可选列。
+* **测试**：`tests/test_validators.py` 180 → 182；变异 M160a–d 四段协议（摘词表 / 改扫代码 / 恒 N/A / 只认列）全咬、还原逐字节一致。
+* **设计**：`DESIGN.md` D176。
 
 ## [v0.2.0-beta.23] - 2026-10-30
 
 ### 🧭 登记测试有效性与 CRAP 候选观测面（D175）
 
-* **新增**：门册 §3 新增两个候选观测面缺口行（「测试 ⇔ 生产代码变异」「实现代码 ⇔ 覆盖×复杂度（CRAP）」），§4 新立「候选观测面（非门）」小节。来源 = ub-mode 变异测试 / CRAP 分数思想。
-* **非门**：候选形态 WARN/N-A，不建 FAIL 门、不进检查编排；升格条件 = 真实仓副本试跑信噪比证据。
-* **试跑收口（同日）**：语言 go/no-go 已过（三工具原生支持六语言）；Python / TS / Java 三栈副本试跑出信噪比证据（全部跑在一次性副本，原目录只读）。**已拍板采纳为 WARN 级观测面**（crapper/dryer 全仓扫描 + mutator 按批 `--changed`），仍非门。
+* **新增**：`shared/gates.md` §3 新增两个候选观测面缺口行：「测试 ⇔ 生产代码变异（变异得分）」「实现代码 ⇔ 覆盖×复杂度（CRAP）」，§4 新立「候选观测面（非门）」小节登记。来源 = ub-mode（Uncle Bob）变异测试 / CRAP 分数思想。
+* **非门**：候选形态 WARN/N-A，不建 FAIL 门、不进 `atlas_check`、不装工具进 Atlas 依赖；升格条件 = 真实仓**副本**试跑信噪比证据。与 M 系列变异钉正交（M 向判据注入脏数据，变异测试篡改生产代码考测试）。
+* **试跑收口（同日）**：go/no-go 已过——三工具原生支持六语言（文章「Python 生态、TS 需换 StrykerJS」有误）；Python 夹具三工具全通；cn-console TS 副本与 nanwang Java 副本 crapper/dryer/mutator 均实测通过（Java 变异 84.6%、~6.6s/变异体）；全部跑在一次性 /tmp 副本（原目录只读）。**已拍板采纳为 WARN 级观测面**：crapper/dryer 全仓扫描（按第一方范围圈定）+ mutator 按批 `--changed` 触发，仍非门。
+* **同步面**：`DESIGN.md` D175、`docs/map/gates.md` 与 `docs/map/atlas-map.html` 行数锚（149 → 152 行）。
 
 ### 🧷 评审重审范围收敛到「真正变化的内容」（D174）
 
@@ -130,6 +157,8 @@
 * **测试**：`tests/test_gen_e2e_scripts.py` 118 → 124；`tests/test_validators.py` 168 → 180；`tests/test_atlas_check.py` 48 → 49。
 * **契约 / 设计**：`rings/e2e/reference.md` §3.2 / §8.2 / §12.6、`shared/independent-review.md` §4、`templates/e2e/e2e-index.md`、`DESIGN.md` D173、`shared/gates.md` 计数。
 
+---
+
 ## [v0.2.0-beta.22] - 2026-10-30
 
 ### 🧭 FAIL 修复指引试点（RFC-20261030-01）
@@ -139,12 +168,18 @@
 * **文档**：`docs/concepts/architecture.md` 新增「Agent Harness 五子系统 ⇄ Atlas 资产」类比映射；`shared/gates.md` 登记反馈格式约定。
 * **同步面**：`shared/gates.md` 门册计数（`tests/test_validators.py` 168 条 / `tests/test_validate_ac_alignment.py` 62 条）、`docs/map/gates.md` 行数与测试文件数（36 → 42）。
 
+---
+
 ## [v0.2.0-beta.21] - 2026-10-29
 
 ### 🐛 api 适配器运行时 schema 只认构造调用（D172 / #46）
 
-* **修复**：`adapters/api.py` 的运行时 schema 判定从文本正则改为 AST 构造调用——注释、文档字符串、正则源码、测试夹具里的 `FastAPI(`/`APIRouter(` 字面量不再把项目误判成「有描述」⇒ 不再产出悬空的 `spec_entry="/openapi.json"` + `items=0` 假指针。
-* **口径**：别名构造也认；测试文件整类不作描述源判定；无法解析的源码 WARN 跳过、不回退文本匹配。共享忽略集补 `.adapter-out`。
+* **修复**：`adapters/api.py` 的运行时 schema 判定从文本正则改为 AST 构造调用——注释、文档字符串、正则源码、测试夹具里的 `FastAPI(`/`APIRouter(` 字面量不再把项目误判成「有描述」⇒ 不再产出悬空的 `spec_entry="/openapi.json"` + `items=0` 假指针（此前适配器自身源码即可自触发，实测复现于本仓根）。
+* **口径**：`from fastapi import FastAPI as App` 的别名构造也认；测试文件（`tests?/`、`test_*.py`、`*_test.py`、`conftest.py`）整类不作描述源判定；无法解析的源码 WARN 跳过、不回退文本匹配。真构造调用仍产指针（有回归钉防修成假阴性）。
+* **共享忽略集**补 `.adapter-out`（atlas 中间产物单一位点，不再被当业务源码枚举）。
+* **同步面**：`shared/stack-profile.md` §3.5（字面量不是证据的口径）、`DESIGN.md` D172、map 行数锚。
+
+---
 
 ## [v0.2.0-beta.20] - 2026-10-29
 
@@ -215,6 +250,8 @@
 
 * **边界**：MyBatis XML/注解 SQL 不产模型；NestJS DTO `class` 未纳入 TS 模型（当前真实 core 无 DTO 类）；`.scratch` 是约定不是通用构建目录。
 
+---
+
 ## [v0.2.0-beta.19] - 2026-10-28
 
 ### 🐛 审查报告定位与记录类留痕分家（D161 / #44 / #43）
@@ -228,6 +265,8 @@
 
 * **修复**：`validate_walkthrough.run()` 在布局解析后统一 `root = lay.root`，消除 `lay.prd_dir.relative_to(root)` 的绝对/相对混用；`atlas_check --root .` 首次触达「第 2 问=是 + 域级 PRD」不再抛 `ValueError`。
 * **测试**：`tests/test_validate_walkthrough.py` 新增相对 root 回归钉（`chdir` + `run(Path("."))` + `main(["--root","."])`）。
+
+---
 
 ## [v0.2.0-beta.18] - 2026-10-28
 
@@ -264,78 +303,90 @@
 
 ---
 
----
-
 ## [v0.2.0-beta.15] - 2026-10-27
 
 ### 🩹 发版口径修复：补齐 beta.13/14 条目与镜像
 
-- **背景**：beta.13/14 两次 chore(release) 只动版本戳、未写 CHANGELOG 条目（2026-10-27 巡检发现）；本版补录两节并同步本文档镜像。同批入库当轮巡检台账。
+* **背景**：beta.13/14 两次 chore(release) 只动版本戳（README / config.mts / map / package.json），未写 CHANGELOG 条目（2026-10-27 巡检发现，bugs.md「安装与装配」段在案）；本版补录上述两节，并把 `docs/guide/changelog.md` 镜像同步为同源基础。
+* **同批入库**：当轮巡检台账（QUEUE.md 状态行 + bugs.md「发版口径回归」条目）。
 
 ## [v0.2.0-beta.13] - 2026-10-27
 
 ### 🧾 后端通道 AC × 覆盖维度对账（D153，RFC-20261026-02 Batch A）
 
-- **能力**：PRD 表新增第 5 列 `后端适用覆盖维度` + 测试侧 `@pytest.mark.ac(..., dims=[...])`；`validate_ac_alignment.py` AST 提取；后端门**只 WARN 不 FAIL**（`mode: enforce` 不升级）；E2E 第 4 列原样不动，两个门各查各的。
-- **单源解析**：`_support/ac_coverage.py`（区间展开 / CJK 邻接 / 与 `validate_e2e_index.tables()` 逐 parity），E2E 校验器改纯提取复用；`Result.status` 闭集扩 `N/A`。
-- **钉**：假绿测试 +55；全量 743 passed / 4 skipped；变异 **M156a–f**。附带 `proposals/BACKLOG-execution-layer.md`（EL-01..EL-16）。
+* **能力**：PRD 表新增第 5 列 `后端适用覆盖维度` + 测试侧 `@pytest.mark.ac(..., dims=[...])`；`validate_ac_alignment.py` AST 提取（decorator / parametrize / class+module `pytestmark`，docstring AC 兜底记 weak-only）；后端门**只 WARN 不 FAIL**（`mode: enforce` 不升级，不在观测面未收口时钉死用户）；E2E 第 4 列原样不动，两个门各查各的。
+* **单源解析**：`_support/ac_coverage.py`（区间展开 / CJK 邻接 / 精确 token / 表切分与 `validate_e2e_index.tables()` 逐 parity），E2E 校验器改纯提取复用；`Result.status` 闭集扩 `N/A`，atlas_check / detail 面同步。
+* **钉**：出厂假绿测试 +55（ac_alignment / shared kernel / atlas_check 等）；全量 743 passed / 4 skipped；变异 **M156a–f**。附带 `proposals/BACKLOG-execution-layer.md`（EL-01..EL-16 执行层待办）。
 
 ### 📒 bug 台账条目级机器字段（D154，RFC-20261026-04）
 
-- **能力**：`duty-review/families.py` 分层日期来源 + 运行面坏形状 WARN + 「精确病案数」显示列；判据三项与案数上界计量不动（评审必修 1 采 (i)）；新条目必带〔日期｜状态｜族｜证〕尾缀；claude-code 钩子条撤案；console 搜索面空值兜底。
-- **钉**：test_duty_bug_families 4→11（含现行库冻结对照）；变异 **M157a/M157b**；合流全量 750 passed / 4 skipped。
+* **能力**：`duty-review/families.py` 分层日期来源 + 运行面坏形状 WARN + 「精确病案数」显示列；判据三项与「案数上界」计量不动（评审必修 1 采 (i)）；新条目必带〔日期(必填)｜状态｜族(仅记录)｜证(D 行>M 钉>留档)〕尾缀。
+* **同场**：claude-code 钩子条撤案（D110/D124/D150 已 fail-closed 三面，外证互证）；console 搜索面 `c.testid` 空值兜底。
+* **钉**：test_duty_bug_families 4→11（含现行库基线冻结对照）；变异 **M157a/M157b**；与 D153 拆分后合流全量 750 passed / 4 skipped。
 
 ### 🗺 map doclink + 连线拆道解耦
 
-- 「完整 L1 文档」走 `vscode://file` 通道；五张子图连线共源拆锚（gates/graph/adapt/e2egen/cli），灭 v 路由反向穿卡线；`atlas-map.check.js` 新增第七项「连线共道」断言，首跑咬出存量 21 处修完归零。
+* 「完整 L1 文档」链接 file: 环境走 `vscode://file` 通道（与关键文件行同仓根推导），不再跳浏览器裸文本。
+* 连线拆道：apply 四模式→三问门四线并一、绕底回边共锚共道、五张子图同病同修（gates/graph/adapt/e2egen/cli）；灭 v 路由反向穿卡线。
+* **钉**：`atlas-map.check.js` 新增第七项「连线共道」断言（共线段重叠 >6px 红），首跑咬出存量 21 处，修完归零。
 
 ### 🧪 台账日期越界校验 + 留出验证制度化（D155 / D156，RFC-20261026-03）
 
-- **D155**：台账字段日期补日历关 + 未来关，走坏形状出口（WARN + 回退）；留出验证归零路径钉分列。
-- **D156**：gates §2.5 流程门（146→147）、proposals §4.5、duty-review 闭族三态、触发 (b) 检查项；指针钉 18→19；收尾登记秒表实测（19 钉 0.41s / pre 0.73s / fast 0.10s / 全量 200.6s）。
+* **D155**：台账字段日期补日历关 + 未来关（形态过正则 ≠ 可用日期），走既有坏形状出口（WARN + 回退）；留出验证 = 归零路径（判别钉 T/T+1 + 送达钉 CLI 分列）。
+* **D156**：试点通过后制度化——gates §2.5 流程门（146→147）、proposals §4.5、duty-review 闭族三态、independent-review 触发 (b) 检查项；指针行形状钉 18→19。
+* **收尾登记**（D156 补，`1f8656c`）：可复算命令秒表入库（19 钉 0.41s / pre 0.73s / fast 0.10s / 全量 200.6s，人时不可回溯如实标注）；「散文日期不校两关」观察行挂 QUEUE 观察室；触发 (b) 维持人侧落点（closeout 步骤 3 + §9 互引）。
 
 ## [v0.2.0-beta.14] - 2026-10-27
 
 ### 🚀 GitHub Release 跟随 tag 自动补建 + 状态落差可见
 
-- **能力**：推 tag 后按 prerelease 语义自动补建 Release（正文取 CHANGELOG 段，缺失退化相邻基线 notes；幂等，失败只告警不阻断 npm）；token 三级回退；`--status` 新增落差行；显式版本号补 semver 校验。
-- **钉**：test_tools +8；SKILL 增第 7 条纪律。
+* **能力**：tag 推送后按 prerelease 语义自动补建 Release——正文取 CHANGELOG 对应段；缺失时以相邻 tag 为对比基线生成 notes；同 tag 已存在幂等跳过，失败只告警不阻断 npm 发布。
+* **配套**：token 三级回退（GITHUB_TOKEN/GH_TOKEN/GITHUB_PAT → gh auth token → git 凭据）；`--status` 新增 Release 与最新 tag 落差行；显式版本号补 semver 白名单校验（此前未校验即拼进 shell 命令与 URL）。
+* **钉**：test_tools +8（prerelease / 正文回退 / 基线 / 幂等 / 无 token / 失败不抛 / 草稿过滤 / 非法版本）；SKILL 增第 7 条纪律。
 
 ## [v0.2.0-beta.12] - 2026-10-26
 
 ### 项目级资产根可配置（D152 / issue #42）
 
-- **能力**：项目根 `atlas.config.yaml` 声明 `layout.assets_root`（默认 `product`）与可选 `layout.adr`（默认 `<assets_root>/adr`）；机器门 / 脚本 / 适配器 / 模板 / pi 扩展经 `_support/layout.py` 单源解析，存量项目无配置零变化。
-- **装配**：`atlas init` 首次 TTY 询问或 `--assets-root` / `--adr-dir`；首装渲染 `stack-profile.yaml` 的 e2e 三路径；`atlas update` 只读不换根；非法配置 FAIL / 零写；双根与路径漂移首版 WARN。
-- **契约与钉**：`shared/layout.md` §1.1；`tests/test_layout.py` 33 条 + 消费者 override；全量 704 passed / 4 skipped；变异 M-layout-1..5。
+* **能力**：项目根 `atlas.config.yaml`（git 跟踪）声明 `layout.assets_root`（默认 `product`）与可选 `layout.adr`（默认 `<assets_root>/adr`）；所有机器门、脚本、适配器、模板、pi 扩展经 `_support/layout.py` 单源解析，存量项目无配置零变化。
+* **装配**：`atlas init` 首次 TTY 询问资产根，或 `--assets-root` / `--adr-dir` 非交互；首装写配置并渲染 `stack-profile.yaml` 的 e2e 三路径；`atlas update` 只读、不换根；非法配置 `atlas_check` FAIL / update 零写；双根与 profile 路径漂移首版 WARN。
+* **契约**：`shared/layout.md` §1.1 新增；ADR / design / PRD / E2E 写侧与 closeout、refresh、review-inputs、console 同步；e2e 三路径仍由 `stack-profile.yaml` 显式覆盖。
+* **钉**：`tests/test_layout.py` 33 条 + 各消费者 override；全量 704 passed / 4 skipped；playground 2 passed；隔离副本变异 M-layout-1..5 全红 → 还原逐字节一致 → 复绿。
 
 ## [v0.2.0-beta.7] - 2026-10-25
 
 ### 🏃 真跑日批：D80② 升档兑现（D149）+ 真跑日协议（D148）+ D108 落点勘误
 
-- **D80② 升档兑现（D149）**：`e2e.app_login` 未声明 ⇒ 生成器推 **`NOT_READY`（退出码 3 + 机读键 `"app_login"`）**，与 `app_base_url` 同一通道族，不再「占位生成 + WARN」半生成；文案按 D103 指路「有门但三态都装不下 ⇒ 人工会话取出」。变异 **MB17/MB18**。
-- **真跑日协议（D148）**：runbook `docs/guide/real-run-day.md`——detached worktree 隔离 / manifest 配对先行 / 七项咬合清单 / 注红条款；首轮已执行出库。
-- **D108 落点勘误**：失败留证实际落 **`.atlas-run/`**（生成物显式 `outputDir`，非 Playwright 缺省 `test-results/`）；**留存窗口 = 到下一次起跑**。咬合点不变 = 重装配。
-- **首轮三发现入档**：落点勘误、留存窗口、探针盲区活体实证（前端 200 / 后端不可达 ⇒ 白屏全红）+ 半就绪变体；案 9（WARN 基线 7 条）升室待拍板。
+* **D80② 升档兑现（D149）**：`e2e.app_login` 未声明 ⇒ 生成器推 **`NOT_READY`（退出码 3 + 机读键 `"app_login"`）**，与 `app_base_url` 同一通道族（`--json` 面 `{"ok": false, "not_ready": "app_login", …}`），不再「占位生成 + WARN」半生成——硬前提的输入不得靠「缺失即静默放行」吸收；文案按 D103 相抵点指路：「有门但三态都装不下」（图形验证码 / 服务端 cookie 会话 / 登录响应体无令牌）⇒ 人工会话取出，不是「补声明」的对象。RFC-20261015-02 预告的时间锚「下一次真跑准备日」到期执行。钉：旧钉改判（半生成 ⇒ 全不生成）+ 新 `--json` 面钉；变异 **MB17**（退回 WARN 半生成）/ **MB18**（机读键写错或缺 message）。
+* **真跑日协议（D148）**：runbook `docs/guide/real-run-day.md`——detached worktree 隔离执行（不碰用户 checkout、不提交）/ D145 manifest 配对先行 / 七项咬合清单 / **注红条款**（注红 red 不计缺陷判据）。首轮已执行出库，回写见 duty-review 三件（QUEUE / README / bugs.md）。
+* **D108 落点勘误 + 留存窗口补定**：失败留证实际落 **`.atlas-run/`**（生成物早有显式 `outputDir`，Playwright 构件目录跟着 outputDir 走——D108 首版契约误写缺省 `test-results/`，2026-10-25 真跑日实咬勘误，构件形态 = `trace.zip + test-failed-*.png` 成对）；**留存窗口 = 到下一次 `playwright test` 起跑**（Playwright 启动即清空 outputDir ⇒ 跨轮取证须起跑前归档）。契约 §7.1 / 生成物注释 / RFC 勘误节同批改口；咬合点不变 = 重装配（`install --update` / 首装），不溯及已装配副本。
+* **真跑日首轮三发现入档**（均为观察、不计缺陷）：① 落点勘误（上行）；② 留证留存窗口（升格条件 = 首个有缺陷指控价值的构件在复跑起跑后被清空）；③ 「栈起没起」探针盲区首个活体实证（前端 200 / 内网后端不可达 ⇒ 白屏全红、形似用例失败实为环境红）+ 半就绪变体（网关 200 / 业务 API 悬挂，唯有打真实业务 API 才能判）。另：案 9（`e2e_index` WARN 基线 7 条）升室待拍板；WS-C 回执状态收窄、WS-D 观察锚写作约定随批落地；消融首跑复核留档 `research/2026-10-23-ablation-first-run-recheck.md`。
 
 ## [v0.2.0-beta.6] - 2026-10-23
 
 ### 🧱 装配基线 manifest：漂移逐文件指名（D145）
 
-- **能力**：`.atlas/MANIFEST.json` 逐文件摘要与 `.atlas/VERSION` 同点同遍历产出，写序「先 MANIFEST 后 VERSION」使半态可判定；`atlas check` 配对校验先行，漂移逐文件点名（改/增/删，各 cap 10），旧装配无 manifest 退聚合口径 + 尾注，不新增红。
-- **口径**：判定装配态一致 = 摘要相等 ∧ manifest 覆盖完整；未逐项解释的差异不得记一致（运行时仍 WARN）。
-- **钉**：三态真跑 + 变异 **M-new-1/4/5**。
+* **能力**：`.atlas/MANIFEST.json` 逐文件摘要（`{digest, files}`），与 `.atlas/VERSION` 同点、**同一次遍历**产出；写序「先 MANIFEST 后 VERSION」⇒ VERSION 在场即基线已齐（半态可判定）。`check_version` 先做 manifest↔戳配对校验，配对后漂移**逐文件指名**（改/增/删各 cap 10 + 计数）；旧装配无 manifest ⇒ 聚合口径 + ok 行尾注「正式判据未齐」，不新增红；`install.sh` 落戳后硬校验 manifest 在场。
+* **口径**：判定「装配态一致」= 摘要相等 ∧ manifest 完整；未逐项解释的差异（`backflow.py` 三态）只能记「不一致（已解释）」，运行时仍 WARN（漂移是常态信号）。
+* **钉**：manifest 形态/配对/空装配 + 逐文件指名 / cap 10 / 不配套 / 形态非法 / 旧装配尾注 + F54 干跑扩 manifest 断言；变异 **M-new-1/4/5**。
 
-### 📋 域级 PRD 变更记录 5 列 + 显式「无」（D146/D147）
+### 📋 域级 PRD 变更记录 5 列 + 「只重验受影响项」通则（D146）
 
-- **契约**：§七 表头升级为 `版本/日期/变更内容及原因/影响/结论与后续`；「影响」点名受影响域/AC/用例，未触达验证面写 `无（未触达验证面）`；legacy 3 列 WARN 随下次真实变更迁移。
-- **通则**：新增「变更后只重验受影响项，未受影响结论沿用并留痕」；可无内容不得留空白（`无` 或既有语义词），`FORBIDDEN` 三处单源 + 词表守恒钉；§六 空表首版 WARN。
-- **钉**：变更记录四态 + §六 四态；变异 **M-new-2/3**。
+* **契约**：§七 表头升级为 `版本/日期/变更内容及原因/影响/结论与后续`；「影响」点名受影响域/AC/用例，未触达验证面写 `无（未触达验证面）`。validator 独立 check 行：5 列 PASS / legacy 3 列 WARN（下次真实变更时随迁，不单跑迁移轮）/ 表头不可辨或「影响」空 ⇒ FAIL / 节在无表 WARN。
+* **通则**：`global-rules` §16「变更后只重验受影响项；未受影响结论沿用并留痕」，机器落点指认 D128 stale / `backflow` 三态 / apply §3.2，不新增门；全局 `十一` 修订记录 4 列不扩（边界句）。
+* **钉**：改变更记录四态；变异 **M-new-3**。
+
+### 🕳 显式「无」通则 + `FORBIDDEN` 单源（D147）
+
+* **契约**：可无内容不得留空白，`无`（理由可选）或既有语义词（`不适用（理由：…）` / `未覆盖（沿用实然）` / 控制台「未创建」）；词表单源 = `global-rules` §5，`FORBIDDEN` 增补 `[必填` / `[条件必填` 并三处同步 + 守恒钉。
+* **机器检查（首版 WARN）**：域级 §六 空表/空节无显式结论 ⇒ WARN（翻转触发器：连续两收口周期真实遗漏 ≥1 且误报 0 ⇒ 升 FAIL；统计落 per-域收口留痕 README「可无项空表：N / 误报：N」）；§七「影响」空白 ⇒ FAIL。
+* **钉**：§六 四态 + 词表守恒；变异 **M-new-2**。
 
 ### 🐛 E2E `select` 点中错误选项（D144）
 
-- **修复**：唯一命中后给选项打一次性标记、点击锚定标记本身，废除整页 DOM 下标（关闭态节点与零宽镜像会随组件重排串位）；标记失效有界重采样 3 次，仍不成则响亮失败。
-- **钉**：`test_select_clicks_the_marked_option_not_a_global_index` + D112/D117 两钉按新形态更新。
+* **病灶**：`atlasSelect` 采样后按**整页 DOM 下标**再点击。一个面板同时挂多个下拉（关闭态节点仍在 DOM、rc-select 另有零宽 `role=option` 镜像），组件重排后同一数字指向别当下拉的选项 ⇒ 选「不限时间」却点中「自定义范围」镜像节点，重试至 30s 超时。全量 41 条 2/2 红、单跑 2/2 绿（顺序依赖的假绿）。
+* **修复**：唯一命中改为给该元素打一次性标记，点击锚定标记本身（走 Playwright actionability）；每次采样先清遗留标记 ⇒ 选择器无歧义；标记失效 ⇒ 重新采样打标再点，有界 3 次，仍不成则带可见选项响亮失败。轮询、三级降级、歧义即拒、原生 `<select>` 分支不变。
+* **钉**：`tests/test_gen_e2e_scripts.py::test_select_clicks_the_marked_option_not_a_global_index`；既有 D112/D117 两条钉按新形态更新（返回 token 而非 idx、候选选择器出现次数 2 → 1）。
 
 ---
 
@@ -343,18 +394,21 @@
 
 ### ✨ E2E `request` 请求载荷断言（D142）
 
-- **能力**：`request <api> <json-path> <expected>` 断言某 step 后新出现的匹配请求；无新请求、路径缺失、越界、解析失败均 fail-loud；含该断言的用例默认 `trace: off`。
-- **钉**：生成器动作锚定 / trace off、Node 真求值三态、校验器正反例；变异 **M145–M147**。
+* **能力**：`request <api> <json-path> <expected>`，断言某 step 后**新出现**的匹配请求；api 带点后缀（歧义拒绝），path 支持点号/`[N]`/`[key=value]`，值分 `(缺席)` / `null` / `""` 三态；无新请求、中间路径缺失、过滤不唯一、越界、解析失败均 fail-loud。
+* **隐私**：含 request 断言的用例默认 `trace: off`（`ATLAS_REQUEST_TRACE=1` opt-in），失败消息不打印载荷；零步基线、testid 提取均豁免 api 后缀。
+* **钉**：生成器动作锚定/trace off/零变化、Node 真求值三态与新请求、校验器正反例；变异 **M145–M147**。
 
 ### 🧭 人工走查项结构化块（D143）
 
-- **能力**：`manual.md` 兼容旧单行，新增 `## <ID> <标题>` + `atlas-manual` 块（page/precondition/step/evidence），控制台按步渲染、命令可复制。
-- **钉**：解析单源 `_support/manual_block.py`，旧行零迁移；校验器页面/步骤/重复 ID；变异 **M148**。
+* **能力**：`manual.md` 兼容旧单行；新增 `## <ID> <标题>` + `atlas-manual` 块（`page / precondition / step / evidence`），步骤行 `操作 | 观察 | 命令(可空)`；id/title 只从标题行取。
+* **控制台**：按步渲染、命令可复制；账本仍用例级。解析单源 `_support/manual_block.py`，旧行零迁移。
+* **钉**：控制台解析/旧行兼容/块内 id 拒绝、校验器页面/步骤/重复 ID；变异 **M148**。
 
 ### 🩹 `after:<N>` 步骤锚错位（D136）
 
-- **假红修复**：`refresh` 发射两个动作行导致 `after:N` 整体前移一格；定案为 `refresh` 两行合并为一个动作槽位，动作与 step 严格 1:1。
-- **钉**：`test_after_anchor_stays_aligned_when_step_emits_multiple_lines`。
+* **假红修复**：`refresh` 发射「先等后刷」两个动作槽位，而锚点按动作下标挂载 ⇒ 从 `refresh` 起 `after:N` 整体前移一格（实测 `after:9` 落在「重新打开面板」之前，面板未开时必红）。
+* **定案**：`refresh` 两行合并为一个动作槽位，动作槽位与 step 严格 1:1，生成物逐行内容不变。
+* **钉**：`test_after_anchor_stays_aligned_when_step_emits_multiple_lines`。
 
 ---
 
@@ -362,8 +416,8 @@
 
 ### 🧷 testid 提取器容忍 `setAttribute` 尾逗号（D135）
 
-- **修复**：Prettier `trailingComma: all` 会把多行 `el.setAttribute("data-testid", "x")` 写成尾逗号形态，旧正则漏抽导致已实现 testid 被判缺失；提取器现允许值后可选 `,`。
-- **钉**：`test_f22_imperative_testid_extraction_and_counts` 增加多行 + 尾逗号样本（Red First），变异 **M135**。
+* **修复**：Prettier `trailingComma: all` 会把多行 `el.setAttribute("data-testid", "x")` 写成尾逗号形态，旧正则漏抽导致已实现 testid 被判缺失；`SETATTR_TESTID` / `SETATTR_TESTID_TPL` 现允许值后可选 `,`。
+* **钉**：`test_f22_imperative_testid_extraction_and_counts` 增加多行 + 尾逗号样本（Red First），变异 **M135**。
 
 ---
 
@@ -371,42 +425,55 @@
 
 ### 🩹 `value` 断言读可见文本（D133）
 
-- **假红修复**：Ant Design Select 交互后会向触发器注入 `aria-live` 播报 span（`opacity:0`），旧实现用 `innerText` 把选中文案读两遍；新增 `atlasVisibleText`，采值前临时移出不可见子树、读完恢复 style。
-- **钉**：`test_value_reads_visible_text_excluding_a11y_mirror` 在 Node 里以假 DOM 真求值（隐藏播报不计入、style 恢复、发射面无裸 `innerText` 回退）。
+* **假红修复**：Ant Design Select 交互后会在触发器内注入 `aria-live` 播报 span（`opacity:0`），旧实现用 `innerText` 把选中文案读两遍，`value` 断言在「先选择再断言」的用例上必红而页面本身正常。
+* **定案**：新增 `atlasVisibleText` 助手（临时移出不可见子树 → 读 `innerText` → `try/finally` 恢复 style），`atlasValueOf` 与 `atlasExpectValue` 统一走它；原生表单元素的 `toHaveValue` 路径不变。
+* **钉**：`test_value_reads_visible_text_excluding_a11y_mirror` 从生成物抽助手在 Node 里真求值（隐藏播报不计入、style 恢复、发射面无裸 `innerText` 回退）。
 
 ### ⌨️ E2E 新增 `type` 逐字输入动词（D134）
 
-- **场景**：带掩码 / 受控输入的控件（如 Ant Design RangePicker 的日期输入）用 `fill` 一次性写 DOM 不会触发组件内部解析；逐条 `press` 无法形成连续输入链。
-- **定案**：`type <tid> <text>` → `locator.pressSequentially(text)`，逐字触发按键链；**不先清空**原值（替换用 `fill`），值必填；动作词表 13 → 14。
-- **钉**：`test_type_verb_emits_press_sequentially_without_clearing` + `test_e2e_index_type_is_action_not_assertion`；变异 **M134**。
+* **场景**：带掩码 / 受控输入的控件（如 Ant Design RangePicker 的日期输入）用 `fill` 一次性写 DOM 不会触发组件内部解析，模型状态不提交；逐条 `press` 每次只发单键、无法形成连续输入链。
+* **定案**：`type <tid> <text>` → `locator.pressSequentially(text)`，逐字触发 `keydown/keypress/input`；**不先清空**原值（替换语义用 `fill`），值必填；动作词表 13 → 14。
+* **钉**：样例守恒 +1、`test_type_verb_emits_press_sequentially_without_clearing`（发射形态 / 空值中止 / `[N]`）+ 校验器动作侧 `test_e2e_index_type_is_action_not_assertion`；变异 **M134**。
 
 ---
 
 ## [v0.2.0-beta.2] - 2026-10-22 - 2026-10-22
 
-### ✨ E2E hash 查询参数 (D132)
+### ✨ E2E hash 查询参数（D132）
 
-- **`hash参数:` + `e2e.query_preset.hash_keys`**：HashRouter 页面 `#` 之后的查询前提；`goto` 值内联 hash 查询，生成器把它注入守卫导航的 hash 段，base query 仍留在 `#` 之前；零步基线与 `参数:` 同纪律不施加；路径门两侧去双查询后比对。
-- **钉**：生成器 +6（守卫/步骤双发射、零步基线排除、未白名单、死声明、值形态、`url_merge` 原语）；校验器 +7（正向、未白名单、白名单外、死声明、值形态、未声明 hash 键、双载体）。`shared/gates.md` 的 `tests/test_validators.py` 计数已同步 **138**。
+* **`hash参数:` + `e2e.query_preset.hash_keys`**：HashRouter 页面 `#` 之后的查询前提；`goto` 值内联 hash 查询，生成器把它注入守卫导航的 hash 段，base query 仍留在 `#` 之前；零步基线与 `参数:` 同纪律不施加；路径门两侧去双查询后比对。
+* **钉**：生成器 +6（守卫/步骤双发射、零步基线排除、未白名单、死声明、值形态、`url_merge` 原语）；校验器 +7（正向、未白名单、白名单外、死声明、值形态、未声明 hash 键、双载体）。`shared/gates.md` 的 `tests/test_validators.py` 计数已同步 **138**。
 
 ---
 
 ## [v0.2.0-beta.1] - 2026-10-21
 
-### ✨ 评审 / 覆盖 / 事故三条反馈闭环 (D128–D131)
+### ✨ 评审 / 覆盖 / 事故三条反馈闭环（D128–D131）
 
-- **人工评审绑定提交指纹（D128）**：控制台账本快照绑定 `head_sha` + `scripts_hash`（对运行期产物免疫），服务端按当前指纹复算 `review_state`；代码或脚本一变即标 **STALE 需重审**、禁用勾选，旧账本无指纹判 `legacy`（fail-closed）——彻底堵住「曾经有人看过 = 当前版本已验收」的审查逃逸。
-- **独立审查报告 `schema_version: 2`（D129）**：新增单源内核 `_support/review_policy.py`，校验器 / CLI 转换器 / 生成器共用同一状态映射；finding 支持 `fingerprint` 跨轮去重、`pre_existing`（存量缺陷不阻断本次收口、仍留 WARN 下限）、`disposition`（误报须签字 + 取证才可关闭）；**第 4 轮起必须登记 `escalation` 升级复议**，终结「Agent 作者 ⇔ Agent 评审」死循环；v1 历史报告语义不变且不回扫。
-- **AC × 覆盖维度矩阵（D130）**：前端适配版 `C01`–`C14` 闭集 + 分片 `覆盖维度:` + 域级 PRD 可选第 4 列；缺维度 / 词表外写法 ⇒ WARN，未声明 ⇒ N/A 兜底，把「每条 AC 有没有用例」升级为「每条 AC 的失败面有没有被覆盖」。
-- **收口风控与事故闭环（D131）**：`closeout.md` 补步骤 3 风险定档（`auth/permission/routing/CI/deps/contracts` 为 Always-Human 路径，禁止 Agent 代勾）与步骤 4 缺陷修复验证 7 检查点（含 Red First）；事故复盘必答「哪一层本该接住它」，并落成 E2E 回归用例或变异钉。
+* **【D128 人工评审绑定提交指纹】**：控制台账本与逐用例快照绑定 `prov: {head_sha, scripts_hash, git_dirty, actor_type}`，`scripts_hash` 对生成脚本与 `atlas-prepare.mjs` 敏感、**对运行期产物免疫**；服务端按当前指纹复算 `review_state` 四态（`fresh`/`stale`/`legacy`/`unreviewed`），代码或脚本一变即标 **STALE 需重审**并禁用勾选，读不到指纹时 fail-closed；重跑自动清旧勾选；`reviewed_scope` 落账本与控制台顶栏。钉 4 条，变异 **M129**；
+* **【D129 独立审查报告 `schema_version: 2`】**：新增单源内核 `_support/review_policy.py`（校验器 / CLI 转换器 / 生成器三方共用同一状态映射）；finding 级 `fingerprint`（剥行号，跨轮去重）/ `pre_existing`（存量缺陷降为 WARN 下限、不阻断本次收口）/ `disposition`（`fixed`、`false_positive` 须签字 + 取证）/ `verification`；**轮次上限**：第 4 轮起必须登记 `escalation` 升级复议；v1 历史报告保持旧语义且不回扫。钉 4 + 3 + 1 条，变异 **M130 / M130b / M130c**；
+* **【D130 AC × 覆盖维度矩阵】**：前端适配版 `C01`–`C14` 闭集；用例分片新增可选 `覆盖维度:`，域级 PRD §五 新增可选第 4 列 `适用覆盖维度`（支持 `C01-C03` 区间与中文邻接写法）；`validate_e2e_index.py` 增「AC × 覆盖维度」行：缺维度 / 词表外写法 ⇒ **WARN**，未声明 ⇒ **N/A**（不给存量项目造红门）。钉 1 条（四态），变异 **M131**；
+* **【D131 收口风控与事故闭环】**：`shared/closeout.md` 补**步骤 3 变更风险定档**（三档 + `auth/permission/routing/CI/deps/contracts` 为 Always-Human 路径，禁止 Agent 代勾）与**步骤 4 缺陷修复验证 7 检查点**（含 Red First 先失败测试）；步骤 11 与 `duty-review/` 引入**事故追问**——逃逸缺陷须标注「哪层本该接住」并落成 E2E 回归用例或变异钉；新增 `templates/reviews/README.md` 按域审查指引（`independent-review.md` §10.5 承载引用，不造第二真相源）。
+
+### 🩹 独立评审抓出的缺陷（当场修并重跑全量）
+
+* **Blocker**：`app.js` 同作用域重复 `const canCheck` ⇒ JS SyntaxError（控制台整页白屏），而字符串 grep 拦不住 ⇒ 已修，并把钉子改成按**出现次数**判 + `node --check` 实验；
+* **Major**：`clean_target_file` 剥不掉 CLI 恒产的 `path:12-15` 行号区间 ⇒ 指纹跨轮漂移、去重门永不命中；`legacy` 未等同 `stale` ⇒ 旧账本可被重勾洗白；
+* **Minor**：`scripts_hash` 钩子候选顺序对齐 Runner 执行面；生成器 critical 判定改走同一 policy；`current=None` 不再冒充已核验；`--schema-version 1` 不得绕过轮次上限；维度解析支持区间展开且不再误杀含「维度」的数据行；
+* **登记面**：`install.sh` 补登记 `_support/review_policy.py` 与 `templates/reviews/README.md`（**49** 条 check）；修正 `gates.md` 对「closeout 步骤 4」的死引用与 README/docs 中过期的「M93」；对外文档（README + `docs/innovations` + `docs/gates`）补齐四项新能力。
+
+> **验证**：全量 `549 passed / 4 skipped`；空目录装配探针 `exit 0`（0 条 FAIL）；五片变异四段协议（基线绿→注入红→逐字节还原→复绿）全部成立；真实 git 靶场端到端复验 `fresh → stale → 落库 stale → 重跑 fresh → legacy`。**控制台 UI 的徽标与禁用态未经真浏览器人工点击复核**（按纪律须你自己有头亲测一次）。
 
 ---
 
 ## [v0.1.0-beta.37] - 2026-10-21
 
-### 🩹 控制台「已提交」视图累积合并 (D127)
+### 🩹 控制台「已提交」视图累积合并（D127）
 
-- **部分提交不再抹掉历史（D127）**：`scripts/e2e_console.py` 新增 `Ledger.committed_snapshot(source)`，按 append-only 事件顺序合并所有 submit 快照（后提交覆盖同名用例）；`cases_payload` / `_submit` 改用该视图，彻底修复「重复提交后历史已评审/已执行用例变回未跑」的问题。
+* **【D127 部分提交不再抹掉历史】**：
+  - `scripts/e2e_console.py` 新增 `Ledger.committed_snapshot(source)`，按 append-only 事件顺序合并所有 submit 快照（后提交覆盖同名用例）；`cases_payload` / `_submit` 改用该视图；
+  - 修复「重复提交后已执行/已评审用例变回未跑」；`last_submit` 保留最近事件语义；
+  - 钉 = `tests/test_e2e_console.py::test_committed_snapshot_merges_partial_submits`，变异 **M128**（退回 last_submit ⇒ 钉红）。
 
 ---
 
@@ -414,7 +481,10 @@
 
 ### 🔧 `select` 选项候选集排除内部子节点防假歧义 (D122 补漏)
 
-- **`select` 选项候选集排除内部子节点（D122 补漏）**：`scripts/gen_e2e_scripts.py` 的 `atlasSelect` 候选集追加 `:not([class*="select-item-option-content"]):not([class*="select-item-option-state"])`，排除选项内部子节点，避免无 `title` 属性的 Ant Design 自定义选项内部子元素重复命中相同类名，消除多重命中导致的假歧义（`ambiguous`）报错。
+* **【D122 子节点排除】**：
+  - `scripts/gen_e2e_scripts.py` 的 `atlasSelect` 候选集追加 `:not([class*="select-item-option-content"]):not([class*="select-item-option-state"])`，排除选项内部子节点；
+  - 避免无 `title` 属性的 Ant Design 自定义选项内部子元素重复命中 `select-item-option` 类名前缀，消除多重命中导致的假歧义（`ambiguous`）报错；
+  - 钉 = `tests/test_gen_e2e_scripts.py` 候选集排除规则断言。
 
 ---
 
@@ -422,8 +492,10 @@
 
 ### 🔧 控制台持窗模式关闭 Playwright 自身 test timeout (D126 / issue #39)
 
-- **控制台持窗模式 `--timeout=0`（D126）**：`scripts/e2e_console.py` 在 `self.keep_open`（持窗模式）下向 Playwright CLI 传递 `--timeout=0`，消除留窗时由于 Playwright 原生 30s test timeout 在 fixture teardown 中超时导致浏览器被强制关闭的问题；控制台的 wall-clock `--timeout` 是唯一超时真相源，自动关窗模式保持原生 30s 兜底防孤儿进程。
-- **契约与验证**：契约 `rings/e2e/reference.md` §10.1 与 `DESIGN.md` D126 同步；钉 = `tests/test_e2e_console.py::test_runner_disables_playwright_test_timeout_only_in_hold_mode`，变异 **M127**。
+* **【D126 控制台持窗模式 `--timeout=0`】**：
+  - `scripts/e2e_console.py` 在 `self.keep_open`（持窗模式）下向 Playwright CLI 传递 `--timeout=0`，消除留窗时由于 Playwright 原生 30s test timeout 在 fixture teardown 中超时导致浏览器被强制关闭的问题；
+  - 控制台的 wall-clock `--timeout` 是唯一超时真相源（到点 kill 并如实报超时）；自动关窗模式保持原生 30s 兜底防孤儿进程；
+  - 契约 `rings/e2e/reference.md` §10.1「执行」与 `DESIGN.md` D126 同步；钉 = `tests/test_e2e_console.py::test_runner_disables_playwright_test_timeout_only_in_hold_mode`，变异 **M127**。
 
 ---
 
@@ -431,9 +503,10 @@
 
 ### 🔧 控制台前置准备钩子环境与前端诊断补齐 (D125)
 
-- **NODE_PATH 同步注入（D125）**：`scripts/e2e_console.py` 调用项目 `product/e2e/scripts/atlas-prepare.mjs` 前置钩子时，若探测到 `nm_dir`，同步注入 `NODE_PATH`，确保前置准备脚本运行环境与真跑子进程依赖解析严格对齐，消除在未自建 `node_modules` 目录下运行时模块解析 `ERR_MODULE_NOT_FOUND` 的缺陷；
-- **前端 UI 诊断分流（D125）**：`templates/e2e/console/app.js` 前端 UI 正式消费 `d.prep_failed`：状态 pill 显示为「前置失败」（warn 级），错误摘录与通告显式提示「前置数据准备 atlas-prepare 失败，与用例脚本本身无关」，消除误导使用人员改动用例脚本的假象。
-- **契约与验证**：契约 `rings/e2e/reference.md` §10「执行」与 `DESIGN.md` D125 同步；钉 = `tests/test_e2e_console.py` prepare 四元组扩为五元组 + `test_console_app_js_handles_prep_failed_distinctly`，变异 **M126**。
+* **【D125 NODE_PATH 同步注入与 UI 诊断分流】**：
+  - `scripts/e2e_console.py` 调用项目 `product/e2e/scripts/atlas-prepare.mjs` 前置钩子时，若探测到 `nm_dir`，同步注入 `NODE_PATH`，确保前置脚本依赖解析环境与真跑子进程严格对齐，消除在未自建 `node_modules` 目录下运行时模块解析 `ERR_MODULE_NOT_FOUND` 的缺陷；
+  - `templates/e2e/console/app.js` 前端 UI 正式消费 `d.prep_failed`：状态 pill 显示为「前置失败」（warn 级），错误摘录与通告显式提示「前置数据准备 atlas-prepare 失败，与用例脚本本身无关」，消除误导使用人员改动用例脚本的假象；
+  - 契约 `rings/e2e/reference.md` §10「执行」与 `DESIGN.md` D125 决策行同步；钉 = `tests/test_e2e_console.py` prepare 四元组扩为五元组（含 NODE_PATH）+ `test_console_app_js_handles_prep_failed_distinctly`，变异 **M126**。
 
 ---
 
@@ -441,10 +514,24 @@
 
 ### 🔧 prepare 用例上下文 / select 候选集 / ESM upload 路径 / 就绪门浏览器判据（D121–D124 / #37 / #38）
 
-- **数据准备钩子传入用例上下文（D121）**：`scripts/e2e_console.py` 调用项目 `atlas-prepare.mjs` 时在子进程环境变量中注入 `ATLAS_CASE_ID`（当前用例 ID），用例级前置不再被迫全局化；
-- **`select` 选项候选集扩充（D122）**：`atlasSelect` 候选集追加 `[class*="select-item-option"]`，解决 Antd Select 可见项无 `role=option` 导致的定位超时假红；
-- **ESM 项目 upload fixture 路径修复（D123）**：`type: "module"` 项目的 `upload` 发射 `import.meta.url` 路径解析，消除 `__dirname` 未定义异常；
-- **E2E 就绪门补浏览器判据（D124 / #38）**：增加 `_support/pw_runner.py::probe_browser` 探测 Chromium 浏览器在场；`atlas_check` 真跑门缺浏览器时明确 FAIL 并指名安装命令 `npx playwright install chromium`，`e2e_console` 起跑前诚实拒绝。
+* **【D121 用例级 prepare】**：
+  - `scripts/e2e_console.py` 调用项目 `product/e2e/scripts/atlas-prepare.mjs` 时在子进程 env 注入 `ATLAS_CASE_ID`（当前用例 ID），项目脚本可据此只准备该用例依赖的数据，避免一组用例的前置缺失把无关用例挡在 prepare 阶段；
+  - 不读取该变量的存量脚本行为逐字节不变（纯增量、向后兼容）；
+  - 契约 `rings/e2e/reference.md` §10「执行」与 `e2e_console` docstring 同步；钉 = `tests/test_e2e_console.py` prepare 四元组含 case id，变异 **M121**（摘 env 注入 ⇒ 钉红）。
+
+* **【D122 `select` 选项候选集】**：
+  - `scripts/gen_e2e_scripts.py` 的 `atlasSelect` 候选集在 `[role=option],[role=menuitem]` 之外追加 `[class*="select-item-option"]:not([class*="select-item-option-content"]):not([class*="select-item-option-state"])`：Antd Select 的可见项无 `role=option`（role 项是零宽 a11y 镜像），此前下拉已打开也采不到；同时排除选项内部 `-content`/`-state` 子节点，避免无 title 时同一选项重复命中造成假歧义；
+  - `atlasPick` 与最终点击使用同一选择器；几何可见门、三级降级与歧义拒绝语义不变；
+  - 契约 `rings/e2e/reference.md` §5.5 同步；钉 = gen 套件候选集断言（两处），变异 **M122**（摘类名 ⇒ 钉红）。
+
+* **【D123 ESM 项目的 upload fixture 路径】**：
+  - `scripts/gen_e2e_scripts.py` 生成期读取 `package.json` 的 `type`：`module` 项目发射 `fileURLToPath(new URL('../fixtures/<rel>', import.meta.url))` 并导入 `node:url`，避免 ESM 下 `__dirname` 未定义导致 upload 用例必红；CJS 项目保持 `resolve(__dirname, …)` 逐字节不变；
+  - 契约 `rings/e2e/reference.md` §5.5/§7.1 同步；钉 = 新增 `test_upload_renders_esm_safe_path_for_module_projects`（gen 91 → 92），变异 **M123**（去掉 esm 分支 ⇒ ESM 钉红）。
+
+* **【D124 E2E 就绪门浏览器判据（issue #38）】**：
+  - 就绪判据分层：① 模块可解析（D101 已有）+ ② **浏览器可执行存在**（新内核函数 `_support/pw_runner.py::probe_browser`：node 侧 `chromium.executablePath()` 自算路径、Python 只判存在——自动吃 `PLAYWRIGHT_BROWSERS_PATH` 与版本 revision；`ATLAS_PLAYWRIGHT_CHANNEL` 已设 ⇒ 旁路走系统通道浏览器）。npm 装包不自动下载浏览器，此前缺浏览器会在 launch 阶段才炸而门谎报就绪；
+  - `atlas_check`「E2E 真跑」门不成立 ⇒ **FAIL 指名 `npx playwright install chromium`**（不用 issue 原案的 SKIP：依赖装了一半 ≠ 前置未声明，与「运行器可执行不存在 ⇒ FAIL + 提示」同族）；`e2e_console` 起跑前置同一内核 ⇒ 起跑前诚实拒绝；
+  - 契约 `rings/e2e/reference.md` §10「执行」、gates.md 2.2 行同步；钉 = 门侧 `test_check_e2e_fails_loud_when_browser_missing` + 控制台探针三态（含 channel 旁路不 spawn）/ `test_start_refuses_when_browser_missing`（既有 6 条真跑钉补旁路假件；`tests/test_atlas_check.py` 30 → 31），变异 **M124 / M125**（各摘一侧判据退回恒真 ⇒ 钉红），四段协议、还原逐字节一致。
 
 ---
 
@@ -452,9 +539,10 @@
 
 ### 🎯 同名多实例元素序位下标支持（#31，D120）
 
-- **步骤动词与断言动词多实例序位 `[N]` 支持（#31）**：`scripts/gen_e2e_scripts.py` 全面支持目标 testid 带 `[N]` 下标语法（0 起始，如 `click list-btn[1]`、`fill input[2] val`、`visible item[1]`），发射为 Playwright 原生 `.nth(N)` 定位器；省略下标时保持缺省 `.first()` 语义（100% 向后兼容）；
-- **生成物 helper 同步适配**：`atlasSelect`、`atlasExpectValue`、`atlasDownload`、`tsLoc`、`tsVis`、`tsVisible` 等生成物 helper 同步适配 `nth` 参数；
-- **校验门无缝对接**：`validators/validate_testids.py` 的 `case_testid_usage` 自动剥离 `[N]` 下标，双向集合门与应然落点门无缝对接基准 testid。
+* **【#31 步骤动词与断言动词多实例序位 `[N]` 支持】**：
+  - `scripts/gen_e2e_scripts.py` 全面支持目标 testid 带 `[N]` 下标语法（0 起始，如 `click list-btn[1]`、`fill input[2] val`、`visible item[1]`），发射为 Playwright 原生 `.nth(N)` 定位器；省略下标时保持缺省 `.first()` 语义（100% 向后兼容）；
+  - `atlasSelect`、`atlasExpectValue`、`atlasDownload`、`tsLoc`、`tsVis`、`tsVisible` 等生成物 helper 同步适配 `nth` 参数；
+  - `validators/validate_testids.py` 的 `case_testid_usage` 自动剥离 `[N]` 下标，双向集合门与应然落点门无缝对接基准 testid。
 
 ---
 
@@ -462,14 +550,25 @@
 
 ### 🩹 自感知缺陷与工件健壮性一揽子修复（#25 / #27 / #28 / #29 / #30 / #34 / #35，D119）+ 等待超时上限口径统一（D118）
 
-- **等待超时上限口径统一（D118）**：页面就绪锚点（含 `waitFor`/`download`/`select` 就绪轮询）等待上限与断言侧统一抬升为 20s（`ATLAS_WAIT_TIMEOUT_MS` 缺省 20,000ms），支持环境变量覆盖；消除慢页面首屏就绪超时被误报的假红。
-- **登录预置深度取值与 JSON 支持（#35）**：`atlas-auth.setup.ts` 令牌键取值改用点号路径解构，彻底解决嵌套响应体（如 `data.token`）取到 `undefined` 击崩浏览器 context 的缺陷；`app_login` 支持可选声明 `body_format: form | json`；登录异常与非法响应统一拦截并保护存量 `state.json`。
-- **测试目录与文件过滤（#27/#33）**：`validate_testids.py` 扫描过滤 `__tests__`、`test`、`tests`、`fixtures` 等目录及 `*.test.*`、`*.spec.*` 文件，明确测试代码不是页面声明处，消除全站重复假红。
-- **应然先行落点门分档（#34）**：未实现页面的未落地落点降级为 `WARN`（先行设计待落地），正向前置设计不再被误判为 `FAIL（虚假陈述）`；翻档为已实现后严格保持 FAIL 严判。
-- **域级 PRD 核心资产门（#29）**：`validate_prd.py` 增加对域级 PRD 核心资产（二、四、五章及结构类 AC 清单）的机器存在性严判，杜绝空壳域 PRD 假绿通道。
-- **结构环事实载体解绑根 README（#25）**：`_meta.json` 引入 `truth_carriers`，支持语义别名与自解释注释，解绑根 README，适配 Agent-first 存量项目。
-- **存量零 testid 三步推进链（#28）**：契约明确责任方与推进链，利用现成索引中的 `blocked` 状态与 Playwright 原生 `test.skip(reason)` 隔离待埋点状态与业务真失败。
-- **独立审查 executed 标记与控制台守卫（#30）**：`review.json` 引入 `executed: boolean`；`e2e_console.py` 的 `snapshot()` 在读索引前增加存在性守卫，抛 `SnapshotError` 防线程崩溃。
+* **【等待超时上限口径统一】（`scripts/gen_e2e_scripts.py`, 7e9316c；D118, MD118）**：
+  - 生成物中页面就绪锚点（连带 `waitFor` / `download` / `select` 就绪轮询）使用的等待上限与断言侧统一抬升为 20s（`ATLAS_WAIT_TIMEOUT_MS` 缺省 20,000ms），并提供环境变量覆盖口；消除慢页面首屏就绪超时被误报的假红。
+* **【#35 登录预置深度取值与 JSON 支持】**：
+  - `scripts/gen_e2e_scripts.py` 生成的 `atlas-auth.setup.ts` 中，令牌键取值改用 `tokenKey.split('.').reduce(...)` 点号路径解构，彻底解决嵌套响应体（如 `data.token`）取到 `undefined` 击崩浏览器 context 的缺陷；非字符串或空值大声抛出带状态码与截断响应体的 Error 并阻断损坏的 `state.json`；
+  - `stack-profile.yaml` 的 `app_login` 支持可选声明 `body_format: form | json`（缺省 `form` 严格保持向下兼容），`validate_stack_profile.py` 补充枚举校验；
+  - 登录异常与非合法 JSON 响应统一 try-catch 拦截，且启动时优先保留本地合法存量 `stateFile`（保护人工 `codegen` 录制产物不被覆写）。
+* **【#27/#33 测试目录与文件过滤】**：
+  - `validators/validate_testids.py` 扫描过滤 `__tests__`、`test`、`tests`、`__mocks__`、`__snapshots__`、`e2e`、`fixtures` 目录及 `*.test.*`、`*.spec.*`、`*.cy.*`、`*.stories.*` 文件；契约 `rings/e2e/reference.md` 明确「测试断言是页面元素的回声，不是页面声明处」，消除测试代码带来的全站重复假红。
+* **【#34 应然先行落点门分档】**：
+  - `validators/validate_testids.py` 应然落点门与双向集合门对齐，联动 `product/e2e/e2e-index.md` 页面表 `实现状态`；未实现/实现中页面的未落地落点降级为 `WARN`（未实现页落点先行待落地），正向前置设计不再被误判为 `FAIL（虚假陈述）`；翻档为已实现后严格保持 FAIL 严判。
+* **【#29 域级 PRD 核心资产门】**：
+  - `validators/validate_prd.py` 增加对域级 PRD 核心资产（二、四、五章及 `#### 结构类 AC 清单` 小节）的机器存在性严判，杜绝空壳域 PRD 假绿通道，同时兼容存量接管开户最小集。
+* **【#25 结构环事实载体解绑根 README】**：
+  - `_meta.json` 引入可选字段 `truth_carriers`，支持语义别名（如 `quickstart` / `test_status`）与自解释注释；契约散文与生成器提示文解绑根 README，适配 Agent-first 与不写根 README 的存量项目。
+* **【#28 存量零 testid 三步推进链】**：
+  - 契约 `rings/e2e/reference.md` 明确推进责任方与三步链，利用现成索引中的 `blocked` 状态与 Playwright 原生 `test.skip(reason)` 隔离待埋点状态与业务真失败。
+* **【#30 独立审查 executed 标记与控制台守卫】**：
+  - `review.json` 引入 `executed: boolean`（缺省 true 向后兼容），自愈基线写入口注入 false（状态下限为 WARN）；
+  - `scripts/e2e_console.py` 的 `snapshot()` 在读索引前增加存在性守卫，抛 `SnapshotError` 防线程崩溃。
 
 ---
 
@@ -477,10 +576,18 @@
 
 ### 🧷 执行串行落门（D115）+ `attr` 空值形态（D116）+ `select` 就绪门按命中态轮询（D117）
 
-- **执行串行落门（D115）**：契约 §7.1 新正文条「用例执行必须串行（并发 = 1）」（跨域并行仅在声明独立靶场时允许）；`atlas_check` 增常驻门「执行串行」——config 缺 `workers: 1` 或 `fullyParallel: false` ⇒ FAIL（逐判据隔离：只破任一都红）；生成器注释出处 `§8` → `§7.1`。变异 MD115a/MD115b 均红。
-- **`attr` 空值形态（D116）**：新增 `""` / `(空)` 写法 = 断言「该属性**缺席或为空串**」，补「否定属性」表达面；缺席属性 `getAttribute` 返 `null` 非 `""` ⇒ `toHaveAttribute(name, "")` 是半通状态，发射改 `?? '').toBe('')` 走 `expect.poll`（与探针同形单源）；非空期望逐字节不变。变异 MD116 红。
-- **`select` 就绪门按命中态轮询采样（D117）**：原全局候选集 `attached` 就绪门会被页面常驻 `[role=menuitem]`（顶部导航）秒满足 ⇒ 采样落进下拉零盒窗口，现场 `--repeat-each=3` 稳定 2 红。改为 `expect.poll` 轮询三值 `status`：0 命中 = 未就绪轮询至上限、>1 命中 = 歧义立即拒绝、唯一才点（D112 语义不变）；不引入固定等待；被否锚 `aria-owns`（只部分组件族成立）。变异 MB16 红；钉按三值形态重构 D112 原钉。
-- **取证**：全量 **519 passed / 4 skipped**；`DESIGN.md` 三决策行；契约 `rings/e2e` §7.1 + §5.5 同步。
+* **【用例执行必须串行（并发 = 1）：正文落定 + 机器门】（9ecd57a；D115）**：
+  - 该纪律此前只活在实现里（生成器发射 `workers: 1` / 控制台「一次一条」），契约正文无正面条款、生成器注释还把出处写成 `rings/e2e §8`（实为校验清单，引用漂移）；更关键：**没有任何机器判据** ⇒ 手改 config 或封装运行注入 `--workers=N` 无人报错，而靶场是共享有状态环境 ⇒ 打乱「零步基线先于改态用例」的定义序 = 恒真误报 / 前提被前序污染。
+  - 定案：① 契约 §7.1 增正文条「用例执行必须串行（并发 = 1）」（跨域并行仅在声明**独立靶场**时允许，同域顺序不得改变）；② `atlas_check` 增常驻门「**执行串行**」：读 `playwright.config.ts`，缺 `workers: 1` 或 `fullyParallel: false` ⇒ **FAIL**（正确性纪律，不降 WARN）；③ 生成器注释出处改为 §7.1。
+  - 钉与变异：`test_config_declares_serial_execution` / `test_serial_execution_gate_bites_on_parallel_config`（**逐判据隔离**：只破 `workers` / 只破 `fullyParallel` 都必须 FAIL）；**MD115a**（摘生成器发射）/ **MD115b**（摘门判据）均红、还原逐字节一致。
+* **【`attr` 动词补空值形态 `""` / `(空)`：断言「该属性缺席或为空串」】（1501569；D116）**：
+  - 补上「否定属性」表达面（现场：研发态入口**不带**合规文案 `aria-label` 才是该 AC 的可证伪机器面；而「入口可用」在同一控件上不是稳定态，观测面只能靠边界标记）。此前 `attr` 只能「属性等于某值」，生成器直接拒空值。
+  - 两处发射点统一 `?? ''` 归一后比对，断言行走 `expect.poll`（与探针同形 = 单源）；注意缺席属性 `getAttribute` 返回 `null` **不是 `""`** ⇒ `toHaveAttribute(name, "")` 对缺席判 FAIL（半通状态），不得用它发射空值档；非空期望逐字节不变。钉 = 同族钉子扩展（空值两写法须发射 `?? '').toBe('')`、**不得**出现 `toHaveAttribute`；非空仍走原路径）；**MD116**（空值档退回 `toHaveAttribute(name, "")`）⇒ 红。
+* **【`select` 就绪门改为按命中态轮询采样】（5d06ea3；D117，v2 真跑现场 2 red + trace 取证）**：
+  - 非原生分支原以全局候选集 `[role=option],[role=menuitem]` 的 `attached` 作就绪门——被测页顶部导航本身常驻 9~10 个 `[role=menuitem]` ⇒ 门被环境项秒满足；rc-select 下拉挂载后有「未定位（零盒）」窗口，几何可见过滤的采样落在该窗口 → 候选只剩导航项（失败文案 `可见选项=["应用市场",…]`；失败快照反证 listbox 内选项齐 = 采样比「可见」早一步）。整份 `--repeat-each=3` 复现 **2 红 / 12**。
+  - 定案：就绪与采样**合并一个判据**——`page.evaluate` 返回三值 `status`（`unique` / `none` / `ambiguous`），外层 `expect.poll`（与页面就绪锚点同一轮询原语，**不引入固定等待**）等到 `status !== 'none'`；**0 命中 = 未就绪** ⇒ 轮询至上限；**>1 命中 = 歧义** ⇒ **立即**拒绝（D112 语义不变）；唯一 ⇒ 点击。三级降级、几何可见过滤、响亮文案、原生分支逐项不变。被否：锚触发器 `aria-owns`（只部分组件族成立，违「语义不定 DOM 机制」）；固定 `waitForTimeout` 间隔（撞 §5.5 固定等待门，本单首版即被吹红）；「未就绪」立即拒绝（收窄适用面）。
+  - 钉 = `test_select_polls_until_options_are_positioned_and_refuses_ambiguity`（旧就绪门必须消失 / 轮询原语 = `expect.poll` / 三值齐 / 歧义立拒 / 原生分支仍在；D112 原钉按三值形态重构）；**MB16**（轮询退回单次采样）⇒ 红。
+* **取证**：全量 `pytest tests -q` ⇒ **519 passed / 0 failed / 4 skipped**（beta.29 基线 516 ⇒ +3 钉）；`DESIGN.md` D115 / D116 / D117 三决策行；契约 `rings/e2e/reference.md` §7.1 + §5.5 两行动词行同步。
 
 ---
 
@@ -488,9 +595,11 @@
 
 ### 🧲 守卫单段化修正：删去「纯在场声明」运行期段，退回单段页面就绪锚点 (D114 v2 修正 / issue #26)
 
-- **背景（现场回灌，首版发布后当天即证伪）**：beta.28 第 ② 段 `guard_only` 与静态双向集合门相抵——「声明但不操作 / 不断言」是该门唯一合法补全形态，对这类 id 在 `goto` 时刻再要求运行期在场 = 两条合法用例在守卫处死锁（`Expected 1 / Received 0`）。
-- **修正**：守卫 = **单段页面就绪锚点**（全量声明清单、`expect.poll`、超时点名整份清单）；被 step 触达的由原生自动等待承接、被 expected 触达的由断言轮询承接；**「仅声明」的 id 只参与静态校验，不承担运行期在场义务**。
-- **取证**：原拆段钉替换为 `test_guard_is_anchor_only_and_never_backfills_presence`；变异 **MD114** 三枚钉红、还原逐字节一致；全量 **516 passed / 4 skipped**。登记：`rings/e2e`、`DESIGN.md` D114 行修订。
+**背景（现场回灌，首版发布后当天即证伪）**：D114 首版的第 ② 段 `guard_only`（`testid:` − step/expected 目标逐个 `toHaveCount(1)`）与静态双向集合门相抵——该门要求「源码里的每个实然 testid 必须被某条用例的 `testid:` 声明」，于是「**声明但不操作 / 不断言**」是它的**唯一合法补全形态**；再对这类 id 在 `goto` 时刻要求运行期在场 = 把「静态门的补全需求」误当成「初始态断言」：面板 / 弹层未打开时该元素必然为 0，两条**合法用例**在守卫处死锁（`Expected 1 / Received 0`）。
+
+**修正（669cab3）**：守卫 = **单段页面就绪锚点**（全量声明清单、`expect.poll`、超时点名整份清单）。其余 id 一律不在 `goto` 时刻要求在场：被 step 触达的由该 step 原生自动等待承接、被 expected 触达的由断言自动轮询承接（§5.5 §B99 语义不变）；**「仅声明」的 id 只参与静态校验，不承担运行期在场义务**。
+
+**钉与取证**：`test_guard_is_anchor_only_and_never_backfills_presence` **替换**原拆段钉（混合夹具含「仅声明」id ⇒ 锚点带全量清单、任何 presence 循环都不得出现）；变异 **MD114**（恢复全量 presence 循环）⇒ 3 枚钉红、还原逐字节一致；全量 `pytest tests -q` ⇒ **516 passed / 0 failed / 4 skipped**（编译产物压力无回归）。登记面：`rings/e2e/reference.md`、`DESIGN.md`（D114 行修订）。
 
 ---
 
@@ -498,10 +607,15 @@
 
 ### 🧲 元素齐全守卫拆两段：「页面就绪锚点 + 纯在场声明」，动作产物元素改由自动等待承接 (D114 / issue #26)
 
-- **病灶**：守卫面 = 用例 `testid:` 全量清单（#R2）后，动作产物元素（初始态必然 0）在未执行任何 step 前即死锁 ⇒ 契约只能指向实现侧 `hidden` 占位槽，衍生三条隐式约定；次生 `count` 断言被迫写「真实数 + 1」、残留被折叠成「页面未加载」。
-- **定案**：守卫拆两段——① `atlasAwaitAnyDeclared` **页面就绪锚点**（任一声明 id 在场即页面已渲染，`expect.poll` 轮询、超时点名整份清单）；② `guard_only` = `testid:` −（step 目标 ∪ expected 目标）仍逐个 `toHaveCount(1)` 严判；已触达的 id 由各自的原生自动等待承接。守卫面不会退化为空表 ⇒ **不再需要 hidden 占位槽，count 断言回到纯业务数**。
-- **兼容**：存量占位槽不强制回退，对存量生成物增量可用。
-- **取证**：钉 86 条（`test_guard_splits_anchor_from_presence_only_ids`；#R2 三枚旧钉按新形态重构）；变异 **MD114** 三枚钉红、还原逐字节一致；全量 **516 passed / 4 skipped**。登记：`rings/e2e` §7.1、`DESIGN.md` D114。
+**背景**：守卫面 = 用例 `testid:` 全量清单（#R2）后，**动作产物元素**（初始态必然 0）在未执行任何 step 前即死锁；契约把解法指向实现侧 `hidden` 占位槽 ⇒ 把测试义务搬进产品 DOM，并衍生三条无机器判据的隐式约定（占位须排在动作目标之后 / 字面按声明文件唯一 / 可交互态取断言反面）。次生：`count` 断言被迫写「真实数 + 1」、前一用例残留被折叠成「页面未加载」（`Expected 1 / Received 2`）。
+
+**定案（`scripts/gen_e2e_scripts.py`，a76c33f）**：守卫拆两段——
+- ① **`atlasAwaitAnyDeclared` 页面就绪锚点**：任意一个声明 id 在场即视为页面已渲染（`expect.poll` 原生轮询、超时点名整份清单）；
+- ② **`guard_only` = `testid:` − (`step` 目标 ∪ `expected` 目标)** 仍逐个 `toHaveCount(1)` 严判。已被 step/expected 触达的 id 不预先要求在场（分别由该 step 的原生自动等待、该断言的自动轮询承接，§5.5 §B99 语义不变）。守卫面不会退化成空表（锚点恒发射且带全量清单）⇒ **实现侧不再需要 `hidden` 占位槽、count 断言回到纯业务数**。
+
+**兼容面**：存量占位槽不强制回退（保留即继续满足第 ② 段，count 的 +1 亦不变）⇒ 对存量生成物为增量可用。
+
+**钉与取证**：`tests/test_gen_e2e_scripts.py` 85 → **86**（新增 `test_guard_splits_anchor_from_presence_only_ids`；#R2 三枚旧钉按新形态重构而非删除）；变异 **MD114**（`guard_only` 回退全量 presence）⇒ 3 枚钉红、还原逐字节一致；全量 `pytest tests -q` ⇒ **516 passed / 0 failed / 4 skipped**。登记面：`rings/e2e/reference.md` §7.1 守卫条重写、`DESIGN.md` D114。
 
 ---
 
@@ -539,9 +653,14 @@
 
 ### 🧩 E2E 执行面两案：用例前数据准备钩子（D110）+ refresh 落盘节拍参数化（D111）
 
-- **用例执行前自动执行项目数据准备脚本（D110，`scripts/e2e_console.py`）**：项目自带 `product/e2e/scripts/atlas-prepare.mjs` ⇒ 每条用例先跑它（cwd = 项目根，180s 上限、不计入用例超时窗）；失败 / 超时 ⇒ **拒绝执行该用例**并按 `done` 事件完整形状（`prep_failed: true` + tail）如实上报。把「清零 → 静置 → 复跑」净场协议从人工纪律落成执行器机制，杜绝有状态靶场残留实体造成的 count 类断言系统性偏移。
-- **refresh 落盘节拍参数化（D111，`scripts/gen_e2e_scripts.py`）**：`refresh` 发射**先等后刷**两行——`ATLAS_REFRESH_SETTLE`（默认 0）注入的 `waitForTimeout` 先于 `page.reload()`，节流型自动保存项目运行时给落库等待窗。默认 0 ⇒ 行为不变；毫秒数属项目侧运行时前提（对齐 `ATLAS_SLOWMO` 注入先例），非 §5.5「固定 sleep」禁令所指。
-- **登记**：`DESIGN.md` D110/D111；契约正文 §7.1 / §5.5；钉 2 条 + 变异 M94/M95（四段协议）；全量 **512 passed / 4 skipped**。
+* **【用例执行前自动执行项目数据准备脚本】（`scripts/e2e_console.py`，ce7f181；v3 现场实证移植，bugs.md 005/006 链 companion；D110）**：
+  - 项目自带 `product/e2e/scripts/atlas-prepare.mjs` ⇒ 每条用例执行前先跑它（cwd = 项目根，**180s 上限、不计入用例超时窗**）。共享型靶场是有状态环境（SPA + 服务端态），用例 precondition 属文档性声明、运行器不自动归零 ⇒ 残留实体会让 count 类断言系统性偏移——本钩子把「清零 → 静置 → 复跑」的净场协议从人工纪律落成**执行器机制**。
+  - 失败 / 超时 ⇒ **拒绝执行该用例**并按 `done` 事件完整形状（带 `prep_failed: true` 标记 + tail）如实上报——不静默跑一条注定偏移的用例。
+* **【refresh 落盘节拍参数化】（`scripts/gen_e2e_scripts.py`，1dcff13；D111）**：
+  - `refresh` 动词发射**先等后刷**两行：`ATLAS_REFRESH_SETTLE`（默认 0）注入的 `waitForTimeout` 先于 `page.reload()`——节流型自动保存的项目（v3 现场 ≈15s 节流）运行时给落库等待窗，步骤编辑内容不丢。
+  - 三条口径：**默认 0 ⇒ 生成物行为与既有契约一致**（毫秒数属项目侧运行时前提，零业务常数进生成器，对齐 `ATLAS_SLOWMO` / `ATLAS_EXPECT_TIMEOUT` 注入先例）；它不是 §5.5「固定 sleep」禁令所指（该禁令禁**用例侧**把共享靶场节拍写死进用例，本行是执行环境配置面）；单一注入面 = 生成物字面内联，无覆盖口。
+* **两案正名入册（0ba3ec3）**：`DESIGN.md` D110 / D111 决策行；契约正文 = `rings/e2e/reference.md` §7.1（准备钩子）+ §5.5 动词表 `refresh` 行（先等后刷）；控制台 docstring 同步；钉 2 条 + 变异 **M94/M95**（四段协议，还原逐字节一致）。
+- **取证**：全量 `pytest tests -q` ⇒ **512 passed / 0 failed / 4 skipped**（beta.24 基线 510 ⇒ +2 钉，无红）。
 
 ---
 
@@ -569,18 +688,29 @@
 
 ### 🎞️ E2E 真跑失败自动留证：trace / screenshot 只在失败落盘 (RFC-20261018-01, D108)
 
-- **两轨同构补两键**：生成物 `playwright.config.ts`（python 轨 / node 轨）的 `use:` 各补 `trace: 'retain-on-failure'` + `screenshot: 'only-on-failure'`——失败现场自动落 trace（DOM 快照 + 网络 + 操作日志，逐帧回放）与截图到 `test-results/`，**全绿轮零新增构件**；无覆盖口（防「成功轮也留证」开后门）。
-- **不溯及已装配副本**：咬合点 = 下一次 `install.sh --update` / 首装重装配；重装配前「契约已声明留证而现场无 trace」属如实态、非缺陷，巡检不得误报。
-- **留证含业务内容**，只落采纳仓本地、不进 atlas 上报通道（§15 出站面不破）；不解决 D103「人工会话取出 ⇒ CI 不可复现」盲区（真身是登录态）。
-- **被否**：`video` 缓行（trace 自带回放器）；全量常录 `on`；失败自动重试 N 次（防复读机裁决已落 `duty-review/QUEUE.md` 归档区）；托管云沙盒会话。
-- **接线与取证**：契约条 = `rings/e2e/reference.md` §7.1；门行 = `shared/gates.md` 2.2；决策行 = `DESIGN.md` D108；钉 3 条（双轨同构 / 值形态封闭 / 无覆盖口）+ 变异 **MB10/MB11** 四段协议双绿；全量 **497 passed / 4 skipped**。评审轮记（两轮）= `proposals/RFC-20261018-01`；观察室 +3（键盘三态原语 / 目录化扩展 / 上报机检增强）。
+**背景**：外部发版雷达首跑 5 条机制级情报（OpenHands v1.26 `browser record` 等）经独立评审裁定**唯一有仓库实锤缺口**的采纳项。此前真跑偶发红（节拍类）现场的取证上限 = 文本尾部 80 行（采集点 `scripts/e2e_console.py:520`、落账条件 `:591-592`、docstring `:582`），元素几何 / 命中点 / 时序类判据只能靠 `/tmp` 临时探针（跨会话不可复算，D98 动词批与案 6 两次付费先例）；`duty-review/bugs.md:17` 未解观察（hover 禁用按钮首跑偶发 `Element is not visible`、3 连跑全绿）的**升判条件**「复现 ≥2 次且有固定节拍证据（trace / 连续截图）⇒ 转 DR4」悬空在等一个不存在的证据源。
+
+**定案**：
+- **两轨同构补两键**：生成物 `playwright.config.ts`（python 轨 / node 轨两分支）的 `use:` 对象各补 `trace: 'retain-on-failure'` + `screenshot: 'only-on-failure'`——失败现场自动落 trace（DOM 快照 + 网络 + 操作日志，trace viewer 逐帧回放）与截图到 Playwright 缺省 `test-results/`；**全绿轮零新增构件**。**无覆盖口**（给留证键加环境开关 = 给「成功轮也留证」开后门）。
+- **不溯及已装配副本**：本能力的**咬合点 = 下一次 `install.sh --update` / 首装重装配**；重装配前「契约已声明留证而现场无 trace」属**如实态、非缺陷**，巡检不得误报（对齐 `shared/single-source.md` §3 迁移仪式「新源生效 ⇔ 旧源显式失效」）。
+- **留证含业务内容，只落采纳仓本地**（`test-results/`），不进 atlas 上报通道（§15 零业务上下文出站面不破）；**不解决 D103 盲区**（人工会话取出类的「CI 不可复现」真身是登录态，trace 只重放已发生的失败）。
+- **被否**：`video` 缓行（trace 自带逐帧回放器，video 是粗粒度投影，多一键 = 双轨同构面 +2 无收益）；全量常录 `on`（磁盘 × 每用例、成功轮留证无消费方）；**失败自动重试 N 次**（与「节拍类首跑不坐实、复跑复现才改判」方向相反，会把真缺陷静默吸收成绿——防复读机裁决已落 `duty-review/QUEUE.md` 归档区，外部情报再提 retry 引用可径行否决）；托管云沙盒会话（同归档区裁决）。
+
+**接线与取证**：契约条 = `rings/e2e/reference.md` §7.1「失败留证（硬，失败才落盘）」；门行 = `shared/gates.md` 2.2「E2E 真跑」补失败留证段；决策行 = `DESIGN.md` D108；`tests/test_gen_e2e_scripts.py` +3 钉（双轨同构 / 值形态封闭 / 无覆盖口）：**MB10**（摘 none 轨 trace 键）/ **MB11**（值改 `on`）四段协议双绿（注入 rc=1 → 还原逐字节一致 → 复绿），注入 diff 摘录于 `proposals/REVIEW-2026-10-18-e2e-failure-evidence.md`；全量 `pytest tests -q` ⇒ **497 passed / 4 skipped**（基线 494 ⇒ +3 钉，无红）。评审轮记（两轮，含五条情报全裁定 + 引用核验）= `proposals/RFC-20261018-01-e2e-failure-evidence.md` §6。**观察室 +3**（`duty-review/QUEUE.md`：键盘三态原语 / 目录化扩展 / 上报机检增强，各带升室条件）。
 
 ### 🔧 E2E 真跑：node 轨运行器判据换本体（D101；issue #24）
 
-- **判据本体更换**：从「可执行文件存在」改为「从 `e2e.scripts_dir` 出发 `@playwright/test` 可解析」（对齐 `shared/gates.md` 2.2 行早写明的「按依赖可导入性，不按路径存在」）。背景 = 百炼/v2前端现场：ESM 项目（`"type": "module"`）下 Node 的 ESM 解析器**不读 `NODE_PATH`**，全局兜底找得到 binary、解析不到模块 ⇒ 错误落到运行期并被门计成「跑失败 / 无结果」。
-- **单源内核 `_support/pw_runner.py`**：二进制解析 / 探针 / 修复收敛到一处，消除 `atlas_check.py` 与 `e2e_console.py` 的两份拷贝（含两份 `_is_node_playwright`）。
-- **全局兜底改为可生效的修复**：补**幂等软链** + 复检，并输出「用了全局什么」；门侧降 `WARN`、不可修复 ⇒ `FAIL` 点名；项目自装缺模块不修只报；链接位被占拒绝覆盖。
-- **取证**：`pytest tests -q` ⇒ **476 passed / 4 skipped**（基线 472）；`test_atlas_check.py` 24 → **25**、`test_e2e_console.py` 9 → **12**；变异 M88/M89/M90 三枚咬合、还原逐字节一致；`install.sh` 自检 44 → **46**（含顺手补的 `_support/case_id.py`）。
+**背景**：百炼/v2前端真跑准备日，`product/e2e/scripts` 下 `playwright test --list` 报 `Cannot find package '@playwright/test'`——而 `atlas_check` 的「E2E 真跑」门与 E2E 控制台**两侧都放行了**：判据都是「可执行文件存在」。项目 `package.json` 声明 `"type": "module"` ⇒ 生成物走 ESM 解析 ⇒ Node 的 ESM 解析器**不读 `NODE_PATH`**（该通道属 CJS）⇒ 全局兜底（F19）找得到 binary、解析不到模块：错误落到运行期，且被门计成「跑失败 / 无结果」（真原因不可见）。`shared/gates.md` 2.2「E2E 真跑」行早已写明「解释器按**依赖可导入性**选（不按路径存在）」——是实现漂离了已落口径。
+
+**定案**：
+- **判据本体** = 「从 `e2e.scripts_dir` 出发 `@playwright/test` 可解析」（探针 = `node --input-type=module -e "import('@playwright/test')"`，解析基准 = cwd，本机实测）。
+- **单源内核** `_support/pw_runner.py`（新）：二进制解析 / 探针 / 修复收敛到一处——消除 `scripts/atlas_check.py` 与 `scripts/e2e_console.py` 的两份拷贝（含两份 `_is_node_playwright`）。
+- **全局兜底改为可生效的修复**：不可解析且运行器来自全局 ⇒ 执行器在 Node 的 `node_modules` 搜索路径上补**幂等软链** + 复检，并输出「用了全局什么」；门侧修复成功 ⇒ 降 **`WARN`**（跑得起来，但结论依赖机器全局状态、非项目自足），不可修复 ⇒ `FAIL` 点名真原因。项目自装目录里缺模块 = 项目自身缺口 ⇒ **不修只报**（避免把全局版本混进项目依赖）；链接位被非本工具占用 ⇒ **拒绝覆盖**。
+- `NODE_PATH` 保留（CJS 项目的真通道）但**不再冒充判据**。
+
+**取证**：`pytest tests -q` ⇒ **476 passed / 0 failed / 4 skipped**（beta.22 基线 472 passed ⇒ +4 钉）；`tests/test_atlas_check.py` 24 → **25 条**、`tests/test_e2e_console.py` 9 → **12 条**；变异 **M88**（判据退回「binary 存在即 ok」）/ **M89**（摘软链步）/ **M90**（摘 `global_note`）三枚咬合、还原逐字节一致；`install.sh` 自检 44 → **46 条**（+`_support/pw_runner.py`；并顺手补存量漏登记的 `_support/case_id.py`——它一直在装配面上却不在自检清单里）。
+
+**落地文件**：`DESIGN.md`（D101）/ `shared/gates.md`（2.2 真跑行判据与钉 + 2.3 计数行）/ `shared/stack-profile.md`（`e2e.node_modules` 字段语义）/ `rings/e2e/reference.md` §7（运行器前置）/ `_support/pw_runner.py`（新）/ `scripts/atlas_check.py` / `scripts/e2e_console.py` / 两个 tests / `install.sh`。**未做**：未改生成器（生成期代表不了运行机器，运行器可解析性由消费者在起跑前判）。
 
 ### 📋 复发自动可见（DR4 口径 B）+「可执行性判据本体」写成流程门（D102；承接 issue #24）
 
@@ -697,34 +827,69 @@ D94 当初把「其余文本期门」登记为残余（改口径会变动其它�
 
 ### ⚙️ E2E 生成链第三动能 `dispatch` + 台账收口三件（D98/D99/D100；v3 定形首跑全绿）
 
-- **合成事件直发动词（D98）**：`rings/e2e/reference.md` §5.5 新增 `dispatch <tid>`——React `dispatchEvent('click')` 创造第三动能，适配「常态遮罩 + 入场动画」表面（force 在动画窗口被吞、native 因可点性检查永不过而挂死）；适用边界与 `native` 同家族、值域封闭（无第三位，出现 ⇒ 校验器 FAIL + 生成器报错中止）；变异 M87 + 两枚钉 + `test_validators.py` 112 条。
-- **`stack-profile` 字段集定稿（D99）**：冻结现行实现实收面为 v1（`_support/stack_profile.py` ⇔ `shared/stack-profile.md` §3），后续字段变更一律起独立决策行，§14「草稿」语境退役。
-- **pre-commit 兜底不启用（D100）**：校验靠显式跑（`pytest tests/` 全量 + `atlas_check` 前闸），启用留待 CI 一起落（D72 ④ 前置形态收口）。
-- **协议定形首跑全绿（§13① 收口）**：v3 platform-frontend 切片 1 app × 1 页 **11/11**（净场协议 + D98 分片直发 + 产品同日修内容保存管道），留档采纳仓 `product/e2e/reviews/2026-10-17/`；gates 2.2「E2E 真跑」行补第 2 次咬合证据（逐格纪律只升本行）。
+**背景**：v3 platform-frontend 切片定形首跑四轮迭代（2026-10-16 首跑 7/11 → 四跑聚焦）。004「连发新增 → 点选 → 删除」复跑复现，暴露「常态遮罩 + 入场动画」表面下 **force/native 双模双灭**（force 点击在动画窗口被吞 5s 轮询不动；native 因可点性检查永不过而整用例挂死）；黑盒探针定界（动画窗内直发两删连中）后维护者拍板新增第三动能。同日**产品侧（spark-flow）修复便利贴编辑内容保存管道**（追路探针 A/B 双版复核：零停顿链贴纸+内容双落库），净场协议（清零 → 静置 >15s 节流窗 → 复清）复跑 **11/11 全绿**，留档采纳仓 `product/e2e/reviews/2026-10-17/`。
+
+**契约与生成器（D98 `dispatch` 动词）**：
+- `rings/e2e/reference.md` §5.5 新增 `dispatch <tid>`：React 合成事件直发——`dispatchEvent('click')`，**不经 hit-testing / 不做可点性检查**，不追加 force（绕行本义无此概念）；适用边界（硬）与 `native` 同家族——被测属性是「可操作性 / 不可交互 / 用户不可达」的用例**不得用**（可点性绕过 ⇒ 无法证伪）；**值域封闭**：无第三位，出现任何取值 ⇒ 校验器 FAIL + 生成器报错中止。
+- `scripts/gen_e2e_scripts.py`：`ACTION_VERBS` +1 词条（守恒样例表同步）、发射分支 + 值域报错；`validators/validate_e2e_index.py`：词表同步 + 值域邻位 FAIL（文本期双保险——兼治「旧安装副本对陌生第三词静默吸收」，v3 现场实证）。
+- 变异 **M87**：摘 dispatch 发射分支 ⇒ 发射钉红，还原逐字节一致（sha `348d8316…`）；钉子 `test_dispatch_verb_emits_synthetic_event_without_force` + `test_dispatch_verb_value_domain_in_index_gate`；`tests/test_validators.py` **112 条**（gates 行计数同步）。
+
+**台账收口**：
+- `DESIGN.md` §13①：协议定形首跑**已完成**（2026-10-17 v3 全片 11/11）；确知仍开 = E0 产物残留重生成（绑真跑准备日）。
+- **D99（原 §14 首行）**：`stack-profile.yaml` 字段集**定稿**——冻结现行实现实收面为 v1（读取面 `_support/stack_profile.py` ⇔ 声明面 `shared/stack-profile.md` §3 对账即清单），后续字段变更一律起独立决策行；两栏制不采（第二真相源，D86 同族）。
+- **D100（原 §14 第二行）**：git pre-commit 校验兜底**不启用**——校验靠显式跑（`pytest tests/` 全量 + `scripts/atlas_check.py` 前闸），启用留待 CI 一起落（D72 ④ 前置形态同步收口）；pytest 最小钩不采（维护者明示接受「跳过验证直接提交」窗口风险）。
+- `shared/gates.md` 2.2「E2E 真跑」行补**第 2 次咬合 + 定形全片证据**（2026-10-17 v3，逐格纪律：只升本行）。
+
+**被否 / 边界**：固定 sleep（「共享靶场必飘 ⇒ 假绿通道」原判据不变）；产品侧 settle/防抖（本条不约束 spark-flow，005 的内容缺陷由产品自修走）；005 用例降级只证贴纸本体（案 6 备选 B 留档未启用）。
+
+**内部运营**：`duty-review/` 三件（README 巡检协议 + QUEUE 决策队列 + bugs.md 按环分类存量 bug 库——未随包分发）与 `scripts/duty_signals.sh`（只读信号收集，随包）上线——每日 20:30 定时巡检，DR1–DR5 拍板判据切断「AI 提题 → AI 评审 → AI 拍板」无人在环闭环；bugs.md 全部「已修·待复验」条目当日真跑复验出库（007/#R2/004/006/005）。
 
 ---
-
 
 ## [v0.1.0-beta.21] - 2026-10-16
 
 ### 🪲 E2E 生成链四处缺陷闭环：标量注释污染 · 元素守卫空转 · 守卫门不剥注释 · `force` 与被测属性相抵（Issue #R1–#R4 / D94–D97）
 
-- **标量注释污染单源收敛（R1/D94）**：`_support/case_block.py` 的标量键分支改经内核 `_support/stack_profile.strip_inline_comment`，消除标量值尾部 `#` 注释直达生成脚本 URL 字面量的问题；列表项保持原样（其 `#` 为自然语言说明）。
-- **守卫门自带剥注释（R3/D94）**：`validators/validate_e2e_index.py` 的 `守卫:` 路径门先经单源 `strip_inline_comment` 再做路由比对，消除门与生成器的消费歧义。
-- **元素齐全守卫回归契约正文（R2/D95，⚠ 行为恢复）**：`scripts/gen_e2e_scripts.py` 的元素守卫 id 面回归 `case.get("testid")` 契约应然清单；未声明 `hidden` 占位槽的动态元素守卫开始真红（正确反馈），静态侧由常驻槽位门双重防腐。
-- **Playwright `force` 动作步级开关（R4/D96）**：`rings/e2e/reference.md` §5.5 确立 `click`/`hover` 默认 `{ force: true }` 的契约授权与适用边界；新增 `native` 步级开关（如 `- click btn native`）用于禁用 force，保护可交互性被测属性的真实判定；校验器与生成器双向强检值域。
-- **基线与守卫剥注释同源（S1/D97）**：零步基线探针与用例元素守卫 id 逐项剥离行内注释，彻底消除带说明 testid 导致的 `toHaveCount(1)` 假红。
+**背景**：卢森堡文件上传禁用需求的 E2E 环执行期间撞出四条链路缺陷。合起来才致命的一环：R1 制造污染 → R3 的门把污染判成 PASS ⇒ **无门可见**，污染直达 Playwright 的 URL 字面量。
 
----
+**修复（源包）**：
+
+- **R1/D94（标量注释污染 ⇒ 剥注释收敛为单源出口）**：`_support/case_block.py` 的**标量键分支**改经内核 `_support/stack_profile.strip_inline_comment`（经包内 bootstrap 取用**同一函数对象**，不新增第二份实现）；`validators/validate_e2e_index.py` 的 `goto` 门两处 + `会话` 门手写 `split("#", 1)[0].strip()` 收敛为同一函数。**列表项逐字节不变** —— 列表项的 `#` 是给人读的 note，由消费侧 `parse_line` 单点消费（docstring 写明「标量剥 / 列表项不剥」的理由，防下一轮再被误判为口径分裂而改坏）。
+- **R3/D94（守卫门自带剥注释）**：`validators/validate_e2e_index.py` 的 `守卫` 门内取值路径先经同一 `strip_inline_comment` 再进 `_route_hit`（与 `goto` 门 / `会话` 门对齐）。**能力边界**：不关闭「合法前缀 + **无注释的真垃圾尾**」（`/x/1/FUZZY` 仍 PASS，需值形态判据 + 契约增量，登记为独立待办）；前缀命中口径不动。
+- **R2/R2'/D95（元素齐全守卫空转 ⇒ 回归契约正文，⚠ 行为恢复）**：`scripts/gen_e2e_scripts.py` 的守卫 id 面从 `case["step"][0]`（首步为 `goto`/`refresh` 时为**空表** ⇒ 守卫静默消失）**回归** `case.get("testid")`（= 契约 §7.1「每条用例的 `testid:` 清单守卫」的应然清单）。
+  **⚠ 这是对采用方的行为恢复，非纯 bugfix**：未被契约合规（无 `hidden` 占位槽，`rings/e2e/reference.md` §4）的动态元素守卫会**开始真红** —— 那是正确反馈，不是回归；静态侧由 `validate_testids.py` 的「应然落点 / 常驻槽位」门前置拦截，二者互为双保险。
+- **R4/D96（`force` 与被测属性相抵）**：`rings/e2e/reference.md` §5.5 的 `click` / `hover` 条目补**缺省 `{ force: true }` 的授权 + 适用边界（硬）+ `native` 步级开关 + 值域封闭**；`scripts/gen_e2e_scripts.py` 的 `click`/`hover` 读第三位，`native` ⇒ 不追加 `force`（保留 `.first()` 的 strict-mode 修复）；校验器 `step 动词合法` 邻位新增「step 开关取值合法」（坏值 ⇒ FAIL，与生成器中止双保险）。
+- **S1/D97（同类未爆现场：零步基线侧）**：零步基线探针的 `case_testids` 逐项经同一 `strip_inline_comment`（否则与走已剥 `parse_line` 的 `step_operated_testids` 集比对时会静默不命中 ⇒ F24 规则二的「纯在场守卫豁免」失效）。
+- **R1 同类（守卫面侧，`check` 复核 C3）**：`scripts/gen_e2e_scripts.py` 的元素守卫 id 面逐项经同一 `strip_inline_comment`（`testid:` 项与 `step:` 项同形，可带行内说明；不剥则守卫面发射带注释的 id ⇒ `toHaveCount(1)` 恒不命中 ⇒ 假红）。至此 `case["testid"]` 的三个消费者（守卫面 / 零步基线探针 / 应然落点门前置）口径一致。
+
+**证据纪律**：六条修复各带「坏输入必红 → 还原后绿（逐字节一致）」成对证据（变异 **M79–M84 / M86**）；重定向尺子而非删断言（原把空表钉成期望的 `test_guard_only_watches_first_step_target` 改为断应然清单）；`tests/test_suite_hygiene.py` 不回归。
+
+**独立复核（`trellis-check`，2026-10-16）**：自行复跑 M79/M83/M84 三条变异（未用作者自备工具）⇒ 3/3 成立（逐字节还原 sha256 前后一致）；逐条读 `git diff tests/` ⇒ 未见解重弱化（3 条被删断言均在新增处有对应物，无 `or True`、无新增 `skip`/`xfail`）；同时抓出两处**引证错误**（生成物 diff 行数夸大 24→实为 18；残留行号清单少报 10 处实况）——已在本版按实况订正。
+
+- `_support/case_block.py` / `validators/validate_e2e_index.py` / `scripts/gen_e2e_scripts.py`：剥注释单源收敛 + 守卫面回归 + `force` 开关 + F5 同类现场；
+- `rings/e2e/reference.md` §5.5：`click` / `hover` 条目补默认 `force` 的授权 / 边界 / 开关 / 值域；
+- `tests/test_shared_kernel.py`（+2：标量剥·列表项不剥 + `strip_inline_comment` 同一函数对象 `is` 钉）；`tests/test_gen_e2e_scripts.py`（尺子重定向 + 新增「首步 `goto` ⇒ 守卫非空」/ 守卫面剥注释 / `native` / 坏值中止 / F5 五条钉）；`tests/test_validators.py`（+2：守卫门剥注释绕过 `parse_block` 的钉 + 开关值域 FAIL 钉）；
+
+**未做（登记为独立待办，非本版范围）**：
+
+- **值形态判据**：`/x/1/FUZZY` 这类「合法前缀 + **无注释的真垃圾尾**」仍判 PASS（需在 `_route_hit` 前叠「值形态」判据 + `reference.md` §8.2 契约增量；当前前缀命中口径是有意设计，单独收紧会把合法带参路径打红）。
+- **其余文本期门的剥注释口径收敛**：`validators/validate_e2e_index.py` 仍有 **10 处**手写 `split("#", 1)[0].strip()`（139/271/722/732/763/780/812/824/833/856；全源包共 17 处），与内核口径**不等价**（内核认引号 + 要求 `#` 前有空白）——改动会变其它门的既有判定，不在本版签字面内。因此「剥注释全局一个函数对象」**在本次收敛面内成立**（`is` 已证），**非全局字面全真**。
+- `DESIGN.md`：D94–D97 决策行（含 F2 的「行为恢复」措辞与 R3 的能力边界登记）。
 
 ## [v0.1.0-beta.20] - 2026-10-16
 
 ### 🔧 装配器语义两案：干跑不落版本戳 + 脏树守卫分「已跟踪/未跟踪」两语义 (Issue #21/#22: F54/F55, D92/D93)
 
-- **干跑不落版本戳（D92/F54）**：`install.sh` 的版本戳落盘原是全脚本唯一裸写 ⇒ `--update --dry-run` 会真写 `.atlas/VERSION` 而不装配任何内容，配合一次被守卫拒住的真跑，副本落入「戳新 / 内容旧」且装配版本门（自写自读闭环）报假 ok；干跑首装还会残留 `<target>/.atlas/` 卡住真首装。修后戳写入挂干跑闸门，真跑路径逐字节不变。
-- **脏树守卫两语义拆分（D93/F55）**：旧守卫只看 porcelain 路径列，`.atlas/` 整目录未跟踪（`?? .atlas/`，包产物不入库的合法形态）被撞判成脏 ⇒ `--update` 恒拒、`--force` 被逼成常规。修后按状态列分桶：已跟踪未提交改动 ⇒ 拒（F34 语义不变）；未跟踪 ⇒ WARN 放行 + 双摘要可见化（副本戳 ⇔ 源包摘要同录出声）+ 回灌出路先行。
-- **动作执行可交互性强化**：`scripts/gen_e2e_scripts.py` 的 Playwright 点击与悬停动作默认追加 `{ force: true }`，避免真实 UI 中由于悬浮遮罩、动画或父容器事件拦截导致的动作执行超时。
-- **登记**：`gates.md` 两行 + `DESIGN.md` D92/D93 + `proposals/RFC-20261016-03`（v2，独立评审「修后采纳」，处置表见 §6）；钉 2 条进 `tests/test_install_selfcheck.py`（7 → 9 条），变异 M77/M78 实证红后还原逐字节一致。
+**背景**：两条 §15 自感知上报（tool-semantic，2026-10-16 14:50）同指 `install.sh` 装配器的「断言语义被形态短路」。① issue #21：版本戳落盘是全脚本唯一的裸写（`run()` 外、无 `DRY_RUN` 判据），而守卫挂干跑放行下 ⇒ `--update --dry-run` 干跑即真写 `.atlas/VERSION`（载荷一文件未拷），配合一次被守卫拒住的真跑 = 副本「戳新 / 内容旧」，且 `atlas_check` 的装配版本门是**自写自读闭环**（只比戳与源包摘要），读到新戳报 ok「一致」——对账门被一次干跑洗成假绿；干跑**首装**还经 `stamp_file` 的 `mkdir` 残留 `<target>/.atlas/`，卡住随后的真首装（临时守卫判「已装配过」恒拒）。② issue #22：旧守卫只读 porcelain 的**路径列**，`.atlas/` 整目录未跟踪被 git 折叠成 `?? .atlas/` 后照被 `.atlas/*` 模式命中 ⇒ 守卫恒拒 ⇒ `--force` 被逼成 `--update` 的常规前缀——守卫真正要护的东西（副本侧未提交的线束改动）反而失去保护（issue 现场证据：副本与源包实差仅 3 文件 + `__pycache__`，并无需要保护的本地改动）。
+
+**修复**：①（D92/F54）戳写入整体挂干跑闸门——干跑只出声 `[dry-run] 装配版本戳（未落盘）`；真跑路径逐字节不变（落戳仍最后一步、失败仍 F37 硬错）；不采「包进 run()」（`run()` 对裸 heredoc 管段不生效，是假闸门）。②（D93/F55）守卫读**整行** porcelain（XY 状态列 + 路径），状态 `??` 进未跟踪桶、其余进脏桶：脏桶非空 ⇒ F34 行为逐字节不变（拒 / `--force` 越过，文案保留）；未跟踪桶非空且脏桶为空 ⇒ **WARN 放行**，文案**双摘要可见化**（副本 `.atlas/VERSION` 首行 ⇔ 当前源包 `pkg_digest` 摘要同录出声）+ 回灌出路先行（ATLAS-UPSTREAM.md / `scripts/backflow.py`）；两桶皆非空 ⇒ 拒优先，拒通知并录未跟踪项。`--force` 语义未漂移，仍 = 越过拒绝的 exceptional 姿势。
+
+**取舍记录**：评审 B-1（major）首选「副本戳 == 当前源包摘要才放行、否则回落拒」不采——npm 升级链路最常见形态恰是「未跟踪且已过期」，每次合法升级被逼 `--force` = issue 病灶复现；采纳下限 = 双摘要可见化让丢失风险出声。issue 建议③（给装配版本门加副本内容抽检）不采并留档——副本清单可比口径（副本本地改动 / VERSION 自环 / `runs/` / `__pycache__`）未立案就上判据 ⇒ 回灌批在路即 WARN 风暴，留待独立 RFC。
+
+- `install.sh`：守卫两语义拆分（新增 `compute_src_digest`）+ 戳挂干跑闸 + 头部用法注释补守卫语义；
+- `tests/test_install_selfcheck.py`：+2 集成钉（干跑两态双证 = 存量 VERSION 逐字节不变 + 全新 target 无 `.atlas` 残留；未跟踪放行 + 双摘要文案 + 已跟踪拒回归 + F34 文案保留）；变异 **M77**（摘干跑闸）/ **M78**（未跟踪桶改指脏桶）均红，还原逐字节一致（post-batch sha `ee5ac3d0…`）；
+- `scripts/gen_e2e_scripts.py`：Playwright 点击与悬停动作默认追加 `{ force: true }`，避免真实 UI 中由于悬浮遮罩、动画或父容器事件拦截导致的动作执行超时；
+- `shared/gates.md`：「装配版本」行 + 「tests/test_install_selfcheck.py」行各补 F54/F55/M77/M78 登记；`DESIGN.md` D92/D93；`proposals/RFC-20261016-03-dryrun-stamp-and-untracked-guard.md`（v2，含独立评审处置表 §6：1 major + 6 minor/suggestion 全处置）。
 
 ---
 
@@ -862,8 +1027,6 @@ D94 当初把「其余文本期门」登记为残余（改口径会变动其它�
   - **实测**：源包 `pytest tests/ -q` = `423 passed, 4 skipped`（本批净增 5 条）；本项目 `validate_e2e_index.py` 的 `ID 格式` 门由 FAIL 转 PASS，6 条存量 ID 一条未改（零迁移）；其余门逐项同态。
   - 被否：纯同步钉（不共享实现 —— 把登记面内的漂移留给守卫，而跨语言对才用同步钉）；收敛为单段（各读数实测碰撞或丢双射，且需新增映射表）；顺手统一 `AC_RE`（PRD 环明文禁止多段 `CODE`，单段是有意收紧）。
 
----
-
 ## [v0.1.0-beta.17] - 2026-10-15
 
 
@@ -897,7 +1060,6 @@ D94 当初把「其余文本期门」登记为残余（改口径会变动其它�
     token 首位 + 显式分隔符，散文提及不算声明）；profile 缺失 / `adapters.api` 未声明 ⇒ 不产行。同日实测咬合：标签前缀正则会把「未取证」本身当 `<标签>:` 前缀吃掉 ⇒ 判据顺序定为「声明位直取优先、标签兜底」（更新至 `_d_form_token` 注释与 F43 钉子）。变异证明：M64，`tests/test_structure_validator.py`（24 条）。
 * **【`apis.md` 指针形态判据锚定化（F44，issue #6 同族兄弟残留）】（`validators/validate_structure.py`）**：
   - 旧判据是无锚定全文子串 `"真相源" in t`：清单型 `apis.md` 的语义段只要写一句「本域接口真相源由网关维护」，整表就被误判「清单与指针混写」FAIL——与 issue #6 的 `categories.A/H` 措辞判形态同一族疾病，落在兄弟判据上。现改**锚定声明**：行首（或表格单元格首）出现 `真相源` token、其后接显式分隔符或就此结束才算指针形态；散文提及一律不算，真按指针落笔时豁免照常成立。`表格列` 门里对指针文件的豁免同步换用同一判据。变异证明：M66，判据退回全文子串 ⇒ `test_f44_list_form_prose_mention_of_zhenxiangyuan_not_flagged` 红（还原逐字节一致）。
-
 
 
 * **【`.adapter-out/` 单一位点 = 项目根】（`scripts/refresh_structure.py`, `scripts/atlas_check.py`, `adapters/_graph.py`, `shared/stack-profile.md` §3.1/§3.6, `DESIGN.md` D41/D77, `rings/structure/reference.md` §6.1；issue #8）**：
@@ -982,8 +1144,6 @@ D94 当初把「其余文本期门」登记为残余（改口径会变动其它�
 
 ---
 
-
-
 ## [v0.1.0-beta.16] - 2026-10-15
 
 ### 🚀 结构环链路闭环与 R8 完结收口 (Structure Ring Chain Close-Out & R8 Closure)
@@ -1025,13 +1185,13 @@ D94 当初把「其余文本期门」登记为残余（改口径会变动其它�
   - 当项目处于存量接管形态（`origin: adopt`）或**显式声明** `mode: auto-baseline` 时，若未发现历史审查报告，在全量校验通过后自动自愈生成最小可证伪基线审查报告（`*-adopt-baseline` 或 `*-auto-baseline`），放行脚本写盘；
   - **三把钥匙语义（R6 对账定稿）**：`review: null` / 未声明 = 执行器取会话默认（契约原语义）⇒ 走缺省严格门，**不再隐式免审**；`mode: off` = 免审 ⇒ 直接放行且不落基线（不制造「形式审过」假象）。
 * **【提取器增强】JS 动态 testid 提取与文件级 counts 重构 (`validators/validate_testids.py`)**：
-  - 全面支持原生 JS 命令式赋值语法：捕获 `el.dataset.testid = "..."`、`el.dataset['testid'] = "..."` 与 `el.setAttribute("data-testid", "...")`（含单/双引号、JSX 花括号与可枚举模板字符串）；
+  - 全面支持原生 JS 命令式赋值语法：捕获 `el.dataset.testid = “...”`、`el.dataset['testid'] = “...”` 与 `el.setAttribute(“data-testid”, “...”)`（含单/双引号、JSX 花括号与可枚举模板字符串）；
   - 引入源码注释预清洗（`strip_comments`），自动剥离 HTML 注释与 JS/TS 行/块注释，避免废弃 id 产生幻影报错；
   - 重构 `counts` 全站唯一规则为「声明文件数」，同一文件内的 HTML 与 JS 共存、条件分支或动态列表赋值计数为 1（天然豁免），跨文件冲突严格报警，业务代码无需在 HTML 补 `<template>` 假桩；
-  - **同文件重复 WARN 收窄（R6 对账定稿）**：仅对**静态属性同形态重复**报警；「模板壳静态声明 + JS 命令式赋值」混用为 vanilla JS 合法惯用法，豁免不报。
+  - **同文件重复 WARN 收窄（R6 对账定稿）**：仅对**静态属性同形态重复**（同文件两处同名静态 `data-testid` = strict-mode 歧义真信号）报警；「模板壳静态声明 + JS 命令式赋值」混用与多处渲染函数重复赋值均为 vanilla JS 合法惯用法，豁免不报（现网实证：主沙箱三条 WARN 均为该形态）。
 * **【存量脚手架自适应】Python pytest 配置兜底重构 (`patches/project-wiring/apply-wiring.py`, `adapters/tests.py`)**：
-  - `adapters/tests.py` 输出标准 `python3 -m pytest` 命令形态，cwd 自动入 `sys.path`，从根因上消除模块导入找不到路径的环境摩擦；
-  - **接线兜底退居诚实角色（R6 对账定稿）**：`apply-wiring.py` 不再注入 `pythonpath = .` 环境补丁（随 F23 退役），只承接 `ac` marker 注册；**载体优先级 = 已有 pyproject.toml / setup.cfg > 既有 pytest.ini（只补 marker）> 新建 pytest.ini**，杜绝「接线复活被清掉的补丁」。
+  - `adapters/tests.py` 输出标准 `python3 -m pytest` 命令形态，cwd 自动入 `sys.path`，从根因上消除「裸 pytest 找不到项目包」的环境摩擦；
+  - **接线兜底退居诚实角色（R6 对账定稿）**：`apply-wiring.py` 不再注入 `pythonpath = .` 环境补丁（随 F23 退役——线束不替业务打补丁），只承接 `ac` marker 注册这一项正当元数据；**载体优先级 = 已有 pyproject.toml / setup.cfg > 既有 pytest.ini（只补 marker）> 新建 pytest.ini**，杜绝「接线复活被清掉的补丁」（legacy 清桩实证病理）。
 * **【Mock 零步探针容忍】打桩用例自动免除零步恒真探针 (`scripts/gen_e2e_scripts.py`)**：
   - 识别用例分片中的 `mock:` 段，整体免除注入零步基线探针（`probes`），彻底根除外部接口打桩导致的页面初始容器被误判为“恒真（假阳性）”；
   - 未被任何 step 操作的容器在场断言（`visible`，声明块成员）由前置 `toHaveCount(1)` 守卫环覆盖而豁免（真跑实证定形）；
@@ -1121,7 +1281,6 @@ D94 当初把「其余文本期门」登记为残余（改口径会变动其它�
 * **全量体检生成物容错 (`scripts/atlas_check.py`)**：修复 `gen_e2e_scripts.py` 混杂前置警告日志导致 `json.loads` 解析失败误报 `WARN 生成器输出非 JSON` 的缺陷，增加正则提取 JSON 块容错。
 * **事实刷新冷启动容错 (`scripts/refresh_structure.py`)**：修复新建工程在尚未首建结构环时被 Trellis `after_finish` 钩子调用抛出 `ERROR: 缺少 _meta.json` 导致退出码 1 的问题，改为友好 `SKIP` 并以 0 正常退出。
 * **E2E 分片块缺字段报错指名 (`validators/validate_e2e_index.py`)**：细化用例分片缺少必填字段（如 `precondition`）时的报错信息，从模糊的 `缺字段=['E2E-xxx']` 优化为精确指名 `E2E-xxx(缺:precondition)`。
-* **AC 代码级对账递归扫描 (`validators/validate_ac_alignment.py`)**：修复 `collect_prd_acs` 使用单层 `glob("*.md")` 漏扫 `product/prd/domains/` 域级 PRD 验收准则的问题，改为 `rglob("*.md")` 递归检索。
 * **防退化棘轮防污染守卫 (`validators/validate_ac_alignment.py`)**：修复校验器无论是否 FAIL 均无条件落盘基线的缺陷，增加 `res.status != "FAIL"` 状态守卫，防止测试注入坏输入污染历史基线。
 * **CLI 出厂测试副本态隔离 (`tests/test_cli_commands.py`)**：为 CLI 测试增加 `pytest.mark.skipif`，在目标项目 `.atlas/tests` 副本态（不分发 `bin/` 与 `install.sh`）下优雅跳过，保证项目端全量体检绿灯。
 

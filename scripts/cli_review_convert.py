@@ -36,6 +36,7 @@ if str(HERE.parent) not in sys.path:
 from _support.siblings import load_module  # noqa: E402
 
 review_policy = load_module("review_policy")
+from _support import review_scope_core as scope_core  # noqa: E402
 
 # 严重度四档 → 三档，写死（骨架 §3 映射锁死；未知档位 = 输入侧契约违约，显式失败不猜）
 SEVERITY_MAP = {"critical": "Critical", "high": "Major", "medium": "Major", "low": "Minor"}
@@ -210,13 +211,24 @@ def main() -> int:
     ap.add_argument("--head-sha", help="差量评审的止点 SHA（v3 delta 必填；不得用 --to 兼取）")
     ap.add_argument("--reviewed-files", help="逗号分隔的实际审阅文件列表（v3 delta 无 coverage 时必填）")
     ap.add_argument("--resolves", help="跨轮关闭声明文件（[...] 或 {by, resolves}）；语义归 review_closure")
+    ap.add_argument("--scope-manifest", help="review_scope.py manifest 产物；提供即升 v4（内容封口）")
+    ap.add_argument("--accept-scope-drift", help="用户确认接受内容漂移：当前 scope_sha256")
+    ap.add_argument("--accept-by", help="确认人（--accept-scope-drift 时必填）")
+    ap.add_argument("--accept-reason", help="确认理由（--accept-scope-drift 时必填）")
+    ap.add_argument("--user-confirmed", action="store_true", help="确认内容漂移由用户显式作出")
     args = ap.parse_args()
     root = Path(args.root).resolve()
     schema_version = args.schema_version if args.schema_version is not None else (
-        3 if args.delta_only else 2)
+        4 if args.scope_manifest else (3 if args.delta_only else 2))
 
     if schema_version < 1:
         return die("schema_version 必须 ≥ 1")
+    if schema_version >= 4 and not args.scope_manifest:
+        return die("v4 报告必须提供 --scope-manifest（内容封口）")
+    if args.scope_manifest and schema_version < 4:
+        return die("--scope-manifest 要求 schema_version ≥ 4")
+    if args.accept_scope_drift and not (args.user_confirmed and args.accept_by and args.accept_reason):
+        return die("--accept-scope-drift 需要 --user-confirmed、--accept-by、--accept-reason")
     if args.round < 1:
         return die("round 必须 ≥ 1")
     # 轮次上限属**过程收敛纪律**（D129），与报告形态版本无关 ⇒ 不因 --schema-version 1 而放行
@@ -267,6 +279,62 @@ def main() -> int:
             reviewed_files = sorted({c["target"].split(":")[0] for c in checks
                                      if "target" in c and c["target"] != "?"})
 
+    scope_paths: list[str] = []
+    scope_manifest: dict | None = None
+    if args.scope_manifest:
+        # 内容封口只覆盖 CLI 实审集：delta 用 reviewed_files；非 delta 用显式列表或 coverage.completed。
+        # 全工作区会把并行 WIP 卷进来（评审 B-1），这里明确不收。
+        scope_paths = list(reviewed_files) if args.delta_only else (
+            _parse_paths(args.reviewed_files) or list(cov["completed"]))
+        if not scope_paths:
+            return die("v4 需要实审文件列表：给 coverage.completed 或 --reviewed-files")
+        try:
+            scope_manifest = scope_core.load_manifest(Path(args.scope_manifest))
+            if Path(str(scope_manifest.get("root") or "")).resolve() != root:
+                return die(f"scope manifest 的 root 与 --root 不一致：{scope_manifest.get('root')}")
+            manifest_set = {str(item["path"]) for item in scope_manifest["files"]}
+            if manifest_set != set(scope_paths):
+                return die("scope manifest 文件集与实审集不一致："
+                           f"manifest={sorted(manifest_set)} / reviewed={sorted(set(scope_paths))}")
+            if scope_core.scope_digest(scope_manifest["files"]) != scope_manifest["scope_sha256"]:
+                return die("scope manifest 内部摘要不一致（scope_sha256 与 files 不匹配）")
+            ok, _current, diffs = scope_core.verify_manifest(root, scope_manifest)
+            if not ok:
+                return die("scope manifest 与当前文件内容不一致：" + "；".join(diffs[:3]))
+            if len(scope_paths) != reviewed:
+                return die(f"v4 实审集 {len(scope_paths)} 个 ≠ reviewed {reviewed}"
+                           "（scope 必须覆盖实审集）")
+        except scope_core.ScopeError as exc:
+            return die(str(exc))
+
+    # 上一轮报告的 scope（用于「受控降级」：用户确认内容漂移后，本轮标记 reviewed=false）
+    previous_scope: str | None = None
+    prev_review = root / args.out / "review.json"
+    if prev_review.is_file():
+        try:
+            prev = json.loads(prev_review.read_text(encoding="utf-8"))
+            prev_scope = prev.get("review_scope") if isinstance(prev, dict) else None
+            if isinstance(prev_scope, dict) and isinstance(prev_scope.get("sha256"), str):
+                previous_scope = prev_scope["sha256"].strip() or None
+        except (OSError, json.JSONDecodeError):
+            previous_scope = None
+    drift_record: dict | None = None
+    if args.accept_scope_drift:
+        if scope_manifest is None:
+            return die("--accept-scope-drift 需要 --scope-manifest")
+        if previous_scope is None:
+            return die("--accept-scope-drift 需要上一轮 review.json 的 review_scope.sha256")
+        if args.accept_scope_drift != scope_manifest["scope_sha256"]:
+            return die("--accept-scope-drift 与当前 manifest 的 scope_sha256 不一致")
+        if previous_scope == scope_manifest["scope_sha256"]:
+            return die("内容未变化，无需接受漂移")
+        drift_record = {"previous_sha256": previous_scope,
+                        "current_sha256": scope_manifest["scope_sha256"],
+                        "accepted_by": args.accept_by,
+                        "accepted_at": scope_core.now_iso(),
+                        "reason": args.accept_reason,
+                        "reviewed": False}
+
     delta_view = {"schema_version": schema_version, "delta_only": args.delta_only,
                   "head_sha": head_sha, "reviewed_files": reviewed_files,
                   "reviewed": reviewed, "expected": expected,
@@ -289,6 +357,11 @@ def main() -> int:
     findings = outdir / "findings"
     findings.mkdir(parents=True, exist_ok=True)
     unit_file = findings / f"{args.unit}.r{args.round}.json"
+    if scope_manifest is not None:
+        try:
+            scope_core.atomic_write_json(outdir / "scope-manifest.json", scope_manifest)
+        except OSError as exc:
+            return die(f"写 scope-manifest.json 失败：{exc}")
 
     review = {"schema_version": schema_version, "ok": status != "FAIL", "status": status,
               "root": str(root), "scope": args.scope, "unit": args.unit, "round": args.round,
@@ -297,6 +370,12 @@ def main() -> int:
               "cli_warnings": [f"{w.get('file', '?')} [{w.get('type', '?')}] {w.get('message', '')}"
                                for w in warnings],
               "checks": checks, "other": other}
+    if scope_manifest is not None:
+        review["review_scope"] = {"manifest": "scope-manifest.json",
+                                  "sha256": scope_manifest["scope_sha256"],
+                                  "files": scope_manifest["files"]}
+    if drift_record:
+        review["review_scope_drift"] = drift_record
     if cov["present"]:
         review["completed_files"] = cov["completed"]
         review["selected_files"] = selected_files
@@ -349,6 +428,13 @@ def main() -> int:
         lines += [f"- delta：base `{args.base_sha or '—'}` → head `{head_sha or '—'}`；"
                   f"reviewed_files {len(reviewed_files)} 个；对账 WARN {len(all_delta)} 条"]
         lines += [f"  - {issue}" for issue in all_delta]
+    if scope_manifest is not None:
+        lines += [f"- 内容封口：`scope-manifest.json`，{len(scope_manifest['files'])} 个实审文件，"
+                  f"scope_sha256 `{scope_manifest['scope_sha256'][:16]}…`"]
+    if drift_record:
+        lines += [f"- **内容漂移已由用户确认**：`{drift_record['previous_sha256'][:16]}…` → "
+                  f"`{drift_record['current_sha256'][:16]}…`，确认人 `{drift_record['accepted_by']}`，"
+                  f"理由：{drift_record['reason']}（本轮标记 reviewed=false）"]
     lines.append("")
     for level in ("Critical", "Major", "Minor"):
         group = [c for c in checks if c["level"] == level]

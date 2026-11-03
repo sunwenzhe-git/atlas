@@ -44,6 +44,7 @@ if str(HERE.parent) not in sys.path:
 from _support.siblings import load_module  # noqa: E402
 
 review_policy = load_module("review_policy")
+from _support import review_scope_core as scope_core  # noqa: E402
 LEVELS = review_policy.LEVELS
 # §3 必备键 → 期望类型（bool 必须先于 int 判——Python 里 bool 是 int 子类）
 REQUIRED_KEYS: list[tuple[str, type]] = [
@@ -71,7 +72,7 @@ def _is_int(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
-def validate_report(d: Path) -> Result:
+def validate_report(d: Path, scope_manifest: Path | None = None) -> Result:
     res = Result()
     rj = d / "review.json"
     if not rj.is_file():
@@ -113,6 +114,7 @@ def validate_report(d: Path) -> Result:
     schema_version = data.get("schema_version", 1)
     if not isinstance(schema_version, int) or schema_version < 1:
         bad_lv.append("`schema_version` 若存在必须为 ≥ 1 的整数")
+        schema_version = 0
     for i, c in enumerate(checks):
         if not isinstance(c, dict):
             bad_lv.append(f"checks[{i}] 不是对象")
@@ -129,6 +131,8 @@ def validate_report(d: Path) -> Result:
         bad_lv.extend(review_policy.validate_v2_report_fields(data))
         if schema_version >= 3:
             bad_lv.extend(review_policy.validate_v3_report_fields(data))
+        if schema_version >= 4:
+            bad_lv.extend(review_policy.validate_v4_report_fields(data))
         # v2 去重指纹校验：未 fixed 的 finding 不得有重复 fingerprint
         fps: dict[str, int] = {}
         for c in checks:
@@ -195,18 +199,51 @@ def validate_report(d: Path) -> Result:
                 "budget_exceeded —— 预算击穿（§6 第 6 条熔断），结论覆盖面受限")
     else:
         res.add("应审/实审对账（§6 第 8 条）", "PASS", f"应审 {exp} / 实审 {rev}")
+
+    # v4 内容封口（RFC-20261103-01）：
+    #   只对「本轮刚转换产出」的报告复算 —— 调用方给 --scope-manifest 才验；
+    #   存量/旧轮报告不带该参数 ⇒ WARN（不追溯判红，r2 修完 r1 报告不该被追着红）。
+    if schema_version >= 4:
+        reported = data.get("review_scope")
+        reported_sha = reported.get("sha256") if isinstance(reported, dict) else None
+        if scope_manifest is None:
+            res.add("评审范围内容封口（v4）", "WARN",
+                    "未提供 --scope-manifest：scope 未复算（只对本轮新产出报告复算）")
+        else:
+            try:
+                manifest = scope_core.load_manifest(scope_manifest)
+                ok, current, diffs = scope_core.verify_manifest(
+                    Path(str(data.get("root") or ".")), manifest)
+                if reported_sha != manifest.get("scope_sha256"):
+                    res.add("评审范围内容封口（v4）", "FAIL",
+                            "`review_scope.sha256` 与 manifest 不一致")
+                elif not ok:
+                    res.add("评审范围内容封口（v4）", "FAIL",
+                            "实审文件内容已变化：" + "；".join(diffs[:5]))
+                else:
+                    res.add("评审范围内容封口（v4）", "PASS",
+                            f"{len(current['files'])} 个实审文件内容与 manifest 一致")
+            except scope_core.ScopeError as exc:
+                res.add("评审范围内容封口（v4）", "FAIL", str(exc))
+    elif scope_manifest is not None:
+        res.add("评审范围内容封口（v4）", "WARN",
+                "报告 schema < 4，忽略 --scope-manifest")
+    elif data.get("review_scope") is not None:
+        res.add("评审范围内容封口（v4）", "PASS",
+                "旧版本报告带 review_scope（不参与旧版判据）")
     return res
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dir", required=True, help="审查报告目录（含 review.json / README.md）")
+    ap.add_argument("--scope-manifest", help="仅对本轮新产出报告复算：review_scope.py manifest 产物")
     args = ap.parse_args()
     d = Path(args.dir)
     if not d.is_dir():
         print(f"ERROR: 报告目录不存在：{d}", file=sys.stderr)
         return 2
-    res = validate_report(d)
+    res = validate_report(d, Path(args.scope_manifest) if args.scope_manifest else None)
     print(f"validate_review_report @ {d}")
     for c in res.checks:
         line = f"  [{c['level']:<4}] {c['check']}"

@@ -435,7 +435,7 @@ Atlas 坚持**变异证明（Mutation Proving / M 系列钉子测试）**原则�
 
 1. **`testid` 双向集合对账门 (`validate_testids.py`)**：
    * **断言**：用例分片中声明的应然 `testid:` 清单，与前端源码中真实扫描出的 `data-testid` **按页面双向集合严格相等**。漏写控件报 FAIL，多写无用埋点报 FAIL。
-2. **实例 ⑤：实现代码 ⇔ 应然资产独立审查（防漏审；机制与对账门已定形，外部执行器接入中，见 shared/gates.md）**：
+2. **实例 ⑤：实现代码 ⇔ 应然资产独立审查（防漏审；机制与对账门已定形，执行器 `ocr` 已接入，2026-10-31 真实仓副本 r1/r2 首跑已做；产品需求 diff 首跑待首个 Atlas 域实现，见 shared/gates.md）**：
    * 需求实现后、归档收口前，由独立进程执行只读 diff 审查（Fresh Context 隔离；契约与转换器见 scripts/cli_review_convert.py）；
    * **应审 N / 实审 M 严格对账**：实测表明大模型审查大体积 diff 时会悄悄跳过文件；若实际评审文件数 `M < N`，报告至少 `WARN`（不直接阻断），发现 `Critical` 缺陷一票否决。`M` 取 CLI `manifest.coverage.completed`（无 coverage 才回退 summary）。
    * **delta v3**：差量复审记录 `head_sha` 与 `reviewed_files`（coverage completed；无 coverage 用显式 `--reviewed-files`）；`selected`/target/数量不一致只 `WARN`；v2 delta 缺 `head_sha` 只 `WARN`（兼容）。
