@@ -1,0 +1,34 @@
+{
+  "installer": [
+    "bash",
+    "<PKG>/install.sh"
+  ],
+  "runs": [
+    {
+      "args": [
+        "--target",
+        "<ROOT>"
+      ],
+      "exit": 2,
+      "output": [
+        "atlas installer",
+        "  包目录 : <PKG>",
+        "  目标项目: <ROOT>",
+        "",
+        "警告：未探测到任何平台 skill 目录，默认创建 .agents/skills/。",
+        "错误：布局配置非法（<ROOT>/atlas.config.yaml）。",
+        "ERROR: 未知 layout 键：bogus（只允许 assets_root / adr）",
+        "ERROR: 未知 layout 键：bogus（只允许 assets_root / adr）"
+      ]
+    }
+  ],
+  "scenario": "invalid-config",
+  "tree": {
+    "dirs": [
+      ".trellis"
+    ],
+    "files": {
+      "atlas.config.yaml": "6c6cefe4713eb68169624bc08e042c0ed8dcd60af4e8979c6db31aa104a9ca72"
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "installer": [
+    "bash",
+    "<PKG>/install.sh"
+  ],
+  "runs": [
+    {
+      "args": [
+        "--update",
+        "--target",
+        "<ROOT>",
+        "--no-skill",
+        "--no-patch",
+        "--no-wiring"
+      ],
+      "exit": 2,
+      "output": [
+        "atlas updater (刷新工程线束)",
+        "  包目录 : <PKG>",
+        "  目标项目: <ROOT>",
+        "",
+        "  [WARN] 装配触点存在未跟踪项： .atlas/——git 对未跟踪触点无改动基线可保护，",
+        "         摘要不可核（副本无 .atlas/VERSION 或源包摘要不可算）——覆盖自负。",
+        "         副本侧若有未回灌的本地改动，覆盖即丢失：先按 ATLAS-UPSTREAM.md 回灌",
+        "         （scripts/backflow.py 三态对账）再刷新更稳。",
+        "警告：未探测到任何平台 skill 目录，默认创建 .agents/skills/。",
+        "  资产根   : product",
+        "  ADR 根   : product/adr",
+        "",
+        "错误：目标存在未关闭的消融事务（ablation active）；先运行 ablation restore；",
+        "      确需覆盖：--force + ATLAS_ALLOW_ABLATION_OVERWRITE=1（会放弃消融现场）。"
+      ]
+    }
+  ],
+  "scenario": "ablation-active",
+  "tree": {
+    "dirs": [
+      ".atlas",
+      ".trellis"
+    ],
+    "files": {
+      ".atlas/ABLATION": "ccfc20bde1b7de44cd03792bd531427a3c0c3aa9f821db2192aa96259b9e0da6",
+      "a.txt": "7aa7a5359173d05b63cfd682e3c38487f3cb4f7f1d60659fe59fab1505977d4c"
+    }
+  }
+}
