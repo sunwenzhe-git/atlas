@@ -2,7 +2,7 @@
 
 > 提案编号：RFC-20261016-01
 > 提案作者：@Agent 起草（会话内）
-> 关联状态：草案 v2 (Draft) —— v2 已吸收独立评审 7 条 finding（全文见 §6）
+> 关联状态：已落地（`9818502`，`DESIGN.md` D83/D84/D85；原草案 v2 保留为提案期记录）
 > 影响范围：适配器 (adapters) | 脚本工具 (scripts) | 契约正文 (shared/stack-profile.md) | 环契约 (rings/structure) | 门册 (shared/gates.md) | 决策/变更登记 (DESIGN.md / CHANGELOG.md) | 测试 (tests)
 > 关联 issue：`#15`（[tool-semantic] routes 适配器候选文件闸）、`#16`（[tool-semantic] 事实区渲染层多行单元格）、`#17`（[rule-friction] `atlas_check` 包自检门落在不会被落下的目录上；本批附带）｜ 批内 F 号：**F46**（#15）/ **F47**（#16）/ **F48**（#17）；决策号顺延至 **D83–D86**（D82 已被并存批「用例 ID 文法」占用）
 

@@ -2,7 +2,7 @@
 
 > 提案编号：RFC-20261016-03
 > 提案作者：@Agent 起草（会话内）
-> 关联状态：**v2 —— 已吸收独立评审（tech-proposal-reviewer，verdict = 修后采纳）1 条 major + 6 条 minor/suggestion，处置见 §6**
+> 关联状态：已落地（beta.20 批 `2913c4e`，`DESIGN.md` D92 / F54 / F55；原 v2 评审记录保留）
 > 影响范围：装配器 (install.sh) | 出厂测试 (tests/test_install_selfcheck.py) | 门册 (shared/gates.md「装配版本」「tests/test_install_selfcheck.py」两行) | 决策/变更登记 (DESIGN.md)
 > 关联 issue：`#21`（干跑落戳 ⇒ 版本门报「一致」而内容陈旧）、`#22`（`.atlas/` 未跟踪 ⇒ `--update` 守卫恒拒 ⇒ `--force` 被逼成常规）｜批内 F 号：**F54**「干跑不落戳」、**F55**「守卫两语义拆分」；决策号：**D92、D93**（D91 已被批 d7d8699 占用）
 

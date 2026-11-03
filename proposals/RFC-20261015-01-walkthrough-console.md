@@ -2,7 +2,7 @@
 
 > 提案编号：RFC-20261015-01
 > 提案作者：@sunwenzhe-git（Agent 起草）
-> 关联状态：草案 v2 (Draft) —— v2 已吸收评审意见（见文末「修订记录」）
+> 关联状态：已落地（`b801872`，`DESIGN.md` D81；原草案 v2 保留为提案期记录）
 > 影响范围：环契约 (rings) | 脚本工具 (scripts) | 契约措辞 (shared/prd) | 文档 (docs)
 > 关联 issue：`#10`（[design-conflict] 走查与 E2E 控制台断链）
 

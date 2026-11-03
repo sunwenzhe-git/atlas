@@ -2,7 +2,7 @@
 
 > 提案编号：RFC-20261015-02
 > 提案作者：@sunwenzhe-git（Agent 起草）
-> 关联状态：草案 v2 (Draft) —— v2 已吸收评审意见（见文末「修订记录」）
+> 关联状态：已落地（`b801872`，`DESIGN.md` D80；原草案 v2 保留为提案期记录）
 > 影响范围：核心契约 (shared) | 环契约 (rings) | 校验器 (validators) | 脚本工具 (scripts) | 环输入 (apply) | 出厂模板 (templates)
 > 关联 issue：`#11`（[design-conflict] 「登录预置」是硬要求但其取证配置 `app_login` 是可选段且无人产出）
 

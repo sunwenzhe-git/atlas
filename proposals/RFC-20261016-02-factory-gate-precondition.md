@@ -2,7 +2,7 @@
 
 > 提案编号：RFC-20261016-02
 > 提案作者：@Agent 起草（会话内）
-> 关联状态：**v2 —— 已吸收独立评审 1 条 blocking + 2 条 major + 4 条 minor，全部采纳，无驳回**
+> 关联状态：已落地（`d7d8699`，`DESIGN.md` D91；原 v2 评审记录保留）
 > 影响范围：脚本工具 (scripts/atlas_check.py) | 门册 (shared/gates.md) | 决策/变更登记 (DESIGN.md) | 测试 (tests/test_atlas_check.py)
 > 关联 issue：`#17`（**残余部分**；装配面根因已由 RFC-20261016-01 D86/F47 修掉）｜ 批内 F 号：**F53**；决策号：**D91**（D82–D90 已被批 9818502 与此前各批占用）
 
