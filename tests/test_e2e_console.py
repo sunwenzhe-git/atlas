@@ -872,8 +872,24 @@ def test_scripts_hash_excludes_runtime_artifacts_and_whitelists_scripts() -> Non
         (results / "trace.zip").write_bytes(b"trace-bytes")
         (s_dir / "failure.png").write_bytes(b"png-bytes")
         (s_dir / ".last-run.json").write_text("{}", encoding="utf-8")
+        # #31：真实运行目录 `.atlas-run/` 整体是运行产物（results.json / .last-run.json / trace）
+        run_dir = s_dir / ".atlas-run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "results.json").write_text('{"cases": []}\n', encoding="utf-8")
+        (run_dir / "nested").mkdir()
+        (run_dir / "nested" / "case.last-run.json").write_text("{}", encoding="utf-8")
+        (run_dir / "trace.zip").write_bytes(b"run-trace")
         h2 = cons.scripts_hash(root)
         assert h2 == h1, (h1, h2)
+
+        # 逐文件清单与哈希同源：`.atlas-run/` 不得进入 script_file_map
+        files = cons.script_file_map(root)
+        assert "scripts/demo.spec.ts" in files, files
+        assert not any(".atlas-run" in k for k in files), files
+
+        # 运行产物内容变化 => hash 仍不变（不是「只在首次创建时免疫」）
+        (run_dir / "results.json").write_text('{"cases": [{"id": "x"}]}\n', encoding="utf-8")
+        assert cons.scripts_hash(root) == h1
 
         # 修改源码脚本 => hash 变化
         spec.write_text("test('a-modified', async () => {});\n", encoding="utf-8")

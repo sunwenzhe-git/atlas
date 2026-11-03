@@ -126,6 +126,13 @@ def repo_git_dirty(root: Path) -> bool | None:
     return None if out is None else bool(out.strip())
 
 
+# D128 #31：运行期产物目录 / 后缀闭集单源——`scripts_hash` 与 `script_file_map` 共用，
+# 避免两处清单再次漂移。`.atlas-run/`（真实运行目录：`results.json`、`.last-run.json`、trace 等）
+# 整体是运行产物，不参与指纹。
+_RUNTIME_PATH_PARTS = ("test-results", "playwright-report", ".atlas-auth", "node_modules", ".atlas-run")
+_RUNTIME_SUFFIXES = (".trace", ".png", ".webm", ".last-run.json")
+
+
 def scripts_hash(root: Path) -> str | None:
     """计算当前 E2E 生成脚本与前置准备钩子的内容散列（16 字符前缀）。
 
@@ -143,9 +150,9 @@ def scripts_hash(root: Path) -> str | None:
         if not p.is_file():
             continue
         rel = p.relative_to(s_dir).as_posix()
-        if any(part in rel for part in ("test-results", "playwright-report", ".atlas-auth", "node_modules")):
+        if any(part in rel for part in _RUNTIME_PATH_PARTS):
             continue
-        if rel.endswith((".trace", ".png", ".webm", ".last-run.json")):
+        if rel.endswith(_RUNTIME_SUFFIXES):
             continue
         if rel.endswith((".ts", ".js", ".mjs", ".json", ".yaml", ".yml")):
             files.append((f"scripts/{rel}", p))
@@ -178,9 +185,9 @@ def script_file_map(root: Path) -> dict[str, Path]:
         if not p.is_file():
             continue
         rel = p.relative_to(s_dir).as_posix()
-        if any(part in rel for part in ("test-results", "playwright-report", ".atlas-auth", "node_modules")):
+        if any(part in rel for part in _RUNTIME_PATH_PARTS):
             continue
-        if rel.endswith((".trace", ".png", ".webm", ".last-run.json")):
+        if rel.endswith(_RUNTIME_SUFFIXES):
             continue
         if rel.endswith((".ts", ".js", ".mjs", ".json", ".yaml", ".yml")):
             out[f"scripts/{rel}"] = p
