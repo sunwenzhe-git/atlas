@@ -35,27 +35,6 @@
 * **缺陷登记**：`duty-review/bugs.md` #31 —— `results.json` 未被指纹免疫闭集排除（`e2e_console.py` 目录族不含 `.atlas-run`），真跑后控制台已审条目假 `stale`，违反 D128 立条目标；实证 = `REVIEW-20261103-01` Major-2，修复另案。
 * **评审**：`REVIEW-20261103-01/02` 双「修后通过」；必修项已落（`.last-run.json` 归类依据改引 `DESIGN.md:597` + 机器面闭集、`DESIGN.md` D144 补 M149/M150 咬合叙述与 D103 回指改口、判据格逐字节恢复）。
 
-### 🧭 atlas eval 跑分器（RFC-20261103-06）
-
-* **新增**：`atlas eval run/gate`——同一组 case、base/candidate 两 commit 的 `git worktree --detach` 对照跑分，出机读 ledger；case 命令 `shlex`+`shell=False`（与 ablation 同口径）+ 逐 case timeout；worktree 默认清理、`--keep-worktrees` 留现场；同 sha 拒绝。
-* **判据**：回归门只判三条——pass→fail（error/timeout 视 fail 侧）、锚缺失（不静默 SKIP）、gate_green 下降（解析不到 ok/PASS ⇒ null+WARN 跳过）；fail2fail 只 WARN；锚缺失 case 不参与 pass/fail 分类。**不宣称净收益/反事实**；ledger 继承「单项目单环境、不可外推」腿注。
-* **case 源**：注册表只存稳定锚（`DESIGN.md` D 行片段 / pytest 节点）；`bugs.md` 出库即删，不作 case 源。门登记 `shared/gates.md` 2.1（独立 CLI，不进 atlas_check）。
-* **测试**：新增 `tests/test_atlas_eval.py` 18 条；变异 M171（摘 pass→fail）/ M172（摘锚缺失）四段协议各红、逐字节还原。
-* **评审修后（2026-11-03，tech-proposal-reviewer「修后落地」）**：B1 锚收集只按退出码判（节点名含 error 不再被子串误杀，M173）；M1 `--retries` 节拍类复跑确认；M2 `anchor_ok_base` + 新增即红 `new_red` ⇒ FAIL（不再落 f2f-WARN）；M3 worktree 部分失败回滚 + run 前 prune + `--worktree-root`；M5 净贡献措辞 / `--baseline` 幽灵 / 两段 §4.5 合并 / 样例注册表；m4–m8 同批。测试 10 → 18。
-
-### 🧭 实例⑤审查一键编排（RFC-20261103-05）
-
-* **新增**：`atlas review --unit <需求ID> --from <ref> --to <ref>` 把 closeout 步骤 10 的 6 步收成一个入口：inputs（可选）→ 指针化 background → preview 取 N → CLI review → scope manifest（coverage.completed / `--reviewed-files`）→ converter → validator（带 `--scope-manifest`）→ closure。只编排不重写判据；子步失败按原退出码透传；`--dry-run` 只读预览；`--cli` 可覆盖 `impl_review.cli`。
-* **契约/模板**：`shared/stack-profile.md` §2 新增 `impl_review: {cli, llm}`；`templates/stack-profile.yaml` 增注释块；`_support/stack_profile.py` 解析该段；`shared/closeout.md` 步骤 10 增「可用 atlas review」一句（判据正文不复制）。
-* **测试**：新增 `tests/test_atlas_review.py` 13 条（全链 v4 / dry-run 不写盘 / preview 与 review 失败透传 / `llm` 缺 SKIP / `--cli` 覆盖 / delta flags / inputs 失败只 WARN / 指针化 background / **真 CLI flag 形态锁**）；变异 M169（validator 漏带 scope manifest）/ M170（preview N 解析删掉）四段协议已咬合（各红、逐字节还原）。`shared/gates.md` 实例⑤行补一键入口。
-
-### 🧭 评审范围内容封口 + apply 基线（RFC-20261103-01）
-
-* **新增**：`scripts/review_scope.py` + `_support/review_scope_core.py`——对 CLI 实审集生成内容清单（`{path, sha256, status, size}` + 根 `scope_sha256`），支持 `manifest` / `verify` / `baseline` / `baseline-check`；只覆盖实审集（不收全工作区），改一字节/删除必红，只改 mtime 不误伤，绝对路径/`..`/符号链接/目录/缺失文件 exit 2，大文件退 `size_mtime` 并显式标注。
-* **接线**：`review.json` 升 schema v4（`review_scope` 字段；v3 及以下不要求，存量不回扫）；`cli_review_convert.py` 增 `--scope-manifest`（v4 必须，manifest 文件集/内部摘要/stale 内容三面拒产）与 `--accept-scope-drift --accept-by --accept-reason --user-confirmed`（写 `review_scope_drift`，标记 `reviewed=false`）；`validate_review_report.py` 增 `--scope-manifest`（只对**本轮新产出报告**复算；旧轮不带 ⇒ WARN）；`review_closure.py` 增跨轮 `scope_drift` 观察（prior 实审文件变了且未纳入最新实审集 ⇒ WARN，签字确认 ⇒ `scope_drift_accepted`）。
-* **apply 基线**：`review_scope.py baseline` 记录 apply 起始既有 dirty 集到 `.atlas/runs/<unit>/apply-baseline.json`；`baseline-check` 未变化自动排除、与本次改动重叠才 WARN（只告警不阻断，尊重 Trellis 边界）。
-* **测试**：新增 `tests/test_review_scope.py` 9 条；`tests/test_review_report.py` 45 → 51、`tests/test_cli_review_convert.py` 51 → 59、`tests/test_review_closure.py` 42 → 46；变异 M165（校验器复算）/ M166（manifest 文件集对账）/ M167（闭包漂移检测）/ M168（baseline overlap）四段协议待回填。`shared/gates.md` 新增登记行；契约 §3/§11、`docs/concepts/review.md`、`shared/closeout.md` 步骤 10、`docs/map` 计数同步。
-
 ### 🧭 Windows 装配入口 fail-closed + Trellis 探测平台自适（2026-11-03 外部现场）
 
 * **修复**：Windows 原生 PowerShell 下 `atlas init` 用 `which trellis` 判依赖（原生 Windows 没有 `which`）⇒ 已装 Trellis 仍报「未检测到」；随后 `bash` 落到 `C:\Windows\System32\bash.exe`（WSL 中继壳），未装发行版时抛 `execvpe(/bin/bash) failed`，`install.sh` 一步未跑；而 `res.status || 0` 在 spawn 失败（status = null）时还会洗成 0（假成功）。
