@@ -1,7 +1,7 @@
 # Atlas 实现地图(创造者版)
 
 > **读者**:造 Atlas 的人(创造者与后续演化者)。面向**用** Atlas 的人请走 `docs/guide/`。**本目录不进公开站点**(VitePress `srcExclude`,2026-10-25 拍板:私有);文中决策编号(D/M/F 系列)的流水见 `shared/gates.md` 与 `DESIGN.md`。
-> **锚定版本**:v0.2.0-beta.26(2026-10-29 复核)。文中行号以该版本为准,文件路径为仓根相对路径。
+> **锚定版本**:v0.2.0-beta.27(2026-10-29 复核)。文中行号以该版本为准,文件路径为仓根相对路径。
 > **维护纪律**:每次发版时刷新本目录;引用的文件路径与行号锚由 `tests/test_map_anchors.py` 机器校验(锚存活性门,M151–M154);本图只写「现在是什么」,「为什么这么设计」归 `shared/gates.md` / `DESIGN.md` / 决策编号流水。
 > **章节预算**(2026-10-25 拍板):每章 ≤120 行、核心机制 4~7 条、file:line 锚 ≤20 个、演化锚 ≤8 行——锚数即门禁成本,预算是「讲述够用、维护可控」的硬边界。
 
@@ -55,7 +55,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 ### 1. CLI 与装配
 
 - `bin/atlas.js`(438 行):命令面 = `init / update / upgrade / check / review / eval / console / report / version`。`init` 先探测 Trellis(POSIX `which` / Windows `where`;`.trellis/` 缺失时自动 `trellis init`)再调装配器;平台探测拆在 `bin/platform.js`(bash 只认 Git Bash 不回落 WSL 中继壳;Python 按平台探测 `py -3`/`python`/`python3` 并校验 3.10+)。
-- `install.py`(836 行):装配单源(`install.sh` 45 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ tests/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`,落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 64 条 `c()` 自检声明。
+- `install.py`(841 行):装配单源(`install.sh` 58 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ tests/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`,落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 65 条 `c()` 自检声明。
 - `patches/`(4 族):`workflow-plan-apply`(apply 挂进 Trellis 工作流)、`project-wiring`(AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.adapter-out/` / pi 扩展五触点)、`workflow-root-cause`、`workflow-skill-routing`。锚点式版本化补丁,可重放。
 - 对账:`scripts/pkg_digest.py`(摘要算法单点)+ `scripts/backflow.py`(副本⇔源包三态回灌,SOURCE_ONLY 拒绝护栏)。
 
@@ -98,18 +98,18 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 - `scripts/atlas_report.py`:§15 自感知上报(四段式零业务上下文,`--trigger user` 不冒充自动感知)。
 - `scripts/release.py`:发版流程(版本串多处落点 + npm prerelease tag 纪律 + GitHub Release 跟随 tag);发版 skill 为用户级安装,不随源包分发。
 
-## 数字快照(v0.2.0-beta.26)
+## 数字快照(v0.2.0-beta.27)
 
 | 量 | 值 | 出处 |
 |---|---|---|
 | 校验器 | 10(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py:52` |
 | 编排门行 | 9 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 / 消融残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:951`) |
-| 出厂测试文件 | 51 | `tests/` |
+| 出厂测试文件 | 52 | `tests/` |
 | skills | 7(含 frontend-design) | `skills/` |
 | 环 | 3(structure / prd / e2e;原型环 E1 已退役) | `rings/` |
 | 共享契约 | 8 份 | `shared/` |
 | 共享内核 | 11 件 | `_support/` |
-| install.py 自检声明 | 64 条 | `install.py` |
+| install.py 自检声明 | 65 条 | `install.py` |
 | 最大单件 | `scripts/gen_e2e_scripts.py` 2614 行 | — |
 
 ## L1 铺设计划(2026-10-25 定稿)
