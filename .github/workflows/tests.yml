@@ -78,8 +78,9 @@ jobs:
           node bin/atlas.js version
           node bin/atlas.js --help > /dev/null
           node bin/atlas.js upgrade --dry-run | grep -q "atlas-project-harness@latest"
-          node bin/atlas.js apply > /dev/null 2>&1; test $? -eq 2
-          node bin/atlas.js nonexistent-cmd > /dev/null 2>&1; test $? -eq 2
+          # GitHub 的 bash 带 `-eo pipefail`：非零命令会先中断步骤，必须先捕获 rc 再断言
+          rc=0; node bin/atlas.js apply > /dev/null 2>&1 || rc=$?; test "$rc" -eq 2
+          rc=0; node bin/atlas.js nonexistent-cmd > /dev/null 2>&1 || rc=$?; test "$rc" -eq 2
 
       - name: Run CLI and wiring tests
         run: python -m pytest tests/test_cli_commands.py tests/test_project_wiring.py -q -k "not update_dry_run_on_initialized"
@@ -107,30 +108,35 @@ jobs:
       - name: Bare PowerShell init → check → update (dry-run stays zero-write)
         run: |
           $repo = (Get-Location).Path
+          $nodeExe = (Get-Command node).Source
           $tmp = Join-Path $env:RUNNER_TEMP ("atlas-native-" + [guid]::NewGuid().ToString("N"))
           New-Item -ItemType Directory -Force -Path (Join-Path $tmp ".trellis") | Out-Null
-          # 最小 PATH：剔除 Git 目录，证明原生轨不依赖 bash
-          $pythonDir = Split-Path (Get-Command python).Source
-          $nodeExe = (Get-Command node).Source
-          $nodeDir = Split-Path $nodeExe
-          $oldPath = $env:Path
-          $env:Path = "$pythonDir;$env:SystemRoot\System32;$env:SystemRoot;$nodeDir"
+          Write-Host "::group::init"
+          & $nodeExe "$repo\bin\atlas.js" init --target $tmp --assets-root docs
+          if ($LASTEXITCODE -ne 0) { throw "init failed: $LASTEXITCODE" }
+          if (-not (Test-Path (Join-Path $tmp ".atlas\VERSION"))) { throw "VERSION missing" }
+          if (-not (Test-Path (Join-Path $tmp ".atlas\MANIFEST.json"))) { throw "MANIFEST missing" }
+          Write-Host "::endgroup::"
+
+          # 全新脚手架 = 占位符 stack-profile + 无 PRD ⇒ check --fast 按设计 exit 1
+          # （README「占位符替换前 FAIL 属预期」）。这里钉住 fail-closed，而不是假装绿。
+          Write-Host "::group::check --fast (expect fail-closed exit 1)"
+          Push-Location $tmp
           try {
-            & $nodeExe "$repo\bin\atlas.js" init --target $tmp --assets-root docs
-            if ($LASTEXITCODE -ne 0) { throw "init failed: $LASTEXITCODE" }
-            if (-not (Test-Path (Join-Path $tmp ".atlas\VERSION"))) { throw "VERSION missing" }
-            if (-not (Test-Path (Join-Path $tmp ".atlas\MANIFEST.json"))) { throw "MANIFEST missing" }
-            Push-Location $tmp
-            & $nodeExe "$repo\bin\atlas.js" check --fast
-            if ($LASTEXITCODE -ne 0) { throw "check failed: $LASTEXITCODE" }
+            $out = & $nodeExe "$repo\bin\atlas.js" check --fast 2>&1 | Out-String
+            $rc = $LASTEXITCODE
+            Write-Host $out
+            if ($rc -ne 1) { throw "expected fail-closed exit 1 on placeholder profile, got $rc" }
+            if ($out -notmatch "validate_stack_profile") { throw "check output missing validate_stack_profile" }
+
             $before = Get-Content (Join-Path $tmp ".atlas\VERSION") -Raw
             & $nodeExe "$repo\bin\atlas.js" update --dry-run
             if ($LASTEXITCODE -ne 0) { throw "update dry-run failed: $LASTEXITCODE" }
             $after = Get-Content (Join-Path $tmp ".atlas\VERSION") -Raw
             if ($before -ne $after) { throw "dry-run modified .atlas/VERSION" }
-            Pop-Location
           } finally {
-            $env:Path = $oldPath
+            Pop-Location
+            Write-Host "::endgroup::"
           }
 
       - name: GBK console encoding does not crash the installer
@@ -140,7 +146,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path (Join-Path $tmp ".trellis") | Out-Null
           $oldEnc = [Console]::OutputEncoding
           try {
-            [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(936)
+            [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding(936)
             node "$repo\bin\atlas.js" init --target $tmp --assets-root docs
             if ($LASTEXITCODE -ne 0) { throw "init under cp936 failed: $LASTEXITCODE" }
             if (-not (Test-Path (Join-Path $tmp ".atlas\VERSION"))) { throw "VERSION missing" }
