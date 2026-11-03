@@ -4,6 +4,19 @@
 
 ---
 
+## [v0.2.0-beta.28] - 2026-11-03
+
+### 🧭 E2E 就绪触发段（RFC-20261103-07）
+
+* **新增**：`patches/workflow-e2e-trigger/` 补丁族 + `scripts/e2e_trigger.py`——在 Phase 2 最后一轮质量检查之前挂入 E2E 触发段：只做就绪归因并委托既有执行器（`atlas_verify`），不生成脚本、不启动控制台；`atlas_check` 的 E2E 行新增机读 `skip_reason`（五态），人读 detail 与 SKIP 判定不变。
+* **契约/文档**：`apply/reference.md`、`rings/e2e/reference.md`、`shared/gates.md`、`docs/map` 同步。
+* **测试**：`tests/test_e2e_trigger.py`、`tests/test_atlas_check_e2e_skip.py`。
+
+### 🧭 Windows CI 首跑修复 + 文档校准
+
+* **CI**：`windows` 的 CLI exit-code smoke 改为捕获 rc（GitHub bash 的 `-eo pipefail` 会先中断步骤）；job 级加 `PYTHONUTF8=1`（Windows 的 Python 默认 cp1252 解码 node 的 UTF-8 中文输出会崩）；`windows-native` 改为断言全新脚手架的 `check --fast` **fail-closed exit 1**，并用 resolver 确定性断言替换不可靠的 PATH 影子探针。
+* **文档**：RFC-20261103-04 §4.3 真机清单修正（控制字符 / `check --fast` 期望 / CI 描述漂移）；`docs/map` 计数与快照同步。
+
 ## [v0.2.0-beta.27] - 2026-11-03
 ### 🧭 atlas eval 跑分器（RFC-20261103-06）
 
