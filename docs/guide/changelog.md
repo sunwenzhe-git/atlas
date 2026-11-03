@@ -4,7 +4,7 @@
 
 ---
 
-## [Unreleased]
+## [v0.2.0-beta.27] - 2026-11-03
 ### 🧭 atlas eval 跑分器（RFC-20261103-06）
 
 * **新增**：`atlas eval run/gate`——同一组 case、base/candidate 两 commit 的 `git worktree --detach` 对照跑分，出机读 ledger；case 命令 `shlex`+`shell=False`（与 ablation 同口径）+ 逐 case timeout；worktree 默认清理、`--keep-worktrees` 留现场；同 sha 拒绝。
