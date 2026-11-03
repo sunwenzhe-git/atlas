@@ -13,7 +13,7 @@
 - skills：`atlas-structure` / `atlas-prd` / `atlas-e2e` / `atlas-apply`
 - 需求级流程走 `.trellis/workflow.md` 的 `#### 1.6 项目级资产更新`（= `atlas apply <需求ID>`），**实现在其后**
 - 收口 = 相关 E2E 全 `green` + **用户验收走查确认**（`blocked` ⇒ 域标待验收、不判收口）+ 结构事实刷新（`.trellis/config.yaml` 的 `after_archive` hook）
-- **平台口径（Windows）**：契约里的 `python3` 命令在 Windows 用 `python` 替代（装配器与校验器已平台化；Windows 原生 PowerShell/CMD 可直接用，需 Python 3.10+；Git Bash / WSL2 是可选兜底）
+- **平台口径（Windows）**：契约里的 `python3` 命令在 Windows 用 `python` 替代（装配器与校验器已平台化；Windows 原生 PowerShell/CMD 可直接用，需 Python 3.10+；Git Bash / WSL2 是可选兜底）。归档钩子已平台中立（`.atlas/scripts/run_python.js`），跨 OS 无需改写。
 - **撞到「规则本身不合业务」不许静默绕过**：注释规则 / 放宽判定 / `--no-verify` / 假装完成都算绕过——按契约 §15 提炼**设计问题**（缺陷本体 · 抽象触发形态 · 建议方向；**不带产品名 / 业务名词 / 真实数据**）后用 `atlas report` 上报，并告知用户 + 给当前阶段最优临时推进方案（`.atlas/shared/global-rules.md` §15）。用户说「这不合理」是同一类。
 
 > 本段由 `atlas/install.py` 幂等维护（区块可重放）。请勿手改；改契约请改 atlas 源包后重跑 `atlas init`。

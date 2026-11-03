@@ -137,6 +137,7 @@
         "  [dry-run] check atlas 自检器",
         "  [dry-run] check 消融事务工具",
         "  [dry-run] check E2E 评审控制台",
+        "  [dry-run] check Python 启动器（钩子平台中立）",
         "  [dry-run] check 控制台静态资源",
         "  [dry-run] check 适配器脚手架",
         "  [dry-run] check 适配器指南",

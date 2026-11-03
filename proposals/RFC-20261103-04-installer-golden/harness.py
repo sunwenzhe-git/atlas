@@ -184,6 +184,22 @@ def sc_dry_run_fresh(ctx: Ctx) -> None:
     ctx.run(["--force", "--dry-run", "--target", str(ctx.root)], expect=0)
 
 
+def sc_dry_run_trellis(ctx: Ctx) -> None:
+    """F54 补洞（2026-11-03）：干跑不得执行 `trellis init`（即使 trellis 可执行）。
+
+    stub 的 `trellis init` 会在 cwd 造 `.trellis/fake.txt` —— 旧路径会在干跑里真执行，
+    新路径（--dry-run 闸）只打印跳过提示。快照能直接看出 .trellis 是否被写。
+    """
+    bindir = ctx.tmp / "fakebin"
+    bindir.mkdir()
+    stub = bindir / "trellis"
+    stub.write_text("#!/bin/sh\nmkdir -p .trellis && echo fake > .trellis/fake.txt\n")
+    stub.chmod(0o755)
+    ctx.env["PATH"] = f"{bindir}:{ctx.env['PATH']}"
+    ctx.run(["--force", "--dry-run", "--target", str(ctx.root), "--assets-root", "docs"],
+            expect=0)
+
+
 def _seed_assembled_tracked(ctx: Ctx) -> None:
     (ctx.root / ".atlas" / "scripts").mkdir(parents=True)
     (ctx.root / ".atlas" / "VERSION").write_text("fixture-stamp\nwhen\nnowhere\n", encoding="utf-8")
@@ -262,6 +278,7 @@ SCENARIOS = {
     "fresh": sc_fresh,
     "update": sc_update,
     "dry-run-fresh": sc_dry_run_fresh,
+    "dry-run-trellis": sc_dry_run_trellis,
     "guard-dirty": sc_guard_dirty,
     "guard-untracked": sc_guard_untracked,
     "ablation-active": sc_ablation_active,

@@ -266,7 +266,7 @@ def test_wire_config_respects_explicit_auto_commit() -> None:
         cfg.write_text(
             "session_auto_commit: true\n"
             "hooks:\n  after_archive:\n"
-            '    - "python3 .atlas/scripts/refresh_structure.py --root . --chain"\n',
+            '    - "node .atlas/scripts/run_python.js .atlas/scripts/refresh_structure.py --root . --chain"\n',
             encoding="utf-8")
         res = wiring.wire_config(root)
         assert res["status"] == "skipped", res

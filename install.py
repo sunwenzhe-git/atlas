@@ -283,8 +283,12 @@ def main() -> None:
 
     if not os.path.isdir(os.path.join(TARGET, ".trellis")):
         if shutil.which("trellis"):
-            say("提示：目标项目尚未初始化 Trellis，尝试自动执行 trellis init...")
-            subprocess.run(["trellis", "init"], cwd=TARGET, check=False)
+            if DRY_RUN:
+                # F54 补洞（2026-11-03）：干跑零落盘——trellis init 会写 .trellis/，跳过。
+                say("提示：目标项目尚未初始化 Trellis（--dry-run：跳过 trellis init，不落盘）。")
+            else:
+                say("提示：目标项目尚未初始化 Trellis，尝试自动执行 trellis init...")
+                subprocess.run(["trellis", "init"], cwd=TARGET, check=False)
     if not os.path.isdir(os.path.join(TARGET, ".trellis")):
         say("警告：目标项目没有 .trellis/（未初始化 Trellis）。")
         say("      atlas 的需求级衔接依赖 Trellis，请先在目标项目执行 trellis init。")
@@ -695,6 +699,7 @@ def main() -> None:
     c("atlas 自检器", f"{atlas_dest}/scripts/atlas_check.py")
     c("消融事务工具", f"{atlas_dest}/scripts/ablation.py")
     c("E2E 评审控制台", f"{atlas_dest}/scripts/e2e_console.py")
+    c("Python 启动器（钩子平台中立）", f"{atlas_dest}/scripts/run_python.js")
     c("控制台静态资源", f"{atlas_dest}/templates/e2e/console/index.html")
     c("适配器脚手架", f"{atlas_dest}/adapters/_scaffold.py")
     c("适配器指南", f"{atlas_dest}/adapters/README.md")

@@ -183,9 +183,10 @@ atlas update --dry-run      # 期望 exit 0，且 .atlas\VERSION 内容不变
 
 ---
 
-## 6. 未决问题（需拍板）
+## 6. 已拍板（2026-11-03）
 
-1. **Git Bash 的正式口径**：继续 best-effort，还是随 C 一起升为正式支持？升格需真机 + CI 双绿。
-2. **`--dry-run` 的 `trellis init` 语义**：保持现状（会写 `.trellis/`）还是顺手修成真零落盘？影响 golden 基线。
-3. **钩子的跨 OS 共享策略**：接受「换平台后跑一次 `atlas update` 归一」，还是引入平台无关启动器（评审已否决启动器，倾向前者）。
-4. **实施时机**：是否下一批就做，还是等 Windows 用户量再确认一轮。评审建议：不等用户量，下一批动。
+1. **Git Bash 口径**：定为「**可用（可选兜底）**」，不升正式。`install.sh` wrapper 已做解释器探测（`ATLAS_PYTHON` > `python3` > `python`），Git Bash 不再需要额外造 `python3` 别名；正式标签等真机复验。
+2. **`--dry-run` 的 `trellis init` 语义**：选 **B（真零落盘）**——干跑只打印 `--dry-run：跳过 trellis init，不落盘`，不执行；golden 新增 `dry-run-trellis` 场景（假 trellis 会造 `.trellis/`，快照证明未执行）。
+3. **钩子跨 OS 策略**：选 **B（平台无关启动器）**——新增 `scripts/run_python.js`（Node 启动器，运行时解析 Python 3.10+ 并转发 argv/退出码）；钩子命令统一为 `node .atlas/scripts/run_python.js .atlas/scripts/refresh_structure.py --root . --chain`，跨 OS 同一串可用。`apply-wiring.py` 自动把旧形态（`python3`/`python`/`py -3`）就地升级，不双注册。**注**：此选项此前被评审判为过度设计（倾向「换 OS 跑一次 update」），用户 2026-11-03 拍板选 B——理由是 config.yaml 是 git 跟踪的，跨 OS 协作场景下「记得跑 update」不可靠。代价 = 多一个 92 行启动器 + 一条自检（63→65 中 +1）。
+4. **发布口径**：选 **B（beta 级支持）**——README 矩阵标「支持（beta，待真机复验后转正）」；发布说明同口径；真机按 §4.3 清单通过后去掉 beta 字样。
+5. **实施时机**：**已完成**（2026-11-03 当批）。

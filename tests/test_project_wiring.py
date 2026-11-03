@@ -25,9 +25,9 @@ APPLIER = PKG / "apply-wiring.py"
 SNIPPET = PKG / "agent-pointer.md"
 REAL_CONFIG = REPO / "codebases" / ".trellis" / "config.yaml"
 
-HOOK_PY = "python" if sys.platform == "win32" else "python3"
-FOREIGN_PY = "python3" if sys.platform == "win32" else "python"
-HOOK_CMD = f"{HOOK_PY} .atlas/scripts/refresh_structure.py --root . --chain"
+HOOK_CORE = ".atlas/scripts/refresh_structure.py --root ."
+# 2026-11-03（RFC-20261103-04 §6 决策 3）：钩子改为平台无关启动器形态。
+HOOK_CMD = f"node .atlas/scripts/run_python.js {HOOK_CORE} --chain"
 A_START = "<!-- ATLAS:START -->"
 A_END = "<!-- ATLAS:END -->"
 T_END = "<!-- TRELLIS:END -->"
@@ -61,9 +61,9 @@ CONFIG_WITH_AFTER_FINISH = """hooks:
     - "echo old"
 """
 
-CONFIG_FOREIGN_INTERPRETER = f"""hooks:
+CONFIG_LEGACY_PYTHON = f"""hooks:
   after_archive:
-    - "{FOREIGN_PY} .atlas/scripts/refresh_structure.py --root . --chain"
+    - "python3 {HOOK_CORE} --chain"
 """
 
 CONFIG_APPLY_TAIL = """hooks:
@@ -216,21 +216,21 @@ def test_config_idempotent() -> None:
         assert "applied=0" in r2.stdout and "errors=0" in r2.stdout, r2.stdout
 
 
-def test_config_retargets_foreign_interpreter_without_duplicate() -> None:
-    """跨 OS 重跑：存量 `python` 钩子在 POSIX 上归一到 python3，且不得双注册。
+def test_config_upgrades_legacy_hook_without_duplicate() -> None:
+    """旧解释器形态（python3/python）⇒ 就地升级为平台无关启动器，且不得双注册。
 
-    钩子由 Trellis 以 shell=True 执行：macOS 装配写 `python3`、Windows 写 `python`。
-    判据若拿整串命令比，换平台重跑就会再加一条 ⇒ refresh 跑两遍。
+    钩子写在 git 跟踪的 config.yaml 里：旧形态在另一端 OS 必坏（python3 在 Windows
+    只命中商店 stub；python 在 POSIX 常缺席）。update 时就地升级，重跑幂等。
     """
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        f = write(tmp, ".trellis/config.yaml", CONFIG_FOREIGN_INTERPRETER)
+        f = write(tmp, ".trellis/config.yaml", CONFIG_LEGACY_PYTHON)
         r = run(tmp, "--apply")
         assert r.returncode == 0, r.stdout
         text = f.read_text(encoding="utf-8")
         assert HOOK_CMD in text
-        assert f'"{FOREIGN_PY} .atlas/scripts/refresh_structure.py' not in text
-        assert text.count("refresh_structure.py") == 1, "解释器归一时不得双注册"
+        assert f'"python3 {HOOK_CORE}' not in text
+        assert text.count("refresh_structure.py") == 1, "升级时不得双注册"
         # 归一后重跑必须字节不变
         before = f.read_text(encoding="utf-8")
         r2 = run(tmp, "--apply")
@@ -265,8 +265,8 @@ def test_config_custom_refresh_tail_skipped() -> None:
         assert "自定义 refresh hook" in r.stdout, r.stdout
 
 
-def test_hook_command_is_platform_aware() -> None:
-    """win32 写 `python`（cmd.exe 里 python3 只命中商店 stub），POSIX 写 `python3`。"""
+def test_hook_command_is_platform_neutral() -> None:
+    """同一串钩子命令跨 OS 成立：由 Node 启动器运行时解析 Python 3.10+。"""
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("apply_wiring_mod", APPLIER)
@@ -275,14 +275,17 @@ def test_hook_command_is_platform_aware() -> None:
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
 
     core = ".atlas/scripts/refresh_structure.py --root ."
-    assert mod.hook_cmd("win32") == f"python {core} --chain"
-    assert mod.hook_cmd("linux") == f"python3 {core} --chain"
-    assert mod._retarget_hook_line(
-        f'    - "python3 {core} --chain"', "python"
-    ) == f'    - "python {core} --chain"'
-    # 自定义包装 / 两段式 / 绝对路径解释器一律不猜
-    assert mod._retarget_hook_line(f'    - "py -3 {core} --chain"', "python") is None
-    assert mod._retarget_hook_line(f'    - "C:/Python312/python.exe {core} --chain"', "python3") is None
+    assert mod.HOOK_CMD == f"node .atlas/scripts/run_python.js {core} --chain"
+    assert "python3" not in mod.HOOK_CMD and "python " not in mod.HOOK_CMD
+    for legacy in (f'    - "python3 {core} --chain"',
+                   f'    - "python {core} --chain"',
+                   f'    - "py -3 {core} --chain"',
+                   f'    - "python.exe {core} --chain"'):
+        assert mod._normalize_hook_line(legacy) == \
+            f'    - "node .atlas/scripts/run_python.js {core} --chain"'
+    # 已是启动器 ⇒ 幂等；绝对路径解释器 ⇒ 不猜
+    assert mod._normalize_hook_line(mod.HOOK_CMD) == mod.HOOK_CMD
+    assert mod._normalize_hook_line(f'    - "C:/Python312/python.exe {core} --chain"') is None
 
 
 def test_dry_run_does_not_write() -> None:
@@ -312,22 +315,23 @@ def test_gitignore_fifth_touchpoint_appends_idempotently() -> None:
         assert gi.read_text(encoding="utf-8") == "node_modules/\n.adapter-out/\n"
 
 
-def test_real_config_already_wired() -> None:
-    """真实 codebases 配置已含 hook → 应 skipped（守护重复登记）。"""
-    if sys.platform == "win32":
-        print("skip: 真实配置是 POSIX 口径（python3），Windows 上 retarget 属预期改写")
-        return
+def test_real_config_wiring_is_idempotent() -> None:
+    """真实 codebases 配置：无论旧形态还是启动器形态，升级一次后重跑字节不变。"""
     if not REAL_CONFIG.is_file():
         print("skip: codebases/.trellis/config.yaml 不存在")
         return
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         f = write(tmp, ".trellis/config.yaml", REAL_CONFIG.read_text(encoding="utf-8"))
+        r1 = run(tmp, "--apply")
+        assert r1.returncode == 0, r1.stdout
+        text = f.read_text(encoding="utf-8")
+        assert text.count("refresh_structure.py") == 1, text
         before = f.read_text(encoding="utf-8")
-        r = run(tmp, "--apply")
-        assert r.returncode == 0, r.stdout
+        r2 = run(tmp, "--apply")
+        assert r2.returncode == 0, r2.stdout
         assert f.read_text(encoding="utf-8") == before
-        assert "skipped=1" in r.stdout, r.stdout
+        assert "applied=0" in r2.stdout and "errors=0" in r2.stdout, r2.stdout
 
 
 def main() -> int:
@@ -341,13 +345,13 @@ def main() -> int:
         test_config_insert_into_existing_hooks,
         test_config_migrates_legacy_after_finish,
         test_config_idempotent,
-        test_config_retargets_foreign_interpreter_without_duplicate,
+        test_config_upgrades_legacy_hook_without_duplicate,
         test_config_apply_tail_normalized_to_chain,
         test_config_custom_refresh_tail_skipped,
-        test_hook_command_is_platform_aware,
+        test_hook_command_is_platform_neutral,
         test_dry_run_does_not_write,
         test_gitignore_fifth_touchpoint_appends_idempotently,
-        test_real_config_already_wired,
+        test_real_config_wiring_is_idempotent,
     ]
     failed = 0
     for t in tests:

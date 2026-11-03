@@ -77,6 +77,14 @@
 * **文档**：`AGENTS.md` 指针段加平台约定一行（Windows 用 `python` 替代 `python3`）；README 增加「平台支持矩阵」（macOS/Linux、Windows 原生、Git Bash、WSL2、无 Python fail-closed 五档）；RFC §4.3 附外部用户 5 分钟真机验收清单。
 * **待办**：真机一次 bare PowerShell 全流程（中文 locale / 企业策略 / 无 Python 裸机文案）；CI 推送后才会真跑。
 
+### 🧭 Windows §6 四项拍板落地（Git Bash 探测 / dry-run 零落盘 / 钩子启动器 / beta 口径）
+
+* **Git Bash**：`install.sh` wrapper 自动探测解释器（`ATLAS_PYTHON` > `python3` > `python`），不再要求额外造 `python3` 别名；口径定为「可用（可选兜底）」。
+* **`--dry-run`**：干跑不再执行 `trellis init`（此前会写 `.trellis/`），只打印跳过提示；golden 新增 `dry-run-trellis` 场景（假 trellis 会造目录，快照证明未执行），9 场景基线全绿。
+* **钩子平台中立（选 B）**：新增 `scripts/run_python.js`（92 行，运行时解析 Python 3.10+、剔除 WindowsApps stub、转发 argv/退出码、强制 `PYTHONUTF8=1`）；`.trellis/config.yaml` 钩子统一为 `node .atlas/scripts/run_python.js .atlas/scripts/refresh_structure.py --root . --chain`，跨 OS 同一串可用；`apply-wiring.py` 自动把旧 `python3`/`python`/`py -3` 形态就地升级，不双注册。自检 65 条（+Python 启动器）。
+* **发布口径**：README 矩阵标 Windows 原生「支持（beta，待真机复验后转正）」，发布说明同口径；真机通过后去 beta。
+* **测试**：`tests/test_run_python_launcher.py` 4 条（argv/退出码/缺参数/UTF-8）；`test_project_wiring.py` 改为启动器语义（16 条）；全量跑绿。RFC §6 由「未决」改为「已拍板」。
+
 ## [v0.2.0-beta.26] - 2026-11-02
 
 ### 🧭 签字与取证必须是非空字符串（RFC-20261101-03）

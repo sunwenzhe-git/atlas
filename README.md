@@ -159,10 +159,12 @@ Atlas 的核心由 **三环（Rings）** 构筑成不可逾越的应然防线：
 | 环境 | 支持级别 | 前置条件 |
 |---|---|---|
 | macOS / Linux | 正式支持 | Node.js 18+、Python 3.10+ |
-| Windows 原生（PowerShell / CMD） | 正式支持 | Node.js 18+、Python 3.10+（`py -3` 或真实 `python`；`atlas init` 自动探测并校验版本） |
-| Windows + Git Bash | 可用（可选兜底） | 同上；`install.sh` 薄 wrapper 用 `python3`，需在 Git Bash 中可解析 |
+| Windows 原生（PowerShell / CMD） | 支持（**beta**，待真机复验后转正） | Node.js 18+、Python 3.10+（`py -3` 或真实 `python`；`atlas init` 自动探测并校验版本） |
+| Windows + Git Bash | 可用（可选兜底） | 同上；`install.sh` wrapper 自动在 `python3` / `python` 中取可执行者，无需额外条件 |
 | Windows + WSL2 | 可用 | 在发行版内安装 Node.js / Python 3 / Trellis / Atlas（各环境独立，Windows 侧安装不算） |
 | 无 Python 的任何环境 | 不支持（fail-closed） | `atlas init` 退出 2 并给出安装指引，不会半装 |
+
+> 发布口径：Windows 原生轨按 **beta 级支持**发布（CI 已覆盖入口/编码/探测），真机复验（中文 locale、企业策略、无 Python 裸机）通过后转正。
 
 * *(可选)* **CodeGraphContext (cgc)**：**仅后端 / 全栈项目建议安装**（纯前端栈实测近乎零收益，atlas 在确认画像时按栈门控提议、不会向纯前端项目推销）——安装：`uv tool install codegraphcontext`（或 `pip install codegraphcontext`）
 

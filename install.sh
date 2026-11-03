@@ -42,4 +42,17 @@ if [ ! -f "$SCRIPT_DIR/install.py" ]; then
   exit 1
 fi
 
-exec "${ATLAS_PYTHON:-python3}" "$SCRIPT_DIR/install.py" "$@"
+# 解释器探测（Git Bash 里 python.org 只提供 python.exe，没有 python3）：
+#   ATLAS_PYTHON 显式覆盖 > python3 > python；都找不到 ⇒ fail-closed（exit 2）。
+if [ -n "${ATLAS_PYTHON:-}" ]; then
+  PY="$ATLAS_PYTHON"
+elif command -v python3 >/dev/null 2>&1; then
+  PY="python3"
+elif command -v python >/dev/null 2>&1; then
+  PY="python"
+else
+  echo "错误：未找到 python3 / python（装配器需要 Python 3.10+）。" >&2
+  exit 2
+fi
+
+exec "$PY" "$SCRIPT_DIR/install.py" "$@"
