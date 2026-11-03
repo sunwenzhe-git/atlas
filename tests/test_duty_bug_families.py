@@ -44,10 +44,11 @@ PKG_ROOT = Path(__file__).resolve().parents[1]
 FAMILIES = PKG_ROOT / "duty-review" / "families.py"
 BUGS = PKG_ROOT / "duty-review" / "bugs.md"
 
-TODAY = datetime.date(2026, 10, 26)          # D154 落刀日；冻结基线与字段钉都用它，不随时钟漂
+TODAY = datetime.date(2026, 11, 3)           # 2026-11-03 复冻（#31 首条带字段条目入 E2E 段）；冻结基线与字段钉都用它，不随时钟漂
 FROZEN_BASELINE = {                          # (案数上界, 最近日期, verdict) —— 现行 bugs.md 五段
     "structure 逆向（适配器 / 事实区渲染 / 结构环）": (3, "", "族已静默"),
-    "E2E（契约用例 / 生成器 / 校验器）": (16, "2026-10-25", "升室候选"),
+    "E2E（契约用例 / 生成器 / 校验器）": (17, "2026-11-03", "升室候选"),
+    # 2026-11-03：#31（指纹免疫漏 results.json）落库，E2E 段案数 16→17、最近日期 10-25→11-03
     # 2026-10-28：发版口径回归条目关闭并并入同根归纳（当日补录 `c73f8a0` 出库）
     # ⇒ 该族最近日期由 2026-10-27 回落到 2026-10-17；案数不变
     "安装与装配（install.sh / adopt 守卫 / 包自检 / 发版口径）": (3, "2026-10-17", "升室候选"),
@@ -281,7 +282,7 @@ def test_future_field_date_warns_and_falls_back() -> None:
 def test_legal_field_date_still_accepted_after_tightening() -> None:
     """反面包：收紧只挡越界，**合法边界值不得被误伤**。
 
-    正好 = cutoff（`TODAY - WINDOW_DAYS` = 2026-09-26）且行内散文日期更旧 ⇒ 字段日期生效、无 WARN。
+    正好 = cutoff（`TODAY - WINDOW_DAYS` = 2026-10-04）且行内散文日期更旧 ⇒ 字段日期生效、无 WARN。
     """
     fam = _load()
     cutoff = (TODAY - datetime.timedelta(days=fam.WINDOW_DAYS)).isoformat()
@@ -407,14 +408,16 @@ def test_cli_channel_delivers_shape_warn_on_stdout(tmp_path, capsys) -> None:
 
 
 def test_current_real_file_baseline_frozen() -> None:
-    """判据零变更对照钉（D154）：对现行 `bugs.md` 全文（零条目带尾缀），判据三输出逐段冻结
-    = D154 落刀日基线（REVIEW-20261026-07 §3 试跑）——字段制式对旧库**零扰动**且无 WARN。"""
+    """判据零变更对照钉（D154）：对现行 `bugs.md` 全文逐段冻结（2026-11-03 复冻；
+    仅 #31 一条带尾缀，其余条目零字段）——字段制式对旧库**零扰动**且无 WARN。"""
     fam = _load()
     rows = fam.families(BUGS.read_text(encoding="utf-8"), today=TODAY)
     got = {r["name"]: (r["count"], r["last_date"], r["verdict"]) for r in rows}
     assert got == FROZEN_BASELINE, got
-    assert all(r["warns"] == [] for r in rows), "现行全文零尾缀 ⇒ 不应有任何形状 WARN"
-    assert all(r["exact"] is None for r in rows), "现行全文零尾缀 ⇒ 不应出精确病案数列"
+    assert all(r["warns"] == [] for r in rows), "现行全文唯一带字段条目日期合法 ⇒ 不应有任何形状 WARN"
+    exact = {r["name"]: r["exact"] for r in rows}
+    assert exact["E2E（契约用例 / 生成器 / 校验器）"] == 1, exact   # #31 是唯一带字段条目
+    assert all(v is None for k, v in exact.items() if k != "E2E（契约用例 / 生成器 / 校验器）"), exact
 
 
 # ---------------------------------------------------------------------------
@@ -432,7 +435,7 @@ def test_holdout_pointer_line_is_judgment_neutral() -> None:
     base = (
         "## 指针段\n"
         "- 同根归纳：同属一族\n"
-        "- #601 案甲 2026-10-01\n"
+        "- #601 案甲 2026-10-20\n"
         "- #602 案乙\n"
         "- #603 案丙\n"
     )
@@ -440,7 +443,7 @@ def test_holdout_pointer_line_is_judgment_neutral() -> None:
     dirty_date = base + "- 留出验证：RFC-20261026-03（2026-10-26）\n"
     dirty_id = base + "- 留出验证：RFC-20261026-03 / REVIEW-20261026-06 / #99\n"
     b, l, d, i = (fam.families(t, today=TODAY)[0] for t in (base, legal, dirty_date, dirty_id))
-    assert (b["count"], b["last_date"], b["verdict"]) == (3, "2026-10-01", "升室候选"), b
+    assert (b["count"], b["last_date"], b["verdict"]) == (3, "2026-10-20", "升室候选"), b
     assert (l["count"], l["last_date"], l["verdict"]) == (b["count"], b["last_date"], b["verdict"]), \
         "合规指针行不得改变三值"
     assert d["last_date"] == "2026-10-26" and d["last_date"] != b["last_date"], \
