@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "gate_command": null,
+  "cases": [
+    {"id": "eval-C2-e2e-runner", "kind": "bug", "anchor": "DESIGN.md#| D105 |",
+     "command": "python3 -m pytest tests/test_atlas_check.py::test_e2e -q"},
+    {"id": "eval-M171-p2f", "kind": "mutation",
+     "anchor": "tests/test_atlas_eval.py::test_gate_regression_alone_fails",
+     "command": "python3 -m pytest tests/test_atlas_eval.py::test_gate_regression_alone_fails -q"}
+  ]
+}

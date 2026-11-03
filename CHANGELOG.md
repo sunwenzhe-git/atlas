@@ -11,7 +11,8 @@
 * **新增**：`atlas eval run/gate`——同一组 case、base/candidate 两 commit 的 `git worktree --detach` 对照跑分，出机读 ledger；case 命令 `shlex`+`shell=False`（与 ablation 同口径）+ 逐 case timeout；worktree 默认清理、`--keep-worktrees` 留现场；同 sha 拒绝。
 * **判据**：回归门只判三条——pass→fail（error/timeout 视 fail 侧）、锚缺失（不静默 SKIP）、gate_green 下降（解析不到 ok/PASS ⇒ null+WARN 跳过）；fail2fail 只 WARN；锚缺失 case 不参与 pass/fail 分类。**不宣称净收益/反事实**；ledger 继承「单项目单环境、不可外推」腿注。
 * **case 源**：注册表只存稳定锚（`DESIGN.md` D 行片段 / pytest 节点）；`bugs.md` 出库即删，不作 case 源。门登记 `shared/gates.md` 2.1（独立 CLI，不进 atlas_check）。
-* **测试**：新增 `tests/test_atlas_eval.py` 10 条；变异 M171（摘 pass→fail）/ M172（摘锚缺失）四段协议各红、逐字节还原。
+* **测试**：新增 `tests/test_atlas_eval.py` 18 条；变异 M171（摘 pass→fail）/ M172（摘锚缺失）四段协议各红、逐字节还原。
+* **评审修后（2026-11-03，tech-proposal-reviewer「修后落地」）**：B1 锚收集只按退出码判（节点名含 error 不再被子串误杀，M173）；M1 `--retries` 节拍类复跑确认；M2 `anchor_ok_base` + 新增即红 `new_red` ⇒ FAIL（不再落 f2f-WARN）；M3 worktree 部分失败回滚 + run 前 prune + `--worktree-root`；M5 净贡献措辞 / `--baseline` 幽灵 / 两段 §4.5 合并 / 样例注册表；m4–m8 同批。测试 10 → 18。
 
 ### 🧭 实例⑤审查一键编排（RFC-20261103-05）
 
