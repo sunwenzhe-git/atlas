@@ -117,8 +117,9 @@ class Ctx:
 def normalize_text(text: str, ctx: Ctx) -> str:
     # 先长路径后短路径：root 在 tmp 内，pkg 可能是 tmp 下的副本。
     # macOS 的 TMPDIR 带 /private 前缀（bash `pwd -P` 会解析出来），两种形态都要替换。
+    # 先替换最长形态（/private 前缀的 realpath），再替换短形态，避免部分替换留尾巴。
     for path, token in ((ctx.root, "<ROOT>"), (ctx.pkg, "<PKG>"), (ctx.tmp, "<TMP>")):
-        for variant in dict.fromkeys([str(path), os.path.realpath(path)]):
+        for variant in dict.fromkeys([os.path.realpath(path), str(path)]):
             text = text.replace(variant, token)
     text = ISO_RE.sub("<TIMESTAMP>", text)
     text = VER_RE.sub("<VERSION>", text)
@@ -127,7 +128,7 @@ def normalize_text(text: str, ctx: Ctx) -> str:
 
 def _bytes_without_env(data: bytes, ctx: Ctx) -> bytes:
     for path, token in ((ctx.root, b"<ROOT>"), (ctx.pkg, b"<PKG>"), (ctx.tmp, b"<TMP>")):
-        for variant in dict.fromkeys([str(path), os.path.realpath(path)]):
+        for variant in dict.fromkeys([os.path.realpath(path), str(path)]):
             data = data.replace(variant.encode(), token)
     return data
 
@@ -139,6 +140,8 @@ def snapshot(ctx: Ctx) -> dict:
         rel = p.relative_to(ctx.root).as_posix()
         if rel == ".git" or rel.startswith(".git/"):
             continue
+        if "__pycache__" in rel.split("/"):
+            continue  # 解释器产物，不是装配器的输出；有无取决于环境，不进快照
         if p.is_dir():
             dirs.append(rel)
             continue
@@ -249,7 +252,8 @@ def sc_missing_layout(ctx: Ctx) -> None:
     )
     (pkg / "_support" / "layout.py").unlink()
     ctx.pkg = pkg
-    ctx.installer = [ctx.installer[0], str(pkg / "install.sh")]
+    # 沿用当前安装器自身的解释器与文件名（bash→install.sh / python→install.py）
+    ctx.installer = [ctx.installer[0], str(pkg / Path(ctx.installer[1]).name)]
     ctx.seed_trellis()
     ctx.run(["--target", str(ctx.root), "--assets-root", "docs"], expect=1)
 
