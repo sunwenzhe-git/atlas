@@ -43,6 +43,7 @@ M102 中间轮重复指纹退回「只留第一条」⇒ `test_intermediate_dupl
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -63,7 +64,10 @@ def finding(fp: str, *, level: str = "Critical", target: str = "a.py:1",
 
 
 def write_report(root: Path, rounds: dict[int, list[dict]], resolves=None,
-                 unit: str = "U", declares: dict[int, list[dict]] | None = None) -> Path:
+                 unit: str = "U", declares: dict[int, list[dict]] | None = None,
+                 scopes: dict[int, dict] | None = None,
+                 latest_extra: dict | None = None,
+                 report_root: Path | None = None) -> Path:
     d = root / "report"
     (d / "findings").mkdir(parents=True, exist_ok=True)
     latest = max(rounds)
@@ -71,11 +75,18 @@ def write_report(root: Path, rounds: dict[int, list[dict]], resolves=None,
         data = {"unit": unit, "round": rnd, "checks": checks, "other": []}
         if declares and rnd in declares:
             data["resolves"] = declares[rnd]
+        if scopes and rnd in scopes:
+            data["review_scope"] = scopes[rnd]
         (d / "findings" / f"{unit}.r{rnd}.json").write_text(
             json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    data = {"unit": unit, "round": latest, "checks": rounds[latest], "other": []}
+    data = {"unit": unit, "round": latest, "checks": rounds[latest], "other": [],
+            "root": str((report_root or root).resolve())}
     if resolves is not None:
         data["resolves"] = resolves
+    if scopes and latest in scopes:
+        data["review_scope"] = scopes[latest]
+    if latest_extra:
+        data.update(latest_extra)
     (d / "review.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     return d
 
@@ -676,3 +687,69 @@ def test_resolves_entry_with_string_signer_closes() -> None:
         p = run(d)
         assert p.returncode == 0 and "PASS" in p.stdout, p.stdout
         assert closure(d)["resolved"][0]["status"] == "false_positive"
+
+
+# ---- 跨轮内容封口（RFC-20261103-01；M167 属本文件）-------------------------------
+
+def sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def scope(path: str, file_sha: str, scope_sha: str) -> dict:
+    return {"manifest": "scope-manifest.json", "sha256": scope_sha,
+            "files": [{"path": path, "sha256": file_sha, "status": "M"}]}
+
+
+def test_scope_drift_unreviewed_warns() -> None:
+    """M167：摘掉漂移检测 ⇒ 本用例红（r1 审过的文件变了，r2 没审当前内容）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "f.txt").write_text("two\n", encoding="utf-8")
+        scopes = {1: scope("f.txt", sha("one\n"), "1" * 64),
+                  2: scope("other.txt", sha("other\n"), "2" * 64)}
+        d = write_report(root, {1: [], 2: []}, scopes=scopes, report_root=root)
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        c = closure(d)
+        assert c["status"] == "WARN" and len(c["scope_drift"]) == 1
+        assert c["scope_drift"][0]["path"] == "f.txt"
+
+
+def test_scope_drift_covered_by_latest_no_warn() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "f.txt").write_text("two\n", encoding="utf-8")
+        scopes = {1: scope("f.txt", sha("one\n"), "1" * 64),
+                  2: scope("f.txt", sha("two\n"), "2" * 64)}
+        d = write_report(root, {1: [], 2: []}, scopes=scopes, report_root=root)
+        p = run(d)
+        assert p.returncode == 0 and "PASS" in p.stdout, p.stdout
+        assert closure(d)["scope_drift"] == []
+
+
+def test_scope_drift_accepted_no_warn() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "f.txt").write_text("two\n", encoding="utf-8")
+        scopes = {1: scope("f.txt", sha("one\n"), "1" * 64),
+                  2: scope("f.txt", sha("two\n"), "2" * 64)}
+        drift = {"previous_sha256": "1" * 64, "current_sha256": "2" * 64,
+                 "accepted_by": "alice", "accepted_at": "2026-11-03T00:00:00+08:00",
+                 "reason": "人工确认接受未复审变化", "reviewed": False}
+        d = write_report(root, {1: [], 2: []}, scopes=scopes, report_root=root,
+                         latest_extra={"review_scope_drift": drift})
+        p = run(d)
+        assert p.returncode == 0 and "PASS" in p.stdout, p.stdout
+        c = closure(d)
+        assert len(c["scope_drift"]) == 0 and len(c["scope_drift_accepted"]) == 1
+
+
+def test_scope_drift_without_latest_scope_warns() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "f.txt").write_text("two\n", encoding="utf-8")
+        scopes = {1: scope("f.txt", sha("one\n"), "1" * 64)}
+        d = write_report(root, {1: [], 2: []}, scopes=scopes, report_root=root)
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        assert "无法做跨轮内容封口比对" in p.stdout

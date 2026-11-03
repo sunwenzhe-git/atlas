@@ -28,6 +28,7 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
   update    安全刷新当前项目中的 .atlas/ 工程线束与平台 Skills 至最新版本
   upgrade   自动拉取 npm 最新全局包升级全局 Atlas CLI
   check     运行项目级资产与门禁全套检查
+  review    实例⑤实现代码独立审查一键编排（preview → CLI review → scope → convert → validate → closure）
   console   启动本地 E2E 用例评审控制台 (http://127.0.0.1:4190)
   report    将流水线设计冲突或缺陷自感知上报至云端设计池
   version   查看当前版本
@@ -42,6 +43,7 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
   atlas upgrade               # 升级全局 CLI 至最新发布版
   atlas upgrade --tag beta    # 升级全局 CLI 至指定的 tag
   atlas check --fast          # 运行快速门禁体检
+  atlas review --unit <ID> --from main --to HEAD  # 实例⑤独立审查一键走全
   atlas console               # 启动可视化 E2E 评审控制台
   atlas report --title "..."  # 上报流水线设计缺陷或规则冲突
 `);
@@ -345,6 +347,20 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
     const targetDir = process.cwd();
     const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_check.py');
     const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_check.py');
+    const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
+
+    const res = runPython([runScript, '--root', targetDir, ...passthroughArgs], {
+      stdio: 'inherit',
+    });
+    exitWithResult(res, 'python');
+    break;
+  }
+
+  case 'review': {
+    const passthroughArgs = args.slice(1);
+    const targetDir = process.cwd();
+    const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_review.py');
+    const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_review.py');
     const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
 
     const res = runPython([runScript, '--root', targetDir, ...passthroughArgs], {

@@ -39,6 +39,7 @@ if str(HERE.parent) not in sys.path:
 from _support.siblings import load_module  # noqa: E402
 
 review_policy = load_module("review_policy")
+from _support import review_scope_core as scope_core  # noqa: E402
 
 # 闭集与取证面单源在 _support/review_policy.py（与转换器的 --resolves 共用同一判据）
 CLOSED = review_policy.RESOLVES_STATUSES
@@ -241,6 +242,7 @@ def base_result(unit: str, latest_round: int, rounds: list[int],
             "rounds": rounds, "prior_relevant": 0,
             "carried": [], "resolved": [], "unaccounted": [],
             "level_downgraded": [], "unknown_resolves": [], "invalid_resolves": [],
+            "scope_drift": [], "scope_drift_accepted": [],
             "warnings": warnings, "status": status}
 
 
@@ -307,6 +309,58 @@ def run(report_dir: Path) -> tuple[str, dict]:
         for _rnd, kind, entry in events.get(item["fingerprint"], []):
             if kind == "check":
                 item["level"] = review_policy.worst_level(item.get("level"), entry.get("level"))
+
+    # ---- 跨轮内容封口（RFC-20261103-01，观察面非门）--------------------------------
+    # 只看「prior 轮审过的文件，现在变了，且最新轮没审当前内容」——这才是未复审变化。
+    # 最新轮自己的 manifest 过期归 validate_review_report --scope-manifest，不在此重复判。
+    scope_drift: list[dict] = []
+    scope_drift_accepted: list[dict] = []
+    scope_unavailable = False
+    root_path = Path(str(root.get("root") or "."))
+    latest_scope = root.get("review_scope") if isinstance(root.get("review_scope"), dict) else None
+    latest_files = {f.get("path"): f.get("sha256")
+                    for f in (latest_scope or {}).get("files", []) if isinstance(f, dict)}
+    drift = root.get("review_scope_drift") if isinstance(root.get("review_scope_drift"), dict) else None
+    accepted_drift = bool(
+        drift and review_policy.signed_str(drift, "accepted_by")
+        and review_policy.signed_str(drift, "reason")
+        and latest_scope and latest_scope.get("sha256") == drift.get("current_sha256"))
+    if latest_scope is not None and root_path.is_dir():
+        for rnd, _path, data in prior_rounds:
+            pscope = data.get("review_scope")
+            if not isinstance(pscope, dict) or not isinstance(pscope.get("files"), list):
+                continue
+            round_drift: list[dict] = []
+            for item in pscope["files"]:
+                if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                    continue
+                rel, old = item["path"], item.get("sha256")
+                try:
+                    cur = scope_core.entry_for(root_path, rel)
+                except scope_core.ScopeError:
+                    cur = {"sha256": scope_core.HASH_ABSENT}
+                if cur.get("sha256") == old:
+                    continue
+                # `review_scope_drift` 明确 reviewed=false：即便最新轮 manifest 覆盖了当前内容，
+                # 也不能当成「已复审」——它是用户确认放行，不是审过。
+                if latest_files.get(rel) == cur.get("sha256") and not accepted_drift:
+                    continue  # 最新轮审了当前内容 ⇒ 已复审
+                round_drift.append({"round": rnd, "path": rel,
+                                    "prior_sha256": old, "current_sha256": cur.get("sha256")})
+            if not round_drift:
+                continue
+            if accepted_drift and pscope.get("sha256") == drift.get("previous_sha256"):
+                scope_drift_accepted.extend(round_drift)
+            else:
+                scope_drift.extend(round_drift)
+                for item in round_drift:
+                    warnings.append(
+                        f"r{item['round']} 的 `{item['path']}` 内容已变化且未纳入最新实审集"
+                        "（未复审变化；重审或走 --accept-scope-drift）")
+    elif latest_scope is None and any(isinstance(d.get("review_scope"), dict)
+                                      for _, _, d in prior_rounds):
+        warnings.append("最新轮无 review_scope，无法做跨轮内容封口比对（旧报告兼容）")
+        scope_unavailable = True
 
     latest_checks = root.get("checks") if isinstance(root.get("checks"), list) else []
     latest_by_fp: dict[str, list[dict]] = {}
@@ -377,13 +431,16 @@ def run(report_dir: Path) -> tuple[str, dict]:
     if prior_shape_errors:
         warnings.extend(f"中间轮 resolves 形状错（该条不作关闭证据）：{e}" for e in prior_shape_errors)
     status = "WARN" if (unaccounted or unknown_resolves or invalid_resolves or orphans
-                        or downgraded or prior_shape_errors or contradictions) else "PASS"
+                        or downgraded or prior_shape_errors or contradictions
+                        or scope_drift or scope_unavailable) else "PASS"
     result = {"schema_version": 1, "unit": unit, "latest_round": latest_round,
               "rounds": [r for r, _, _ in prior_rounds] + [latest_round],
               "prior_relevant": len(prior), "carried": carried, "resolved": resolved,
               "unaccounted": unaccounted, "level_downgraded": downgraded,
               "unknown_resolves": unknown_resolves,
-              "invalid_resolves": invalid_resolves, "warnings": warnings, "status": status}
+              "invalid_resolves": invalid_resolves,
+              "scope_drift": scope_drift, "scope_drift_accepted": scope_drift_accepted,
+              "warnings": warnings, "status": status}
     return status, result
 
 
@@ -392,7 +449,8 @@ def skeleton(result: dict) -> dict:
     return {"by": "",
             "resolves": [{"fingerprint": u["fingerprint"], "status": "", "by": "", "evidence": "",
                           "prior_round": u["prior_round"], "target": u.get("target")}
-                         for u in result["unaccounted"]]}
+                         for u in result["unaccounted"]],
+            "scope_drift": result.get("scope_drift", [])}
 
 
 def main() -> int:
@@ -415,6 +473,7 @@ def main() -> int:
           f"prior {result['prior_relevant']} carried {len(result['carried'])} "
           f"resolved {len(result['resolved'])} unaccounted {len(result['unaccounted'])} "
           f"unknown {len(result['unknown_resolves'])} invalid {len(result['invalid_resolves'])} "
+          f"scope_drift {len(result['scope_drift'])} accepted {len(result['scope_drift_accepted'])} "
           f"warnings {len(result['warnings'])}")
     for w in result["warnings"]:
         print(f"  · {w}")

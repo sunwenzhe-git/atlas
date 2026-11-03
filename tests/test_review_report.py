@@ -25,6 +25,7 @@ M101 `escalation.approved_by` 退回宽松 ⇒ `test_escalation_approved_by_must
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -53,8 +54,8 @@ def mk_report(root: Path, payload, *, readme: bool = True, name: str = "r1") -> 
     return d
 
 
-def run(d: Path) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, str(VR), "--dir", str(d)],
+def run(d: Path, extra: list[str] | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(VR), "--dir", str(d)] + (extra or []),
                           capture_output=True, text=True, timeout=120)
 
 
@@ -507,3 +508,92 @@ def test_blocking_critical_requires_string_signer() -> None:
     assert rp.calculate_status([fake], schema_version=2) == "FAIL"
     # 合法签字只是「不阻断」，Critical 仍把下限抬到 WARN —— 不得静默 PASS
     assert rp.calculate_status([real], schema_version=2) == "WARN"
+
+
+# ---- v4 内容封口（RFC-20261103-01；M165 属本文件）-------------------------------
+
+def _scope_manifest(root: Path, rel: str = "a.ts") -> tuple[dict, Path]:
+    p = root / rel
+    sha = hashlib.sha256(p.read_bytes()).hexdigest()
+    files = [{"path": rel, "status": "M", "sha256": sha,
+              "size": p.stat().st_size, "hash_mode": "sha256"}]
+    digest = hashlib.sha256(f"{rel}\0{sha}\0sha256".encode("utf-8")).hexdigest()
+    manifest = {"schema_version": 1, "generated_at": "2026-11-03T00:00:00+08:00",
+                "root": str(root.resolve()), "base": "", "head": "",
+                "files": files, "scope_sha256": digest}
+    path = root / "scope-manifest.json"
+    path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    return manifest, path
+
+
+def _v4_report(root: Path, manifest: dict, **over) -> Path:
+    payload = {**GOOD, "root": str(root.resolve()), "schema_version": 4,
+               "expected": 1, "reviewed": 1, "checks": [],
+               "review_scope": {"manifest": "scope-manifest.json",
+                                "sha256": manifest["scope_sha256"],
+                                "files": manifest["files"]}}
+    payload.update(over)
+    return mk_report(root, payload)
+
+
+def test_v4_fresh_scope_passes() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "a.ts").write_text("one\n", encoding="utf-8")
+        manifest, path = _scope_manifest(root)
+        d = _v4_report(root, manifest)
+        p = run(d, ["--scope-manifest", str(path)])
+        assert p.returncode == 0, p.stdout
+        assert "[PASS] 评审范围内容封口（v4）" in p.stdout
+
+
+def test_v4_stale_scope_fails() -> None:
+    """M165：摘掉校验器复算 ⇒ 本用例红（评审后改一字节必须 FAIL）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "a.ts").write_text("one\n", encoding="utf-8")
+        manifest, path = _scope_manifest(root)
+        d = _v4_report(root, manifest)
+        (root / "a.ts").write_text("two\n", encoding="utf-8")
+        p = run(d, ["--scope-manifest", str(path)])
+        assert p.returncode == 1 and "内容已变化" in p.stdout, p.stdout
+
+
+def test_v4_without_manifest_warns_not_fails() -> None:
+    """只对本轮新产出报告复算：旧轮/手工复验不带 manifest ⇒ WARN，不追溯判红。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "a.ts").write_text("one\n", encoding="utf-8")
+        manifest, _path = _scope_manifest(root)
+        p = run(_v4_report(root, manifest))
+        assert p.returncode == 0 and "未复算" in p.stdout, p.stdout
+
+
+def test_v4_missing_review_scope_fails() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "a.ts").write_text("one\n", encoding="utf-8")
+        payload = {**GOOD, "root": str(root.resolve()), "schema_version": 4,
+                   "expected": 1, "reviewed": 1, "checks": []}
+        p = run(mk_report(root, payload))
+        assert p.returncode == 1 and "review_scope" in p.stdout, p.stdout
+
+
+def test_v4_scope_count_mismatch_fails() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "a.ts").write_text("one\n", encoding="utf-8")
+        manifest, path = _scope_manifest(root)
+        p = run(_v4_report(root, manifest, reviewed=2, expected=2),
+                ["--scope-manifest", str(path)])
+        assert p.returncode == 1 and "scope 必须覆盖实审集" in p.stdout, p.stdout
+
+
+def test_v3_report_ignores_scope_manifest() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "a.ts").write_text("one\n", encoding="utf-8")
+        manifest, path = _scope_manifest(root)
+        payload = {**GOOD, "root": str(root.resolve()), "schema_version": 3}
+        p = run(mk_report(root, payload), ["--scope-manifest", str(path)])
+        assert p.returncode == 0 and "schema < 4" in p.stdout, p.stdout

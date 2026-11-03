@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### 🧭 实例⑤审查一键编排（RFC-20261103-05）
+
+* **新增**：`atlas review --unit <需求ID> --from <ref> --to <ref>` 把 closeout 步骤 10 的 6 步收成一个入口：inputs（可选）→ 指针化 background → preview 取 N → CLI review → scope manifest（coverage.completed / `--reviewed-files`）→ converter → validator（带 `--scope-manifest`）→ closure。只编排不重写判据；子步失败按原退出码透传；`--dry-run` 只读预览；`--cli` 可覆盖 `impl_review.cli`。
+* **契约/模板**：`shared/stack-profile.md` §2 新增 `impl_review: {cli, llm}`；`templates/stack-profile.yaml` 增注释块；`_support/stack_profile.py` 解析该段；`shared/closeout.md` 步骤 10 增「可用 atlas review」一句（判据正文不复制）。
+* **测试**：新增 `tests/test_atlas_review.py` 13 条（全链 v4 / dry-run 不写盘 / preview 与 review 失败透传 / `llm` 缺 SKIP / `--cli` 覆盖 / delta flags / inputs 失败只 WARN / 指针化 background / **真 CLI flag 形态锁**）；变异 M169（validator 漏带 scope manifest）/ M170（preview N 解析删掉）四段协议已咬合（各红、逐字节还原）。`shared/gates.md` 实例⑤行补一键入口。
+
+### 🧭 评审范围内容封口 + apply 基线（RFC-20261103-01）
+
+* **新增**：`scripts/review_scope.py` + `_support/review_scope_core.py`——对 CLI 实审集生成内容清单（`{path, sha256, status, size}` + 根 `scope_sha256`），支持 `manifest` / `verify` / `baseline` / `baseline-check`；只覆盖实审集（不收全工作区），改一字节/删除必红，只改 mtime 不误伤，绝对路径/`..`/符号链接/目录/缺失文件 exit 2，大文件退 `size_mtime` 并显式标注。
+* **接线**：`review.json` 升 schema v4（`review_scope` 字段；v3 及以下不要求，存量不回扫）；`cli_review_convert.py` 增 `--scope-manifest`（v4 必须，manifest 文件集/内部摘要/stale 内容三面拒产）与 `--accept-scope-drift --accept-by --accept-reason --user-confirmed`（写 `review_scope_drift`，标记 `reviewed=false`）；`validate_review_report.py` 增 `--scope-manifest`（只对**本轮新产出报告**复算；旧轮不带 ⇒ WARN）；`review_closure.py` 增跨轮 `scope_drift` 观察（prior 实审文件变了且未纳入最新实审集 ⇒ WARN，签字确认 ⇒ `scope_drift_accepted`）。
+* **apply 基线**：`review_scope.py baseline` 记录 apply 起始既有 dirty 集到 `.atlas/runs/<unit>/apply-baseline.json`；`baseline-check` 未变化自动排除、与本次改动重叠才 WARN（只告警不阻断，尊重 Trellis 边界）。
+* **测试**：新增 `tests/test_review_scope.py` 9 条；`tests/test_review_report.py` 45 → 51、`tests/test_cli_review_convert.py` 51 → 59、`tests/test_review_closure.py` 42 → 46；变异 M165（校验器复算）/ M166（manifest 文件集对账）/ M167（闭包漂移检测）/ M168（baseline overlap）四段协议待回填。`shared/gates.md` 新增登记行；契约 §3/§11、`docs/concepts/review.md`、`shared/closeout.md` 步骤 10、`docs/map` 计数同步。
+
 ### 🧭 Windows 装配入口 fail-closed + Trellis 探测平台自适（2026-11-03 外部现场）
 
 * **修复**：Windows 原生 PowerShell 下 `atlas init` 用 `which trellis` 判依赖（原生 Windows 没有 `which`）⇒ 已装 Trellis 仍报「未检测到」；随后 `bash` 落到 `C:\Windows\System32\bash.exe`（WSL 中继壳），未装发行版时抛 `execvpe(/bin/bash) failed`，`install.sh` 一步未跑；而 `res.status || 0` 在 spawn 失败（status = null）时还会洗成 0（假成功）。
@@ -625,7 +638,7 @@
   - `refresh` 动词发射**先等后刷**两行：`ATLAS_REFRESH_SETTLE`（默认 0）注入的 `waitForTimeout` 先于 `page.reload()`——节流型自动保存的项目（v3 现场 ≈15s 节流）运行时给落库等待窗，步骤编辑内容不丢。
   - 三条口径：**默认 0 ⇒ 生成物行为与既有契约一致**（毫秒数属项目侧运行时前提，零业务常数进生成器，对齐 `ATLAS_SLOWMO` / `ATLAS_EXPECT_TIMEOUT` 注入先例）；它不是 §5.5「固定 sleep」禁令所指（该禁令禁**用例侧**把共享靶场节拍写死进用例，本行是执行环境配置面）；单一注入面 = 生成物字面内联，无覆盖口。
 * **两案正名入册（0ba3ec3）**：`DESIGN.md` D110 / D111 决策行；契约正文 = `rings/e2e/reference.md` §7.1（准备钩子）+ §5.5 动词表 `refresh` 行（先等后刷）；控制台 docstring 同步；钉 2 条 + 变异 **M94/M95**（四段协议，还原逐字节一致）。
-- **取证**：全量 `pytest tests -q` ⇒ **512 passed / 0 failed / 4 skipped**（beta.24 基线 510 ⇒ +2 钉，无红）。
+- **取证**：全量 `pytest tests -q` ⇒ **513 passed / 0 failed / 4 skipped**（beta.24 基线 510 ⇒ +2 钉，无红）。
 
 ---
 
@@ -673,7 +686,7 @@
 - **全局兜底改为可生效的修复**：不可解析且运行器来自全局 ⇒ 执行器在 Node 的 `node_modules` 搜索路径上补**幂等软链** + 复检，并输出「用了全局什么」；门侧修复成功 ⇒ 降 **`WARN`**（跑得起来，但结论依赖机器全局状态、非项目自足），不可修复 ⇒ `FAIL` 点名真原因。项目自装目录里缺模块 = 项目自身缺口 ⇒ **不修只报**（避免把全局版本混进项目依赖）；链接位被非本工具占用 ⇒ **拒绝覆盖**。
 - `NODE_PATH` 保留（CJS 项目的真通道）但**不再冒充判据**。
 
-**取证**：`pytest tests -q` ⇒ **476 passed / 0 failed / 4 skipped**（beta.22 基线 472 passed ⇒ +4 钉）；`tests/test_atlas_check.py` 24 → **25 条**、`tests/test_e2e_console.py` 9 → **12 条**；变异 **M88**（判据退回「binary 存在即 ok」）/ **M89**（摘软链步）/ **M90**（摘 `global_note`）三枚咬合、还原逐字节一致；`install.sh` 自检 44 → **46 条**（+`_support/pw_runner.py`；并顺手补存量漏登记的 `_support/case_id.py`——它一直在装配面上却不在自检清单里）。
+**取证**：`pytest tests -q` ⇒ **476 passed / 0 failed / 4 skipped**（beta.22 基线 472 passed ⇒ +4 钉）；`tests/test_atlas_check.py` 24 → **25 条**、`tests/test_e2e_console.py` 9 → **13 条**；变异 **M88**（判据退回「binary 存在即 ok」）/ **M89**（摘软链步）/ **M90**（摘 `global_note`）三枚咬合、还原逐字节一致；`install.sh` 自检 44 → **46 条**（+`_support/pw_runner.py`；并顺手补存量漏登记的 `_support/case_id.py`——它一直在装配面上却不在自检清单里）。
 
 **落地文件**：`DESIGN.md`（D101）/ `shared/gates.md`（2.2 真跑行判据与钉 + 2.3 计数行）/ `shared/stack-profile.md`（`e2e.node_modules` 字段语义）/ `rings/e2e/reference.md` §7（运行器前置）/ `_support/pw_runner.py`（新）/ `scripts/atlas_check.py` / `scripts/e2e_console.py` / 两个 tests / `install.sh`。**未做**：未改生成器（生成期代表不了运行机器，运行器可解析性由消费者在起跑前判）。
 

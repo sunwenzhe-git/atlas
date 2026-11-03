@@ -20,9 +20,10 @@ import re
 _DEFAULTS: dict = {
     "product": None, "origin": None, "apps": [], "adapters": {},
     "prototype": {}, "e2e": {}, "graph": None, "backend_test": None,
+    "impl_review": None,
 }
 # 值 = 空映射的顶层段（解析时直接初始化 dict，供后续缩进行填充）
-_DICT_SECTIONS = ("graph", "backend_test")
+_DICT_SECTIONS = ("graph", "backend_test", "impl_review")
 # `e2e` 下「缩进 2 且值为空」开子块的键（§2 e2e 表；`app_login` / `seed` / `mock` / `review`）
 # `query_preset`：宿主注入型 **URL 参数**白名单（2026-10-18，契约 §5.5 / `DESIGN.md` D109），
 # 与 `session_preset`（会话载体）对称：同为「前提面」而非「数据态面」。
@@ -105,7 +106,7 @@ def parse_profile(text: str) -> dict:
             m = re.match(r"^\s+(path|kind|role|stack):\s*(.*?)\s*$", line)
             if m and cur is not None:
                 cur[m.group(1)] = yaml_scalar(m.group(2))
-        elif section in ("adapters", "prototype", "e2e", "backend_test") \
+        elif section in ("adapters", "prototype", "e2e", "backend_test", "impl_review") \
                 or (section == "graph" and isinstance(data["graph"], dict)):
             # 块列表项（`shared/stack-profile.md` §2 的 `e2e.session_preset.keys` 族，2026-10-16）：
             # 形态 = `<键>:` 后跟若干更深缩进的 `- 项`。旧实现不支持 ⇒ 列表头被读成 None。

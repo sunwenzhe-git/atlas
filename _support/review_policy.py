@@ -20,6 +20,9 @@ RESOLVES_EVIDENCE_REQUIRED = ("fixed", "false_positive")
 VERIFICATION_STATUSES = ("confirmed", "rejected", "inconclusive")
 # `success` 是 `ocr scan`（整文件补审通道）的完成态：与 review 通道的 `complete` 同义，两家词表不同源
 CLI_STATUSES = ("complete", "completed", "success", "partial", "failed", "skipped", "unknown")
+# RFC-20261103-01：review_scope 的 64 位小写 hex 与「大文件/删除」两种非内容摘要形态
+SCOPE_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+SCOPE_ENTRY_HASH_RE = re.compile(r"^(?:[0-9a-f]{64}|size_mtime:\d+:\d+|absent)$")
 
 
 def worst_level(left: object, right: object) -> str | None:
@@ -368,4 +371,64 @@ def validate_v3_report_fields(data: dict) -> list[str]:
             errs.append("`reviewed_files` 必须为字符串列表且元素非空")
         elif len(set(rf)) != len(rf):
             errs.append("`reviewed_files` 不得有重复项")
+    return errs
+
+
+def validate_v4_report_fields(data: dict) -> list[str]:
+    """v4 报告：必须有 `review_scope`（内容封口）+ 可选的 `review_scope_drift`（受控降级）。
+
+    v4 只由带 `--scope-manifest` 的新落盘报告产生；v3 及以下不要求本字段（存量兼容）。
+    """
+    errs: list[str] = []
+    scope = data.get("review_scope")
+    if not isinstance(scope, dict):
+        errs.append("v4 报告必须提供 `review_scope` 对象（manifest / sha256 / files）")
+        return errs
+    manifest = scope.get("manifest")
+    if not isinstance(manifest, str) or not manifest.strip():
+        errs.append("`review_scope.manifest` 必须为非空字符串（报告目录内文件名）")
+    sha = scope.get("sha256")
+    if not isinstance(sha, str) or not SCOPE_HASH_RE.fullmatch(sha):
+        errs.append("`review_scope.sha256` 必须为 64 位小写 hex")
+    files = scope.get("files")
+    if not isinstance(files, list) or not files:
+        errs.append("`review_scope.files` 必须为非空数组")
+    else:
+        seen: set[str] = set()
+        for i, item in enumerate(files):
+            if not isinstance(item, dict):
+                errs.append(f"`review_scope.files[{i}]` 必须为对象")
+                continue
+            path = item.get("path")
+            if not isinstance(path, str) or not path.strip():
+                errs.append(f"`review_scope.files[{i}].path` 必须为非空字符串")
+            elif path in seen:
+                errs.append(f"`review_scope.files` 出现重复 path：{path}")
+            else:
+                seen.add(path)
+            entry_sha = item.get("sha256")
+            if not isinstance(entry_sha, str) or not SCOPE_ENTRY_HASH_RE.fullmatch(entry_sha):
+                errs.append(f"`review_scope.files[{i}].sha256` 形状非法"
+                            "（64 hex / size_mtime:<size>:<mtime_ns> / absent）")
+        if isinstance(data.get("reviewed"), int) and len(files) != data["reviewed"]:
+            errs.append(f"`review_scope.files` {len(files)} 个 ≠ reviewed {data['reviewed']}"
+                        "（scope 必须覆盖实审集）")
+        if data.get("delta_only") is True and isinstance(data.get("reviewed_files"), list):
+            scope_paths = {item.get("path") for item in files if isinstance(item, dict)}
+            if scope_paths != set(data["reviewed_files"]):
+                errs.append("`review_scope.files` 与 `reviewed_files` 集合不一致")
+    drift = data.get("review_scope_drift")
+    if drift is not None:
+        if not isinstance(drift, dict):
+            errs.append("`review_scope_drift` 若存在必须为对象")
+        else:
+            for key in ("previous_sha256", "current_sha256"):
+                v = drift.get(key)
+                if not isinstance(v, str) or not SCOPE_HASH_RE.fullmatch(v):
+                    errs.append(f"`review_scope_drift.{key}` 必须为 64 位小写 hex")
+            for key in ("accepted_by", "accepted_at", "reason"):
+                if not signed_str(drift, key):
+                    errs.append(f"`review_scope_drift.{key}` 必须为非空字符串（可追责）")
+            if "reviewed" in drift and not isinstance(drift["reviewed"], bool):
+                errs.append("`review_scope_drift.reviewed` 若存在必须为 bool")
     return errs
