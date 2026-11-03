@@ -74,6 +74,8 @@ def test_cli_update_fails_on_uninitialized_project():
         assert "目标项目尚未装配 Atlas" in res.stderr or "目标项目尚未装配 Atlas" in res.stdout
 
 
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="直接给 bash 传 Windows 临时路径（反斜杠/盘符）；CLI 轨已有路径归一化，Windows 用 CLI 用例覆盖")
 def test_install_sh_update_fails_on_uninitialized_project():
     with tempfile.TemporaryDirectory() as tmpdir:
         res = run_cmd(["bash", str(INSTALL_SH), "--update", "--target", tmpdir])
@@ -81,6 +83,8 @@ def test_install_sh_update_fails_on_uninitialized_project():
         assert "目标项目尚未装配 atlas" in res.stdout or "目标项目尚未装配 atlas" in res.stderr
 
 
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="直接给 bash 传 Windows 临时路径；Windows 用 CLI 用例覆盖")
 def test_install_sh_update_preserves_runs_dir():
     with tempfile.TemporaryDirectory() as tmpdir:
         tmppath = Path(tmpdir)

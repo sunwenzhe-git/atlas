@@ -25,7 +25,9 @@ APPLIER = PKG / "apply-wiring.py"
 SNIPPET = PKG / "agent-pointer.md"
 REAL_CONFIG = REPO / "codebases" / ".trellis" / "config.yaml"
 
-HOOK_CMD = "python3 .atlas/scripts/refresh_structure.py --root . --chain"
+HOOK_PY = "python" if sys.platform == "win32" else "python3"
+FOREIGN_PY = "python3" if sys.platform == "win32" else "python"
+HOOK_CMD = f"{HOOK_PY} .atlas/scripts/refresh_structure.py --root . --chain"
 A_START = "<!-- ATLAS:START -->"
 A_END = "<!-- ATLAS:END -->"
 T_END = "<!-- TRELLIS:END -->"
@@ -57,6 +59,21 @@ max_journal_lines: 2000
 CONFIG_WITH_AFTER_FINISH = """hooks:
   after_finish:
     - "echo old"
+"""
+
+CONFIG_FOREIGN_INTERPRETER = f"""hooks:
+  after_archive:
+    - "{FOREIGN_PY} .atlas/scripts/refresh_structure.py --root . --chain"
+"""
+
+CONFIG_APPLY_TAIL = """hooks:
+  after_archive:
+    - "python3 .atlas/scripts/refresh_structure.py --root . --apply"
+"""
+
+CONFIG_CUSTOM_TAIL = """hooks:
+  after_archive:
+    - "python3 .atlas/scripts/refresh_structure.py --root . --custom"
 """
 
 
@@ -199,6 +216,75 @@ def test_config_idempotent() -> None:
         assert "applied=0" in r2.stdout and "errors=0" in r2.stdout, r2.stdout
 
 
+def test_config_retargets_foreign_interpreter_without_duplicate() -> None:
+    """跨 OS 重跑：存量 `python` 钩子在 POSIX 上归一到 python3，且不得双注册。
+
+    钩子由 Trellis 以 shell=True 执行：macOS 装配写 `python3`、Windows 写 `python`。
+    判据若拿整串命令比，换平台重跑就会再加一条 ⇒ refresh 跑两遍。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        f = write(tmp, ".trellis/config.yaml", CONFIG_FOREIGN_INTERPRETER)
+        r = run(tmp, "--apply")
+        assert r.returncode == 0, r.stdout
+        text = f.read_text(encoding="utf-8")
+        assert HOOK_CMD in text
+        assert f'"{FOREIGN_PY} .atlas/scripts/refresh_structure.py' not in text
+        assert text.count("refresh_structure.py") == 1, "解释器归一时不得双注册"
+        # 归一后重跑必须字节不变
+        before = f.read_text(encoding="utf-8")
+        r2 = run(tmp, "--apply")
+        assert r2.returncode == 0, r2.stdout
+        assert f.read_text(encoding="utf-8") == before
+        assert "applied=0" in r2.stdout and "errors=0" in r2.stdout, r2.stdout
+
+
+def test_config_apply_tail_normalized_to_chain() -> None:
+    """after_archive 里旧 `--apply` 尾参要迁成 `--chain`，不能与既有条目并存。"""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        f = write(tmp, ".trellis/config.yaml", CONFIG_APPLY_TAIL)
+        r = run(tmp, "--apply")
+        assert r.returncode == 0, r.stdout
+        text = f.read_text(encoding="utf-8")
+        assert HOOK_CMD in text
+        assert "--apply" not in text, text
+        assert text.count("refresh_structure.py") == 1
+        assert top_hooks_count(text) == 1
+
+
+def test_config_custom_refresh_tail_skipped() -> None:
+    """自定义尾参的 refresh hook 不猜、不覆盖、不重复登记。"""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        f = write(tmp, ".trellis/config.yaml", CONFIG_CUSTOM_TAIL)
+        before = f.read_text(encoding="utf-8")
+        r = run(tmp, "--apply")
+        assert r.returncode == 0, r.stdout
+        assert f.read_text(encoding="utf-8") == before
+        assert "自定义 refresh hook" in r.stdout, r.stdout
+
+
+def test_hook_command_is_platform_aware() -> None:
+    """win32 写 `python`（cmd.exe 里 python3 只命中商店 stub），POSIX 写 `python3`。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("apply_wiring_mod", APPLIER)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+
+    core = ".atlas/scripts/refresh_structure.py --root ."
+    assert mod.hook_cmd("win32") == f"python {core} --chain"
+    assert mod.hook_cmd("linux") == f"python3 {core} --chain"
+    assert mod._retarget_hook_line(
+        f'    - "python3 {core} --chain"', "python"
+    ) == f'    - "python {core} --chain"'
+    # 自定义包装 / 两段式 / 绝对路径解释器一律不猜
+    assert mod._retarget_hook_line(f'    - "py -3 {core} --chain"', "python") is None
+    assert mod._retarget_hook_line(f'    - "C:/Python312/python.exe {core} --chain"', "python3") is None
+
+
 def test_dry_run_does_not_write() -> None:
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
@@ -228,6 +314,9 @@ def test_gitignore_fifth_touchpoint_appends_idempotently() -> None:
 
 def test_real_config_already_wired() -> None:
     """真实 codebases 配置已含 hook → 应 skipped（守护重复登记）。"""
+    if sys.platform == "win32":
+        print("skip: 真实配置是 POSIX 口径（python3），Windows 上 retarget 属预期改写")
+        return
     if not REAL_CONFIG.is_file():
         print("skip: codebases/.trellis/config.yaml 不存在")
         return
@@ -252,6 +341,10 @@ def main() -> int:
         test_config_insert_into_existing_hooks,
         test_config_migrates_legacy_after_finish,
         test_config_idempotent,
+        test_config_retargets_foreign_interpreter_without_duplicate,
+        test_config_apply_tail_normalized_to_chain,
+        test_config_custom_refresh_tail_skipped,
+        test_hook_command_is_platform_aware,
         test_dry_run_does_not_write,
         test_gitignore_fifth_touchpoint_appends_idempotently,
         test_real_config_already_wired,

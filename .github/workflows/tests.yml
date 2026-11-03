@@ -1,0 +1,101 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  posix:
+    name: POSIX baseline (CLI + wiring)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pytest
+        run: python -m pip install --upgrade pytest
+
+      # 出厂全量门禁仍以本地 `python3 -m pytest tests/` 为准（含 Playwright/真跑面）；
+      # CI 这里只跑与平台入口强相关的两组，保证 Windows 有同口径对照基线。
+      - name: Run CLI and wiring tests
+        run: python -m pytest tests/test_cli_commands.py tests/test_project_wiring.py -q
+
+  windows:
+    name: Windows smoke (Git Bash / fail-closed)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pytest
+        run: python -m pip install --upgrade pytest
+
+      # python.org 的 Windows Python 只提供 python.exe；配一个 python3 别名，
+      # 让 install.sh / runInstaller 的 `python3` 前置检查在 Git Bash 里可解析。
+      # 这是测试台适配，不等于产品已支持「只有 python.exe」的机器（见 RFC-20261103-04）。
+      - name: Provide python3 alias (Git Bash)
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "py3"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item (Get-Command python).Source (Join-Path $dir "python3.exe")
+          Add-Content -Path $env:GITHUB_PATH -Value $dir
+
+      - name: Platform probes (Git Bash found, Trellis probe does not throw)
+        run: |
+          node -e "
+            const p = require('./bin/platform.js');
+            const bash = p.resolveBash();
+            if (!bash) { console.error('Git Bash not found'); process.exit(1); }
+            console.log('bash =', bash);
+            console.log('trellis =', p.detectTrellis());
+          "
+
+      - name: CLI exit-code smoke
+        run: |
+          node bin/atlas.js version
+          node bin/atlas.js --help > /dev/null
+          node bin/atlas.js upgrade --dry-run | grep -q "atlas-project-harness@latest"
+          node bin/atlas.js apply > /dev/null 2>&1; test $? -eq 2
+          node bin/atlas.js nonexistent-cmd > /dev/null 2>&1; test $? -eq 2
+
+      - name: Fail-closed without Git Bash / WSL (simulated)
+        shell: pwsh
+        run: |
+          $env:ProgramFiles = "C:\__atlas_none__"
+          $env:'ProgramFiles(x86)' = "C:\__atlas_none__"
+          $env:LOCALAPPDATA = "C:\__atlas_none__"
+          Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue
+          node bin/atlas.js init --target "$env:RUNNER_TEMP\atlas-nope" --assets-root docs
+          if ($LASTEXITCODE -ne 2) { throw "expected exit 2, got $LASTEXITCODE" }
+
+      - name: Run CLI and wiring tests
+        run: python -m pytest tests/test_cli_commands.py tests/test_project_wiring.py -q -k "not update_dry_run_on_initialized"
+
+      # 装配器走 Git Bash + Windows Python 的链路尚未真机收口（RFC-20261103-04）。
+      # 先以 advisory 跑，失败只记录不挡门；移植 Python 安装器后转正。
+      - name: Installer via Git Bash (advisory, RFC-20261103-04)
+        continue-on-error: true
+        run: python -m pytest tests/test_cli_commands.py -q -k "update_dry_run_on_initialized"

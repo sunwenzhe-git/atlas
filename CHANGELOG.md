@@ -13,6 +13,13 @@
 * **文档**：README 依赖准备补 Windows 运行边界（Git Bash / WSL2；原生 PowerShell/CMD 不支持）。
 * **测试**：`tests/test_cli_commands.py` 11 → 15。
 
+### 🧭 Windows 归档钩子平台化 + windows-latest CI（B-lite）
+
+* **修复**：`apply-wiring.py` 往 `.trellis/config.yaml` 写 refresh hook 时固定用 `python3`，而 Trellis 以 `subprocess.Popen(cmd, shell=True)` 执行钩子（Windows 落到 cmd.exe）⇒ `python3` 命中 WindowsApps 商店 stub，钩子 fail-open **静默失效**——Git Bash 路径下同样成立。现按写入平台写 `python` / `python3`；幂等/迁移判据由整串命令收窄为平台无关的 `HOOK_CORE`（`.atlas/scripts/refresh_structure.py --root .`），跨 OS 重跑 `atlas update` 只归一解释器、不双注册。
+* **CI**：新增 `.github/workflows/tests.yml`——ubuntu 基线（CLI + wiring 测试）与 windows-latest 烟测（Git Bash 探针、exit-code、无 POSIX 环境的 fail-closed 模拟、Git Bash 装配链路 advisory）。
+* **测试**：`tests/test_project_wiring.py` 12 → 16；`tests/test_cli_commands.py` 两条直传 bash 临时路径的用例在 win32 跳过（Windows 由 CLI 轨覆盖）。
+* **未决**：装配器 Python 化（`proposals/RFC-20261103-04-windows-native-installer.md`）。
+
 ## [v0.2.0-beta.26] - 2026-11-02
 
 ### 🧭 签字与取证必须是非空字符串（RFC-20261101-03）

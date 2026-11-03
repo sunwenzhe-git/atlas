@@ -62,10 +62,15 @@ ATLAS_END = "<!-- ATLAS:END -->"
 TRELLIS_END = "<!-- TRELLIS:END -->"
 AGENTS_REL = "AGENTS.md"
 
-HOOK_CMD = "python3 .atlas/scripts/refresh_structure.py --root . --chain"
-# C1（R7，2026-10-15）：存量钩子的**前缀**（幂等判据必须冗余于一字符）——
-# 子串等于旧命令会漏识别 `--apply` 旧形态 ⇒ 双 hook 常驻、refresh 跑两遍。
-HOOK_PREFIX = "python3 .atlas/scripts/refresh_structure.py --root ."
+# 钩子由 Trellis 以 `subprocess.Popen(cmd, shell=True)` 执行（common/task_utils.run_task_hooks）：
+# Windows 上落到 cmd.exe，而 `python3` 在原生 Windows 只可能命中 WindowsApps 商店 stub
+# ⇒ 按写入平台选解释器名（与 Trellis `configurators/shared.js` 的 win32 口径一致）。
+HOOK_CORE = ".atlas/scripts/refresh_structure.py --root ."
+HOOK_PYTHON = "python" if sys.platform == "win32" else "python3"
+HOOK_CMD = f"{HOOK_PYTHON} {HOOK_CORE} --chain"
+# C1（R7，2026-10-15）：幂等/迁移判据 = **平台无关的脚本路径段**（HOOK_CORE）——
+# 解释器名按平台不同（python/python3），拿整串命令判等会在跨 OS 重跑时失配，
+# 导致双注册或漏迁移。
 CONFIG_REL = ".trellis/config.yaml"
 EVENT_ARCHIVE = "after_archive"
 EVENT_ORDER = ["after_finish", "after_start", "after_create", "after_archive"]
@@ -73,6 +78,38 @@ EVENT_ORDER = ["after_finish", "after_start", "after_create", "after_archive"]
 RE_HOOKS = re.compile(r"^hooks:\s*(#.*)?$")
 RE_AFTER_FINISH = re.compile(r"^  after_finish:\s*(#.*)?$")
 RE_TOP_LEVEL = re.compile(r"^\S")
+
+
+def hook_python(platform: str = sys.platform) -> str:
+    """refresh hook 的解释器名：Windows 用 `python`，POSIX 用 `python3`。"""
+    return "python" if platform.startswith("win") else "python3"
+
+
+def hook_cmd(platform: str = sys.platform) -> str:
+    return f"{hook_python(platform)} {HOOK_CORE} --chain"
+
+
+def _refresh_tail(line: str) -> str | None:
+    """是 refresh hook 行 ⇒ 返回 HOOK_CORE 之后的尾参（`--chain`/`--apply`/自定义）。"""
+    if HOOK_CORE not in line:
+        return None
+    return line.split(HOOK_CORE, 1)[1].strip().strip('"').strip("'").strip()
+
+
+def _retarget_hook_line(line: str, python: str | None = None) -> str | None:
+    """把 refresh hook 的解释器 token 归一成本平台口径，其余原样保留。
+
+    认不出解释器前缀（用户自定义包装、`py -3` 两段式等）⇒ 返回 None，调用侧按
+    「自定义 hook」跳过，不猜、不覆盖。
+    """
+    idx = line.index(HOOK_CORE)
+    before = line[:idx]
+    # 只认本脚本写出的形态：`<indent>- ["']python[3][.exe] `。绝对路径/包装器一律不猜。
+    m = re.fullmatch(r"(\s*-\s*[\"']?)(python3?)(\.exe)?\s+", before, re.IGNORECASE)
+    if not m:
+        return None
+    target = python or HOOK_PYTHON
+    return m.group(1) + target + (m.group(3) or "") + " " + line[idx:]
 
 
 def render_pointer() -> str:
@@ -206,13 +243,29 @@ def wire_config(target: Path) -> dict:
     rng = _hooks_range(lines)
 
     hook_ready = False
+    retargeted = False
     if rng is not None:
         archive = _event_lines(lines, rng, EVENT_ARCHIVE)
-        hook_ready = archive is not None and any(HOOK_CMD in lines[i] for i in archive[1])
+        if archive is not None:
+            for i in archive[1]:
+                if _refresh_tail(lines[i]) != "--chain":
+                    continue
+                new_line = _retarget_hook_line(lines[i])
+                if new_line is None:
+                    # 解释器前缀认不出（自定义包装 / `py -3` 两段式）⇒ 不猜、不重复登记
+                    return {"file": CONFIG_REL, "status": "skipped",
+                            "detail": "after_archive 已存在 refresh hook（解释器前缀无法识别），未改"}
+                if new_line != lines[i]:
+                    lines[i] = new_line
+                    retargeted = True
+                hook_ready = True
 
     detail = "after_archive hook already registered"
+    if retargeted:
+        detail = f"applied (hook interpreter retargeted to {HOOK_PYTHON})"
     if not hook_ready:
-        # 找到别处（旧形态 after_finish / 其它事件）的同一条命令，准备迁移
+        # 找到别处（旧形态 after_finish / 其它事件）或 after_archive 旧尾参（--apply）的
+        # 同一条命令，准备迁移。判据只看 HOOK_CORE（平台无关），解释器名不参与判等。
         legacy: list[tuple[str, int]] = []
         if rng is not None:
             for event in EVENT_ORDER:
@@ -220,12 +273,13 @@ def wire_config(target: Path) -> dict:
                 if found is None:
                     continue
                 for i in found[1]:
-                    if HOOK_PREFIX in lines[i]:
-                        tail = lines[i].split(HOOK_PREFIX, 1)[1].strip().strip('"').strip("'").strip()
-                        if tail not in ("--apply", "--chain"):
-                            return {"file": CONFIG_REL, "status": "skipped",
-                                    "detail": "存在自定义 refresh hook（尾参非 --apply/--chain），未改"}
-                        legacy.append((event, i))
+                    tail = _refresh_tail(lines[i])
+                    if tail is None:
+                        continue
+                    if tail not in ("--apply", "--chain"):
+                        return {"file": CONFIG_REL, "status": "skipped",
+                                "detail": "存在自定义 refresh hook（尾参非 --apply/--chain），未改"}
+                    legacy.append((event, i))
 
         # 迁移：删除旧命令行；旧事件子块被删空时连键行一起去掉
         for event, i in sorted(legacy, key=lambda x: -x[1]):
