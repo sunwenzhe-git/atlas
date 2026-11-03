@@ -71,6 +71,12 @@
 * **门具同步**：`test_install_selfcheck` 解析对象改 `install.py`，判据 4（bash `$var` 非 ASCII）退役、换为「install.sh 必须薄 wrapper」守卫；backflow / F30 / F47 三张表同步钉改读 `install.py` 的 `pkg_dirs`；canonical 计数门自检源改 `install.py`；`gates.md` 接线测试 12→16 修正；docs/map 计数与锚点同步。
 * **边界**：需要 Python 3.10+；`--dry-run` 的 `trellis init` 语义未动（RFC §6 未决）；golden 基线仍是移植期安全绳，包内容变更后需重录。
 
+### 🧭 Windows 原生轨 CI + 文档收口（RFC-20261103-04 第 6 步）
+
+* **CI**：新增 `windows-native` 作业（纯 PowerShell、最小 PATH 剔除 Git）——bare `atlas init` → `check --fast` → `update --dry-run`（断言 `VERSION` 逐字节不变）、GBK(936) 控制台不崩、`WindowsApps` stub + 坏 `py` 被拒（exit 2）、坏 py 回退 `where python` 真实路径；Git Bash 轨的装配器用例由 advisory 转正。
+* **文档**：`AGENTS.md` 指针段加平台约定一行（Windows 用 `python` 替代 `python3`）；README 增加「平台支持矩阵」（macOS/Linux、Windows 原生、Git Bash、WSL2、无 Python fail-closed 五档）；RFC §4.3 附外部用户 5 分钟真机验收清单。
+* **待办**：真机一次 bare PowerShell 全流程（中文 locale / 企业策略 / 无 Python 裸机文案）；CI 推送后才会真跑。
+
 ## [v0.2.0-beta.26] - 2026-11-02
 
 ### 🧭 签字与取证必须是非空字符串（RFC-20261101-03）

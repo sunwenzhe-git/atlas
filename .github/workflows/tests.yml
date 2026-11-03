@@ -33,7 +33,7 @@ jobs:
         run: python -m pytest tests/test_cli_commands.py tests/test_project_wiring.py -q
 
   windows:
-    name: Windows smoke (Git Bash / fail-closed)
+    name: Windows smoke (Git Bash / CLI)
     runs-on: windows-latest
     defaults:
       run:
@@ -52,10 +52,10 @@ jobs:
       - name: Install pytest
         run: python -m pip install --upgrade pytest
 
-      # python.org 的 Windows Python 只提供 python.exe；配一个 python3 别名，
-      # 让 install.sh / runInstaller 的 `python3` 前置检查在 Git Bash 里可解析。
-      # 这是测试台适配，不等于产品已支持「只有 python.exe」的机器（见 RFC-20261103-04）。
-      - name: Provide python3 alias (Git Bash)
+      # python.org 的 Windows Python 只提供 python.exe；install.sh 薄 wrapper 用
+      # `python3`，配一个别名让 Git Bash 轨的测试可解析。Windows 原生轨走
+      # install.py（不经过 wrapper），不需要这个别名。
+      - name: Provide python3 alias (Git Bash wrapper)
         shell: pwsh
         run: |
           $dir = Join-Path $env:RUNNER_TEMP "py3"
@@ -81,21 +81,118 @@ jobs:
           node bin/atlas.js apply > /dev/null 2>&1; test $? -eq 2
           node bin/atlas.js nonexistent-cmd > /dev/null 2>&1; test $? -eq 2
 
-      - name: Fail-closed without Git Bash / WSL (simulated)
-        shell: pwsh
-        run: |
-          $env:ProgramFiles = "C:\__atlas_none__"
-          $env:'ProgramFiles(x86)' = "C:\__atlas_none__"
-          $env:LOCALAPPDATA = "C:\__atlas_none__"
-          Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue
-          node bin/atlas.js init --target "$env:RUNNER_TEMP\atlas-nope" --assets-root docs
-          if ($LASTEXITCODE -ne 2) { throw "expected exit 2, got $LASTEXITCODE" }
-
       - name: Run CLI and wiring tests
         run: python -m pytest tests/test_cli_commands.py tests/test_project_wiring.py -q -k "not update_dry_run_on_initialized"
 
-      # 装配器走 Git Bash + Windows Python 的链路尚未真机收口（RFC-20261103-04）。
-      # 先以 advisory 跑，失败只记录不挡门；移植 Python 安装器后转正。
-      - name: Installer via Git Bash (advisory, RFC-20261103-04)
-        continue-on-error: true
+      - name: Installer via Git Bash (gating)
         run: python -m pytest tests/test_cli_commands.py -q -k "update_dry_run_on_initialized"
+
+  windows-native:
+    name: Windows native (PowerShell, no bash)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Bare PowerShell init → check → update (dry-run stays zero-write)
+        run: |
+          $repo = (Get-Location).Path
+          $tmp = Join-Path $env:RUNNER_TEMP ("atlas-native-" + [guid]::NewGuid().ToString("N"))
+          New-Item -ItemType Directory -Force -Path (Join-Path $tmp ".trellis") | Out-Null
+          # 最小 PATH：剔除 Git 目录，证明原生轨不依赖 bash
+          $pythonDir = Split-Path (Get-Command python).Source
+          $nodeExe = (Get-Command node).Source
+          $nodeDir = Split-Path $nodeExe
+          $oldPath = $env:Path
+          $env:Path = "$pythonDir;$env:SystemRoot\System32;$env:SystemRoot;$nodeDir"
+          try {
+            & $nodeExe "$repo\bin\atlas.js" init --target $tmp --assets-root docs
+            if ($LASTEXITCODE -ne 0) { throw "init failed: $LASTEXITCODE" }
+            if (-not (Test-Path (Join-Path $tmp ".atlas\VERSION"))) { throw "VERSION missing" }
+            if (-not (Test-Path (Join-Path $tmp ".atlas\MANIFEST.json"))) { throw "MANIFEST missing" }
+            Push-Location $tmp
+            & $nodeExe "$repo\bin\atlas.js" check --fast
+            if ($LASTEXITCODE -ne 0) { throw "check failed: $LASTEXITCODE" }
+            $before = Get-Content (Join-Path $tmp ".atlas\VERSION") -Raw
+            & $nodeExe "$repo\bin\atlas.js" update --dry-run
+            if ($LASTEXITCODE -ne 0) { throw "update dry-run failed: $LASTEXITCODE" }
+            $after = Get-Content (Join-Path $tmp ".atlas\VERSION") -Raw
+            if ($before -ne $after) { throw "dry-run modified .atlas/VERSION" }
+            Pop-Location
+          } finally {
+            $env:Path = $oldPath
+          }
+
+      - name: GBK console encoding does not crash the installer
+        run: |
+          $repo = (Get-Location).Path
+          $tmp = Join-Path $env:RUNNER_TEMP ("atlas-gbk-" + [guid]::NewGuid().ToString("N"))
+          New-Item -ItemType Directory -Force -Path (Join-Path $tmp ".trellis") | Out-Null
+          $oldEnc = [Console]::OutputEncoding
+          try {
+            [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(936)
+            node "$repo\bin\atlas.js" init --target $tmp --assets-root docs
+            if ($LASTEXITCODE -ne 0) { throw "init under cp936 failed: $LASTEXITCODE" }
+            if (-not (Test-Path (Join-Path $tmp ".atlas\VERSION"))) { throw "VERSION missing" }
+          } finally {
+            [Console]::OutputEncoding = $oldEnc
+          }
+
+      - name: WindowsApps stub + broken py launcher are rejected (fail-closed)
+        run: |
+          $repo = (Get-Location).Path
+          $repoForNode = $repo -replace '\\', '/'
+          $nodeExe = (Get-Command node).Source
+          $scrub = Join-Path $env:RUNNER_TEMP "atlas-scrub"
+          $stub = Join-Path $scrub "WindowsApps"
+          New-Item -ItemType Directory -Force -Path $stub | Out-Null
+          # 当前目录的假 py.exe 会先于 System32/Windows 被 CreateProcess 命中 ⇒ 坏解释器
+          Copy-Item "$env:SystemRoot\System32\cmd.exe" (Join-Path $scrub "py.exe") -Force
+          # where python 会命中的商店 stub（路径含 WindowsApps）⇒ resolver 必须剔除
+          Copy-Item "$env:SystemRoot\System32\cmd.exe" (Join-Path $stub "python.exe") -Force
+          $oldPath = $env:Path
+          $oldCwd = (Get-Location).Path
+          try {
+            Set-Location $scrub
+            $env:Path = "$stub;$env:SystemRoot\System32;" + (Split-Path $nodeExe)
+            & $nodeExe -e "const p = require('$repoForNode/bin/platform.js'); const r = p.resolvePython(); if (r) { console.error('stub/broken py accepted:', r); process.exit(1); } console.log('stub rejected -> null');"
+            if ($LASTEXITCODE -ne 0) { throw "stub rejection failed" }
+            New-Item -ItemType Directory -Force -Path (Join-Path $scrub "proj\.trellis") | Out-Null
+            & $nodeExe "$repo\bin\atlas.js" init --target (Join-Path $scrub "proj") --assets-root docs
+            if ($LASTEXITCODE -ne 2) { throw "expected fail-closed exit 2, got $LASTEXITCODE" }
+          } finally {
+            Set-Location $oldCwd
+            $env:Path = $oldPath
+          }
+
+      - name: Broken py falls back to real python (win32 second arm)
+        run: |
+          $repo = (Get-Location).Path
+          $repoForNode = $repo -replace '\\', '/'
+          $nodeExe = (Get-Command node).Source
+          $realPython = (Get-Command python).Source
+          $realDir = Split-Path $realPython
+          $scrub = Join-Path $env:RUNNER_TEMP "atlas-scrub-fallback"
+          New-Item -ItemType Directory -Force -Path $scrub | Out-Null
+          Copy-Item "$env:SystemRoot\System32\cmd.exe" (Join-Path $scrub "py.exe") -Force
+          $oldPath = $env:Path
+          $oldCwd = (Get-Location).Path
+          try {
+            Set-Location $scrub
+            $env:Path = "$realDir;$env:SystemRoot\System32;" + (Split-Path $nodeExe)
+            & $nodeExe -e "const p = require('$repoForNode/bin/platform.js'); const r = p.resolvePython(); if (!r || r.cmd === 'py' || r.version.major !== 3 || r.version.minor < 10) { console.error('fallback failed:', r); process.exit(1); } console.log('fallback ->', r.cmd, r.version);"
+            if ($LASTEXITCODE -ne 0) { throw "where-python fallback failed" }
+          } finally {
+            Set-Location $oldCwd
+            $env:Path = $oldPath
+          }

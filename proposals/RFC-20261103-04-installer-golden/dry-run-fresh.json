@@ -159,6 +159,7 @@
         "  [dry-run] check 共享内核（node 运行器判据）",
         "  [dry-run] check 共享内核（base query 转发）",
         "  [dry-run] check 共享内核（审查策略单源）",
+        "  [dry-run] check 共享内核（审查范围封口）",
         "  [dry-run] check 共享内核（布局解析）",
         "  [dry-run] check 共享内核（维度解析）",
         "  [dry-run] check pi 宿主扩展",

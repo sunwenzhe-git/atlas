@@ -526,7 +526,7 @@ shared: {sum:'8 份 markdown 是规则/程序契约的单一落点(frontend-reus
          ['shared/independent-review.md','独立审查契约(实例⑤)'],
          ['shared/closeout.md','收口触发表:closeout_derive 的唯一真相源'],
          ['shared/frontend-reuse.md','前端复用程序契约:四档/四层/五列记录;非门、非真相源']],blind:null},
-kernel: {sum:'全包只准存在一处的实现内核(10 件);消费者经 siblings.load_module 取用,禁止就地复制。',
+kernel: {sum:'全包只准存在一处的实现内核(11 件);消费者经 siblings.load_module 取用,禁止就地复制。',
   points:['覆盖:profile/用例块解析、Playwright 运行器探测与修复、审查策略、URL 合并、用例 ID 文法、手工块等','test_shared_kernel 守卫「同名实现全包唯一」+ 黄金期望;yaml_scalar 的 null 家族收窄为 YAML 口径(裸 none 是合法字符串,D80 教训)','历史教训:双端各存一份判据实现 ⇒ 同错恒等 ⇒ 门恒绿(装配版本门 F37 实例),故立此层'],
   files:[['_support/siblings.py','跨脚本模块加载器:load_module 单源取用入口'],
          ['_support/stack_profile.py','profile / 用例块解析 + 行内注释剥除的单源实现'],
