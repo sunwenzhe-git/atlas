@@ -89,6 +89,9 @@ REASON_PREFIX = {"ENV_ISSUE", "NOT_IMPLEMENTED", "SPEC_AMBIGUOUS", "BLOCKED_DEP"
 
 ID_RE = re.compile(rf"^{case_id.GRAMMAR}$")
 AC_RE = re.compile(r"^AC-[A-Z0-9]+-\d{3}$")
+# D130 / Batch B（RFC-20261103-08）：E2E 维度列按**表头名**定位；唯一合法表头写死在这里，
+# 表头不符 ⇒ 该表按「未声明」跳过（不按第 4 格位置吸收）。
+E2E_DIM_HEADER = "适用覆盖维度"
 # 契约 §8.2（2026-09-25 补）：PRD 环登记「结构类 AC」的小节标题 ——
 # 该小节内的 AC 其被测属性**只能在初始态观测**（骨架 / 默认面板 / 按数据渲染构成）。
 STRUCT_LIST_HEAD = "#### 结构类 AC 清单"
@@ -350,6 +353,34 @@ def _route_hit(p: str, page_routes) -> bool:
     if p in routes:
         return True
     return any(r != "/" and p.startswith(r + "/") for r in routes)
+
+
+def collect_e2e_declared_dims(prd_files) -> dict[str, set[str]]:
+    """逐表按**表头名**收集 AC 的 E2E 覆盖维度声明（Batch B，RFC-20261103-08）。
+
+    与 D153 单源一致：表的切分走 `_support/ac_coverage.iter_md_tables`，单元格解析走
+    `parse_dims_cell`。与旧位置式正则的差别：只有表头含 `适用覆盖维度` 的 AC 表才被采信，
+    其余表按「未声明」跳过 —— 逐表独立，一张错表头不会擦掉同文件的好表。
+    """
+    declared: dict[str, set[str]] = {}
+    for p in prd_files:
+        seg = p.read_text(encoding="utf-8")
+        for header, rows in ac_coverage.iter_md_tables(seg):
+            hdr = [ac_coverage.strip_md_cell(c) for c in header]
+            if "AC ID" not in hdr or "回指规则" not in hdr or E2E_DIM_HEADER not in hdr:
+                continue
+            ac_idx = hdr.index("AC ID")
+            dim_idx = hdr.index(E2E_DIM_HEADER)
+            for row in rows:
+                if ac_idx >= len(row):
+                    continue
+                acid = ac_coverage.strip_md_cell(row[ac_idx])
+                if not AC_RE.match(acid):
+                    continue
+                dims, _looks = parse_dims_cell(row[dim_idx] if dim_idx < len(row) else "")
+                if dims:
+                    declared[acid] = dims
+    return declared
 
 
 def validate(root: Path) -> Result:
@@ -659,13 +690,9 @@ def validate(root: Path) -> Result:
 
     # 解析口径归 `_support/ac_coverage.py::parse_dims_cell`（D153 单源，行为与 D130 逐字节一致）：
     # 区间展开、中文邻接、疑似写法出声；本文件不再自持第二份 parser。
-    declared_ac_dims: dict[str, set[str]] = {}
-    for p in prd_files:
-        seg = p.read_text(encoding="utf-8")
-        for m in re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|[^|\n]*\|[^|\n]*\|([^|\n]+)\|", seg, re.M):
-            dims, _looks = parse_dims_cell(m.group(2))
-            if dims:
-                declared_ac_dims[m.group(1)] = dims
+    # Batch B（RFC-20261103-08）：列定位从「第 4 格位置」改为「表头名 `适用覆盖维度`」——
+    # 表切分仍走同一 `_support`，逐表处理；表头不符的表按未声明跳过。
+    declared_ac_dims = collect_e2e_declared_dims(prd_files)
 
     covered_ac_dims: dict[str, set[str]] = {}
     bad_case_dims: list[str] = []

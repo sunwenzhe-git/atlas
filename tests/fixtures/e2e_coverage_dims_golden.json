@@ -1,5 +1,5 @@
 {
-  "note": "D153 E2E 纯抽取 golden：parse_dims_cell 的 7 组语料；tests/test_shared_kernel.py 逐条比对。looks = 是否含疑似维度写法（任意 C+数字，含合法 token）。",
+  "note": "D153 E2E 纯抽取 golden：parse_dims_cell 的 7 组语料；tests/test_shared_kernel.py 逐条比对。looks = 是否含疑似维度写法（任意 C+数字，含合法 token）。Batch B（RFC-20261103-08）追加 e2e_dim_header_cases：合法表头只有「适用覆盖维度」，tests/test_validators.py 逐条比对。",
   "parse_dims_cell": [
     {"raw": "C01-C02", "dims": ["C01", "C02"], "looks": true},
     {"raw": "C01正常流", "dims": ["C01"], "looks": true},
@@ -8,5 +8,11 @@
     {"raw": "C99", "dims": [], "looks": true},
     {"raw": "C01", "dims": ["C01"], "looks": true},
     {"raw": "C01-C03", "dims": ["C01", "C02", "C03"], "looks": true}
+  ],
+  "e2e_dim_header_cases": [
+    {"header": "适用覆盖维度", "accepted": true},
+    {"header": "覆盖维度", "accepted": false},
+    {"header": "后端适用覆盖维度", "accepted": false},
+    {"header": "备注", "accepted": false}
   ]
 }

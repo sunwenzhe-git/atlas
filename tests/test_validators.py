@@ -1500,6 +1500,66 @@ def test_e2e_dimension_check_uses_shared_parser(monkeypatch) -> None:
         assert check["level"] == "N/A", check
 
 
+def test_e2e_dim_header_located_by_name() -> None:
+    """Batch B（RFC-20261103-08 / 变异 M174）：E2E 维度列按**表头名**定位。
+
+    ① 错表头（覆盖维度 / 后端适用覆盖维度 / 备注）⇒ 该表按未声明 ⇒ 门 N/A，不点名 AC；
+    ② 同文件一坏一好 ⇒ 好表缺口仍被点名，坏表额外维度不串味；
+    ③ 合法表头行为与 D130 一致（WARN / PASS 结论逐条不变）。
+    """
+    import json
+    golden = json.loads(
+        (Path(__file__).resolve().parent / "fixtures" / "e2e_coverage_dims_golden.json")
+        .read_text(encoding="utf-8")
+    )
+    INDEX_WITH_PAGE = INDEX_GOOD + "\n## 页面\n\n| 页面 | 路由 | 所属域 | 状态 |\n|---|---|---|---|\n| home | / | home | 已实现 |\n"
+
+    def prd(header: str, dims: str) -> str:
+        return (
+            "---\ndomain: home\n---\n\n## 五、验收标准\n\n"
+            f"| AC ID | 场景 | 回指规则 | {header} |\n"
+            "|---|---|---|---|\n"
+            f"| `AC-HOME-001` | 首页展示正常 | HOME-R-001 | {dims} |\n"
+        )
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_index(root, INDEX_WITH_PAGE)
+        prd_dir = root / "product" / "prd"
+        prd_dir.mkdir(parents=True, exist_ok=True)
+        mk_cases(root, CASE_GOOD.strip()[:-3] + "覆盖维度:\n  - C01正常流\n```\n")
+
+        def check_for(text: str):
+            (prd_dir / "home-prd.md").write_text(text, encoding="utf-8")
+            res = ve.validate(root)
+            return next(c for c in res.checks if c["check"] == "AC × 覆盖维度")
+
+        for case in golden["e2e_dim_header_cases"]:
+            check = check_for(prd(case["header"], "C01-C02"))
+            if case["accepted"]:
+                assert check["level"] == "WARN", (case, check)
+                assert "AC-HOME-001缺C02" in check["detail"], (case, check)
+            else:
+                assert check["level"] == "N/A", (case, check)
+                assert "AC-HOME-001" not in check["detail"], (case, check)
+
+        mixed = (
+            "---\ndomain: home\n---\n\n## 五、验收标准\n\n"
+            "| AC ID | 场景 | 回指规则 | 覆盖维度 |\n|---|---|---|---|\n"
+            "| `AC-HOME-001` | 首页展示正常 | HOME-R-001 | C03-C04 |\n\n"
+            "| AC ID | 场景 | 回指规则 | 适用覆盖维度 |\n|---|---|---|---|\n"
+            "| `AC-HOME-001` | 首页展示正常 | HOME-R-001 | C01-C02 |\n"
+        )
+        check = check_for(mixed)
+        assert check["level"] == "WARN" and "AC-HOME-001缺C02" in check["detail"], check
+        assert "C03" not in check["detail"] and "C04" not in check["detail"], check
+
+        mk_cases(root, CASE_GOOD.strip()[:-3] + "覆盖维度:\n  - C01\n  - C02\n```\n")
+        check = check_for(prd("适用覆盖维度", "C01-C02"))
+        assert check["level"] == "PASS", check
+
+
 def test_e2e_index_verb_fail() -> None:
     """新门（契约 §5.5，2026-09-23）：step/expected 首 token 不在动词词表内 → FAIL。"""
     with tempfile.TemporaryDirectory() as td:
