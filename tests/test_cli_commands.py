@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """测试 Atlas CLI 的 update 与 upgrade 命令。"""
 
+import json
 import os
 import shutil
 import subprocess
@@ -11,6 +12,7 @@ import pytest
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
 ATLAS_BIN = PKG_ROOT / "bin" / "atlas.js"
+PLATFORM_JS = PKG_ROOT / "bin" / "platform.js"
 INSTALL_SH = PKG_ROOT / "install.sh"
 
 pytestmark = pytest.mark.skipif(
@@ -119,3 +121,51 @@ def test_cli_unknown_command_exits_2():
     res = run_cmd(["node", str(ATLAS_BIN), "nonexistent-cmd"])
     assert res.returncode == 2
     assert "未知命令" in res.stderr
+
+
+# ---------------------------------------------------------------- 平台探测（bin/platform.js）
+# Windows 现场（2026-11-03）：原生 PowerShell 没有 which ⇒ trellis 已装却被判「未检测到」；
+# 随后 `bash` 落到 C:\Windows\System32\bash.exe（WSL 中继壳）⇒ execvpe(/bin/bash) 报错，
+# install.sh 一步没跑；而 spawn 失败（status=null）还会被 `|| 0` 洗成成功。
+# 下面四测钉住探测口径与路径归一化。
+
+def node_json(expr: str):
+    """在 node 里求值 platform.js 的表达式，返回 JSON 结果。"""
+    script = f"const p = require({json.dumps(str(PLATFORM_JS))}); console.log(JSON.stringify({expr}));"
+    res = run_cmd(["node", "-e", script])
+    assert res.returncode == 0, res.stderr
+    return json.loads(res.stdout)
+
+
+def test_trellis_probe_uses_where_on_windows():
+    assert node_json("p.trellisProbe('win32')") == {"cmd": "where", "args": ["trellis"]}
+    assert node_json("p.trellisProbe('darwin')") == {"cmd": "which", "args": ["trellis"]}
+
+
+def test_bash_candidates_are_git_bash_only():
+    probe = node_json(
+        "(() => {"
+        "  const c = p.bashCandidates('win32', {ProgramFiles: 'C:/Program Files'});"
+        "  return {count: c.length,"
+        "          allGit: c.every(x => x.includes('Git') && x.endsWith('bash.exe')),"
+        "          hasWslRelay: c.some(x => /system32/i.test(x))};"
+        "})()"
+    )
+    assert probe == {"count": 2, "allGit": True, "hasWslRelay": False}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 宿主上可能真装了 Git Bash")
+def test_resolve_bash_never_falls_back_to_system_bash():
+    # 拿不到 Git Bash 时必须返回 null（调用侧 fail-closed），不能回落到系统 bash。
+    assert node_json("p.resolveBash('win32')") is None
+
+
+def test_normalize_bash_args_rewrites_windows_paths_only():
+    out = node_json(
+        "p.normalizeBashArgs(['--target', 'C:\\\\Users\\\\demo\\\\proj', '--dry-run'], 'win32')"
+    )
+    assert out == ["--target", "C:/Users/demo/proj", "--dry-run"]
+    assert node_json("p.normalizeBashArgs(['--target', '/tmp/proj'], 'darwin')") == [
+        "--target",
+        "/tmp/proj",
+    ]

@@ -4,6 +4,15 @@
 
 ---
 
+## [Unreleased]
+
+### 🧭 Windows 装配入口 fail-closed + Trellis 探测平台自适（2026-11-03 外部现场）
+
+* **修复**：Windows 原生 PowerShell 下 `atlas init` 用 `which trellis` 判依赖（原生 Windows 没有 `which`）⇒ 已装 Trellis 仍报「未检测到」；随后 `bash` 落到 `C:\Windows\System32\bash.exe`（WSL 中继壳），未装发行版时抛 `execvpe(/bin/bash) failed`，`install.sh` 一步未跑；而 `res.status || 0` 在 spawn 失败（status = null）时还会洗成 0（假成功）。
+* **口径**：新增 `bin/platform.js` 单源平台探测——Trellis 探测 POSIX `which` / Windows `where`；bash 只认 Git Bash 绝对路径，**绝不回落 System32 中继壳**；Windows 路径参数转 `/`；bash 环境缺 `python3` 时前置失败并给出 Git Bash / WSL2 两条路；`spawnSync` 失败（status = null）不再被 `|| 0` 洗成成功。
+* **文档**：README 依赖准备补 Windows 运行边界（Git Bash / WSL2；原生 PowerShell/CMD 不支持）。
+* **测试**：`tests/test_cli_commands.py` 11 → 15。
+
 ## [v0.2.0-beta.26] - 2026-11-02
 
 ### 🧭 签字与取证必须是非空字符串（RFC-20261101-03）

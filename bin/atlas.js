@@ -4,6 +4,13 @@ const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
 
+const {
+  IS_WIN,
+  resolveBash,
+  normalizeBashArgs,
+  detectTrellis,
+} = require('./platform.js');
+
 const PKG_ROOT = path.resolve(__dirname, '..');
 const args = process.argv.slice(2);
 const command = args[0] || 'help';
@@ -39,9 +46,60 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
 `);
 }
 
+/**
+ * 用 bash 运行 install.sh。Windows 原生环境找不到 Git Bash 时直接失败并给出可执行
+ * 的两条路（Git Bash / WSL2）——绝不回落到 C:\Windows\System32\bash.exe（WSL 中继壳，
+ * 无发行版时只会抛 execvpe 错误，装不出任何东西）。
+ */
+function requireBash() {
+  const bash = resolveBash();
+  if (bash) return bash;
+  console.error('\n[Atlas] 错误: 未找到可用的 bash，无法运行 Atlas 装配器（install.sh）。');
+  console.error('        Windows 原生环境缺少 Atlas 所需的 bash + python3，请任选其一：');
+  console.error('          1) 在 Git Bash 中运行 atlas init（安装 Git for Windows 后从开始菜单打开 Git Bash）');
+  console.error('          2) 使用 WSL2: wsl --install -d Ubuntu，在发行版内装好 Node.js 与 Python 3 后运行 atlas init');
+  console.error('        注意: C:\\Windows\\System32\\bash.exe 是 WSL 中继壳，不是可用的 bash。\n');
+  process.exit(2);
+}
+
+function runInstaller(argv, extraEnv = {}) {
+  const installScript = path.join(PKG_ROOT, 'install.sh');
+  const env = { ...process.env, ...extraEnv };
+  const bash = requireBash();
+
+  if (IS_WIN) {
+    const py = spawnSync(bash, ['-c', 'command -v python3'], { encoding: 'utf8', env });
+    if (py.status !== 0) {
+      console.error('\n[Atlas] 错误: bash 环境中未找到 python3（Atlas 校验器要求 Python 3.10+）。');
+      console.error('        请在 Git Bash 中确认 `python3 --version` 可用，或改用 WSL2 运行。\n');
+      process.exit(2);
+    }
+  }
+
+  // bash 只认 / 分隔的路径；Windows 反斜杠会被当转义符。
+  const script = IS_WIN ? installScript.replace(/\\/g, '/') : installScript;
+  const res = spawnSync(bash, [script, ...normalizeBashArgs(argv)], {
+    stdio: 'inherit',
+    env,
+  });
+  if (res.error) {
+    console.error(`\n[Atlas] 错误: 启动装配器失败: ${res.error.message}\n`);
+    process.exit(1);
+  }
+  return res;
+}
+
+/** spawnSync 失败（status = null）不能被 `|| 0` 洗成成功退出。 */
+function exitWithResult(res, tool) {
+  if (res.error) {
+    console.error(`[Atlas] 错误: 无法启动 ${tool}: ${res.error.message}`);
+    process.exit(1);
+  }
+  process.exit(typeof res.status === 'number' ? res.status : 1);
+}
+
 switch (command) {
   case 'init': {
-    const installScript = path.join(PKG_ROOT, 'install.sh');
     const passthroughArgs = args.slice(1);
 
     // 如果没有指定 --target，默认使用当前工作目录
@@ -61,6 +119,9 @@ switch (command) {
     const shouldPrompt = !hasAssetsRoot && !hasConfig && !hasAtlas
       && process.stdin.isTTY && process.stdout.isTTY;
 
+    // Windows 原生 PowerShell/CMD：先 fail-closed，别让用户答完资产根才发现没有 bash。
+    requireBash();
+
     function runInstall(extraArgs) {
       const baseArgs = hasTarget ? passthroughArgs : ['--target', targetDir, ...passthroughArgs];
       const finalArgs = [...baseArgs, ...extraArgs];
@@ -68,11 +129,16 @@ switch (command) {
       // Trellis 环境检测与自动初始化引导
       const trellisDir = path.join(targetDir, '.trellis');
       if (!fs.existsSync(trellisDir)) {
-        const hasTrellis = spawnSync('which', ['trellis']).status === 0;
-        if (hasTrellis) {
+        const trellisCmd = detectTrellis();
+        if (trellisCmd && IS_WIN) {
+          // Windows 下 npm 的 trellis 是 .cmd/sh 入口，Node 不能直接拉起；交给
+          // install.sh 在 bash 里执行 trellis init（那里能直接找到 shim）。
+          console.log('\n[Atlas] 检测到 Trellis CLI，但目标项目尚未初始化（.trellis/ 缺失）。');
+          console.log('[Atlas] 装配器将在 bash 中尝试 trellis init ...');
+        } else if (trellisCmd) {
           console.log('\n[Atlas] 检测到目标项目尚未初始化 Trellis (.trellis/ 缺失)。');
           console.log('[Atlas] 正在自动运行 trellis init 初始化状态机骨架...');
-          const initRes = spawnSync('trellis', ['init'], {
+          const initRes = spawnSync(trellisCmd, ['init'], {
             cwd: targetDir,
             stdio: 'inherit',
             env: process.env,
@@ -87,11 +153,8 @@ switch (command) {
         }
       }
 
-      const res = spawnSync('bash', [installScript, ...finalArgs], {
-        stdio: 'inherit',
-        env: process.env,
-      });
-      process.exit(res.status || 0);
+      const res = runInstaller(finalArgs);
+      exitWithResult(res, 'bash');
     }
 
     if (shouldPrompt) {
@@ -107,7 +170,10 @@ switch (command) {
              '--root', targetDir, '--validate-value', 'assets_root', value],
             { encoding: 'utf8' },
           );
-          if (validation.status !== 0) {
+          if (validation.error && IS_WIN) {
+            // Windows 上 python3 可能只在 bash 环境里可见；install.sh 的
+            // --assets-root 分支会再验一次，不在 Node 侧误报「无效资产根」。
+          } else if (validation.status !== 0) {
             console.error('[Atlas] 无效资产根：' + (validation.stderr || '').trim());
             process.exit(2);
           }
@@ -124,7 +190,6 @@ switch (command) {
   }
 
   case 'update': {
-    const installScript = path.join(PKG_ROOT, 'install.sh');
     const passthroughArgs = args.slice(1);
 
     if (passthroughArgs.includes('-h') || passthroughArgs.includes('--help')) {
@@ -183,13 +248,7 @@ Atlas update — 安全刷新当前项目中的 .atlas/ 工程线束与平台 Sk
 
     const finalArgs = hasTarget ? passthroughArgs : ['--target', targetDir, ...passthroughArgs];
 
-    const res = spawnSync('bash', [installScript, '--update', ...finalArgs], {
-      stdio: 'inherit',
-      env: {
-        ...process.env,
-        ATLAS_ALLOW_OVERWRITE: '1',
-      },
-    });
+    const res = runInstaller(['--update', ...finalArgs], { ATLAS_ALLOW_OVERWRITE: '1' });
 
     if (res.status === 0) {
       console.log(`\n[Atlas Update] ✅ 项目工程线束与资产已成功刷新至 v${pkg.version}！\n`);
@@ -197,7 +256,7 @@ Atlas update — 安全刷新当前项目中的 .atlas/ 工程线束与平台 Sk
       console.error(`\n[Atlas Update] ❌ 项目更新未完成 (退出码: ${res.status})。\n`);
     }
 
-    process.exit(res.status || 0);
+    exitWithResult(res, 'bash');
     break;
   }
 
@@ -265,7 +324,7 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
       console.error(`  2. 网络或代理问题: 请检查 npm 源或网络代理设置（如 http_proxy）\n`);
     }
 
-    process.exit(res.status || 0);
+    exitWithResult(res, npmCmd);
     break;
   }
 
@@ -280,7 +339,7 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
       stdio: 'inherit',
       env: process.env,
     });
-    process.exit(res.status || 0);
+    exitWithResult(res, 'python3');
     break;
   }
 
@@ -296,7 +355,7 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
       stdio: 'inherit',
       env: process.env,
     });
-    process.exit(res.status || 0);
+    exitWithResult(res, 'python3');
     break;
   }
 
@@ -311,7 +370,7 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
       stdio: 'inherit',
       env: process.env,
     });
-    process.exit(res.status || 0);
+    exitWithResult(res, 'python3');
     break;
   }
 
