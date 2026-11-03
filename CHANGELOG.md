@@ -34,6 +34,13 @@
 * **纪律**：harness 与基线必须留在装配集之外（proposals/ 不进 `.atlas/`）——放 `scripts/` 里加一行就会改源包摘要，把要冻结的基线自己冲掉（当日实证）。包内容变更后需 `--record` 重录。
 * **定位**：移植期安全绳，非长期 CI 门。
 
+### 🧭 装配器单源切换：install.py + 薄 wrapper（RFC-20261103-04 第 4 步）
+
+* **切换**：`install.sh`（740 行 bash）退化为 45 行薄 wrapper（头部用法说明 + `exec python3 install.py`）；装配单源 = `install.py`（835 行）。`bin/atlas.js` 的 `runInstaller` 改走 `resolvePython`（win32 `py -3` → 真实 python 路径，版本校验 3.10+）——**Windows 原生 PowerShell/CMD 只要装了 Python 即可 `atlas init`**，Git Bash / WSL2 不再是必要条件。子进程统一注入 `PYTHONUTF8=1`。
+* **验收**：golden harness 双轨 8/8 全绿（`bash install.sh` 与 `python3 install.py` 各跑一遍，逐字节对齐同一基线）；63 条自检声明、F34/F55/F54、消融互锁、首建提示全部同语义。
+* **门具同步**：`test_install_selfcheck` 解析对象改 `install.py`，判据 4（bash `$var` 非 ASCII）退役、换为「install.sh 必须薄 wrapper」守卫；backflow / F30 / F47 三张表同步钉改读 `install.py` 的 `pkg_dirs`；canonical 计数门自检源改 `install.py`；`gates.md` 接线测试 12→16 修正；docs/map 计数与锚点同步。
+* **边界**：需要 Python 3.10+；`--dry-run` 的 `trellis init` 语义未动（RFC §6 未决）；golden 基线仍是移植期安全绳，包内容变更后需重录。
+
 ## [v0.2.0-beta.26] - 2026-11-02
 
 ### 🧭 签字与取证必须是非空字符串（RFC-20261101-03）

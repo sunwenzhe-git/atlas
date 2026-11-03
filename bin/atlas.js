@@ -6,7 +6,6 @@ const readline = require('readline');
 
 const {
   IS_WIN,
-  resolveBash,
   resolvePython,
   normalizeBashArgs,
   detectTrellis,
@@ -48,21 +47,10 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
 }
 
 /**
- * 用 bash 运行 install.sh。Windows 原生环境找不到 Git Bash 时直接失败并给出可执行
- * 的两条路（Git Bash / WSL2）——绝不回落到 C:\Windows\System32\bash.exe（WSL 中继壳，
- * 无发行版时只会抛 execvpe 错误，装不出任何东西）。
+ * 装配单源 = install.py（Python 3.10+，RFC-20261103-04 第 4 步）；bash 只经薄 wrapper
+ * 到达它。Windows 原生 PowerShell/CMD 只要装了 Python 即可运行——Git Bash / WSL2
+ * 不再是必要条件（`resolvePython` 按 py -3 / 真实 python 路径探测，版本校验 3.10+）。
  */
-function requireBash() {
-  const bash = resolveBash();
-  if (bash) return bash;
-  console.error('\n[Atlas] 错误: 未找到可用的 bash，无法运行 Atlas 装配器（install.sh）。');
-  console.error('        Windows 原生环境缺少 Atlas 所需的 bash + python3，请任选其一：');
-  console.error('          1) 在 Git Bash 中运行 atlas init（安装 Git for Windows 后从开始菜单打开 Git Bash）');
-  console.error('          2) 使用 WSL2: wsl --install -d Ubuntu，在发行版内装好 Node.js 与 Python 3 后运行 atlas init');
-  console.error('        注意: C:\\Windows\\System32\\bash.exe 是 WSL 中继壳，不是可用的 bash。\n');
-  process.exit(2);
-}
-
 /** 统一 Python 入口：win32 `py -3`/真实 python，POSIX python3——校验 3.10+。 */
 function requirePython() {
   const py = resolvePython();
@@ -78,23 +66,16 @@ function runPython(scriptArgs, opts = {}) {
 }
 
 function runInstaller(argv, extraEnv = {}) {
-  const installScript = path.join(PKG_ROOT, 'install.sh');
-  const env = { ...process.env, ...extraEnv };
-  const bash = requireBash();
-
-  if (IS_WIN) {
-    const py = spawnSync(bash, ['-c', 'command -v python3'], { encoding: 'utf8', env });
-    if (py.status !== 0) {
-      console.error('\n[Atlas] 错误: 安装器当前阶段仍在 bash 内调用 python3，但 Git Bash 里找不到 python3。');
-      console.error('        请提供 python3 命令（Python 3.10+），或改用 WSL2 运行。');
-      console.error('        注：`atlas check/console/report` 已支持 python / py -3；安装器本身当前仍要求 python3。\n');
-      process.exit(2);
-    }
+  const installPy = path.join(PKG_ROOT, 'install.py');
+  if (!fs.existsSync(installPy)) {
+    console.error('\n[Atlas] 错误: 源包缺少 install.py（装配单源），无法继续装配。\n');
+    process.exit(2);
   }
-
-  // bash 只认 / 分隔的路径；Windows 反斜杠会被当转义符。
-  const script = IS_WIN ? installScript.replace(/\\/g, '/') : installScript;
-  const res = spawnSync(bash, [script, ...normalizeBashArgs(argv)], {
+  const py = requirePython();
+  const env = { ...process.env, PYTHONUTF8: '1', ...extraEnv };
+  // Windows 反斜杠路径会被下游当转义符，统一转 /（install.py 与叶子脚本都接受 /）。
+  const script = IS_WIN ? installPy.replace(/\\/g, '/') : installPy;
+  const res = spawnSync(py.cmd, [...py.args, script, ...normalizeBashArgs(argv)], {
     stdio: 'inherit',
     env,
   });
@@ -104,7 +85,6 @@ function runInstaller(argv, extraEnv = {}) {
   }
   return res;
 }
-
 /** spawnSync 失败（status = null）不能被 `|| 0` 洗成成功退出。 */
 function exitWithResult(res, tool) {
   if (res.error) {
@@ -135,8 +115,8 @@ switch (command) {
     const shouldPrompt = !hasAssetsRoot && !hasConfig && !hasAtlas
       && process.stdin.isTTY && process.stdout.isTTY;
 
-    // Windows 原生 PowerShell/CMD：先 fail-closed，别让用户答完资产根才发现没有 bash。
-    requireBash();
+    // 先 fail-closed：没有 Python 3.10+ 就别让用户答完资产根才发现装不了。
+    requirePython();
 
     function runInstall(extraArgs) {
       const baseArgs = hasTarget ? passthroughArgs : ['--target', targetDir, ...passthroughArgs];
@@ -170,7 +150,7 @@ switch (command) {
       }
 
       const res = runInstaller(finalArgs);
-      exitWithResult(res, 'bash');
+      exitWithResult(res, 'python');
     }
 
     if (shouldPrompt) {
@@ -268,7 +248,7 @@ Atlas update — 安全刷新当前项目中的 .atlas/ 工程线束与平台 Sk
       console.error(`\n[Atlas Update] ❌ 项目更新未完成 (退出码: ${res.status})。\n`);
     }
 
-    exitWithResult(res, 'bash');
+    exitWithResult(res, 'python');
     break;
   }
 

@@ -13,21 +13,22 @@
 
 | 文件 | 行数 | 角色 |
 |---|---|---|
-| `bin/atlas.js` | 426 | CLI 入口:命令面总表见 `printHelp`(`bin/atlas.js:18`)= init / update / upgrade / check / console / report / version,分派在同文件 `switch (command)`;平台探测拆到 `bin/platform.js`(Trellis 用 which/where、bash 只认 Git Bash、Python 按平台探测 3.10+) |
-| `install.sh` | 740 | 装配器:白名单目录拷贝 + 版本戳 + manifest + 63 条自检 |
+| `bin/atlas.js` | 406 | CLI 入口:命令面总表见 `printHelp`(`bin/atlas.js:18`)= init / update / upgrade / check / console / report / version,分派在同文件 `switch (command)`;平台探测拆到 `bin/platform.js`(Trellis 用 which/where、bash 只认 Git Bash、Python 按平台探测 3.10+) |
+| `install.py` | 835 | 装配单源:白名单拷贝 + 版本戳 + manifest + 63 条 `c()` 自检 + 图谱探测;叶子脚本(layout / apply-patches / apply-wiring / pkg_digest / ablation)复用不重写 |
+| `install.sh` | 45 | 薄 wrapper:头部用法说明 + `exec python3 install.py`(装配逻辑零残留,自检门守) |
 | `scripts/pkg_digest.py` | — | 内容摘要算法单点(`ASSEMBLY_COVER_DIRS`,`scripts/pkg_digest.py:52`):装配版本门两侧共用,防双端漂移 |
 | `scripts/backflow.py` | — | 副本 ⇄ 源包三态回灌(`diff_trees`,`scripts/backflow.py:60`;`apply`,`scripts/backflow.py:97`) |
 | `patches/`(4 族) | — | 锚点式版本化补丁:workflow-plan-apply / project-wiring / workflow-root-cause / workflow-skill-routing |
 
 ## 核心机制
 
-### 1. 装配六步(`install.sh`)
+### 1. 装配六步(`install.py`;`install.sh` 薄 wrapper)
 
-`[1/6]` 整包 → `.atlas/`(`ATLAS_DEST`,`install.sh:341`,白名单目录拷贝,不整目录删,保住 `.atlas/runs/` 运行态)→ `[2/6]` skill 瘦桩(引用契约不复制正文)→ `[4/6]` 骨架 → `[5/6]` Trellis workflow 补丁(遍历 patches/)→ `[6/6]` 项目接线 → 图谱后端探测(可选)→ 自检段(`[自检]`,`install.sh:341`,63 条 `check` 声明)。`--dry-run`(F54)零落盘、双摘要可见化;`--update` 刷新已装配副本。
+`[1/6]` 整包 → `.atlas/`(`atlas_dest`,`install.py:472`,白名单目录拷贝,不整目录删,保住 `.atlas/runs/` 运行态)→ `[2/6]` skill 瘦桩(引用契约不复制正文)→ `[4/6]` 骨架 → `[5/6]` Trellis workflow 补丁(遍历 patches/)→ `[6/6]` 项目接线 → 图谱后端探测(可选)→ 自检段(`say("自检")`,`install.py:663`,63 条 `c()` 声明)。`--dry-run`(F54)零落盘、双摘要可见化;`--update` 刷新已装配副本。
 
 ### 2. 装配基线三件(D145/D146/D147)
 
-`.atlas/VERSION` 内容摘要戳(落点 `install.sh:3` 起)与 `.atlas/MANIFEST.json` 逐文件基线(`install.sh:3` 起),摘要算法单源在 `pkg_digest.py`——atlas_check 装配版本门按「配对校验先行」重算对账:戳在而 manifest 缺 = 显式「旧装配」半态,不是失败。写序先 manifest 后 VERSION。
+`.atlas/VERSION` 内容摘要戳(落点 `install.py:785` `stamp_file`)与 `.atlas/MANIFEST.json` 逐文件基线(同点落),摘要算法单源在 `pkg_digest.py`——atlas_check 装配版本门按「配对校验先行」重算对账:戳在而 manifest 缺 = 显式「旧装配」半态,不是失败。写序先 manifest 后 VERSION。
 
 ### 3. 三态回灌(`backflow.py`)
 

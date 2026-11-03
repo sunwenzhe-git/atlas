@@ -222,11 +222,12 @@ def check_registry_counts() -> dict:
     而实况是 35 条 `check` 声明、16 个测试文件 —— **计数类陈述无门可判**。本判据把这三处钉住。
     """
     gates = (PKG_ROOT / "shared" / "gates.md").read_text(encoding="utf-8")
-    # `install.sh` 是**源包专属件**（不装配进 `.atlas/`）⇒ 副本态跳过该子项（显式，不静默）。
-    install_file = PKG_ROOT / "install.sh"
+    # `install.py` 是**源包专属件**（不装配进 `.atlas/`）⇒ 副本态跳过该子项（显式，不静默）。
+    # 2026-11-03（RFC-20261103-04 第 4 步）：自检声明随装配单源迁至 install.py（`c(...)`）。
+    install_file = PKG_ROOT / "install.py"
     install = install_file.read_text(encoding="utf-8") if install_file.is_file() else ""
     n_tests = len(list((PKG_ROOT / "tests").glob("test_*.py")))
-    n_checks = len(re.findall(r"^check ", install, re.M))
+    n_checks = len(re.findall(r'^\s*c\("', install, re.M))
     bad: list[str] = []
     for m in re.finditer(r"(\d+)\s*个\**\s*测试文件", gates):
         if int(m.group(1)) != n_tests:
@@ -235,7 +236,7 @@ def check_registry_counts() -> dict:
         if int(m.group(1)) != n_tests or int(m.group(2)) != n_tests:
             bad.append(f"「{m.group(1)}/{m.group(2)}」≠ 实际 {n_tests}/{n_tests}")
     if install:
-        for m in re.finditer(r"自检（\**(\d+)\s*条\s*`check`\s*声明", gates):
+        for m in re.finditer(r"自检（\**(\d+)\s*条\s*(?:`check`|`c\(\)`)\s*声明", gates):
             if int(m.group(1)) != n_checks:
                 bad.append(f"「自检 {m.group(1)} 条 check 声明」≠ 实际 {n_checks}")
     # 校验器行数：`gates.md` 的「数量 = … 当前 N」必须 = `atlas_check.VALIDATORS` 长度
@@ -282,7 +283,7 @@ def check_registry_counts() -> dict:
             bad.append(f"DESIGN.md 校验器清单与实况不符：漏列={miss} 多列={extra}")
     skips = []
     if not install:
-        skips.append("副本态无 `install.sh` ⇒ 自检项数子项跳过")
+        skips.append("副本态无 `install.py` ⇒ 自检项数子项跳过")
     if not design:
         skips.append("副本态无 `DESIGN.md` ⇒ §13 状态词子项跳过")
     skipped = ("；" + "；".join(skips) + "（都不是通过）") if skips else ""

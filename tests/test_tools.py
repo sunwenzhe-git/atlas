@@ -202,28 +202,29 @@ def test_f23_tests_adapter_python3_m_pytest() -> None:
 
 
 def test_f30_assembly_cover_in_sync_with_install_sh() -> None:
-    """F30（R7，2026-10-15）：pkg_digest 装配集白名单 ⇔ install.sh 拷贝列表**双向同步钉**
-    （防将来新增拷贝目录自成摘要盲区；含 docs-only 改动不再激发装配版本回环）。"""
+    """F30（R7，2026-10-15）：pkg_digest 装配集白名单 ⇔ install.py 拷贝清单**双向同步钉**
+    （防将来新增拷贝目录自成摘要盲区；含 docs-only 改动不再激发装配版本回环）。
+    2026-11-03（RFC-20261103-04 第 4 步）：装配单源迁 install.py，解析对象同步。"""
     import pytest
 
-    install_sh = PKG_ROOT / "install.sh"
-    if not install_sh.is_file():
-        pytest.skip("包内无 install.sh（副本态）——同步钉要求源包态执行")
+    install_py = PKG_ROOT / "install.py"
+    if not install_py.is_file():
+        pytest.skip("包内无 install.py（副本态）——同步钉要求源包态执行")
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("pkg_digest", PKG_ROOT / "scripts" / "pkg_digest.py")
     pd = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(pd)
 
-    install_txt = install_sh.read_text(encoding="utf-8")
-    m = re.search(r"for pkg_dir in ([a-z /_]+);", install_txt)
+    install_txt = install_py.read_text(encoding="utf-8")
+    m = re.search(r"pkg_dirs = \[(.*?)\]", install_txt, re.S)
     assert m, install_txt
-    pkg_dirs = {d for d in m.group(1).strip().split()}
-    cover = pdo_cover = set(pd.ASSEMBLY_COVER_DIRS)
+    pkg_dirs = set(re.findall(r'"([^"]+)"', m.group(1)))
+    cover = set(pd.ASSEMBLY_COVER_DIRS)
 
-    # ① install.sh pkg_dir 循环里的每一笔必须都在摘要白名单
+    # ① install.py pkg_dir 清单里的每一笔必须都在摘要白名单
     missing = pkg_dirs - cover - {"LICENSE"}
-    assert not missing, f"install.sh 拷贝了 {missing}，pkg_digest 未覆盖（摘要盲区）"
+    assert not missing, f"install.py 拷贝了 {missing}，pkg_digest 未覆盖（摘要盲区）"
     # ② skills/* 是 [2/6] 拷贝集（不在 pkg_dir 循环）⇒ 必须也在白名单
     assert "skills/" in install_txt and "skills" in cover
     # ③ 非装配文件不进摘要：临时 math clone 中仅 docs 改动 ⇒ digest 不变
@@ -550,14 +551,14 @@ def test_f47_npm_files_cover_assembly_list() -> None:
     """
     import pytest
 
-    install_sh = PKG_ROOT / "install.sh"
+    install_py = PKG_ROOT / "install.py"
     pkg_json = PKG_ROOT / "package.json"
-    if not install_sh.is_file() or not pkg_json.is_file():
-        pytest.skip("包内无 install.sh / package.json（副本态）——同步钉要求源包态执行")
+    if not install_py.is_file() or not pkg_json.is_file():
+        pytest.skip("包内无 install.py / package.json（副本态）——同步钉要求源包态执行")
 
-    m = re.search(r"for pkg_dir in ([a-z /_]+);", install_sh.read_text(encoding="utf-8"))
-    assert m, "install.sh 的 pkg_dir 循环没找到"
-    pkg_dirs = {d for d in m.group(1).strip().split()}
+    m = re.search(r"pkg_dirs = \[(.*?)\]", install_py.read_text(encoding="utf-8"), re.S)
+    assert m, "install.py 的 pkg_dirs 清单没找到"
+    pkg_dirs = set(re.findall(r'"([^"]+)"', m.group(1)))
     files = set(json.loads(pkg_json.read_text(encoding="utf-8")).get("files") or [])
     missing = sorted(pkg_dirs - files)
     assert not missing, (

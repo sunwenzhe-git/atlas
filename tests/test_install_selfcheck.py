@@ -6,24 +6,27 @@
 人眼复核连过两轮（`3508 §101`、`§104`）都没命中 —— 因为它不在 vault↔canonical 的
 对账面上。故把下面几条判据钉成机器门：
 
-  1. **自检引用必须存在**：`install.sh` 每条 `check "<名>" "<路径>"`，凡指向包内
-     （`$ATLAS_DEST/...`、`$PATCH_DIR/...`、`$WIRING_DIR/...`）的文件必须在包内存在；
-     `$TARGET/...` 是目标项目侧产物，跳过；**无法判定的变量形态 ⇒ FAIL**（fail-closed：
-     解析不了不得静默放过，同 `§B106` 的「缺列按最严」）。
-  2. **骨架不得复活已退役环的目录**：`install.sh` 建的每个目录，在 `shared/layout.md`
+  1. **自检引用必须存在**：`install.py` 每条 `c("<名>", "<路径>")`，凡指向包内
+     （`{atlas_dest}/...`）的文件必须在包内存在；`TARGET` / 资产根变量是目标项目侧
+     产物，跳过；**无法判定的形态 ⇒ FAIL**（fail-closed：解析不了不得静默放过，
+     同 `§B106` 的「缺列按最严」）。
+  2. **骨架不得复活已退役环的目录**：`install.py` 建的每个目录，在 `shared/layout.md`
      的目录树里不得标「已退役」（该文件已用此标记，如 `product/prototype/`）。
      一般化的退役登记表（`3508 §95` 定形）落地前，以 layout.md 的标记为准。
   3. **skill 瘦桩引用的契约必须存在**（副本态也能跑）：`skills/*/SKILL.md` 里出现的
      `.atlas/<...>` 路径逐个校验；`{a,b,c}` 花括号展开。事故同族：E1 后瘦桩仍指
      `rings/{prd,prototype,e2e,structure}`。
-  4. **`$var` 紧邻非 ASCII 必须写 `${var}`**（`set -u` 下会被吞进变量名 ⇒ 半途退出）。
+  4. **install.sh 必须是薄 wrapper**（2026-11-03，RFC-20261103-04 第 4 步）：装配单源
+     已迁 `install.py`；wrapper 只准保留头部说明 + 委托执行，不得残留装配逻辑
+     （`say` / `check` / 拷贝语句）——两份实现并存必然漂移（F34/F55 守卫体系的病灶）。
+     旧判据「`$var` 紧邻非 ASCII」随 bash 实现退役。
   5. **环退役对称**（`rings/<r>/reference.md` ⇔ `skills/atlas-<r>/`）。
   6. **首建提示的两条硬约束**（2026-10-15 加）：`say` 行不得残留已退役环名（首建者是纯
      噪声，与判据 1 同族），且存量（`atlas-apply adopt`）与全新（`atlas-apply all`）两条
      开户入口都要在 —— 只给全新那条，存量项目开户即无从下手。
 
 - 框架无关；纯标准库。判定：全部通过 → 0；任一违规 → 1。
-- 副本态（`.atlas/`）没有 `install.sh` ⇒ 判据 1/2/4/6 **显式 skip**（`-rs` 可见），不静默通过。
+- 副本态（`.atlas/`）没有 `install.sh` / `install.py` ⇒ 判据 1/2/4/6 **显式 skip**（`-rs` 可见），不静默通过。
 
 用法：
     python3 test_install_selfcheck.py [--json]
@@ -37,27 +40,29 @@ import sys
 from pathlib import Path
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
-INSTALL = PKG_ROOT / "install.sh"
+INSTALL = PKG_ROOT / "install.sh"        # 薄 wrapper（判据 4）
+INSTALL_PY = PKG_ROOT / "install.py"     # 装配单源（判据 1/2/6 的解析对象）
 LAYOUT = PKG_ROOT / "shared" / "layout.md"
 
-# check "<名>" "<路径>"
-CHECK_RE = re.compile(r'^\s*check\s+"([^"]+)"\s+"([^"]+)"', re.M)
-# 脚本内简单赋值（用于展开 `$entry` 这类局部变量；不展开保留名）
-ASSIGN_RE = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)="([^"]*)"', re.M)
-VAR_USE_RE = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
-# `$var` 紧邻非 ASCII（如 `$stale_name（`）⇒ bash 把多字节字符吞进变量名 ⇒
-# `set -u` 报 unbound variable，install 半途退出（2026-09-28 实测：该分支只在
-# 「目标已有退役桩」时才走到，空目录探针跑不到）⇒ 必须写 `${var}`。
-VAR_ADJ_NONASCII_RE = re.compile(r"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?[^\x00-\x7f]")
-# for d in \ ... do  之间的引号项
-SKELETON_RE = re.compile(r"for\s+d\s+in\s+\\?\s*(.*?)\ndo\b", re.S)
+# install.py 自检条目：c("<名>", <路径>)。路径三种形态：
+#   f"{atlas_dest}/<包内相对>"   ⇒ 包内侧
+#   os.path.join(TARGET, ...)    ⇒ 目标项目侧
+#   资产根变量（stack_profile / e2e_cases_dir）⇒ 目标项目侧
+CHECK_PY_RE = re.compile(r'^\s*c\("([^"]+)",\s*(.+?)\)\s*$', re.M)
+# f"{atlas_dest}/<包内相对>" 的静态尾部（最后一个 } 之后的部分）
+ATLAS_DEST_FSTRING_RE = re.compile(r'^f?"\{atlas_dest\}/(.+)"$')
+# 目标项目侧的变量/调用形态（白名单；出现别的形态 ⇒ unresolved ⇒ fail-closed）
+TARGET_FORMS = ("os.path.join(TARGET", "stack_profile", "e2e_cases_dir")
+# install.py 骨架列表里的引号项（QUOTED_RE 复用）
 QUOTED_RE = re.compile(r'"([^"]+)"')
 # SKILL.md 里的 .atlas/... 引用（到 .md/.py 为止；**字符类必须含 `,`** ——
 # 否则 `{prd,prototype,e2e,structure}` 整条引用匹配不上，静默不检查。
 # 实测：漏 `,` 时变异 M3（把已删环塞回花括号）不咬，门成摆设）
 ATLAS_REF_RE = re.compile(r"\.atlas/([A-Za-z0-9_./{},]+\.(?:md|py))")
-# `say "..."` 整行（用户可见输出；判据 6 用）
-SAY_RE = re.compile(r'\bsay\s+"(.*)"\s*$')
+# install.py 的 `say(f"...")` 整行（用户可见输出；判据 6 用）
+SAY_PY_RE = re.compile(r'\bsay\((f?)"(.*)"\)\s*$')
+# install.py 的骨架列表字面量（skeleton = [ ... ]）
+SKELETON_PY_RE = re.compile(r"skeleton = \[(.*?)\]", re.S)
 # 已退役环在提示里的残留词（判据 6 ①）：`rings/prototype/` 已删，中英文两种写法都不该露脸
 RETIRED_RING_WORDS = ("原型", "prototype")
 # 开户两条入口（判据 6 ②）：存量 adopt / 全新 all。只给一条 ⇒ 另一种形态的项目开户即无从下手
@@ -66,67 +71,35 @@ HINT_ENTRIES = ("atlas-apply adopt", "atlas-apply all")
 # 包内变量前缀 → 包内相对目录（$ATLAS_DEST = <目标>/.atlas/，逐字镜像包内布局）
 # 非环 skill 白名单（`3509 §95`）：它们不是「环」，不参与环退役对称判据。
 NON_RING_SKILLS = ("apply", "design-review", "grill", "release")
-PKG_VARS = {
-    "$ATLAS_DEST": "",
-    "${ATLAS_DEST}": "",
-    "$PATCH_DIR": "patches/workflow-plan-apply",
-    "${PATCH_DIR}": "patches/workflow-plan-apply",
-    "$WIRING_DIR": "patches/project-wiring",
-    "${WIRING_DIR}": "patches/project-wiring",
-}
-# 目标项目侧产物：装配后才存在，不在包内校验
-TARGET_VARS = ("$TARGET", "${TARGET}")
 
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.is_file() else ""
 
+def install_py_check_paths(text: str) -> list[dict]:
+    """install.py 的 `c("<名>", <路径>)` 条目 ⇒ (状态, 包内相对路径)。
 
-def _expand_locals(raw: str, assigns: dict[str, str], depth: int = 3) -> str:
-    """展开脚本内局部变量（如 `$entry`），但**绝不**展开保留名 —— 否则
-    `$ATLAS_DEST/shared/x` 会经 `ATLAS_DEST="$TARGET/.atlas"` 被降级成目标侧，
-    把包内路径静默放行（门自己变成摆设）。"""
-    reserved = {v.strip("${}") for v in list(PKG_VARS) + list(TARGET_VARS)}
-    for _ in range(depth):
-        new = VAR_USE_RE.sub(
-            lambda m: m.group(0) if m.group(1) in reserved else assigns.get(m.group(1), m.group(0)),
-            raw)
-        if new == raw:
-            break
-        raw = new
-    return raw
-
-
-def resolve_check_path(raw: str, assigns: dict[str, str] | None = None) -> tuple[str, str]:
-    """→ (状态, 包内相对路径)；状态 ∈ {pkg, target, unresolved}。
-
-    判定顺序：先认保留名（包内 / 目标侧），**再**展开局部变量后重试 —— 顺序不能反。
+    形态白名单外的 ⇒ unresolved（fail-closed，同 `§B106` 缺列按最严）。
     """
-    assigns = assigns if assigns is not None else {}
-    for var in TARGET_VARS:
-        if raw.startswith(var):
-            return "target", ""
-    for var, prefix in PKG_VARS.items():
-        if raw.startswith(var + "/"):
-            rest = raw[len(var) + 1:]
-            return "pkg", (f"{prefix}/{rest}" if prefix else rest)
-    expanded = _expand_locals(raw, assigns)
-    if expanded != raw:
-        return resolve_check_path(expanded, assigns)
-    return "unresolved", raw
-
-
-def install_check_paths(text: str) -> list[dict]:
-    assigns = dict(ASSIGN_RE.findall(text))
     out: list[dict] = []
-    for name, raw in CHECK_RE.findall(text):
-        status, pkg = resolve_check_path(raw, assigns)
+    for name, raw in CHECK_PY_RE.findall(text):
+        raw = raw.strip()
+        if raw.startswith("os.path.join(TARGET"):
+            status, pkg = "target", ""
+        elif raw in TARGET_FORMS[1:]:
+            status, pkg = "target", ""
+        else:
+            m = ATLAS_DEST_FSTRING_RE.match(raw)
+            if m:
+                status, pkg = "pkg", m.group(1)
+            else:
+                status, pkg = "unresolved", raw
         out.append({"name": name, "raw": raw, "status": status, "pkg": pkg})
     return out
 
 
 def install_skeleton_dirs(text: str) -> list[str]:
-    m = SKELETON_RE.search(text)
+    m = SKELETON_PY_RE.search(text)
     return QUOTED_RE.findall(m.group(1)) if m else []
 
 
@@ -173,12 +146,12 @@ def skill_refs() -> list[dict]:
 
 
 def check_install_paths() -> dict:
-    text = _read(INSTALL)
+    text = _read(INSTALL_PY)
     if not text:
         return {"check": "自检引用存在", "ok": True, "skip": True,
-                "detail": "包内无 install.sh（副本态：装配面自检只在源包跑）"}
+                "detail": "包内无 install.py（副本态：装配面自检只在源包跑）"}
     missing, unresolved = [], []
-    for item in install_check_paths(text):
+    for item in install_py_check_paths(text):
         if item["status"] == "pkg":
             if not (PKG_ROOT / item["pkg"]).exists():
                 missing.append(f'{item["name"]} → {item["pkg"]}')
@@ -186,19 +159,19 @@ def check_install_paths() -> dict:
             unresolved.append(f'{item["name"]} → {item["raw"]}')
     bad = missing + [f"无法判定（fail-closed）: {u}" for u in unresolved]
     return {"check": "自检引用存在", "ok": not bad, "skip": False,
-            "detail": ("；".join(bad) if bad else f"{len(install_check_paths(text))} 条自检引用全部可达")}
+            "detail": ("；".join(bad) if bad else f"{len(install_py_check_paths(text))} 条自检引用全部可达")}
 
 
 def check_install_skeleton() -> dict:
-    text = _read(INSTALL)
+    text = _read(INSTALL_PY)
     if not text:
         return {"check": "骨架不含已退役目录", "ok": True, "skip": True,
-                "detail": "包内无 install.sh（副本态）"}
+                "detail": "包内无 install.py（副本态）"}
     retired = retired_dir_names(_read(LAYOUT))
     dirs = install_skeleton_dirs(text)
     if not dirs:
         return {"check": "骨架不含已退役目录", "ok": False, "skip": False,
-                "detail": "未能从 install.sh 解析出骨架目录列表（判据失效，fail-closed）"}
+                "detail": "未能从 install.py 解析出骨架目录列表（判据失效，fail-closed）"}
     bad = [d for d in dirs if d.rstrip("/").split("/")[-1] in retired]
     return {"check": "骨架不含已退役目录", "ok": not bad, "skip": False,
             "detail": ("；".join(f"{d} 已在 layout.md 标为已退役" for d in bad) if bad
@@ -240,23 +213,39 @@ def check_ring_skill_symmetry() -> dict:
                        f"{len(rings)} 个环与对应 skill 一一对应（非环 skill：{sorted(NON_RING_SKILLS)}）")}
 
 
-def check_var_before_nonascii() -> dict:
+WRAPPER_MAX_LINES = 60
+
+
+def check_install_sh_is_thin_wrapper() -> dict:
+    """判据 4（2026-11-03，RFC-20261103-04 第 4 步）：install.sh 必须是薄 wrapper。
+
+    装配单源已迁 `install.py`；wrapper 里残留任何装配逻辑（`say` / `check` /
+    `cp -R` 等）= 两份实现并存 ⇒ 必然漂移（F34/F55 守卫体系防的同族病）。
+    行数上限是冗余防线：真正的 bash 实现 741 行，wrapper 只准是头部说明 + 委托。
+    """
     text = _read(INSTALL)
     if not text:
-        return {"check": "变量名分隔（set -u 安全）", "ok": True, "skip": True,
+        return {"check": "install.sh 是薄 wrapper", "ok": True, "skip": True,
                 "detail": "包内无 install.sh（副本态）"}
     bad = []
+    n = len(text.splitlines())
+    if n > WRAPPER_MAX_LINES:
+        bad.append(f"install.sh 有 {n} 行（> {WRAPPER_MAX_LINES}）——不像 wrapper")
+    if "install.py" not in text:
+        bad.append("wrapper 未委托 install.py")
     for i, line in enumerate(text.splitlines(), 1):
-        for m in VAR_ADJ_NONASCII_RE.finditer(line):
-            if not m.group(0).startswith("${"):
-                bad.append(f"L{i}: {m.group(0)!r}")
-    return {"check": "变量名分隔（set -u 安全）", "ok": not bad, "skip": False,
-            "detail": ("；".join(bad) + "（改用 ${var}）" if bad
-                       else "install.sh 内无 `$var` 紧邻非 ASCII 的写法")}
+        s = line.strip()
+        if s.startswith("#") or not s:
+            continue
+        if s.startswith(("say ", "say(", "check ", "check(", "cp ", "rm ", "mkdir ", "python3 ")):
+            bad.append(f"L{i} 残留装配逻辑: {s!r}")
+    return {"check": "install.sh 是薄 wrapper", "ok": not bad, "skip": False,
+            "detail": ("；".join(bad) + "（装配单源 = install.py，wrapper 只准头部说明 + 委托）" if bad
+                       else f"install.sh {n} 行薄 wrapper：仅头部说明 + 委托 install.py，无装配逻辑")}
 
 
 def install_say_lines(text: str) -> list[str]:
-    """install.sh **打到用户眼前**的行（`say "..."`；注释与普通语句不算）。
+    """install.py **打到用户眼前**的行（`say("...")`；注释与普通语句不算）。
 
     只看注释不算数：判据要守的是首建者读到的那几行。
     """
@@ -264,9 +253,9 @@ def install_say_lines(text: str) -> list[str]:
     for line in text.splitlines():
         if line.lstrip().startswith("#"):
             continue
-        m = SAY_RE.search(line)
+        m = SAY_PY_RE.search(line)
         if m:
-            out.append(m.group(1))
+            out.append(m.group(2))
     return out
 
 
@@ -280,14 +269,14 @@ def check_first_run_hint() -> dict:
       ① **无退役环残留**：`say` 行不得出现已退役环名（`原型` / `prototype`）；
       ② **双入口齐备**：存量（`atlas-apply adopt`）与全新（`atlas-apply all`）都要出现。
     """
-    text = _read(INSTALL)
+    text = _read(INSTALL_PY)
     if not text:
         return {"check": "首建提示（退役环残留 / 双入口）", "ok": True, "skip": True,
-                "detail": "包内无 install.sh（副本态：装配面自检只在源包跑）"}
+                "detail": "包内无 install.py（副本态：装配面自检只在源包跑）"}
     lines = install_say_lines(text)
     if not lines:
         return {"check": "首建提示（退役环残留 / 双入口）", "ok": False, "skip": False,
-                "detail": "未能从 install.sh 解析出任何 `say` 行（判据失效，fail-closed）"}
+                "detail": "未能从 install.py 解析出任何 `say` 行（判据失效，fail-closed）"}
     bad = [f"提示残留退役环名「{w}」：{ln.strip()}"
            for ln in lines for w in RETIRED_RING_WORDS if w in ln]
     joined = "\n".join(lines)
@@ -300,7 +289,8 @@ def check_first_run_hint() -> dict:
 
 def scan() -> list[dict]:
     return [check_install_paths(), check_install_skeleton(), check_skill_refs(),
-            check_var_before_nonascii(), check_ring_skill_symmetry(), check_first_run_hint()]
+            check_install_sh_is_thin_wrapper(), check_ring_skill_symmetry(),
+            check_first_run_hint()]
 
 
 def test_install_selfcheck_paths_exist() -> None:
@@ -318,8 +308,8 @@ def test_skill_stubs_reference_existing_contracts() -> None:
     assert res["ok"], res["detail"]
 
 
-def test_install_has_no_var_touching_nonascii() -> None:
-    res = check_var_before_nonascii()
+def test_install_sh_is_thin_wrapper() -> None:
+    res = check_install_sh_is_thin_wrapper()
     assert res["ok"], res["detail"]
 
 

@@ -151,13 +151,13 @@ def test_apply_verify_green(tmp_path: Path) -> None:
 
 
 def test_manifest_matches_install_sh() -> None:
-    """清单守恒：BACKFLOW_DIRS == install.sh 第 1 步循环项（副本态无 install.sh ⇒ SKIP）。"""
-    install = PKG_ROOT / "install.sh"
+    """清单守恒：BACKFLOW_DIRS == install.py 第 1 步拷贝清单（副本态无 install.py ⇒ SKIP）。"""
+    install = PKG_ROOT / "install.py"
     if not install.is_file():
-        pytest.skip("副本态无 install.sh（装配面自检只在源包跑）——不是通过")
+        pytest.skip("副本态无 install.py（装配面自检只在源包跑）——不是通过")
     text = install.read_text(encoding="utf-8")
-    m = re.search(r"for pkg_dir in ([^;]+); do", text)
-    assert m, "install.sh 第 1 步循环行未找到（形态变了？两处须同改）"
-    listed = tuple(m.group(1).split())
+    m = re.search(r"pkg_dirs = \[(.*?)\]", text, re.S)
+    assert m, "install.py 第 1 步拷贝清单未找到（形态变了？两处须同改）"
+    listed = tuple(re.findall(r'"([^"]+)"', m.group(1)))
     assert listed == BACKFLOW_DIRS, (
         f"backflow 清单与 install.sh 不一致：backflow={BACKFLOW_DIRS} install={listed}")

@@ -150,7 +150,7 @@ Atlas 的核心由 **三环（Rings）** 构筑成不可逾越的应然防线：
 ### 1. 依赖准备
 * **Node.js 18+**（CLI 运行环境）
 * **Python 3.10+**（核心校验器与生成引擎）
-* **操作系统**：macOS / Linux。Windows 需提供 POSIX 环境——**Git Bash**（`atlas init` 会自动探测常见安装位置，且要求 `python3` 在该环境中可用）或 **WSL2**；原生 PowerShell/CMD 没有 bash + python3，装配器无法运行（会 fail-closed 并给出指引）
+* **操作系统**：macOS / Linux / **Windows**。装配单源是 `install.py`（Python 3.10+）：Windows 原生 PowerShell/CMD 即可运行（`atlas init` 自动探测 `py -3` / 真实 `python` 路径并校验版本）；Git Bash / WSL2 不再是必要条件
 * **Playwright**（E2E 测试运行器：Node 版，由项目 node_modules 提供）
 * **[Trellis](https://github.com/mindfold-ai/trellis)**（必需宿主执行器，负责需求级任务调度；安装：`npm install -g @mindfoldhq/trellis`）
 * *(可选)* **CodeGraphContext (cgc)**：**仅后端 / 全栈项目建议安装**（纯前端栈实测近乎零收益，atlas 在确认画像时按栈门控提议、不会向纯前端项目推销）——安装：`uv tool install codegraphcontext`（或 `pip install codegraphcontext`）
