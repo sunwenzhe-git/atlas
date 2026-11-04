@@ -134,37 +134,45 @@ def repo_git_dirty(root: Path) -> bool | None:
 _RUNTIME_PATH_PARTS = ("test-results", "playwright-report", ".atlas-auth", "node_modules",
                        ".atlas-run", ".atlas-evidence")
 _RUNTIME_SUFFIXES = (".trace", ".png", ".webm", ".last-run.json")
+_SCRIPT_SUFFIXES = (".ts", ".js", ".mjs", ".json", ".yaml", ".yml")
 
 
-def scripts_hash(root: Path) -> str | None:
-    """计算当前 E2E 生成脚本与前置准备钩子的内容散列（16 字符前缀）。
+def _script_inventory(root: Path) -> list[tuple[str, Path]]:
+    """白名单脚本清单（单源）：`scripts_hash` 与 `script_file_map` 的**唯一**枚举。
 
-    白名单：`product/e2e/scripts/` 下源码脚本（ts/js/mjs/json/yaml/yml），
-    以及可选的项目级数据准备钩子 `atlas-prepare.mjs`。
-    严格排除运行时产物（test-results/、playwright-report/、.atlas-auth/、node_modules/、trace、png 等），
-    确保执行产物不导致指纹假漂移。
+    `product/e2e/scripts/` 下源码脚本 + 可选 `atlas-prepare.mjs`（scripts 内优先，其次项目根）；
+    排除 `_RUNTIME_PATH_PARTS` / `_RUNTIME_SUFFIXES`。顺序稳定（目录序 + 钩子末位）。
     """
     s_dir = load_layout(root).e2e_scripts_dir
     if not s_dir.is_dir():
-        return None
-    h = hashlib.sha256()
-    files: list[tuple[str, Path]] = []
+        return []
+    inv: list[tuple[str, Path]] = []
     for p in sorted(s_dir.rglob("*")):
         if not p.is_file():
             continue
         rel = p.relative_to(s_dir).as_posix()
         if any(part in rel for part in _RUNTIME_PATH_PARTS):
             continue
-        if rel.endswith(_RUNTIME_SUFFIXES):
+        if rel.endswith(_RUNTIME_SUFFIXES) or not rel.endswith(_SCRIPT_SUFFIXES):
             continue
-        if rel.endswith((".ts", ".js", ".mjs", ".json", ".yaml", ".yml")):
-            files.append((f"scripts/{rel}", p))
+        inv.append((f"scripts/{rel}", p))
     for prep in (s_dir / "atlas-prepare.mjs", root / "atlas-prepare.mjs"):
         if prep.is_file():
-            files.append(("atlas-prepare.mjs", prep))
+            key = "scripts/atlas-prepare.mjs" if prep.parent == s_dir else "atlas-prepare.mjs"
+            inv.append((key, prep))
             break
+    return inv
+
+
+def scripts_hash(root: Path) -> str | None:
+    """计算当前 E2E 生成脚本与前置准备钩子的内容散列（16 字符前缀）。
+
+    白名单与排除规则的单源是 `_script_inventory`；`script_file_map` 消费同一清单。
+    """
+    files = _script_inventory(root)
     if not files:
         return None
+    h = hashlib.sha256()
     for rel, p in files:
         h.update(rel.encode("utf-8"))
         try:
@@ -175,30 +183,8 @@ def scripts_hash(root: Path) -> str | None:
 
 
 def script_file_map(root: Path) -> dict[str, Path]:
-    """白名单脚本的逐文件清单 `{相对路径: 路径}`。
-
-    白名单与 `scripts_hash` 同源（源码脚本 + 可选 `atlas-prepare.mjs`，排除运行期产物），
-    但按文件去重——逐用例指纹与共享闭包都从这里取，不另写第二份枚举。
-    """
-    s_dir = load_layout(root).e2e_scripts_dir
-    if not s_dir.is_dir():
-        return {}
-    out: dict[str, Path] = {}
-    for p in sorted(s_dir.rglob("*")):
-        if not p.is_file():
-            continue
-        rel = p.relative_to(s_dir).as_posix()
-        if any(part in rel for part in _RUNTIME_PATH_PARTS):
-            continue
-        if rel.endswith(_RUNTIME_SUFFIXES):
-            continue
-        if rel.endswith((".ts", ".js", ".mjs", ".json", ".yaml", ".yml")):
-            out[f"scripts/{rel}"] = p
-    for prep in (s_dir / "atlas-prepare.mjs", root / "atlas-prepare.mjs"):
-        if prep.is_file():
-            out.setdefault("scripts/atlas-prepare.mjs" if prep.parent == s_dir else "atlas-prepare.mjs", prep)
-            break
-    return dict(sorted(out.items()))
+    """白名单脚本的逐文件清单 `{相对路径: 路径}`（与 `scripts_hash` 同源）。"""
+    return dict(sorted(_script_inventory(root)))
 
 
 def script_file_hashes(root: Path) -> dict[str, str]:

@@ -92,6 +92,21 @@ AC_RE = re.compile(r"^AC-[A-Z0-9]+-\d{3}$")
 # D130 / Batch B（RFC-20261103-08）：E2E 维度列按**表头名**定位；唯一合法表头写死在这里，
 # 表头不符 ⇒ 该表按「未声明」跳过（不按第 4 格位置吸收）。
 E2E_DIM_HEADER = "适用覆盖维度"
+# H（2026-11-04，评审第 3 条 / D156 单案）：前三列须按序为 `AC ID` / `场景` / `回指规则`。
+# 第二列按前缀接受模板的 `场景（Given / When / Then）` 变体（同为场景列）；列序严格，
+# 非 canonical 列序 ⇒ 该表按 N/A（逐表独立，坏表不擦好表）。
+_CANONICAL_AC_HEAD = ("AC ID", "场景", "回指规则")
+
+
+def is_canonical_ac_header(hdr: list[str]) -> bool:
+    """前三列是否按序为 canonical AC 表头（第二列接受 `场景…` 变体）。"""
+    if len(hdr) < 3:
+        return False
+    return (
+        hdr[0] == _CANONICAL_AC_HEAD[0]
+        and hdr[1].startswith(_CANONICAL_AC_HEAD[1])
+        and hdr[2] == _CANONICAL_AC_HEAD[2]
+    )
 # 契约 §8.2（2026-09-25 补）：PRD 环登记「结构类 AC」的小节标题 ——
 # 该小节内的 AC 其被测属性**只能在初始态观测**（骨架 / 默认面板 / 按数据渲染构成）。
 STRUCT_LIST_HEAD = "#### 结构类 AC 清单"
@@ -359,15 +374,16 @@ def collect_e2e_declared_dims(prd_files) -> dict[str, set[str]]:
     """逐表按**表头名**收集 AC 的 E2E 覆盖维度声明（Batch B，RFC-20261103-08）。
 
     与 D153 单源一致：表的切分走 `_support/ac_coverage.iter_md_tables`，单元格解析走
-    `parse_dims_cell`。与旧位置式正则的差别：只有表头含 `适用覆盖维度` 的 AC 表才被采信，
-    其余表按「未声明」跳过 —— 逐表独立，一张错表头不会擦掉同文件的好表。
+    `parse_dims_cell`。只有表头含 `适用覆盖维度` **且前三列为 canonical 列序**
+    （`AC ID` / `场景…` / `回指规则`）的 AC 表才被采信，其余表按「未声明」跳过 ——
+    逐表独立，一张错表头不会擦掉同文件的好表。
     """
     declared: dict[str, set[str]] = {}
     for p in prd_files:
         seg = p.read_text(encoding="utf-8")
         for header, rows in ac_coverage.iter_md_tables(seg):
             hdr = [ac_coverage.strip_md_cell(c) for c in header]
-            if "AC ID" not in hdr or "回指规则" not in hdr or E2E_DIM_HEADER not in hdr:
+            if not is_canonical_ac_header(hdr) or E2E_DIM_HEADER not in hdr:
                 continue
             ac_idx = hdr.index("AC ID")
             dim_idx = hdr.index(E2E_DIM_HEADER)

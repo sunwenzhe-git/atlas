@@ -958,7 +958,7 @@ def test_committed_snapshot_merges_partial_submits() -> None:
 
 # ── 2026-10-21 D128：评审绑定提交指纹与陈旧度（stale）判定 ────────────────────────
 def test_scripts_hash_excludes_runtime_artifacts_and_whitelists_scripts() -> None:
-    """D128：scripts_hash 必须对源码脚本敏感、对运行期产物免疫。"""
+    """D128：scripts_hash 必须对源码脚本敏感、对运行期产物免疫（变异 M175）。"""
     cons = load("e2e_console", "scripts/e2e_console.py")
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -993,6 +993,8 @@ def test_scripts_hash_excludes_runtime_artifacts_and_whitelists_scripts() -> Non
         files = cons.script_file_map(root)
         assert "scripts/demo.spec.ts" in files, files
         assert not any(".atlas-run" in k for k in files), files
+        inv = cons._script_inventory(root)
+        assert set(files) == {k for k, _ in inv}, (files, inv)
 
         # 运行产物内容变化 => hash 仍不变（不是「只在首次创建时免疫」）
         (run_dir / "results.json").write_text('{"cases": [{"id": "x"}]}\n', encoding="utf-8")

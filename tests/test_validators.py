@@ -1560,6 +1560,73 @@ def test_e2e_dim_header_located_by_name() -> None:
         assert check["level"] == "PASS", check
 
 
+def test_e2e_dim_header_requires_canonical_first_three_columns() -> None:
+    """H（2026-11-04，D156 单案）：AC 表前三列须按序为 `AC ID` / `场景` / `回指规则`。
+
+    ① canonical 4 列（旧表）与 canonical 5 列（模板 `场景（Given / When / Then）`）⇒ 采信；
+    ② 非 canonical 列序 / 前三列错位 ⇒ 该表按 N/A，不点名 AC；
+    ③ 逐表独立：一张坏表不得擦除同文件的好表（坏表的额外维度也不串味）。
+    """
+    import json
+    golden = json.loads(
+        (Path(__file__).resolve().parent / "fixtures" / "e2e_coverage_dims_golden.json")
+        .read_text(encoding="utf-8")
+    )
+    INDEX_WITH_PAGE = INDEX_GOOD + "\n## 页面\n\n| 页面 | 路由 | 所属域 | 状态 |\n|---|---|---|---|\n| home | / | home | 已实现 |\n"
+
+    def table(columns: list[str], dims: str) -> str:
+        cells = []
+        for c in columns:
+            if c == "AC ID":
+                cells.append("`AC-HOME-001`")
+            elif c.startswith("场景"):
+                cells.append("首页展示正常")
+            elif c == "回指规则":
+                cells.append("HOME-R-001")
+            elif c == "适用覆盖维度":
+                cells.append(dims)
+            else:
+                cells.append("")
+        return (
+            "| " + " | ".join(columns) + " |\n"
+            + "|" + "---|" * len(columns) + "\n"
+            + "| " + " | ".join(cells) + " |"
+        )
+
+    def prd(*tables: str) -> str:
+        return "---\ndomain: home\n---\n\n## 五、验收标准\n\n" + "\n\n".join(tables) + "\n"
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_index(root, INDEX_WITH_PAGE)
+        prd_dir = root / "product" / "prd"
+        prd_dir.mkdir(parents=True, exist_ok=True)
+        mk_cases(root, CASE_GOOD.strip()[:-3] + "覆盖维度:\n  - C01正常流\n```\n")
+
+        def check_for(text: str):
+            (prd_dir / "home-prd.md").write_text(text, encoding="utf-8")
+            res = ve.validate(root)
+            return next(c for c in res.checks if c["check"] == "AC × 覆盖维度")
+
+        for case in golden["e2e_canonical_header_cases"]:
+            check = check_for(prd(table(case["columns"], "C01-C02")))
+            if case["accepted"]:
+                assert check["level"] == "WARN", (case, check)
+                assert "AC-HOME-001缺C02" in check["detail"], (case, check)
+            else:
+                assert check["level"] == "N/A", (case, check)
+                assert "AC-HOME-001" not in check["detail"], (case, check)
+
+        mixed = prd(
+            table(["场景", "AC ID", "回指规则", "适用覆盖维度"], "C03-C04"),
+            table(["AC ID", "场景", "回指规则", "适用覆盖维度"], "C01-C02"),
+        )
+        check = check_for(mixed)
+        assert check["level"] == "WARN" and "AC-HOME-001缺C02" in check["detail"], check
+        assert "C03" not in check["detail"] and "C04" not in check["detail"], check
+
+
 def test_e2e_index_verb_fail() -> None:
     """新门（契约 §5.5，2026-09-23）：step/expected 首 token 不在动词词表内 → FAIL。"""
     with tempfile.TemporaryDirectory() as td:
