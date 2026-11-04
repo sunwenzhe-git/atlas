@@ -83,14 +83,34 @@ python3 -m pytest tests/test_gate_registry.py -q
 ```
 
 * **钉的三条断言**：① `.atlas-run/` 三件（`results.json` / 嵌套 `.last-run.json` / `trace.zip`）写入后 `scripts_hash` 不变，且 `script_file_map` 不出现 `.atlas-run` 键；② 运行产物**内容再变**仍不变（不是仅首次创建免疫）；③ 改 `demo.spec.ts` ⇒ 哈希变化（防一刀切假绿）。
-* **结果**：全量 `1144 passed, 5 skipped in 1705.24s (0:28:25)`；`atlas_check --fast` = `OK`；`test_map_anchors` = 8 passed；`test_gate_registry` = 9 passed。
+* **结果**：全量 `1144 passed, 5 skipped in 1705.24s (0:28:25)`；`atlas_check --fast` = exit 0，但源包态 10 个校验器全部 `SKIP 校验器不存在`（仅 write-claim / ablation 行真跑），**不构成门证据**；门证据 = 全量 pytest + 定向钉；`test_map_anchors` = 8 passed；`python3 -m pytest tests/test_gate_registry.py -q` = **3 passed**（原记 9 passed 有误）。
 * **M175 四段协议**：基线 GREEN → 注入（摘 `_RUNTIME_PATH_PARTS` 里的 `.atlas-run`）RED → 逐字节还原（sha256 一致）→ 复绿；报告 = `.atlas/runs/mutation-proof/M175.txt`。
 
 ### 4.5 留出验证（系统性修复必填；`RFC-20261026-03`）
 
 * **(a) §1 引子族锚 / ≥3 条独立重复 finding**：否——单条 `bugs.md` #31 + 1 条 REVIEW finding（Major-2）。
-* **(b) 改脚本/契约判据且 diff 落在 DR4 段级锚路径族**：**命中**。`git diff --name-only` = `DESIGN.md` / `duty-review/bugs.md` / `rings/e2e/reference.md` / `scripts/e2e_console.py` / `tests/test_e2e_console.py`；E2E 段「指纹假漂移」族的路径族含 `scripts/e2e_console.py` + `rings/e2e/reference.md` ⇒ 保守判命中；`closeout_derive` 原始输出见 RFC-20261103-08 §4.5 同形（步骤 1/2/3/5/7 均自动/人工触发，本清单不含语义触发行）。
-* **留出集可行性（三条独立性）**：① 翻转只能由 `.atlas-run/` 下的同一文件触发；② M175 证明注入后既有钉绿而新钉红，但新钉夹具即 #31 的变体；③ 任何「独立」语料仍需构造同一运行目录 ⇒ 结构不可达。=> **无可行留出集**。
+* **(b) 改脚本/契约判据且 diff 落在 DR4 段级锚路径族**：**命中**。原始 `git show --stat`（提交 `5a36129`，11 个文件；此前正文手抄只列 5 个，属截断）：
+
+```text
+$ git show --stat --oneline 5a36129
+5a36129 fix(e2e): keep run artifacts out of scripts hash (#31)
+ DESIGN.md                                          |   2 +-
+ docs/map/atlas-map.html                            |   4 +-
+ docs/map/e2egen.md                                 |   4 +-
+ docs/map/index.md                                  |   2 +-
+ duty-review/QUEUE.md                               |   1 +
+ duty-review/bugs.md                                |   2 +-
+ ...W-20261103-04-e2e-scripts-hash-run-artifacts.md |  51 ++++++++++
+ ...C-20261103-09-e2e-scripts-hash-run-artifacts.md | 106 ++++++++++++++++++++++
+ rings/e2e/reference.md                             |   2 +-
+ scripts/e2e_console.py                             |  15 ++-
+ tests/test_e2e_console.py                          |  16 ++++
+ 11 files changed, 193 insertions(+), 12 deletions(-)
+```
+
+E2E 段「指纹假漂移」族的路径族含 `scripts/e2e_console.py` + `rings/e2e/reference.md` ⇒ 保守判命中；`closeout_derive` 原始输出见 RFC-20261103-08 §4.5 同形（步骤 1/2/3/5/7 均自动/人工触发，本清单不含语义触发行）。
+* **留出集可行性（三条独立性）**：① 判据输出翻转的输入不止 `.atlas-run/` 下某一文件——目录内任一文件（`results.json` / `.last-run.json` / trace / 截图 / 嵌套件）及其内容变化都能翻转 `scripts_hash` 或判分，但它们都必须落在 `.atlas-run/` 这一运行目录内（同夹具族）；② M175 证明注入后既有钉绿而新钉红，但新钉夹具即 #31 的变体；③ 任何「独立」语料仍需构造同一运行目录 ⇒ 结构不可达。=> **无可行留出集**。
+* **残留面（显式）**：`_RUNTIME_PATH_PARTS` / `_RUNTIME_SUFFIXES` 已单源，但白名单扩展名（`.ts` / `.js` / `.mjs` / `.json` / `.yaml` / `.yml`）与 `atlas-prepare.mjs` 的枚举仍在 `scripts_hash` 与 `script_file_map` 各写一份（`scripts/e2e_console.py:160-165` / `:195-200`）；新增扩展名时仍可能单边漏。
 * **pre-fix 红**：有——`REVIEW-20261103-01` Major-2 冻结副本（h1≠h2）。
 * **post-fix 绿**：§4 钉全绿 + M175 还原复绿。
 * **反面包**：真实脚本内容变化仍致哈希变化（断言③）。

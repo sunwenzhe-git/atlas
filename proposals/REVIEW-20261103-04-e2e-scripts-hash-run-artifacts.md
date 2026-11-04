@@ -39,7 +39,8 @@ $ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q -p no:cacheprovider
 1144 passed, 5 skipped in 1705.24s (0:28:25)
 
 $ python3 scripts/atlas_check.py --fast
-OK
+（源包态 10 个校验器全部 SKIP 校验器不存在；仅 write-claim / ablation 行真跑）
+exit 0（不构成门证据）
 
 $ python3 -m pytest tests/test_map_anchors.py tests/test_gate_registry.py -q
 11 passed in 1.31s（本批同时重跑 `tests/test_e2e_console.py`；三项合计 39 passed）

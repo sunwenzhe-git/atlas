@@ -53,17 +53,18 @@
 
 ### 2.2 硬接口（写死，可检查）
 
-**权威与写者**（每一行只有一个权威侧；「可检查落点」全部指向**既有**机器面，本 RFC 不新增判据）：
+**权威与写者**（每一行只有一个权威侧；「可检查落点」优先指向既有机器面，尚未建成的显式标「待建 / 纪律面」，本 RFC 不新增判据）：
 
-| 跨边界物 | 权威侧 | 唯一写者 | 跨边界形态 | 失败归属 | 可检查落点（既有） |
+| 跨边界物 | 权威侧 | 唯一写者 | 跨边界形态 | 失败归属 | 可检查落点（既有 / 待建 / 纪律面） |
 |---|---|---|---|---|---|
 | 判据：AC 账本 / 用例索引 / 覆盖维度 / 门定义 | **Atlas** | Atlas | 执行层**只读** | 判据或门误判 ⇒ Atlas | `validators/`、`atlas_check` 退出码 |
 | 生成物：spec / `playwright.config.ts` / setup / `atlas-hold.ts` | **Atlas** | Atlas（确定性派生） | 执行层只读，不得手改 | 生成物与契约不符 ⇒ Atlas「生成物最新」门 | `atlas_check`「生成物最新」行 |
-| 动作序列：pre → run → report | **执行层** | 执行层 | 顺序与前置由 Atlas 契约声明（D150 四步） | 排错、起不动、429、预算熔断 ⇒ 执行层 | 报告里「已跑 M/N」字段（EL-16） |
-| 账本写面：索引状态回填 / 控制台 `events.jsonl` | **Atlas** | Atlas（`e2e_console.writeback` / `atlas_verify` backfill） | 执行层交 `results.json`，由 Atlas 回填 | 回填错写 ⇒ Atlas | `validate_e2e_index.py`、D151 |
-| 运行：进程启动 / 并发 / 超时 / 预算 | **执行层** | 执行层 | Atlas 只声明上限（扇出 ≤4、180s prepare、120s 用例） | 超限 / 超时 ⇒ 执行层，结论 = 未执行 | `shared/independent-review.md` §6、D110/D121 |
-| 证据：`trace.zip` / `test-failed-*.png` / `*.webm` | **执行层** | 执行层 | Atlas **只读**证据面（§17） | 证据缺失 ⇒ 执行层（不得折算成 pass） | `rings/e2e/reference.md` §10.1 二分表 |
-| 报告：`results.json`（机器面）+ 人读报告 | **执行层** | 执行层产出，**字段集由 Atlas 定** | `status` / `expected` 等字段不得擅自扩展 | schema 漂移 ⇒ Atlas 门或回填报错 | §10.1 判分面清单 |
+| 审查报告：`review.json` | **Atlas**（`shared/independent-review.md` §3/§4） | 执行层 | 执行层产出，**字段集由 Atlas 定**，不得擅自扩展 | 执行器未跑 / 少审 ⇒ 执行层；表单字段漂移 ⇒ Atlas `validate_review_report` | `scripts/validate_review_report.py` |
+| 动作序列：pre → run → backfill → report（D151 权威步序；D150 原序 = pre → run → report，backfill 缓行） | **执行层**（pre / run / report） | 执行层；backfill 步归 Atlas（见下一行账本写面） | 顺序与前置由 Atlas 契约声明（D151） | 排错、起不动、429、预算熔断 ⇒ 执行层；backfill 漏跑 / 错序 ⇒ Atlas | **待建**（EL-16 接入后补「已跑 M/N」字段）；当前无机器面 |
+| 账本写面：索引状态回填 / 控制台 `events.jsonl` | **Atlas** | Atlas（`e2e_console.writeback` / `atlas_verify` backfill） | 执行层交 `results.json`，由 Atlas 在 report 前回填（D151 步序） | 回填错写 ⇒ Atlas | `validate_e2e_index.py`、D151 步序 |
+| 运行：进程启动 / 并发 / 超时 / 预算 | **执行层** | 执行层 | Atlas 只声明上限（扇出 ≤4、180s prepare、120s 用例） | 超限 / 超时 ⇒ 执行层，结论 = 未执行 | `tests/test_e2e_console.py::test_timeout_soft_kill_lets_trace_flush`（超时）、`::test_prepare_hook_runs_before_case_and_refuses_on_failure`（180s prepare 上限）；扇出 ≤4 与预算熔断 = **纪律面，不可机检**（`shared/independent-review.md` §6） |
+| 证据：`trace.zip` / `test-failed-*.png` / `*.webm` | **执行层** | 执行层 | Atlas **只读**证据面（§17） | 证据缺失 ⇒ 执行层（不得折算成 pass） | `rings/e2e/reference.md` §7 二分表 |
+| 报告：`results.json`（机器面）+ 人读报告 | **执行层** | 执行层产出，**字段集由 Atlas 定** | `status` / `expected` 等字段不得擅自扩展 | schema 漂移 ⇒ Atlas 门或回填报错 | `rings/e2e/reference.md` §7 判分面清单 |
 | 环境 / 准备失败 | **执行层** | 执行层 | 必须显式标注 `env` / `prep_failed` | 环境红 / 准备失败 ⇒ 执行层，不得记 pass，也不得记用例 fail | D110「失败即拒」、bugs.md「栈起没起」观察行 |
 
 **四条硬约束（跨块）**：
@@ -77,8 +78,10 @@
 
 * **已排除（`scripts_hash` / `script_file_map` 均不收录）**：`.atlas-run/` **整树**——含 `results.json`、`.last-run.json`、`trace.zip`、截图、`*.webm` 与任意嵌套文件；以及目录族 `test-results/`、`playwright-report/`、`.atlas-auth/`、`node_modules/`；后缀 `.trace` / `.png` / `.webm` / `.last-run.json`。
 * **仍计入**：`product/e2e/scripts/` 下白名单扩展名（`.ts` / `.js` / `.mjs` / `.json` / `.yaml` / `.yml`）与 `atlas-prepare.mjs`。即**真实脚本内容变化仍驱动指纹变化**（防一刀切假绿的钉：`tests/test_e2e_console.py` 断言③）。
-* **判定**：`保留`——物理同目录。理由是**两个动机都不再指向迁出**：(a) 指纹假漂移已由目录族排除消除（`5a36129` / M175）；(b) §17 的纪律只要求「证据面与判分面可区分且有清单」，`rings/e2e/reference.md` §10.1 二分表已满足。
+* **判定**：`保留`——物理同目录。理由是**两个动机都不再指向迁出**：(a) 指纹假漂移已由目录族排除消除（`5a36129` / M175）；(b) §17 的纪律只要求「证据面与判分面可区分且有清单」，`rings/e2e/reference.md` §7 二分表已满足。
+* **职责迁出 ≠ 物理迁出**：`.atlas-run/` 仍是运行目录（`_support/layout.py:120`）；本节「保留」只把载体留在原地，§2.1 的「迁出」均指职责与调度面，不改变物理落点。
 * **升格条件（原样保留，不改）**：出现第一个自动改进 / 诊断消费者，或目录出现清单外第三类载体 ⇒ 白名单升机器门 + 评估判分载体物理迁出（另立 RFC）。
+* **重评触发器**：一旦出现**程序自动读取 `.atlas-run/`** 的消费者（如跨轮归档工具），本「保留」判定必须重评——消费者出现即意味着「物理同目录不违约」的前提已变。
 * **遗留（显式，不冒充已覆盖）**：
   1. `.atlas-run/` 之外、以白名单扩展名落盘的运行产物仍计入指纹（`RFC-20261103-09` §5 遗留 1）；若项目把判分载体写到 `scripts/` 根，本块判定须重议；
   2. D174 的 `app` 散列与 `shared` import 闭包未做判分载体全量盘点；
@@ -123,7 +126,7 @@ python3 scripts/atlas_check.py --fast
 python3 -m pytest tests/test_map_anchors.py tests/test_gate_registry.py -q
 ```
 
-* **结果**：全量 `1144 passed, 5 skipped in 1726.90s (0:28:46)`；`atlas_check --fast` = `OK`；`test_map_anchors` + `test_gate_registry` = 11 passed。
+* **结果**：全量 `1144 passed, 5 skipped in 1726.90s (0:28:46)`；`atlas_check --fast` = exit 0，但源包态 10 个校验器全部 `SKIP 校验器不存在`（仅 write-claim / ablation 行真跑），**不构成门证据**；门证据 = 全量 pytest + 定向钉；`test_map_anchors` + `test_gate_registry` = 11 passed。
 
 ### 4.5 留出验证（系统性修复必填；`RFC-20261026-03`）
 
@@ -137,4 +140,5 @@ python3 -m pytest tests/test_map_anchors.py tests/test_gate_registry.py -q
 1. **只定界、不落代码**：执行层尚未自建；四块的切分点落地须另立 RFC（含 EL-05 的调度语义统一）。
 2. **④ 的遗留**见 §2.3：`.atlas-run/` 之外的判分载体仍计入指纹；自动消费者未出现。
 3. **② 的形态选择**（CLI 进程 vs 子代理）归 `product/stack-profile.yaml` 的 `impl_review` 声明，执行层接管后不得降低独立性判据。
-4. 本 RFC 的「可检查落点」全部引用既有机器面；若后续有人把其中任一条升成机器门，按 `shared/gates.md` 流程另立 RFC，不在本文件内扩判据。
+4. 本 RFC 的「可检查落点」优先引用既有机器面，标「待建 / 纪律面」的条目不是机器判据；若后续有人把其中任一条升成机器门，按 `shared/gates.md` 流程另立 RFC，不在本文件内扩判据。
+5. **EL-16「已跑 M/N」是待建字段**：§2.2 动作序列行的「报告里『已跑 M/N』字段」当前不存在（`grep -rn "已跑" scripts/` 仅命中 `scripts/backflow.py:128` 的提示句）；EL-16 接入后才补该字段，期间「少审 / 少跑」只能靠人工对账。

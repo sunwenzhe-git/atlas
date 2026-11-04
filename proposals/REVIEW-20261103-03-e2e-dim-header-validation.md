@@ -17,7 +17,7 @@
 | 列定位路径 | 走 `_support/ac_coverage.iter_md_tables` + 表头名索引，**未迁** `tables()` | [`validate_e2e_index.py:358`](file:///Users/sunwenzhe/Desktop/atlas/validators/validate_e2e_index.py#L358)、`:370`、`:373`；`tables()` 仍只服务索引 / 页面表（`:225` / `:371` / `:529` 旧位） |
 | 合法表头 | 逐字 `适用覆盖维度`，模块常量固定 | [`validate_e2e_index.py:94`](file:///Users/sunwenzhe/Desktop/atlas/validators/validate_e2e_index.py#L94) |
 | 逐表独立 | 单表表头不符 ⇒ 跳过该表；合法表照常 | [`validate_e2e_index.py:370-377`](file:///Users/sunwenzhe/Desktop/atlas/validators/validate_e2e_index.py#L370-L377) |
-| N/A 语义未改 | `atlas_check.py` 子项 N/A 语义（D153）原样 | `scripts/atlas_check.py` 未出现在 diff；`atlas_check --fast` = `OK` |
+| N/A 语义未改 | `atlas_check.py` 子项 N/A 语义（D153）原样 | `scripts/atlas_check.py` 未出现在 diff；`atlas_check --fast` = exit 0（源包态 10 校验器全 `SKIP 校验器不存在`，不构成门证据） |
 | D130 / M131 保持绿 | 合法 4 列表头语料结论不变 | `tests/test_validators.py::test_e2e_index_coverage_dimensions_pass_and_warn` 通过；`DESIGN.md` D130 行未改动 |
 | 新增钉 | 3 类断言 + golden 4 例 | [`tests/test_validators.py:1503`](file:///Users/sunwenzhe/Desktop/atlas/tests/test_validators.py#L1503)、`tests/fixtures/e2e_coverage_dims_golden.json` → `e2e_dim_header_cases` |
 | 变异编号 | M174（仓内实际最大为 M173，未按过时 M131 续号） | `.atlas/runs/mutation-proof/M174.txt`；`README.md:381` / `docs/innovations/mutation-proving.md:22` 为过时文本，未作为依据 |
@@ -50,8 +50,8 @@ $ python3 -m pytest tests/test_gate_registry.py tests/test_shared_kernel.py -q
 15 passed in 0.12s
 
 $ python3 scripts/atlas_check.py --fast
-（E2E 相关子项按仓内现状 SKIP）
-OK
+（源包态 10 个校验器全部 SKIP 校验器不存在；仅 write-claim / ablation 行真跑）
+exit 0（不构成门证据）
 
 $ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q -p no:cacheprovider
 1144 passed, 5 skipped in 1715.33s (0:28:35)

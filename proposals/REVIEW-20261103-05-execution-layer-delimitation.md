@@ -22,7 +22,7 @@
 | §7 只增不删 | 四块均为**追加**；④ 的修复前断言改为「指纹面状态（2026-11-03 更新）」的带日期状态行，历史事实保留，未删除任何能力条目 | `git diff proposals/BACKLOG-execution-layer.md` |
 | 无新机器判据 | 本批全部改动均为 `.md`；无钉、无变异、无门 | §3 命令 ② |
 | D156 触发面 | (a) 否（非系统性修复）；(b) 否——diff 只落 `proposals/`、`duty-review/`，对 `event_path_tokens` 的契约族（`shared/`、`rings/`、`apply/`、`atlas.config.yaml`）与脚本族（`scripts/`、`tests/`）零命中 | §3 命令 ② + `scripts/closeout_derive.py:67-86` |
-| 环境事实引用 | `_support/layout.py:119-120` 定义 `.atlas-run/`；`rings/e2e/reference.md` §10.1 二分表在位 | §3 命令 ⑤ |
+| 环境事实引用 | `_support/layout.py:119-120` 定义 `.atlas-run/`；`rings/e2e/reference.md` §7 二分表在位（§7 起于 :480；§10.1 是评审控制台） | §3 命令 ⑤ |
 
 ## 2. 发现
 
