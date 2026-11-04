@@ -160,7 +160,7 @@ $ python3 scripts/closeout_derive.py --diff-base HEAD
 
 ### 4.5-b 后续收紧（2026-11-04，H：前三列 canonical；D156）
 
-* **变更**：`collect_e2e_declared_dims` 增加「表头前三列须按序为 `AC ID` / `场景` / `回指规则`，否则该表按 N/A」。第二列按前缀接受模板的 `场景（Given / When / Then）` 变体——纯字面相等会把仓内 canonical 模板 `templates/prd/domain.md` 的 5 列表判成 N/A，故仅第二列放前缀；列序严格。
+* **变更**：`collect_e2e_declared_dims` 增加「表头前三列须按序为 `AC ID` / `场景` / `回指规则`，否则该表按 N/A」。第二列按前缀接受模板的 `场景（Given / When / Then）` 变体——**前缀判定是有意的，且前缀固定为 `场景`，不是任意前缀**（逐字相等会把仓内 canonical 模板 `templates/prd/domain.md` 的 5 列表判死）；第一列与第三列逐字，列序严格。
 * **pre-fix 红**：`python3 -m pytest tests/test_validators.py::test_e2e_dim_header_requires_canonical_first_three_columns -q` → **1 failed**：非 canonical 列序（`场景 | AC ID | 回指规则 | 适用覆盖维度`）被旧判据按 PASS 采信。
 * **post-fix 绿**：同一钉 + 旧 4 列钉 = **2 passed**；`python3 -m pytest tests/test_validators.py tests/test_e2e_console.py -q` = **215 passed in 2.47s**。
 * **反面包**：canonical 4 列（旧表）与 canonical 5 列（模板 `场景（Given / When / Then）`）均按 WARN 采信；非 canonical 列序与前三列错位均 N/A 且不点名 AC；一坏一好两张表 ⇒ 只报好表缺口（坏表 C03/C04 不串味）。
