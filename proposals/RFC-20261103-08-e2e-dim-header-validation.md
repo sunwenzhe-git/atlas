@@ -158,6 +158,16 @@ $ python3 scripts/closeout_derive.py --diff-base HEAD
 * **三态结论**：`单案修复（无留出集）`——**不宣称闭族**。残留风险与观察 = `duty-review/QUEUE.md` 观察室「E2E 维度列表头校验观察」，owner = 本批实施者，补验期限 = 首个真实仓 PRD 跑该门后 2 周（不晚于下一个 beta 发版后 2 周）。
 * **耗时与评审**：设计 + 实施 + 四段变异证明为本轮一次完成；评审 = `proposals/REVIEW-20261103-03-e2e-dim-header-validation.md`（技术方案 + 事实核查）。
 
+### 4.5-b 后续收紧（2026-11-04，H：前三列 canonical；D156）
+
+* **变更**：`collect_e2e_declared_dims` 增加「表头前三列须按序为 `AC ID` / `场景` / `回指规则`，否则该表按 N/A」。第二列按前缀接受模板的 `场景（Given / When / Then）` 变体——纯字面相等会把仓内 canonical 模板 `templates/prd/domain.md` 的 5 列表判成 N/A，故仅第二列放前缀；列序严格。
+* **pre-fix 红**：`python3 -m pytest tests/test_validators.py::test_e2e_dim_header_requires_canonical_first_three_columns -q` → **1 failed**：非 canonical 列序（`场景 | AC ID | 回指规则 | 适用覆盖维度`）被旧判据按 PASS 采信。
+* **post-fix 绿**：同一钉 + 旧 4 列钉 = **2 passed**；`python3 -m pytest tests/test_validators.py tests/test_e2e_console.py -q` = **215 passed in 2.47s**。
+* **反面包**：canonical 4 列（旧表）与 canonical 5 列（模板 `场景（Given / When / Then）`）均按 WARN 采信；非 canonical 列序与前三列错位均 N/A 且不点名 AC；一坏一好两张表 ⇒ 只报好表缺口（坏表 C03/C04 不串味）。
+* **留出集**：**无**。翻转输入即表头前三列的次序 / 取值本身，任何「独立」语料仍需构造同一张 AC 表并改表头 ⇒ 同夹具族、结构不可达。
+* **残留面**：表头写错 ⇒ 无任何信号（含 WARN），即上述已接受残留面；第二列前缀匹配属模板兼容口径，未来若出现第二个场景列变体须显式登记。
+* **三态结论**：`单案修复（无留出集）` **候选**——**未闭族**。缺独立评审复验与 `duty-review/QUEUE.md` 观察行（QUEUE 正被 S2 会话占用，按并行守卫暂缓）；二者落地前不得自称闭族。
+
 ---
 
 ## 5. 明确范围外（后续案）
