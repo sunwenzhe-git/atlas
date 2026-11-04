@@ -35,7 +35,7 @@
 
 - **S2 连续 carried 前提复核（`RFC-20261104-01` S2；单案修复·无留出集，`REVIEW-20261104-01-d156-single-case-signoff`）**：owner = `master`；补验期限 = 首个真实仓实例⑤多轮（≥3 轮）运行后 2 周（不晚于下一个 beta 发版后 2 周，先到为准）。观察项 = ① 真实多轮报告是否因 `premise` 缺失反复刷 WARN 而被静音；② `premise` 是否被写成同义复读（「同一前提：还是那个问题」）而 `discriminating_check` 根本不可执行；③ 上一轮 resolves 关闭后重新 open 的路径是否被误算连续；④ 同轮 `Major`+`Critical` 重复在真实转换器产物里的出现频率与最严档是否被正确保留；⑤ WARN 不阻断 ⇒ 长期无人补字段时闭环是否仍能收口。升室判据 = 真实仓出现「连续 carried 无前提却仍绿收口且事后证明误判」的实例 ⇒ 按 DR2 议升档；出室判据 = 连续 ≥2 仓/批多轮运行 `premise_required` 无误报、补字段率 ≥ 多数 ⇒ 归档。
 
-- **强制前三列（canonical AC 表头；单案修复·无留出集，`RFC-20261103-08` §4.5-b / `49689f3` / `d2defd2`）**：`collect_e2e_declared_dims` 要求前三列按序 `AC ID` / `场景…` / `回指规则`，非 canonical ⇒ 该表 N/A；第二列按固定前缀 `场景` 接受模板变体。owner = `master`；补验期限 = 首个真实仓跑过 `validate_e2e_index` 后 2 周（不晚于下个 beta 发版后 2 周，先到为准）。观察项 = ① 真实仓 canonical 5 列与 `场景（Given / When / Then）` 变体不被误判 N/A；② 非 canonical 列序被按 N/A 时无人误读为「维度全丢」；③ 第二列是否出现未登记的第三变体。升室判据 = 真实仓出现「合规 canonical 表被判 N/A ⇒ 缺口逃逸」或「非 canonical 被采信 ⇒ 漏检」⇒ 按 DR2 议升档；出室判据 = 连续 ≥2 仓/批无上述实例 ⇒ 归档。**三态 = 单案修复（无留出集）；未闭族，须独立评审复验**（`REVIEW-20261104-01-d156-single-case-signoff`）。
+- **强制前三列（canonical AC 表头；单案修复·无留出集，`RFC-20261103-08` §4.5-b / `49689f3` / `d2defd2` / `82dd3f7`）**：`collect_e2e_declared_dims` 要求前三列按序 `AC ID` / `场景` / `回指规则`，非 canonical ⇒ 该表 N/A；第二列仅认**显式两形态** `场景` 与 `场景（Given / When / Then）`（不做前缀匹配）。owner = `master`；补验期限 = 首个真实仓跑过 `validate_e2e_index` 后 2 周（不晚于下个 beta 发版后 2 周，先到为准）。观察项 = ① 真实仓 canonical 5 列与 `场景（Given / When / Then）` 变体不被误判 N/A；② 非 canonical 列序被按 N/A 时无人误读为「维度全丢」；③ 第二列是否出现未登记的第三变体。升室判据 = 真实仓出现「合规 canonical 表被判 N/A ⇒ 缺口逃逸」或「非 canonical 被采信 ⇒ 漏检」⇒ 按 DR2 议升档；出室判据 = 连续 ≥2 仓/批无上述实例 ⇒ 归档。**三态 = 单案修复（无留出集）；未闭族**（`REVIEW-20261104-02-e2e-canonical-header-d156` 准予，C1–C4 已收尾）。
 
 ## 归档与废案（结案带原话；重开被拒的理由也记这里）
 

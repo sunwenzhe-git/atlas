@@ -160,13 +160,14 @@ $ python3 scripts/closeout_derive.py --diff-base HEAD
 
 ### 4.5-b 后续收紧（2026-11-04，H：前三列 canonical；D156）
 
-* **变更**：`collect_e2e_declared_dims` 增加「表头前三列须按序为 `AC ID` / `场景` / `回指规则`，否则该表按 N/A」。第二列按前缀接受模板的 `场景（Given / When / Then）` 变体——**前缀判定是有意的，且前缀固定为 `场景`，不是任意前缀**（逐字相等会把仓内 canonical 模板 `templates/prd/domain.md` 的 5 列表判死）；第一列与第三列逐字，列序严格。
+* **变更**：`collect_e2e_declared_dims` 增加「表头前三列须按序为 `AC ID` / `场景` / `回指规则`，否则该表按 N/A」。第二列只认**显式两形态**：裸 `场景`（三列形态）与模板 canonical 写法 `场景（Given / When / Then）`（`templates/prd/domain.md:107` / `rings/prd/reference.md:196` 的实际字面）；**不做前缀匹配**——`startswith("场景")` 会放行 `场景数量` / `场景说明` / `场景化数据` 这类异义列（`REVIEW-20261104-02` §3，C3）。第一列与第三列逐字，列序严格。
 * **pre-fix 红**：`python3 -m pytest tests/test_validators.py::test_e2e_dim_header_requires_canonical_first_three_columns -q` → **1 failed**：非 canonical 列序（`场景 | AC ID | 回指规则 | 适用覆盖维度`）被旧判据按 PASS 采信。
 * **post-fix 绿**：同一钉 + 旧 4 列钉 = **2 passed**；`python3 -m pytest tests/test_validators.py tests/test_e2e_console.py -q` = **215 passed in 2.47s**。
+* **前缀收紧（C3，`82dd3f7`）**：pre-fix 重放（`git show HEAD:validators/validate_e2e_index.py` 旧 `startswith` 实现）对 `场景数量` / `场景说明` 均返回 `accepted: True`；收紧后同一输入 N/A，两形态（`场景`、`场景（Given / When / Then）`）各 PASS。钉 = `tests/test_validators.py::test_is_canonical_ac_header_only_two_scene_forms`，golden 加 `场景数量 ⇒ accepted: false`。
 * **反面包**：canonical 4 列（旧表）与 canonical 5 列（模板 `场景（Given / When / Then）`）均按 WARN 采信；非 canonical 列序与前三列错位均 N/A 且不点名 AC；一坏一好两张表 ⇒ 只报好表缺口（坏表 C03/C04 不串味）。
-* **留出集**：**无**。翻转输入即表头前三列的次序 / 取值本身，任何「独立」语料仍需构造同一张 AC 表并改表头 ⇒ 同夹具族、结构不可达。
-* **残留面**：表头写错 ⇒ 无任何信号（含 WARN），即上述已接受残留面；第二列前缀匹配属模板兼容口径，未来若出现第二个场景列变体须显式登记。
-* **三态结论**：`单案修复（无留出集）` **候选**——**未闭族**。缺独立评审复验与 `duty-review/QUEUE.md` 观察行（QUEUE 正被 S2 会话占用，按并行守卫暂缓）；二者落地前不得自称闭族。
+* **留出集**：**无**。仓内**无冻结的非 canonical 表头语料**——`git grep -n "AC ID" -- "*.md"` 实测所有 AC 表前三列均为 `AC ID` / `场景…` / `回指规则`（`templates/prd/domain.md:107`、`rings/prd/reference.md:196`），唯一真实 PRD 样本 `tests/fixtures/verify_playground/product/prd/home-prd.md:41` 是 canonical 5 列、不翻转；其余任何「独立」候选只能手写构造同一张 AC 表并改表头 / 加减列 ⇒ 同夹具族，无可行留出集。此口径与 `REVIEW-20261104-01:38` / `:42` 已立的口径一致（原「翻转输入即表头本身」的表述属同义反复，已按 `REVIEW-20261104-02` C2 改写）。
+* **残留面**：表头写错 ⇒ 无任何信号（含 WARN），即上述已接受残留面；第二列已收为**显式两形态**，未来出现任何新变体只能显式登记并扩白名单（**不回到前缀匹配**）。
+* **三态结论**：`单案修复（无留出集）`——**未闭族**。独立评审 = `proposals/REVIEW-20261104-02-e2e-canonical-header-d156.md`（准予，附 C1–C4 非阻断整改；本批逐条收尾：C1 台账指回本记录、C2 论证改写、C3 前缀两形态 `82dd3f7`、C4 prep key 钉 `8c50891` + `RFC-20261103-09` §5）；QUEUE 观察行 = `duty-review/QUEUE.md:38`（owner `master` + 期限已立）。**不宣称闭族**：表头错 = 静默 N/A 的假绿面仍在。
 
 ---
 
