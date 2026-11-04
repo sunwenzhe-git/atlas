@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import os
 import subprocess
 import sys
 import difflib
@@ -3386,6 +3387,139 @@ def test_failure_evidence_has_no_override_switch() -> None:
         for tag, root in (("none", rn), ("login", rl)):
             cfg = _cfg(root)
             assert "EVIDENCE" not in cfg, f"[{tag}] {cfg[:400]}"
+
+
+# ── RFC-20261104-01 S1：证据生命周期（P11 / P12 / B4） ─────────────────────────
+
+def test_config_wires_teardown_relative_to_config_dir() -> None:
+    """P12 钉：`globalTeardown` 必须相对 **config 所在目录**（`scripts/`）解析。
+
+    写成 `'./scripts/atlas-evidence-teardown.ts'` 会落到 `<e2e>/scripts/scripts/`，
+    模块不存在 ⇒ 每个绿轮都被 teardown 抛错翻红。变异 M179 摘掉接线 ⇒ 本钉红。
+    """
+    with tempfile.TemporaryDirectory() as td_none, tempfile.TemporaryDirectory() as td_login:
+        for profile in (NONE_PROFILE, PROFILE):
+            root = Path(td_none) if profile is NONE_PROFILE else Path(td_login)
+            make(root, profile=profile)
+            assert run(root, "--apply").returncode == 0
+            cfg = _cfg(root)
+            assert "globalTeardown: './atlas-evidence-teardown.ts'" in cfg, cfg[:400]
+            assert "'./scripts/atlas-evidence-teardown.ts'" not in cfg, cfg[:400]
+
+
+def test_teardown_carrier_uses_sibling_python_and_swallows() -> None:
+    """P12 钉：载体走 Python CLI（`ATLAS_PYTHON` 缺省 `python3`），且异常全吞。
+
+    只 copy + 写 manifest；不得在 TS 里判定 / 抛错（否则 PASS 被翻成 FAIL）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        ts = (root / "product" / "e2e" / "scripts" / "atlas-evidence-teardown.ts").read_text(encoding="utf-8")
+        assert "ATLAS_PYTHON ?? 'python3'" in ts
+        assert "'--phase', 'post-run'" in ts
+        assert "evidence_archive.py" in ts
+        assert "catch" in ts
+        assert "fileURLToPath" not in ts, "Playwright 以 CJS 转译 .ts，import.meta 不可用"
+
+
+def test_trace_policy_is_per_case_generated_artifact() -> None:
+    """B4 钉：逐用例策略清单是生成物（每案 `request_assertion`），不是单个 bool。
+
+    运行期再叠加 `ATLAS_REQUEST_TRACE` 得到每案 `trace_enabled`。变异 B4 退化为
+    单一 `trace_enabled` ⇒ 本钉红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        policy = json.loads((root / "product" / "e2e" / "scripts" /
+                             ".atlas-trace-policy.json").read_text(encoding="utf-8"))
+        assert policy == {"E2E-HOME-001": {"request_assertion": False}}
+        gen = load_generator()
+        assert gen.case_uses_request({"expected": ["request app.updateApp Data.a null"]}) is True
+
+
+def _gitignore_entry(root: Path, *extra: str) -> dict:
+    proc = run(root, "--apply", "--json", *extra)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    data = json.loads(proc.stdout)
+    hits = [r for r in data["results"]
+            if r.get("file", "").endswith(".gitignore") and "gitignore" in r]
+    assert len(hits) == 1, hits
+    return hits[0]
+
+
+def test_root_gitignore_created_when_absent() -> None:
+    """P11 钉 1：根 `.gitignore` 缺失 ⇒ 创建并只写 `.atlas-evidence/` 一行（D183 放开）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, review=True)
+        entry = _gitignore_entry(root)
+        assert entry["gitignore"] == "gitignore_created"
+        assert (root / ".gitignore").read_text(encoding="utf-8") == ".atlas-evidence/\n"
+
+
+def test_root_gitignore_append_keeps_original_bytes() -> None:
+    """P11 钉 2：已有内容与行序一字不改，只在末尾追加缺失行。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        gi = root / ".gitignore"
+        original = b"# user rules\nnode_modules/\ndist/\n"
+        gi.write_bytes(original)
+        entry = _gitignore_entry(root)
+        assert entry["gitignore"] == "gitignore_appended"
+        assert gi.read_bytes() == original + b".atlas-evidence/\n"
+
+
+def test_root_gitignore_rule_conflict_warns_without_write() -> None:
+    """P11 钉 5：已有 `!.atlas-evidence/` 显式反选 ⇒ WARN、不写、不硬碰。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        gi = root / ".gitignore"
+        gi.write_text("!.atlas-evidence/\n", encoding="utf-8")
+        entry = _gitignore_entry(root)
+        assert entry["gitignore"] == "gitignore_rule_conflict"
+        assert entry["warning"] is True
+        assert gi.read_text(encoding="utf-8") == "!.atlas-evidence/\n"
+
+
+def test_root_gitignore_readonly_warns_without_write() -> None:
+    """P11 钉 3：只读 ⇒ WARN、不写；归档照常（长期 dirty 警告见 RFC §4.6）。"""
+    if os.geteuid() == 0:
+        pytest.skip("root 下只读位不生效")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        gi = root / ".gitignore"
+        gi.write_text("dist/\n", encoding="utf-8")
+        gi.chmod(0o444)
+        try:
+            entry = _gitignore_entry(root)
+            assert entry["gitignore"] == "gitignore_readonly"
+            assert entry["warning"] is True
+            assert gi.read_text(encoding="utf-8") == "dist/\n"
+        finally:
+            gi.chmod(0o644)
+
+
+def test_root_gitignore_tracked_appends_and_marks_status() -> None:
+    """P11 钉 4：`.gitignore` 已被 git 跟踪 ⇒ 仍只追加，但状态显式标 tracked。"""
+    if shutil.which("git") is None:
+        pytest.skip("git 不可用")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        gi = root / ".gitignore"
+        gi.write_text("dist/\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "add", ".gitignore"], cwd=root, check=True)
+        entry = _gitignore_entry(root)
+        assert entry["gitignore"] == "gitignore_tracked_appended"
+        assert gi.read_text(encoding="utf-8") == "dist/\n.atlas-evidence/\n"
 
 
 

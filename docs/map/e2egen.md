@@ -13,8 +13,10 @@
 
 | 文件 | 行数 | 角色 |
 |---|---|---|
-| `scripts/gen_e2e_scripts.py` | 2614 | 生成器本体(全仓最大单件):分片 DSL → `.spec.ts` |
-| `scripts/e2e_console.py` | 1396 | 评审控制台:纯标准库 SSE 服务(默认 127.0.0.1:4190) |
+| `scripts/gen_e2e_scripts.py` | 2726 | 生成器本体(全仓最大单件):分片 DSL → `.spec.ts` |
+| `scripts/e2e_console.py` | 1446 | 评审控制台:纯标准库 SSE 服务(默认 127.0.0.1:4190) |
+| `<e2e>/scripts/atlas-evidence-teardown.ts` | — | 生成物:`globalTeardown` 调证据归档 CLI(P12) |
+| `<e2e>/scripts/.atlas-trace-policy.json` | — | 生成物:逐用例 `request_assertion`(B4) |
 | `scripts/gen_testid_stub.py` | — | testid 实然盘点薄桩生成器(adopt 开户交尾件) |
 | `_support/pw_runner.py` | — | 运行器单源内核:可解析性判据 / 全局兜底修复 / 浏览器就绪探针 |
 | `_support/case_block.py` / `case_id.py` / `manual_block.py` | — | 用例块解析 / 用例 ID 文法 / 手工块(共享内核件) |
@@ -31,15 +33,15 @@
 
 ### 3. 登录形态三态(D80②)
 
-`APP_LOGIN_MODES`(`scripts/gen_e2e_scripts.py:91`)= real / fabricated / none;字段族 `APP_LOGIN_FIELDS`(`scripts/gen_e2e_scripts.py:86`)。none = 显式声明无门,不是降级。消费面分型:sessionStorage=会话 / storageState=auth / 查询串=参数。
+`APP_LOGIN_MODES`(`scripts/gen_e2e_scripts.py:91`)= real / fabricated / none;字段族 `APP_LOGIN_FIELDS`(`scripts/gen_e2e_scripts.py:90`)。none = 显式声明无门,不是降级。消费面分型:sessionStorage=会话 / storageState=auth / 查询串=参数。
 
 ### 4. mock 外部协议(`MOCK_METHODS`,`scripts/gen_e2e_scripts.py:93`)
 
-打桩声明(`parse_mock_line`,`scripts/gen_e2e_scripts.py:311`)编译为**单条** `context.route` 派发表:pathname+method 命中、query 免疫、前缀内未命中即红(`compile_mock_entries`,`scripts/gen_e2e_scripts.py:370`);fixture 文件随批落盘。
+打桩声明(`parse_mock_line`,`scripts/gen_e2e_scripts.py:96`)编译为**单条** `context.route` 派发表:pathname+method 命中、query 免疫、前缀内未命中即红(`compile_mock_entries`,`scripts/gen_e2e_scripts.py:374`);fixture 文件随批落盘。
 
 ### 5. 双前置门:独立审查 + 就绪
 
-`review_gate`(`scripts/gen_e2e_scripts.py:1431`)读最新审查报告(`REVIEW_LEVELS`,`scripts/gen_e2e_scripts.py:1182`),有 Critical 拒绝写盘;`NOT_READY`(`scripts/gen_e2e_scripts.py:84`,exit 3)= 前置未声明的显式跳过,不是失败。
+`review_gate`(`scripts/gen_e2e_scripts.py:1246`)读最新审查报告(`REVIEW_LEVELS`,`scripts/gen_e2e_scripts.py:1246`),有 Critical 拒绝写盘;`NOT_READY`(`scripts/gen_e2e_scripts.py:88`,exit 3)= 前置未声明的显式跳过,不是失败。
 
 ### 6. 失败留证(D108/D142)
 
@@ -51,7 +53,7 @@ Playwright 配置层 `trace` / `screenshot` 两轨(`scripts/gen_e2e_scripts.py:2
 
 ### 8. 评审控制台(`scripts/e2e_console.py`)
 
-`snapshot`(`scripts/e2e_console.py:568`)聚合现场;`repo_provenance`(`scripts/e2e_console.py:394`)产评审指纹(应用内容指纹 + 逐文件脚本散列)防旧账本挂新执行;`Ledger`(`scripts/e2e_console.py:682`)落评审台账;`Runner`(`scripts/e2e_console.py:811`)做 500ms 慢动作回放 + 逐用例三值走查(pass/fail/skip),提交即解锁人工 Review;`resolve_pw`(`scripts/e2e_console.py:649`)复用运行器判据与全局兜底。
+`snapshot`(`scripts/e2e_console.py:568`)聚合现场;`repo_provenance`(`scripts/e2e_console.py:394`)产评审指纹(应用内容指纹 + 逐文件脚本散列)防旧账本挂新执行;`Ledger`(`scripts/e2e_console.py:682`)落评审台账;`Runner`(`scripts/e2e_console.py:685`)做 500ms 慢动作回放 + 逐用例三值走查(pass/fail/skip),提交即解锁人工 Review;`resolve_pw`(`scripts/e2e_console.py:649`)复用运行器判据与全局兜底。
 
 ## 对外接口(谁咬它)
 

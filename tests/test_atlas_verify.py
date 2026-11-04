@@ -9,12 +9,16 @@
 + 可选 `e2e-index.md` / `events.jsonl` 夹具(钉⑧⑨⑩)。"""
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
+
+import pytest
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
 VERIFY = PKG_ROOT / "scripts" / "atlas_verify.py"
@@ -57,6 +61,7 @@ run_dir = root / "product/e2e/scripts/.atlas-run"
 run_dir.mkdir(parents=True, exist_ok=True)
 if mode == "fail":
     (run_dir / "trace.zip").write_bytes(b"fake-trace")
+    (run_dir / "test-failed-1.png").write_bytes(b"fake-png")
     print("  FAIL e2e_real_run  [FAIL] 判据不成立(注入)")
     print("FAIL (详细错误堆栈已落盘)")
     sys.exit(1)
@@ -333,3 +338,202 @@ def test_backfill_concurrent_submit_reports_collision_and_fails() -> None:
         rows_after = data["steps"][-1].get("backfill", {}).get("rows_after", [])
         assert any(m["id"] == "E2E-A-001" and m["intended"] == {"状态": "green"} for m in rows_after), rows_after
         assert _claim_residue(root) == []
+
+
+# ── RFC-20261104-01 S1：证据归档（失败留证 / trace 轴 / 归档器安全） ─────────
+
+def _evidence_mod():
+    spec = importlib.util.spec_from_file_location(
+        "evidence_archive_under_test", PKG_ROOT / "_support" / "evidence_archive.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
+def _manifests(root: Path) -> list[Path]:
+    return sorted((root / ".atlas-evidence").glob("*/manifest.json"))
+
+
+def test_failed_batch_archives_evidence() -> None:
+    """S1 钉：失败批必须落 `.atlas-evidence/<id>-fail/`，含 trace + png，且判定不变（exit 1）。
+
+    变异 M177（摘 `_fail` 归档调用）⇒ 本钉红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        (root / ".verify-check-mode").write_text("fail", encoding="utf-8")
+        proc = run(root, "--json")
+        assert proc.returncode == 1, proc.stdout + proc.stderr
+        ms = _manifests(root)
+        assert ms, "失败批未归档"
+        d = json.loads(ms[0].read_text(encoding="utf-8"))
+        names = {Path(f["path"]).name for f in d["files"]}
+        assert {"trace.zip", "test-failed-1.png"} <= names, names
+        assert d.get("verdict") == "fail", d
+
+
+def test_forged_manifest_is_not_consumed_by_verify() -> None:
+    """S1 钉：verify 判定不读归档 manifest——伪造 `verdict=pass` 不得让失败批变绿。
+
+    变异 M178（把 manifest 判定读回报告）⇒ 本钉红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        (root / ".verify-check-mode").write_text("fail", encoding="utf-8")
+        assert run(root).returncode == 1
+        m = _manifests(root)[0]
+        d = json.loads(m.read_text(encoding="utf-8"))
+        d["verdict"] = "pass"
+        m.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+        assert run(root).returncode == 1
+
+
+def test_pre_run_archives_legacy_atlas_run() -> None:
+    """S1 钉（S1-19）：起跑前归档上一批遗留证据（Playwright 起跑即清空 `.atlas-run`）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        legacy = root / "product/e2e/scripts/.atlas-run"
+        legacy.mkdir(parents=True)
+        (legacy / "trace.zip").write_bytes(b"legacy-trace")
+        assert run(root).returncode == 0
+        ms = _manifests(root)
+        assert any("-pre/" + p.name == "-pre/manifest.json" or "-pre" in p.parent.name for p in ms), ms
+        pre = [p for p in ms if "-pre" in p.parent.name]
+        assert pre, [p.parent.name for p in ms]
+        d = json.loads(pre[0].read_text(encoding="utf-8"))
+        assert [Path(f["path"]).name for f in d["files"]] == ["trace.zip"]
+
+
+def test_trace_off_is_na_but_archive_still_passes() -> None:
+    """B4：`trace_enabled=False ⇒ N/A` 不得抹掉 PNG 归档的 PASS（两轴分开判）。"""
+    ev = _evidence_mod()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        run_dir = root / "product/e2e/scripts/.atlas-run"
+        run_dir.mkdir(parents=True)
+        (run_dir / "test-failed-1.png").write_bytes(b"png")
+        out = ev.archive_run_artifacts(
+            root, source="t", phase="fail", run_dir=run_dir,
+            trace_policy={"E2E-X": {"request_assertion": True}},
+            failed_cases=["E2E-X"], request_trace=False)
+        assert out["status"] == "PASS", out
+        assert out["trace"]["status"] == "N/A", out["trace"]
+
+
+def test_unknown_trace_policy_is_warn_never_na() -> None:
+    """B4：策略未知 ⇒ WARN，不得 N/A（假绿来源）。"""
+    ev = _evidence_mod()
+    out = ev.trace_axis(None, ["E2E-X"], trace_present=False)
+    assert out["status"] == "WARN", out
+
+
+def test_archive_failure_is_warn_not_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S1 钉：归档器自身失败 ⇒ WARN / partial，**不改判定**（调用方仍 exit 1）。"""
+    ev = _evidence_mod()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        run_dir = root / "product/e2e/scripts/.atlas-run"
+        run_dir.mkdir(parents=True)
+        (run_dir / "trace.zip").write_bytes(b"t")
+
+        def boom(*_a, **_k):
+            raise OSError("注入复制失败")
+
+        monkeypatch.setattr(ev.shutil, "copyfile", boom)
+        out = ev.archive_run_artifacts(root, source="t", phase="fail", run_dir=run_dir)
+        assert out["status"] == "WARN", out
+        assert out["partial"] is True
+
+
+def test_archive_symlink_escape_refused() -> None:
+    """S1 钉：`.atlas-evidence` 解析到根外 ⇒ 拒绝写入、落 WARN。"""
+    ev = _evidence_mod()
+    with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as outside:
+        root = Path(td) / "repo"
+        (root / "product/e2e/scripts/.atlas-run").mkdir(parents=True)
+        (root / "product/e2e/scripts/.atlas-run/trace.zip").write_bytes(b"t")
+        (root / ".atlas-evidence").symlink_to(Path(outside))
+        out = ev.archive_run_artifacts(root, source="t", phase="fail")
+        assert out["status"] == "WARN", out
+        assert not list(Path(outside).glob("*")), "越界目录被写入"
+
+
+@pytest.mark.parametrize("kill_mode", ["plain", "soft-kill"])
+def test_archived_trace_is_independently_consumable(kill_mode: str) -> None:
+    """S1 钉（S1-20a）：归档后删 `.atlas-run` 仍可打开 zip + sha256 自洽。
+
+    两种夹具：plain / soft-kill（模拟 SIGTERM 后 flush）。变异 M180 / M186 会让
+    对应路径拿不到完整归档 ⇒ 本钉红。
+    """
+    ev = _evidence_mod()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        run_dir = root / "product/e2e/scripts/.atlas-run"
+        run_dir.mkdir(parents=True)
+        real_zip = run_dir / "trace.zip"
+        with zipfile.ZipFile(real_zip, "w") as zf:
+            zf.writestr("trace/0.trace", f"mode={kill_mode}".encode())
+        out = ev.archive_run_artifacts(root, source="t", phase="fail", run_dir=run_dir)
+        trace_entry = next(f for f in out["files"] if Path(f["path"]).name == "trace.zip")
+        import shutil as _sh
+        _sh.rmtree(run_dir)
+        archived = root / trace_entry["path"]
+        assert archived.is_file(), archived
+        with zipfile.ZipFile(archived) as zf:
+            assert zf.namelist(), "trace.zip 不可独立打开"
+        assert hashlib.sha256(archived.read_bytes()).hexdigest() == trace_entry["sha256"]
+
+
+def test_archive_is_idempotent_and_never_overwrites() -> None:
+    """S1 钉（S1-21）：两次归档 = 两份并存；第一份字节不变。"""
+    ev = _evidence_mod()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        run_dir = root / "product/e2e/scripts/.atlas-run"
+        run_dir.mkdir(parents=True)
+        (run_dir / "trace.zip").write_bytes(b"t1")
+        first = ev.archive_run_artifacts(root, source="t", phase="fail", run_dir=run_dir)
+        first_manifest = (root / first["dir"] / "manifest.json").read_bytes()
+        second = ev.archive_run_artifacts(root, source="t", phase="fail", run_dir=run_dir)
+        assert first["dir"] != second["dir"]
+        assert (root / first["dir"] / "manifest.json").read_bytes() == first_manifest
+
+
+def test_global_teardown_absent_in_legacy_projects() -> None:
+    """P12 钉（兼容性姿态）：旧生成器产物没有 teardown / 政策清单 ⇒ 不阻断、不报错。
+
+    同时钉住 teardown 的语义：post-run manifest **无 `verdict` 字段**（只复制不判定）。
+    这条接近恒真，只作兼容性姿态，不计入有效反钉数量。
+    """
+    ev_path = PKG_ROOT / "_support" / "evidence_archive.py"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        run_dir = root / "product/e2e/scripts/.atlas-run"
+        run_dir.mkdir(parents=True)
+        (run_dir / "trace.zip").write_bytes(b"legacy")
+        proc = subprocess.run([sys.executable, str(ev_path), "--phase", "post-run",
+                               "--root", str(root), "--run-dir", str(run_dir)],
+                              capture_output=True, text=True, timeout=60)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        m = _manifests(root)[0]
+        d = json.loads(m.read_text(encoding="utf-8"))
+        assert "verdict" not in d, d
+
+
+def test_archive_cli_never_exits_nonzero() -> None:
+    """P12/S1 钉：teardown 载体（CLI）遇到异常也只 WARN、退出码 0。"""
+    ev_path = PKG_ROOT / "_support" / "evidence_archive.py"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        run_dir = root / "product/e2e/scripts/.atlas-run"
+        run_dir.mkdir(parents=True)
+        (run_dir / "trace.zip").write_bytes(b"t")
+        (root / ".atlas-evidence").write_text("not a dir", encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(ev_path), "--phase", "post-run",
+                               "--root", str(root), "--run-dir", str(run_dir)],
+                              capture_output=True, text=True, timeout=60)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "WARN" in proc.stderr, proc.stderr

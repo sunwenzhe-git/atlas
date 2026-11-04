@@ -47,6 +47,7 @@ from pathlib import Path
 if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _support.layout import LayoutError, load_layout  # noqa: E402
+from _support import evidence_archive as evidence  # noqa: E402
 
 PRE_TIMEOUT_S = 180
 BATCH_CASE_ID = "verify-batch"  # RFC-20261025-02 批级语义:显式批标识,非用例 ID(D121)
@@ -382,26 +383,31 @@ def main(argv: list[str] | None = None) -> int:
     steps: list[dict] = []
     real_run = 0
 
+    # 起跑前证据归档（RFC-20261104-01 S1）：Playwright 起跑即清空 `.atlas-run`，
+    # 跨轮取证必须先搬走；只由包装器做（teardown 只补跑后，不替代本步）。
+    pre_evidence = evidence.archive_run_artifacts(root, source="atlas_verify", phase="pre-run")
+
     pre = step_pre(root)
     steps.append(pre)
     if pre["status"] == "FAIL":
-        return _fail(root, steps, [], 0, args.json)
+        return _fail(root, steps, [], 0, args.json, pre_evidence=pre_evidence)
 
     run = step_run(root, py=sys.executable)
     steps.append(run)
     real_run += run.get("real_run_count", 0)
     rows = run.get("rows", [])
     if run["status"] == "FAIL":
-        return _fail(root, steps, rows, real_run, args.json)
+        return _fail(root, steps, rows, real_run, args.json, pre_evidence=pre_evidence)
 
     # backfill = 附录 B v2(D151):全链绿批 run 后、留档前;FAIL ⇒ 停环(不落档)。
     bf = step_backfill(root)
     steps.append(bf)
     if bf["status"] == "FAIL":
-        return _fail(root, steps, rows, real_run, args.json)
+        return _fail(root, steps, rows, real_run, args.json, pre_evidence=pre_evidence)
 
     report = {"ok": True, "short_circuit": False, "steps": steps, "rows": rows,
-              "real_run_count": real_run, "archive": None}
+              "real_run_count": real_run, "archive": None,
+              "evidence_archive": {"pre_run": pre_evidence, "fail": None}}
     report["archive"] = write_archive(root, report)
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -414,13 +420,22 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _fail(root: Path, steps: list[dict], rows: list[dict], real_run: int, as_json: bool) -> int:
+def _fail(root: Path, steps: list[dict], rows: list[dict], real_run: int, as_json: bool,
+          pre_evidence: dict | None = None) -> int:
     """失败停环:停在该步、结构化报告、下游不静默跳过;失败不落档(重跑不被短路)。"""
+    # 失败后证据归档（RFC-20261104-01 S1）：只复制、只观 WARN，不改判（仍 exit 1）。
+    try:
+        _failed = evidence.failed_case_ids(load_layout(root).e2e_run_dir)
+    except LayoutError:
+        _failed = []
+    fail_evidence = evidence.archive_run_artifacts(
+        root, source="atlas_verify", phase="fail", failed_cases=_failed)
     report = {"ok": False, "short_circuit": False, "steps": steps, "rows": rows,
               "real_run_count": real_run, "archive": None,
               "failed_step": next((s["name"] for s in reversed(steps) if s["status"] == "FAIL"), None),
               "completed_steps": [s["name"] for s in steps if s["status"] in {"ok", "SKIP"}],
-              "evidence": _evidence_paths(root)}
+              "evidence": _evidence_paths(root),
+              "evidence_archive": {"pre_run": pre_evidence, "fail": fail_evidence}}
     if as_json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:

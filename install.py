@@ -724,6 +724,7 @@ def main() -> None:
     c("共享内核（审查策略单源）", f"{atlas_dest}/_support/review_policy.py")
     c("共享内核（审查范围封口）", f"{atlas_dest}/_support/review_scope_core.py")
     c("共享内核（布局解析）", f"{atlas_dest}/_support/layout.py")
+    c("共享内核（证据归档）", f"{atlas_dest}/_support/evidence_archive.py")
     c("共享内核（维度解析）", f"{atlas_dest}/_support/ac_coverage.py")
     c("pi 宿主扩展", f"{atlas_dest}/extensions/pi.ts")
     c("结构模板", f"{atlas_dest}/templates/structure/_meta.json")

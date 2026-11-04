@@ -124,6 +124,11 @@ class Layout:
         return self.e2e_scripts_dir / ".atlas-auth"
 
     @property
+    def e2e_evidence_dir(self) -> Path:
+        """根级运行证据归档（RFC-20261104-01 S1；与 scripts 内 `.atlas-run` 物理分离）。"""
+        return self.root / ".atlas-evidence"
+
+    @property
     def console_dir(self) -> Path:
         return self.e2e_reviews_dir / "console"
 
@@ -155,6 +160,7 @@ class Layout:
             "e2e_scripts": self.e2e_scripts_dir,
             "e2e_fixtures": self.e2e_fixtures_dir,
             "e2e_reviews": self.e2e_reviews_dir,
+            "e2e_evidence": self.e2e_evidence_dir,
             "console_ledger": self.console_ledger,
         }
         if key not in mapping:

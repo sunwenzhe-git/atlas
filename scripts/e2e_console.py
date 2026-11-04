@@ -90,6 +90,8 @@ case_id = load_module("case_id")
 # node 运行器单源内核（二进制解析 / **可解析性判据** / 全局兜底修复；issue #24）：
 # `atlas_check` 真跑门与本月控制台共用同一实现 —— 此前两处各存一份拷贝。
 pw_runner = load_module("pw_runner")
+# 证据归档（RFC-20261104-01 S1）：与 atlas_verify / globalTeardown 共用同一内核。
+evidence_archive = load_module("evidence_archive")
 # 宿主注入型 base query（issue #27 / D104）：单源 `_support/url_merge.py`。
 url_merge = load_module("url_merge")
 
@@ -129,7 +131,8 @@ def repo_git_dirty(root: Path) -> bool | None:
 # D128 #31：运行期产物目录 / 后缀闭集单源——`scripts_hash` 与 `script_file_map` 共用，
 # 避免两处清单再次漂移。`.atlas-run/`（真实运行目录：`results.json`、`.last-run.json`、trace 等）
 # 整体是运行产物，不参与指纹。
-_RUNTIME_PATH_PARTS = ("test-results", "playwright-report", ".atlas-auth", "node_modules", ".atlas-run")
+_RUNTIME_PATH_PARTS = ("test-results", "playwright-report", ".atlas-auth", "node_modules",
+                       ".atlas-run", ".atlas-evidence")
 _RUNTIME_SUFFIXES = (".trace", ".png", ".webm", ".last-run.json")
 
 
@@ -809,12 +812,17 @@ class Ledger:
 # ---------------------------------------------------------------- 执行器（并发=1）
 
 class Runner:
-    def __init__(self, root: Path, ledger: Ledger, timeout: int, head: bool, keep_open: bool = True):
+    def __init__(self, root: Path, ledger: Ledger, timeout: int, head: bool, keep_open: bool = True,
+                 kill_grace_secs: float = 5.0):
         self.root = root
         self.layout = load_layout(root)
         self.ledger = ledger
         self.timeout = timeout
         self.head = head
+        # P13=A（RFC-20261104-01）：超时先 SIGTERM，等 grace（默认 5s、钳 0–15s）再 SIGKILL。
+        # 只改「进程怎么退出」，不改「超时判 FAIL」；grace 只对 node 进程，worker/browser 不在控制内。
+        self.kill_grace_secs = max(0.0, min(15.0, float(kill_grace_secs)))
+        self._pre_archived = False  # 每批只做一次 pre-run 归档（批首、第一个用例起跑前）
         # 人工 review（用户 2026-09-23 要求）：跑完**不自动关浏览器**，留给人手动关。
         # 无头/自动关模式的取舍在 `main()` 算好再传进来（Runner 只认参数，不耦合 head）。
         self.keep_open = bool(keep_open)
@@ -931,6 +939,8 @@ class Runner:
                     self.done = ev
                     self.cond.notify_all()
                 return
+        # 起跑前证据归档：批首、第一个用例起跑前做一次（Playwright 起跑即清空 `.atlas-run`）。
+        self._archive_pre_once()
         # node 单轨（3507 BO）：`file:line` 过滤 + 运行器原生 flag（--headed）；NODE_PATH 让生成物里的
         # @playwright/test 解析到项目声明的依赖目录（与 atlas_check 真跑门同一姿势）。
         cmd = [str(pw_bin), "test", "-c", "playwright.config.ts", nodeid]
@@ -995,11 +1005,20 @@ class Runner:
             pass
         dur = int((time.time() - t0) * 1000)
         ok = (exit_code == 0 and not timed_out)
+        # 失败后证据归档：只复制、只观 WARN，绝不改判定（ok / timeout 照旧）。
+        ev_archive = None
+        if not ok:
+            ev_archive = evidence_archive.archive_run_artifacts(
+                self.root, source=f"e2e_console-{case['id']}", phase="fail",
+                failed_cases=[case["id"]])
+            if ev_archive["status"] == "WARN":
+                self._emit(f"[证据归档] WARN {'; '.join(ev_archive['warnings'])[:300]}")
         with self.cond:
             raw = list(self.lines)
         # 「乙」：执行结果只回给页面（浏览器存本地草稿），提交时才落账本
         ev = {"kind": "done", "case": case["id"], "nodeid": nodeid, "ok": ok, "exit": exit_code,
               "duration_ms": dur, "timeout": timed_out, "held": held,
+              "evidence_archive": ev_archive,
               "slowmo": slowmo, "head": self.head, "source": source,
               "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
               # 失败原文是人工评审的输入 ⇒ 交给页面留在本地草稿里（提交时随快照一起落账本）
@@ -1025,15 +1044,42 @@ class Runner:
                 self.held_case = None
             self.cond.notify_all()
 
+    def _archive_pre_once(self) -> None:
+        """批首、第一个用例起跑前归档上一批遗留证据（每 Runner 批一次）。"""
+        if self._pre_archived:
+            return
+        self._pre_archived = True
+        ev = evidence_archive.archive_run_artifacts(
+            self.root, source="e2e_console", phase="pre-run")
+        if ev["status"] == "WARN":
+            self._emit(f"[证据归档] WARN {'; '.join(ev['warnings'])[:300]}")
+
     def _kill(self) -> None:
+        """P13=A：SIGTERM → grace（默认 5s、钳 0–15s）→ 仍不退出才 SIGKILL。
+
+        **不改超时判定**：调用方随后照旧置 `timed_out=True` ⇒ FAIL。软杀只是让
+        Playwright 有机会 flush trace；grace 只对 node 进程，worker / browser 不在控制内。
+        """
         proc = self._proc
-        if proc and proc.poll() is None:
-            setattr(proc, "_atlas_killed", True)
+        if not (proc and proc.poll() is None):
+            return
+        setattr(proc, "_atlas_killed", True)
+        grace = self.kill_grace_secs
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        deadline = time.time() + grace
+        while grace > 0 and proc.poll() is None and time.time() < deadline:
+            time.sleep(0.05)
+        if proc.poll() is None:
             try:
                 proc.kill()
             except Exception:
                 pass
-            self._emit(f"⏱ 超时 {self.timeout}s，已终止该条用例")
+            self._emit(f"⏱ 超时 {self.timeout}s，grace {grace:g}s 内未退出 ⇒ 已硬杀（SIGKILL）")
+        else:
+            self._emit(f"⏱ 超时 {self.timeout}s，已软杀（SIGTERM，grace {grace:g}s）")
 
     def wait_lines(self, since: int, block_s: float = 20.0) -> tuple[list[str], int, bool, dict | None]:
         with self.cond:
@@ -1139,14 +1185,16 @@ def writeback(root: Path, draft: dict, apply: bool, source: str = "app") -> dict
 # ---------------------------------------------------------------- HTTP
 
 class App:
-    def __init__(self, root: Path, port: int, slowmo: int, timeout: int, head: bool, keep_open: bool = True):
+    def __init__(self, root: Path, port: int, slowmo: int, timeout: int, head: bool, keep_open: bool = True,
+                 kill_grace_secs: float = 5.0):
         self.root = root
         self.layout = load_layout(root)
         self.port = port
         self.slowmo = slowmo
         self.actor = f"{os.environ.get('USER', 'local')}·控制台"
         self.ledger = Ledger(root, self.actor)
-        self.runner = Runner(root, self.ledger, timeout, head, keep_open)
+        self.runner = Runner(root, self.ledger, timeout, head, keep_open,
+                             kill_grace_secs=kill_grace_secs)
 
     def cases_payload(self, source: str) -> dict:
         current_prov = repo_provenance(self.root)
@@ -1367,6 +1415,8 @@ def main() -> int:
     ap.add_argument("--no-head", action="store_true", help="不带有头窗口（默认有头）")
     ap.add_argument("--auto-close", action="store_true",
                     help="跑完自动关浏览器（默认**不关**：留窗给人手动 review；无头时恒自动关）")
+    ap.add_argument("--kill-grace", type=float, default=5.0,
+                    help="超时软杀 grace 秒数（SIGTERM 后等待；0–15，默认 5；0=立即 SIGKILL）")
     ap.add_argument("--host", default="127.0.0.1")
     args = ap.parse_args()
 
@@ -1377,7 +1427,7 @@ def main() -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     app = App(root, args.port, args.slowmo, args.timeout, not args.no_head,
-              (not args.auto_close) and (not args.no_head))
+              (not args.auto_close) and (not args.no_head), kill_grace_secs=args.kill_grace)
     Handler.app = app
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"E2E 用例评审控制台 → http://{args.host}:{args.port}/")

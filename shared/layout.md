@@ -45,6 +45,7 @@ layout:
   - `product/<环>/reviews/<日期>-<范围>/` = **独立审查报告**（机器/审查者产出：`README.md` + `review.json` + `inputs/`），落点归该环自己的产物目录。
   - `product/e2e/reviews/console/` = **人工评审账本**（append-only；语义 = 人复核**执行结果**符合业务预期）。与机器审查（**设计期**语义门）分开，以免「谁判的」模糊。
 - **E2E 用例评审控制台是随包工具**（`.atlas/scripts/e2e_console.py` + `.atlas/templates/e2e/console/`）：项目侧只落它的运行时产物（账本 `product/e2e/reviews/console/`，append-only），**本体不进 `product/`**（`rings/e2e/reference.md` §10.1）。
+- **根级运行证据归档 `.atlas-evidence/`（运行产物，2026-11-04 登记 `RFC-20261104-01` S1）**：E2E 证据面（`trace.zip` / `test-failed-*.png` / `*.webm`）在 pre-run / fail / post-run 三点复制到 `<项目根>/.atlas-evidence/<run-id>/`，每份带 `manifest.json`；**只复制、不判定**，永不覆盖、不进 `scripts_hash`。写者 = `atlas_verify` / `e2e_console` / 生成物 `globalTeardown`（共用 `_support/evidence_archive.py`）；忽略行由生成器写根 `.gitignore`（`DESIGN.md` D183）。
 
 ## 2. 布局
 
@@ -65,6 +66,7 @@ layout:
 │   └── spec/conventions/           # 约定类注入薄桩（当前仅 testid.md；派生视图）
 │       └── testid.md               #   paths = 前端 app globs；正文归 E2E 环契约
 ├── .atlas/                         # atlas 包（由 install.sh 装配）
+├── .atlas-evidence/                # 运行证据归档（manifest + trace/png/webm；只复制不判定，已忽略）
 ├── .impeccable/                    # impeccable detect 配置（可选外部工具；config.json 的 detector.ignoreRules 须与 product/design.md 的 detect 豁免双向一致）
 └── product/                        # atlas 项目级文档
     ├── adr/                        # NNNN-<slug>.md（项目级长效架构决策记录，按需落笔，永不覆盖）

@@ -81,6 +81,113 @@ def opener():
     return urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
+# ── RFC-20261104-01 S1：超时软杀 + 证据归档（P13 / S1-20） ─────────────────────
+
+def _run_with_proc(cons, root: Path, proc, grace: float = 1.0):
+    """直接驱动 `_run`（假 Popen），绕开真 Playwright。"""
+    ledger = cons.Ledger(root, "tester")
+    runner = cons.Runner(root, ledger, timeout=0, head=True, keep_open=False,
+                         kill_grace_secs=grace)
+    orig = cons.subprocess.Popen
+    cons.subprocess.Popen = lambda *a, **k: proc  # type: ignore[assignment]
+    try:
+        runner._run({"id": "E2E-DEMO-001"}, "demo.spec.ts:3", 0, "app",
+                    "http://127.0.0.1:8000", Path("/nonexistent/pw"), Path("/nonexistent/nm"))
+    finally:
+        cons.subprocess.Popen = orig
+    return runner
+
+
+def test_timeout_soft_kill_lets_trace_flush() -> None:
+    """P13/S1-20a：SIGTERM 后在 grace 内退出 ⇒ trace 完整归档、判定仍超时。
+
+    变异 M180（退回硬杀）⇒ 进程没机会 flush ⇒ 本钉红。
+    """
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build_project(root)
+        scripts = cons.load_layout(root).e2e_scripts_dir
+        scripts.mkdir(parents=True, exist_ok=True)
+        (scripts / ".atlas-trace-policy.json").write_text(
+            '{"E2E-DEMO-001": {"request_assertion": false}}\n', encoding="utf-8")
+
+        class SoftProc:
+            stdout = iter(())
+
+            def __init__(self) -> None:
+                self.terminated = False
+                self.killed = False
+
+            def poll(self):
+                return 0 if self.terminated else None
+
+            def terminate(self) -> None:
+                self.terminated = True
+                rd = scripts / ".atlas-run"
+                rd.mkdir(parents=True, exist_ok=True)
+                (rd / "trace.zip").write_bytes(b"flushed-on-sigterm")
+
+            def kill(self) -> None:
+                self.killed = True
+
+        proc = SoftProc()
+        runner = _run_with_proc(cons, root, proc, grace=5.0)
+        assert proc.terminated and not proc.killed
+        assert runner.done["timeout"] is True and runner.done["ok"] is False
+        ev = runner.done["evidence_archive"]
+        assert ev and ev["status"] == "PASS", ev
+        assert any(Path(f["path"]).name == "trace.zip" for f in ev["files"]), ev
+
+
+def test_sigterm_ignored_escalates_to_sigkill_warn_partial() -> None:
+    """P13/S1-20b：忽略 SIGTERM ⇒ grace 到期 SIGKILL ⇒ WARN + partial。
+
+    变异 M186（摘掉 grace 后 SIGKILL 回退）⇒ 进程永不退出、测试挂死/本钉红。
+    """
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build_project(root)
+
+        class StubbornProc:
+            stdout = iter(())
+
+            def __init__(self) -> None:
+                self.terminated = False
+                self.killed = False
+
+            def poll(self):
+                return None
+
+            def terminate(self) -> None:
+                self.terminated = True
+
+            def kill(self) -> None:
+                self.killed = True
+
+        proc = StubbornProc()
+        runner = _run_with_proc(cons, root, proc, grace=0.5)
+        assert proc.terminated and proc.killed, "grace 到期必须回退 SIGKILL"
+        assert runner.done["timeout"] is True and runner.done["ok"] is False
+        ev = runner.done["evidence_archive"]
+        assert ev and ev["status"] == "WARN" and ev["partial"] is True, ev
+
+
+def test_evidence_archive_outside_scripts_hash() -> None:
+    """S1 钉：根 `.atlas-evidence/` 不进 `scripts_hash`（运行产物不造成指纹漂移）。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        scripts = cons.load_layout(root).e2e_scripts_dir
+        scripts.mkdir(parents=True)
+        (scripts / "a.ts").write_text("export {};\n", encoding="utf-8")
+        before = cons.scripts_hash(root)
+        (root / ".atlas-evidence" / "x").mkdir(parents=True)
+        (root / ".atlas-evidence" / "x" / "trace.zip").write_bytes(b"t")
+        assert cons.scripts_hash(root) == before
+
+
 def test_console_serves_from_package() -> None:
     assert CONSOLE.is_file(), "控制台脚本必须随包（.atlas/scripts/e2e_console.py）"
     assert (ASSETS / "index.html").is_file(), "控制台静态资源必须随包（.atlas/templates/e2e/console/）"
