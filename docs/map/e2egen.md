@@ -14,7 +14,7 @@
 | 文件 | 行数 | 角色 |
 |---|---|---|
 | `scripts/gen_e2e_scripts.py` | 2726 | 生成器本体(全仓最大单件):分片 DSL → `.spec.ts` |
-| `scripts/e2e_console.py` | 1432 | 评审控制台:纯标准库 SSE 服务(默认 127.0.0.1:4190) |
+| `scripts/e2e_console.py` | 1434 | 评审控制台:纯标准库 SSE 服务(默认 127.0.0.1:4190) |
 | `<e2e>/scripts/atlas-evidence-teardown.ts` | — | 生成物:`globalTeardown` 调证据归档 CLI(P12) |
 | `<e2e>/scripts/.atlas-trace-policy.json` | — | 生成物:逐用例 `request_assertion`(B4) |
 | `scripts/gen_testid_stub.py` | — | testid 实然盘点薄桩生成器(adopt 开户交尾件) |
