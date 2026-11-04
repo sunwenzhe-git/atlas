@@ -17,6 +17,13 @@
 关闭是否成立按**上一轮的级别**判：prior Critical 被新一轮降级成 Major 再挂
 `intentional`（无签字取证）不算关闭；即便仍按 open 重报，「Critical 变低级」也单独记 WARN。
 `findings/` 里出现非本 unit 的孤儿文件也判 WARN——跨轮换 unit 名会让闭环义务凭空清零。
+**连续 carried 的前提复核（`RFC-20261104-01` S2）**：最新轮仍 open、且**上一轮（轮差 = 1）**
+同指纹也 open ⇒ 视为连续未关闭，最新轮 `checks[]` 必须带 `premise`（一句话共同前提）与
+`discriminating_check{command, expected_if_false}`；缺失/形状错只记 `premise_required[]` + `warnings`、
+抬 WARN，**退出码仍为 0，永不阻断**。上一轮用 `events` 里 `< latest` 且 `kind=="check"` 的**最大轮号**
+判相邻（不用跨轮去重后的 `prior_round`，否则 `{1,2,3}` 会被算成 `3-1=2` 而漏掉空窗）；
+同轮重复只在本轮内去重、等级取最严档；上一轮已 resolves 关闭则重新开启不算连续。
+
 不进入 `atlas_check`，不建 FAIL 门；输入形状错误才 exit 2。
 
 用法：
@@ -213,6 +220,57 @@ def last_close(events: list[tuple[int, str, dict]], obligation: dict) -> dict | 
             "status": str(entry.get("status") or entry.get("disposition") or "closed")}
 
 
+def round_worst_level(entries: list[dict]) -> str | None:
+    """同轮同指纹重复时取**最严档**，不让升降级语义被去重吞掉。"""
+    level: str | None = None
+    for entry in entries:
+        level = review_policy.worst_level(level, entry.get("level"))
+    return level
+
+
+def premise_missing(check: dict) -> list[str]:
+    """最新轮连续 carried 必须带的前提字段；缺失项按稳定顺序返回（空列表 = 合格）。
+
+    形状面（类型/非空）由 `validate_review_report` 判；这里是语义面的「写了没」。
+    """
+    missing: list[str] = []
+    if not review_policy.signed_str(check, "premise"):
+        missing.append("premise")
+    dc = check.get("discriminating_check")
+    if not isinstance(dc, dict):
+        missing.append("discriminating_check")
+        return missing
+    for key in ("command", "expected_if_false"):
+        if not review_policy.signed_str(dc, key):
+            missing.append(f"discriminating_check.{key}")
+    return missing
+
+
+def streak_prev_round(events: list[tuple[int, str, dict]], item: dict,
+                      latest_round: int) -> int | None:
+    """连续 carried 的「上一轮」：`events` 中 `< latest` 且 `kind=="check"` 的最大轮号。
+
+    必须读 `events`，不能用 `prior` 里的 `prior_round`——后者是跨轮去重后的首现轮，
+    `{1,2,3}` 会被算成 `3-1=2`，第 2–3 轮的空窗被漏掉。同轮重复只在本轮内去重
+    （同一轮多个 check 事件只贡献一个轮号，跨轮命中不把 streak 归 N/A）。
+    """
+    rounds = sorted({rnd for rnd, kind, _ in events
+                     if kind == "check" and rnd < latest_round})
+    if not rounds:
+        return None
+    prev = rounds[-1]
+    if latest_round - prev != 1:
+        return None
+    prev_checks = [entry for rnd, kind, entry in events
+                   if kind == "check" and rnd == prev]
+    if not any(relevant(entry) for entry in prev_checks):
+        return None   # 上一轮是 `pre_existing` / Minor / 已关闭 ⇒ 不参与 streak
+    if any(declares_close(entry, item.get("level")) for rnd, kind, entry in events
+           if kind == "resolves" and rnd == prev):
+        return None   # 上一轮已 resolves 关闭、最新又 open ⇒ 重新开启，不是同前提连续失败
+    return prev
+
+
 def parse_resolves(data: dict, prior_fps: set[str]) -> tuple[list[dict], list[str], list[str]]:
     raw = data.get("resolves")
     errs = review_policy.resolves_shape_errors(raw, "resolves")
@@ -240,7 +298,7 @@ def base_result(unit: str, latest_round: int, rounds: list[int],
                 warnings: list[str], status: str) -> dict:
     return {"schema_version": 1, "unit": unit, "latest_round": latest_round,
             "rounds": rounds, "prior_relevant": 0,
-            "carried": [], "resolved": [], "unaccounted": [],
+            "carried": [], "resolved": [], "unaccounted": [], "premise_required": [],
             "level_downgraded": [], "unknown_resolves": [], "invalid_resolves": [],
             "scope_drift": [], "scope_drift_accepted": [],
             "warnings": warnings, "status": status}
@@ -390,10 +448,11 @@ def run(report_dir: Path) -> tuple[str, dict]:
                 carried.append(item)
                 if item.get("level") == "Critical" and all(
                         c.get("level") != "Critical" for c in latest):
-                    downgraded.append({**item, "latest_level": latest[0].get("level")})
+                    latest_level = round_worst_level(latest)
+                    downgraded.append({**item, "latest_level": latest_level})
                     warnings.append(
                         f"prior Critical（round {item['prior_round']} `{item.get('target')}`）"
-                        f"新一轮降级为 {latest[0].get('level')!r} —— 仍按未关闭跟踪")
+                        f"新一轮降级为 {latest_level!r} —— 仍按未关闭跟踪")
             continue
         if fp in resolved_by_fp:
             resolve = resolved_by_fp[fp]
@@ -410,6 +469,31 @@ def run(report_dir: Path) -> tuple[str, dict]:
                                  "declared_in_round": closer["declared_in_round"]})
             else:
                 unaccounted.append(item)
+
+    # ---- 连续 carried 的前提复核（S2；只 WARN，退出码仍为 0，不进 atlas_check）----------
+    premise_required: list[dict] = []
+    for item in carried:
+        fp = item["fingerprint"]
+        prev = streak_prev_round(events.get(fp, []), item, latest_round)
+        if prev is None:
+            continue
+        open_entries = [c for c in latest_by_fp.get(fp, [])
+                        if state_of(c, item.get("level")) == "open"]
+        if not open_entries:
+            continue
+        # 同轮同指纹重复只在本轮内去重：字段按「本轮写过」判一次，等级取最严档
+        missing_by_entry = [premise_missing(c) for c in open_entries]
+        if any(not missing for missing in missing_by_entry):
+            continue
+        level = round_worst_level(open_entries)
+        strict = next((c for c in open_entries if c.get("level") == level), open_entries[0])
+        missing = premise_missing(strict)
+        premise_required.append({"fingerprint": fp, "target": item.get("target"),
+                                 "level": level, "prev_round": prev,
+                                 "latest_round": latest_round, "missing": missing})
+        warnings.append(
+            f"连续 carried r{prev}→r{latest_round} 的 `{fp}` 缺 {'/'.join(missing)}"
+            "（共同前提与判别检查是复核承重件；只 WARN，不阻断）")
 
     for entry in (root.get("resolves") or []):
         if not isinstance(entry, dict):
@@ -432,11 +516,13 @@ def run(report_dir: Path) -> tuple[str, dict]:
         warnings.extend(f"中间轮 resolves 形状错（该条不作关闭证据）：{e}" for e in prior_shape_errors)
     status = "WARN" if (unaccounted or unknown_resolves or invalid_resolves or orphans
                         or downgraded or prior_shape_errors or contradictions
+                        or premise_required
                         or scope_drift or scope_unavailable) else "PASS"
     result = {"schema_version": 1, "unit": unit, "latest_round": latest_round,
               "rounds": [r for r, _, _ in prior_rounds] + [latest_round],
               "prior_relevant": len(prior), "carried": carried, "resolved": resolved,
-              "unaccounted": unaccounted, "level_downgraded": downgraded,
+              "unaccounted": unaccounted, "premise_required": premise_required,
+              "level_downgraded": downgraded,
               "unknown_resolves": unknown_resolves,
               "invalid_resolves": invalid_resolves,
               "scope_drift": scope_drift, "scope_drift_accepted": scope_drift_accepted,
@@ -472,6 +558,7 @@ def main() -> int:
     print(f"review_closure @ {report_dir}   {status}   rounds {len(result['rounds'])} "
           f"prior {result['prior_relevant']} carried {len(result['carried'])} "
           f"resolved {len(result['resolved'])} unaccounted {len(result['unaccounted'])} "
+          f"premise {len(result['premise_required'])} "
           f"unknown {len(result['unknown_resolves'])} invalid {len(result['invalid_resolves'])} "
           f"scope_drift {len(result['scope_drift'])} accepted {len(result['scope_drift_accepted'])} "
           f"warnings {len(result['warnings'])}")

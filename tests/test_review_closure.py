@@ -110,7 +110,7 @@ def test_less_than_two_rounds_skips() -> None:
 
 def test_carried_same_fingerprint_passes() -> None:
     with tempfile.TemporaryDirectory() as td:
-        d = write_report(Path(td), {1: [finding("A")], 2: [finding("A")]})
+        d = write_report(Path(td), {1: [finding("A")], 2: [with_premise("A")]})
         p = run(d)
         assert p.returncode == 0 and "PASS" in p.stdout, p.stdout
         c = closure(d)
@@ -228,7 +228,7 @@ def test_finding_without_fingerprint_uses_hash() -> None:
     with tempfile.TemporaryDirectory() as td:
         d = write_report(Path(td), {
             1: [finding("", with_fingerprint=False)],
-            2: [finding("", with_fingerprint=False)],
+            2: [with_premise("", with_fingerprint=False)],
         })
         p = run(d)
         assert p.returncode == 0 and "PASS" in p.stdout, p.stdout
@@ -292,7 +292,7 @@ def test_prior_critical_downgraded_is_not_closed() -> None:
 def test_prior_critical_rereported_as_critical_passes() -> None:
     """正例对照：级别未变且仍 open ⇒ carried、PASS（不得把正常重报刷红）。"""
     with tempfile.TemporaryDirectory() as td:
-        d = write_report(Path(td), {1: [finding("A")], 2: [finding("A")]})
+        d = write_report(Path(td), {1: [finding("A")], 2: [with_premise("A")]})
         p = run(d)
         assert p.returncode == 0 and "PASS" in p.stdout, p.stdout
         assert closure(d)["level_downgraded"] == []
@@ -753,3 +753,131 @@ def test_scope_drift_without_latest_scope_warns() -> None:
         p = run(d)
         assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
         assert "无法做跨轮内容封口比对" in p.stdout
+
+
+# ---- 连续 carried 的前提复核（RFC-20261104-01 S2）--------------------------------------
+
+def with_premise(fp: str, **kw) -> dict:
+    return finding(fp,
+                   premise="同一前提：OCR 只按 manifest.coverage.completed 计实审数",
+                   discriminating_check={
+                       "command": "python3 -m pytest tests/test_cli_review_convert.py -q",
+                       "expected_if_false": "若 coverage 回退到 summary，reviewed 会变 6/6 假绿"},
+                   **kw)
+
+
+def test_two_round_carried_requires_premise() -> None:
+    """S2-2/M176：连续两轮同指纹 open 且最新轮缺前提 ⇒ premise_required 稳定出现。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A")], 2: [finding("A")]})
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        c = closure(d)
+        assert c["status"] == "WARN" and len(c["premise_required"]) == 1
+        assert c["premise_required"][0]["missing"] == ["premise", "discriminating_check"]
+        # 同一夹具连跑两次：条目序与内容逐字节稳定（防把红灯训练成噪声）
+        first = json.dumps({"p": c["premise_required"], "w": c["warnings"]}, ensure_ascii=False)
+        run(d)
+        second = json.dumps({"p": closure(d)["premise_required"],
+                             "w": closure(d)["warnings"]}, ensure_ascii=False)
+        assert first == second
+
+
+def test_two_round_carried_with_premise_passes() -> None:
+    """S2-1：字段齐全 ⇒ 不产生新 WARN。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A")], 2: [with_premise("A")]})
+        p = run(d)
+        assert p.returncode == 0 and "PASS" in p.stdout, p.stdout
+        c = closure(d)
+        assert c["status"] == "PASS" and c["premise_required"] == []
+
+
+def test_single_round_carried_no_premise() -> None:
+    """S2-4：只有最新 1 轮 open ⇒ 首轮不要求前提。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("B")], 2: [finding("A")]},
+                         resolves=[{"fingerprint": "B", "status": "fixed",
+                                    "by": "lead", "evidence": "test green"}])
+        p = run(d)
+        assert p.returncode == 0, p.stdout
+        assert closure(d)["premise_required"] == []
+
+
+def test_resolved_round_breaks_streak() -> None:
+    """S2-6：上一轮已 resolves 关闭、最新又 open ⇒ 重新开启不算连续。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A")], 2: [finding("A")], 3: [finding("A")]},
+                         declares={2: [{"fingerprint": "A", "status": "fixed",
+                                        "by": "lead", "evidence": "test green"}]})
+        p = run(d)
+        assert p.returncode == 0, p.stdout
+        assert closure(d)["premise_required"] == []
+
+
+def test_round_gap_is_not_consecutive() -> None:
+    """S2-5：{1,3} 缺 r2 ⇒ 轮差 3-1=2，不构成连续（依据是轮差，不是 events 相邻性）。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A")], 3: [finding("A")]})
+        p = run(d)
+        assert p.returncode == 0, p.stdout
+        assert closure(d)["premise_required"] == []
+
+
+def test_same_round_duplicate_deduped_in_round() -> None:
+    """S2-11：同轮重复只在本轮内去重 ⇒ 本轮一次；跨轮 prior_fps 命中不把 streak 归 N/A。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A"), finding("A")], 2: [finding("A")]})
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        assert "prior fingerprint 重复" in p.stdout
+        c = closure(d)
+        assert len(c["premise_required"]) == 1
+
+
+def test_same_round_duplicate_keeps_strictest_level() -> None:
+    """S2-11：同轮 Major+Critical 重复去重后等级仍取最严档（Critical）。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A")],
+                                    2: [finding("A", level="Major"),
+                                        finding("A", level="Critical")]})
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        c = closure(d)
+        assert len(c["premise_required"]) == 1
+        assert c["premise_required"][0]["level"] == "Critical"
+
+
+def test_third_round_missing_premise_warns() -> None:
+    """S2-12/M176b：r2 有字段、r3 无 ⇒ 仍触发；旧公式（prior_round=r1）会得 3-1=2 ⇒ N/A ⇒ 红。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A")], 2: [with_premise("A")], 3: [finding("A")]})
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        c = closure(d)
+        assert len(c["premise_required"]) == 1
+        assert c["premise_required"][0]["prev_round"] == 2
+
+
+def test_four_round_streak_still_warns() -> None:
+    """S2-13：四轮同指纹均 open、全缺字段 ⇒ 最新轮 r4 仍触发（M176b 下红）。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A")], 2: [finding("A")],
+                                    3: [finding("A")], 4: [finding("A")]})
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        c = closure(d)
+        assert len(c["premise_required"]) == 1
+        assert c["premise_required"][0]["prev_round"] == 3
+
+
+def test_level_change_still_requires_premise() -> None:
+    """S2-8：Critical → Major 仍 open ⇒ 级别变化不是关闭，照样要求前提。"""
+    with tempfile.TemporaryDirectory() as td:
+        d = write_report(Path(td), {1: [finding("A", level="Critical")],
+                                    2: [finding("A", level="Major")]})
+        p = run(d)
+        assert p.returncode == 0 and "WARN" in p.stdout, p.stdout
+        c = closure(d)
+        assert len(c["premise_required"]) == 1
+        assert c["premise_required"][0]["level"] == "Major"

@@ -295,6 +295,19 @@ def validate_v2_finding(c: dict, idx: int) -> list[str]:
                 errs.append(f"checks[{idx}].disposition={disp} 必须带非空字符串 disposition_by 签名")
             if not signed_str(c, "disposition_evidence"):
                 errs.append(f"checks[{idx}].disposition={disp} 必须带非空字符串 disposition_evidence 取证")
+    if "premise" in c:
+        if not signed_str(c, "premise"):
+            errs.append(f"checks[{idx}].premise 必须为非空字符串（连续 carried 的共同前提）")
+    if "discriminating_check" in c:
+        dc = c["discriminating_check"]
+        if not isinstance(dc, dict):
+            errs.append(f"checks[{idx}].discriminating_check 必须为对象")
+        else:
+            for key in ("command", "expected_if_false"):
+                if not signed_str(dc, key):
+                    errs.append(f"checks[{idx}].discriminating_check.{key} 必须为非空字符串")
+            if "observation" in dc and not signed_str(dc, "observation"):
+                errs.append(f"checks[{idx}].discriminating_check.observation 若存在必须为非空字符串")
     if "verification" in c:
         v = c["verification"]
         if not isinstance(v, dict):

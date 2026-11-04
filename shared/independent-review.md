@@ -247,6 +247,8 @@ atlas-grill（提炼刺痛代价与致命冲突） → 用户拍板关键抉择
 
 - **跨轮内容封口（2026-11-03，`RFC-20261103-01`）**：`review_closure.py` 读各轮 `review_scope.files`，若 prior 轮审过的文件当前内容已变且该路径不在最新轮实审集 ⇒ `scope_drift` WARN（非门）；最新轮实审集覆盖当前内容 ⇒ 不告警；`review_scope_drift` 签字齐全且 `previous_sha256/current_sha256` 对上 ⇒ 记 `scope_drift_accepted`，不告警。`--emit-skeleton` 的产物同时带 `scope_drift` 列表（路径/新旧摘要），供人工重审或显式确认，不伪造 `resolves` 指纹。
 
+- **连续 carried 的前提复核（2026-11-04，`RFC-20261104-01`）**：上一轮未关闭的 `Critical|Major` 在**最新轮的上一轮**（轮差 = 1，按各轮 `findings` 里真实出现过的最大轮号判，**不按跨轮去重后的首现轮**）也仍 open ⇒ 最新轮必须写 `premise`（一句话说清「两轮都成立的那个共同前提」）与 `discriminating_check{command, expected_if_false}`（如果前提是错的，哪条命令会给出什么结果）。缺字段只进 `premise_required` + `warnings`、抬 WARN，**不阻断、不 exit 2、不进 `atlas_check`**——「连续两轮同前提失败」是复核承重件缺失的信号，不是自动否决。同轮同指纹重复只在本轮内去重（等级取最严档，`Major`+`Critical` 仍是 `Critical`）；上一轮已 `resolves` 关闭、最新又 open 属重新开启，不算连续；`{1,3}` 这类缺轮不构成连续。可选字段的形状（非空字符串 / 对象 / 子键齐）由 `validate_review_report` 判（`RFC-20261104-01` §3.2 S2-3）。
+
 ## Guidance
 
 动手做任何一处独立审查前，先读本文件（骨架 + §6 成本约束 + §7 校准环），再读该实例自己的契约拿**维度**与**回退环取值**。**不得**把骨架条款复制进环契约（`single-source.md` §1）；**不得**在报告里写被审对象的正文；**不得**让审查者替代 `global-rules.md §7` 的确认门。改本契约时同步环契约的接线与 `3507` 决策记录。

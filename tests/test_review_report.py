@@ -597,3 +597,34 @@ def test_v3_report_ignores_scope_manifest() -> None:
         payload = {**GOOD, "root": str(root.resolve()), "schema_version": 3}
         p = run(mk_report(root, payload), ["--scope-manifest", str(path)])
         assert p.returncode == 0 and "schema < 4" in p.stdout, p.stdout
+
+
+def test_premise_optional_fields_shape() -> None:
+    """S2 形状钉（RFC-20261104-01）：`premise` / `discriminating_check` 出现时校验形状。
+
+    合法 ⇒ 通过；空串 / 非对象 / 缺 `command` / 缺 `expected_if_false` ⇒ FAIL。
+    字段是**可选**的：不带这两个键的正常 finding 不受影响（正例由 `GOOD` 提供）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        ok = {**GOOD, "schema_version": 2,
+              "checks": [{**GOOD["checks"][0],
+                          "premise": "共同前提：只按 completed 计实审数",
+                          "discriminating_check": {"command": "pytest -q",
+                                                   "expected_if_false": "reviewed 变 6/6"}}]}
+        p = run(mk_report(Path(td), ok))
+        assert p.returncode == 0, p.stdout
+    bad_cases = [
+        ({"premise": ""}, "premise"),
+        ({"premise": 3}, "premise"),
+        ({"discriminating_check": []}, "discriminating_check"),
+        ({"discriminating_check": {"expected_if_false": "x"}}, "command"),
+        ({"discriminating_check": {"command": "x"}}, "expected_if_false"),
+        ({"discriminating_check": {"command": "x", "expected_if_false": "y",
+                                   "observation": ""}}, "observation"),
+    ]
+    for extra, needle in bad_cases:
+        with tempfile.TemporaryDirectory() as td:
+            payload = {**GOOD, "schema_version": 2,
+                       "checks": [{**GOOD["checks"][0], **extra}]}
+            p = run(mk_report(Path(td), payload))
+            assert p.returncode == 1 and needle in p.stdout, (extra, p.stdout)
