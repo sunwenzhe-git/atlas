@@ -51,21 +51,21 @@
 | ③ | 项目数据准备钩子（`atlas-prepare.mjs` / `ATLAS_CASE_ID`） | 控制台与 `atlas_verify` 调用（D110/D121） | **迁出（调度面）** | 脚本内容归项目、调度归执行层；`ATLAS_CASE_ID` 语义与「失败即拒」判据留 Atlas |
 | ④ | E2E 运行目录证据面 ⇄ 判分面物理落点 | `.atlas-run/` 内同目录（`_support/layout.py:120`） | **保留** | 目录族指纹排除已消除假漂移；§17 只需「可区分 + 有清单」，物理同目录不违约 |
 
-### 2.2 硬接口（写死，可检查）
+### 2.2 硬接口（写死；可机检性逐行标注）
 
 **权威与写者**（每一行只有一个权威侧；「可检查落点」优先指向既有机器面，尚未建成的显式标「待建 / 纪律面」，本 RFC 不新增判据）：
 
 | 跨边界物 | 权威侧 | 唯一写者 | 跨边界形态 | 失败归属 | 可检查落点（既有 / 待建 / 纪律面） |
 |---|---|---|---|---|---|
-| 判据：AC 账本 / 用例索引 / 覆盖维度 / 门定义 | **Atlas** | Atlas | 执行层**只读** | 判据或门误判 ⇒ Atlas | `validators/`、`atlas_check` 退出码 |
-| 生成物：spec / `playwright.config.ts` / setup / `atlas-hold.ts` | **Atlas** | Atlas（确定性派生） | 执行层只读，不得手改 | 生成物与契约不符 ⇒ Atlas「生成物最新」门 | `atlas_check`「生成物最新」行 |
+| 判据：AC 账本 / 用例索引 / 覆盖维度 / 门定义 | **Atlas** | Atlas | 执行层**只读** | 判据或门误判 ⇒ Atlas | `validators/validate_e2e_index.py` / `validators/validate_ac_alignment.py` + `tests/test_validators.py`（源包态）；门定义 = `tests/test_gate_registry.py`；`atlas_check` 退出码 = **装配态**（源包态全 SKIP，不作门证据） |
+| 生成物：spec / `playwright.config.ts` / setup / `atlas-hold.ts` | **Atlas** | Atlas（确定性派生） | 执行层只读，不得手改 | 生成物与契约不符 ⇒ Atlas「生成物最新」门 | `atlas_check`「生成物最新」行 = **装配态**；源包态无生成器（SKIP，不作门证据） |
 | 审查报告：`review.json` | **Atlas**（`shared/independent-review.md` §3/§4） | 执行层 | 执行层产出，**字段集由 Atlas 定**，不得擅自扩展 | 执行器未跑 / 少审 ⇒ 执行层；表单字段漂移 ⇒ Atlas `validate_review_report` | `scripts/validate_review_report.py` |
 | 动作序列：pre → run → backfill → report（D151 权威步序；D150 原序 = pre → run → report，backfill 缓行） | **执行层**（pre / run / report） | 执行层；backfill 步归 Atlas（见下一行账本写面） | 顺序与前置由 Atlas 契约声明（D151） | 排错、起不动、429、预算熔断 ⇒ 执行层；backfill 漏跑 / 错序 ⇒ Atlas | **待建**（EL-16 接入后补「已跑 M/N」字段）；当前无机器面 |
-| 账本写面：索引状态回填 / 控制台 `events.jsonl` | **Atlas** | Atlas（`e2e_console.writeback` / `atlas_verify` backfill） | 执行层交 `results.json`，由 Atlas 在 report 前回填（D151 步序） | 回填错写 ⇒ Atlas | `validate_e2e_index.py`、D151 步序 |
+| 账本写面：索引状态回填 / 控制台 `events.jsonl` | **Atlas** | Atlas（`e2e_console.writeback` / `atlas_verify` backfill） | 执行层交 `results.json`，由 Atlas 在 report 前回填（D151 步序） | 回填错写 ⇒ Atlas | `tests/test_atlas_verify.py::test_backfill_reuses_console_writeback_identity`（回填走 `writeback` 同函数）；`::test_backfill_never_touches_review_ledger`（不回填评审账本）；`validators/validate_e2e_index.py` |
 | 运行：进程启动 / 并发 / 超时 / 预算 | **执行层** | 执行层 | Atlas 只声明上限（扇出 ≤4、180s prepare、120s 用例） | 超限 / 超时 ⇒ 执行层，结论 = 未执行 | `tests/test_e2e_console.py::test_timeout_soft_kill_lets_trace_flush`（超时）、`::test_prepare_hook_runs_before_case_and_refuses_on_failure`（180s prepare 上限）；扇出 ≤4 与预算熔断 = **纪律面，不可机检**（`shared/independent-review.md` §6） |
-| 证据：`trace.zip` / `test-failed-*.png` / `*.webm` | **执行层** | 执行层 | Atlas **只读**证据面（§17） | 证据缺失 ⇒ 执行层（不得折算成 pass） | `rings/e2e/reference.md` §7 二分表 |
-| 报告：`results.json`（机器面）+ 人读报告 | **执行层** | 执行层产出，**字段集由 Atlas 定** | `status` / `expected` 等字段不得擅自扩展 | schema 漂移 ⇒ Atlas 门或回填报错 | `rings/e2e/reference.md` §7 判分面清单 |
-| 环境 / 准备失败 | **执行层** | 执行层 | 必须显式标注 `env` / `prep_failed` | 环境红 / 准备失败 ⇒ 执行层，不得记 pass，也不得记用例 fail | D110「失败即拒」、bugs.md「栈起没起」观察行 |
+| 证据：`trace.zip` / `test-failed-*.png` / `*.webm` | **执行层** | 执行层 | Atlas **只读**证据面（§17） | 证据缺失 ⇒ 执行层（不得折算成 pass） | **纪律面**：`rings/e2e/reference.md` §7 是登记表，无专用机检；「证据不参与判分」由 `tests/test_atlas_verify.py::test_forged_manifest_is_not_consumed_by_verify` 佐证 |
+| 报告：`results.json`（机器面）+ 人读报告 | **执行层** | 执行层产出，**字段集由 Atlas 定** | `status` / `expected` 等字段不得擅自扩展 | schema 漂移 ⇒ Atlas 门或回填报错 | **纪律面**：`rings/e2e/reference.md` §7 判分面清单；schema 漂移由 backfill 解析失败兜底（`tests/test_atlas_verify.py::test_backfill_reuses_console_writeback_identity` 覆盖解析↔回填），无独立 schema 钉 |
+| 环境 / 准备失败 | **执行层** | 执行层 | 必须显式标注 `env` / `prep_failed` | 环境红 / 准备失败 ⇒ 执行层，不得记 pass，也不得记用例 fail | `tests/test_e2e_console.py::test_prepare_hook_runs_before_case_and_refuses_on_failure`（拒跑 + `prep_failed`）、`tests/test_atlas_verify.py::test_pre_failure_stops_batch`（准备失败停批）；环境失败归类无专用钉 = **纪律面**（`bugs.md`「栈起没起」观察行） |
 
 **四条硬约束（跨块）**：
 
