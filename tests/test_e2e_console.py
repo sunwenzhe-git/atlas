@@ -1011,6 +1011,40 @@ def test_scripts_hash_excludes_runtime_artifacts_and_whitelists_scripts() -> Non
         assert h4 != h3, (h3, h4)
 
 
+def test_script_inventory_prepare_key_forms() -> None:
+    """⑥ 单源化（`49689f3`）的 key 归一：`atlas-prepare.mjs` 按位置落 key（`REVIEW-20261104-02` C4）。
+
+    `product/e2e/scripts/` 内 ⇒ `scripts/atlas-prepare.mjs`（重构前为裸 `atlas-prepare.mjs`，
+    该位置上的 `scripts_hash` 值因此一次性变化）；项目根 ⇒ `atlas-prepare.mjs`。两处并存时 scripts/ 优先。
+    """
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        s_dir = root / "product" / "e2e" / "scripts"
+        s_dir.mkdir(parents=True)
+
+        # scripts/ 内 => 带 scripts/ 前缀的 key
+        (s_dir / "atlas-prepare.mjs").write_text("// prep\n", encoding="utf-8")
+        files = cons.script_file_map(root)
+        assert set(files) == {"scripts/atlas-prepare.mjs"}, files
+        h_in_scripts = cons.scripts_hash(root)
+
+        # 项目根 => 裸 key（同一内容也因 key 不同而得到不同哈希）
+        (s_dir / "atlas-prepare.mjs").unlink()
+        (root / "atlas-prepare.mjs").write_text("// prep\n", encoding="utf-8")
+        files = cons.script_file_map(root)
+        assert set(files) == {"atlas-prepare.mjs"}, files
+        h_at_root = cons.scripts_hash(root)
+        assert h_at_root != h_in_scripts, (h_in_scripts, h_at_root)
+
+        # 两处并存 => scripts/ 优先，不重复计入
+        (s_dir / "atlas-prepare.mjs").write_text("// prep\n", encoding="utf-8")
+        inv = cons._script_inventory(root)
+        keys = [k for k, _ in inv]
+        assert keys == ["scripts/atlas-prepare.mjs"], keys
+        assert cons.scripts_hash(root) == h_in_scripts
+
+
 def test_case_review_state_lifecycle() -> None:
     """D128 + D174：四态闭集不变；新指纹按**内容**复算，逐条作废而不是整目录。"""
     cons = load("e2e_console", "scripts/e2e_console.py")

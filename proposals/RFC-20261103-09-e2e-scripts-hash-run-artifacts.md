@@ -124,3 +124,4 @@ E2E 段「指纹假漂移」族的路径族含 `scripts/e2e_console.py` + `rings
 1. `product/e2e/scripts/` 根下、非 `.atlas-run/` 的运行产物若仍以白名单扩展名出现，仍会计入指纹（本批未排除，避免一刀切假绿）；
 2. `app` 散列（D174）与 `shared` import 闭包不在本批范围；未做全量判分载体盘点；
 3. #31 的「真实仓复验」未完成——状态 `已修·待复验`，出库前需一次真实跑后控制台不再假 `stale` 的实证。
+4. **单源化带来的基线一次性变化（`REVIEW-20261104-02` C4，2026-11-04）**：`_script_inventory` 单源后，`product/e2e/scripts/` 内的 `atlas-prepare.mjs` 的 key 由裸 `atlas-prepare.mjs` 归一为 `scripts/atlas-prepare.mjs`（与同目录其他脚本同前缀）；项目根钩子的 key 不变。`scripts_hash` 对该位置的散列因此一次性变化——**无法回填绝对新值**（散列取决于项目实际文件集），只记录变化事实与形态；钉 = `tests/test_e2e_console.py::test_script_inventory_prepare_key_forms`（两形态 key、两处并存 scripts/ 优先、同内容跨位置哈希不同）。此变化与本件 #31 的判据（运行产物免疫）无关，不得当作 #31 或 H 的独立性证据。

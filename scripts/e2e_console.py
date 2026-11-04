@@ -157,10 +157,12 @@ def _script_inventory(root: Path) -> list[tuple[str, Path]]:
             continue
         inv.append((f"scripts/{rel}", p))
     for prep in (s_dir / "atlas-prepare.mjs", root / "atlas-prepare.mjs"):
-        if prep.is_file():
-            key = "scripts/atlas-prepare.mjs" if prep.parent == s_dir else "atlas-prepare.mjs"
+        if not prep.is_file():
+            continue
+        key = "scripts/atlas-prepare.mjs" if prep.parent == s_dir else "atlas-prepare.mjs"
+        if all(k != key for k, _ in inv):
             inv.append((key, prep))
-            break
+        break
     return inv
 
 
