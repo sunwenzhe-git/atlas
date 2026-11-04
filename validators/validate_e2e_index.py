@@ -93,19 +93,21 @@ AC_RE = re.compile(r"^AC-[A-Z0-9]+-\d{3}$")
 # 表头不符 ⇒ 该表按「未声明」跳过（不按第 4 格位置吸收）。
 E2E_DIM_HEADER = "适用覆盖维度"
 # H（2026-11-04，评审第 3 条 / D156 单案）：前三列须按序为 `AC ID` / `场景` / `回指规则`。
-# 第二列按前缀接受模板的 `场景（Given / When / Then）` 变体：这是**有意**的口径，
-# 前缀**固定为 `场景`**，不是任意前缀（逐字相等会把仓内 canonical 5 列模板判死）。
+# 第二列只认**显式两形态**：裸 `场景`（三列形态）与模板 canonical 写法
+# `场景（Given / When / Then）`（`templates/prd/domain.md:107`）。不用前缀匹配——
+# 前缀会放行 `场景数量` / `场景说明` 这类异义列（`REVIEW-20261104-02` §3）。
 # 第一列 / 第三列逐字；列序严格，非 canonical 列序 ⇒ 该表按 N/A（逐表独立，坏表不擦好表）。
 _CANONICAL_AC_HEAD = ("AC ID", "场景", "回指规则")
+_SCENE_HEAD_FORMS = ("场景", "场景（Given / When / Then）")
 
 
 def is_canonical_ac_header(hdr: list[str]) -> bool:
-    """前三列是否按序为 canonical AC 表头（第二列接受 `场景…` 变体）。"""
+    """前三列是否按序为 canonical AC 表头（第二列仅 `_SCENE_HEAD_FORMS` 两形态）。"""
     if len(hdr) < 3:
         return False
     return (
         hdr[0] == _CANONICAL_AC_HEAD[0]
-        and hdr[1].startswith(_CANONICAL_AC_HEAD[1])
+        and hdr[1] in _SCENE_HEAD_FORMS
         and hdr[2] == _CANONICAL_AC_HEAD[2]
     )
 # 契约 §8.2（2026-09-25 补）：PRD 环登记「结构类 AC」的小节标题 ——

@@ -1,5 +1,5 @@
 {
-  "note": "D153 E2E 纯抽取 golden：parse_dims_cell 的 7 组语料；tests/test_shared_kernel.py 逐条比对。looks = 是否含疑似维度写法（任意 C+数字，含合法 token）。Batch B（RFC-20261103-08）追加 e2e_dim_header_cases：合法表头只有「适用覆盖维度」，tests/test_validators.py 逐条比对。2026-11-04（D156 单案）追加 e2e_canonical_header_cases：前三列须按序为 AC ID / 场景 / 回指规则，非 canonical 列序按 N/A。",
+  "note": "D153 E2E 纯抽取 golden：parse_dims_cell 的 7 组语料；tests/test_shared_kernel.py 逐条比对。looks = 是否含疑似维度写法（任意 C+数字，含合法 token）。Batch B（RFC-20261103-08）追加 e2e_dim_header_cases：合法表头只有「适用覆盖维度」，tests/test_validators.py 逐条比对。2026-11-04（D156 单案）追加 e2e_canonical_header_cases：前三列须按序为 AC ID / 场景 / 回指规则，第二列仅 场景 与 场景（Given / When / Then）两形态（异义 场景… 列按 N/A），非 canonical 列序按 N/A。",
   "parse_dims_cell": [
     {"raw": "C01-C02", "dims": ["C01", "C02"], "looks": true},
     {"raw": "C01正常流", "dims": ["C01"], "looks": true},
@@ -18,6 +18,7 @@
   "e2e_canonical_header_cases": [
     {"columns": ["AC ID", "场景", "回指规则", "适用覆盖维度"], "accepted": true},
     {"columns": ["AC ID", "场景（Given / When / Then）", "回指规则", "适用覆盖维度", "后端适用覆盖维度"], "accepted": true},
+    {"columns": ["AC ID", "场景数量", "回指规则", "适用覆盖维度"], "accepted": false},
     {"columns": ["场景", "AC ID", "回指规则", "适用覆盖维度"], "accepted": false},
     {"columns": ["AC ID", "场景", "备注", "适用覆盖维度"], "accepted": false}
   ]

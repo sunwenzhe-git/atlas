@@ -1627,6 +1627,29 @@ def test_e2e_dim_header_requires_canonical_first_three_columns() -> None:
         assert "C03" not in check["detail"] and "C04" not in check["detail"], check
 
 
+def test_is_canonical_ac_header_only_two_scene_forms() -> None:
+    """H 收紧（`REVIEW-20261104-02` §3 / C3）：第二列只认 `场景` 与 `场景（Given / When / Then）`。
+
+    前缀匹配会放行 `场景数量` / `场景说明` 这类异义列；本钉逐形态断言接受面（两形态各 PASS，异义列 N/A）。
+    """
+    accepted = [
+        ["AC ID", "场景", "回指规则"],
+        ["AC ID", "场景（Given / When / Then）", "回指规则", "适用覆盖维度"],
+    ]
+    rejected = [
+        ["AC ID", "场景数量", "回指规则", "适用覆盖维度"],
+        ["AC ID", "场景说明", "回指规则", "适用覆盖维度"],
+        ["AC ID", "场景化数据", "回指规则", "适用覆盖维度"],
+        ["场景", "AC ID", "回指规则", "适用覆盖维度"],
+        ["AC ID", "场景", "备注", "适用覆盖维度"],
+        ["AC ID", "场景"],
+    ]
+    for hdr in accepted:
+        assert ve.is_canonical_ac_header(hdr), hdr
+    for hdr in rejected:
+        assert not ve.is_canonical_ac_header(hdr), hdr
+
+
 def test_e2e_index_verb_fail() -> None:
     """新门（契约 §5.5，2026-09-23）：step/expected 首 token 不在动词词表内 → FAIL。"""
     with tempfile.TemporaryDirectory() as td:
