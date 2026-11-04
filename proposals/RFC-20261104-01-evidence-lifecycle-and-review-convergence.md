@@ -445,7 +445,7 @@ python3 scripts/closeout_derive.py --diff-base d1674e3 --root .
 | `install.py` 自检条数 | 65（`shared/gates.md:82`；`docs/map/index.md:112` 的「65 条」为**人工口径**） | **66** | 新增 `_support/evidence_archive.py` 一条自检；gates + canonical 机器比对；`docs/map/index.md:112`「65 条」→「66 条」**不在机器口径内，必须人工改** |
 | 共享内核件数 | 11（`docs/map/atlas-map.html:172` 的 `内核 ×11`、`:529` 的 `(11 件)`；`docs/map/index.md:37`/`:111`） | **12** | **2 机器 + 2 人工**：机器 ① `tests/test_map_anchors.py:365-371` 的 `r"内核 ×(\d+)"` 读 `docs/map/atlas-map.html:172`；机器 ② `:279-288` 的 `check_snapshot` 判 `docs/map/index.md:111`；人工 ③ `docs/map/atlas-map.html:529` 的 `(11 件)`；人工 ④ `docs/map/index.md:37`（两者不被上述正则读取） |
 | 最大单件行数 | 2614（`docs/map/index.md:113`、`docs/map/e2egen.md:16`、`docs/map/atlas-map.html:357`/`:499`） | **必漂，实现后实测回填** | **2 机器 + 2 人工**：机器 ① `tests/test_map_anchors.py:279-288`（`docs/map/index.md:113`）；机器 ② `:355-358`（`docs/map/e2egen.md:16`）与 HTML `:357`/`:499`（由 `:365-371` 的 HTML 规则读）；人工 ③/④ 新值只能实现后实测，回填到上述四处。P11/P12 必改 `scripts/gen_e2e_scripts.py` 行数 ⇒ 必须同批改，否则地图门红 |
-| `scripts_hash` | 现行指纹（不含 `.atlas-evidence`） | **一次性基线变化** | P12 发射的 `scripts/atlas-evidence-teardown.ts` 与 `.atlas-trace-policy.json` 都在 `scripts/e2e_console.py:157` 白名单内 ⇒ 进指纹；交付记录须附新值；`docs/map` 文件清单两个都加 |
+| `scripts_hash` | 现行指纹（不含 `.atlas-evidence`） | **一次性基线变化** | P12/B4 发射的 `<e2e>/scripts/atlas-evidence-teardown.ts` 与 `<e2e>/scripts/.atlas-trace-policy.json`（不是仓库级 `scripts/`）都在 `scripts/e2e_console.py:157` 白名单内 ⇒ 进指纹；交付记录须附新值；`docs/map` 文件清单两个都加 |
 | D 行 | 180，末号 D182 | **181，末号 D183** | 实现阶段写 D183；本 RFC 不写 |
 | e2e_console 行数 | 1396（`docs/map/e2egen.md:17`、`docs/map/atlas-map.html:371`、`:500`） | 增加（P13 改 `_kill`） | 三处同步；HTML 两处由 `:365-371` 机器读 |
 | review_closure 行数 | 490（`docs/map/atlas-map.html:516`） | 增加 | `docs/map/review.md:15` 无行数，只有锚（`:77`/`:137`/`:191`/`:101`），插入点在 397 后 ⇒ 锚不漂 |
@@ -539,6 +539,16 @@ python3 -m pytest -q tests/test_review_report.py
 
 - 抽样 3 条历史 `Major`，每条都能写出「路径（或可复跑 probe：命令 + 预期差异）+ 上游守卫」；任一写不出即未达成。
 
+**抽样复放（实现批回填，2026-11-04）**：样本取自仓内唯一的历史真实评审报告 `proposals/REVIEW-2026-10-23-request-assertion-and-manual/review.json`（4 条 `Major`：F3–F6；F5 属编号面，不作可达性样本），抽 **F3 / F4 / F6** 三条。复放口径 = 只按当前仓文件与提交核对（不重跑当时基线）。
+
+| 样本 | 触发条件（可触发路径） | 已检查的上游守卫 | 新纪律判定 | 今日落地核对 |
+|---|---|---|---|---|
+| F3 隐私与 trace | 任一含 `request` 断言的真用例失败、且该用例 trace 开启 ⇒ Playwright 落 `trace.zip`，请求体随档案落盘 | `scripts/gen_e2e_scripts.py` 发射的 `test.use({ trace: … })`，当时没有请求案级开关 | 保留（有具体触发路径，不是「可能泄漏」） | `scripts/gen_e2e_scripts.py:2343` 现按 `ATLAS_REQUEST_TRACE` 才开（D142 定案：含该断言的用例默认 `trace: off`） |
+| F4 testid 提取与零步基线 | 用例写 `request app.updateApp status 200` ⇒ 第二个 token 被当 testid；零步基线逐条 `parse_line` 遇 `request` 抛未知动词 | `validators/validate_testids.py` 的 `_NO_TID_VERBS` 当时不含 `request`；基线解析无跳过分支 | 保留 | `validators/validate_testids.py:509` 现为 `{"goto","refresh","request"}`；`scripts/gen_e2e_scripts.py:920` 显式拒绝 `request` 进零步基线（D142） |
+| F6 人工块解析面 | `manual.md` 写嵌套 `steps` map + `command: \|` 块标量 ⇒ 控制台读不到条目 | `_support/case_block.py` 只吃扁平数组；`e2e_console.read_manual` 逐行扫 `- `、无 fence 剥离 | 保留 | D143 抽出单源 `_support/manual_block.py`；`scripts/e2e_console.py:495` 注明「解析单源 `_support/manual_block.py`」 |
+
+**结论（事实，不折算）**：3/3 保留、0 丢弃、0 降级；没有真问题被新纪律丢掉。三条都在 `detail` 里写了具体路径与上游守卫，复放后仍可立项，也没有把「我觉得」类候选留下（本轮样本中不存在无路径候选，故「丢弃」分支在样本里未被触发）；三条均非设计/性能类，`probe` 义务未触发。
+
 ### 8.4 计数、地图、总门
 
 ```bash
@@ -568,7 +578,7 @@ python3 scripts/atlas_check.py --root . --fast
 | P9 | D156 单案修复的 QUEUE owner = `master` | §4.5.3 |
 | P10 | 不做 `--verify-archive` | §2.1 末条、§2.6 |
 | **P11 = A** | 生成器在根 `.gitignore` 缺失时创建并追加 `.atlas-evidence/`；**这是改一条已落地裁决**（`patches/project-wiring/apply-wiring.py:342`），故须记 D183；范围仅限运行产物忽略行 | §2.1（含 6 条冲突路径）、§4.1、§4.5.4、§7.2 |
-| **P12 = 同批** | `globalTeardown` 作为**补充**落进生成器发射的 config，并发射 `scripts/atlas-evidence-teardown.ts`（subprocess 调 `evidence_archive.py --phase post-run`、吞异常）：只 copy + 写 manifest、不判定、不改 verdict；本体仍是 `atlas_verify`/`e2e_console` | §2.1 第三个归档点、§2.5 否决论证、§4.1、§6（`scripts_hash`/docs/map） |
+| **P12 = 同批** | `globalTeardown` 作为**补充**落进生成器发射的 config，并发射 `<e2e>/scripts/atlas-evidence-teardown.ts`（与 config 同目录；`globalTeardown` 写 `'./atlas-evidence-teardown.ts'`；subprocess 调 `evidence_archive.py --phase post-run`、吞异常）：只 copy + 写 manifest、不判定、不改 verdict；本体仍是 `atlas_verify`/`e2e_console` | §2.1 第三个归档点、§2.5 否决论证、§4.1、§6（`scripts_hash`/docs/map） |
 | **P13 = A** | `_kill` 改软杀：SIGTERM → `kill_grace_secs`（默认 5s，0–15s）→ 仍不退才 SIGKILL；超时判定先发生、grace 后仍置 `timed_out` ⇒ FAIL；只对 node 进程发 SIGTERM | §2.5、§3.1 S1-20a/20b、§4.1 |
 
 本轮范围外（不在本稿实现，也不留可选项）：`--verify-archive` 事后对账、证据保留期/自动清理、S3 的 Launch/Doctor/Cleanup（§2.6）。
