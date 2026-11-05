@@ -156,3 +156,22 @@ atlas check --fast
 ```bash
 atlas console
 ```
+
+### 场景 F：多仓产品（solution，Phase 1）
+当产品由多个独立 git 仓组成时，不要在父目录直接 `atlas init`；用 solution 层做只读整合：
+
+```bash
+# 在父目录（solution 根）执行；Phase 1 只支持 federated
+atlas solution init --name <方案名> --member web=web --member api=api
+# 已有成员资产时自动识别
+atlas solution adopt --name <方案名>
+# 只读查看 / 检查 / 锁定
+atlas solution status
+atlas solution check
+atlas solution lock --update
+```
+
+- solution 根需先 `git init`（成员目录保持 untracked、不 ignore）；`atlas solution check` 在根非 git 时会 WARN。
+- 成员仓保持独立、untracked 且不被 ignore；solution 根只跟踪 Atlas 资产。
+- Phase 1 不搬移成员 PRD/结构/E2E，不做成员代码提交；`unified` 与 `import` 属 Phase 2/3。
+- 契约正文见 `shared/solution.md`。

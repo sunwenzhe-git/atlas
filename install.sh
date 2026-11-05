@@ -4,7 +4,7 @@
 #
 # 用法：
 #   bash install.sh [--target <项目根>] [--update] [--force] [--dry-run] [--no-skill] [--no-patch] [--no-wiring]
-#                   [--assets-root <dir>] [--adr-dir <dir>]
+#                   [--no-trellis] [--assets-root <dir>] [--adr-dir <dir>]
 #
 # 装配行为：
 #   1. 整包装配到 <目标>/.atlas/（shared / rings / apply / templates / adapters /

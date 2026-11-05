@@ -97,3 +97,21 @@ layout:
 - 编码规范（原 I 类）与 testid 约定（原 G 类）**不在 structure 环**；testid 约定**正文归 E2E 环契约**（`.atlas/rings/e2e/reference.md` §4），编码规范不由 atlas 收口。
 - testid 在 `<项目根>/.trellis/spec/conventions/testid.md` 落一份**派生薄桩**（祈使句 + 指针 + 由**用例分片应然清单**派生的 testid 清单），供 Trellis 原生注入到实现任务；它是派生视图，不复制命名规则词表。
 - A（技术栈 + 启动，可选）与 H（测试 / 运行，条件）的真相源均为**项目根 `README.md`**，**不入 spec**（受控例外，见 §1；仅对应两节，过确认门）。
+
+## 5. solution 根（多仓方案层，Phase 1）
+
+当产品由多个独立 git 仓组成时，父目录可作为 **solution 根**：
+
+```text
+<solution 根>/
+├── atlas.config.yaml
+├── atlas.solution.yaml          # members / mode / assets / contracts
+├── atlas.solution.lock.json
+├── .atlas/                      # solution 层只读检查
+├── <assets_root>/               # 父级 PRD / E2E / stack-profile
+└── <member>/                    # 成员仓：untracked、不 ignore、保留自己的 .git
+```
+
+- solution 根是独立 git 仓，只跟踪 Atlas 资产、清单、锁与父级 PRD；成员目录 **untracked 且不被任何 ignore 规则覆盖**。
+- 禁止在 solution 根 `.gitignore` / `.ignore` / `.rgignore` / `.git/info/exclude` 命中成员；禁止 `status.showUntrackedFiles=no`；消费者统一 `--untracked-files=all` 并逐成员根过滤。
+- 字段与命令契约见 `shared/solution.md`；Phase 1 只支持 `federated`，unified / 成员代码提交 / import 属 Phase 2/3。

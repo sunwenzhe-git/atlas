@@ -36,6 +36,7 @@ def test_cli_help_includes_update_and_upgrade():
     assert res.returncode == 0
     assert "update" in res.stdout
     assert "upgrade" in res.stdout
+    assert "solution" in res.stdout
 
 
 def test_cli_update_help():

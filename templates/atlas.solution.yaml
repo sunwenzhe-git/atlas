@@ -1,0 +1,29 @@
+# atlas.solution.yaml —— 多仓方案层清单（Phase 1：federated）
+#
+# 放在 solution 根（父目录）。它不是 atlas.config.yaml：
+#   - atlas.config.yaml：项目级布局（assets_root）
+#   - atlas.solution.yaml：成员 / 模式 / 资产归属 / 跨仓契约
+#
+# Phase 1 只支持 mode: federated（成员各自持有 Atlas 资产）。
+# 成员目录必须 untracked 且不被任何 ignore 规则覆盖；不要在 solution 根 .gitignore 中忽略成员。
+version: 1
+solution: <方案名>
+mode: federated
+
+members:
+  - name: <成员标识>
+    path: <成员仓相对路径>
+    assets: member          # Phase 1 只允许 member；solution 属 Phase 2 unified
+    kind: fullstack         # frontend | backend | fullstack | mobile（供 solution stack-profile 使用）
+
+# 跨仓契约（可选）。producer/consumer 必须是上面 members 的 name；
+# *_path 是相对各自成员仓的路径。Phase 1 只做文件指纹漂移提示，不做语义兼容判断。
+contracts:
+  - id: <契约标识>
+    producer: <成员标识>
+    producer_path: <契约文件相对成员仓路径>
+    consumer: <成员标识>
+    consumer_path: <消费文件相对成员仓路径>
+
+# Phase 1 不解析 requirements；保留给 Phase 2/3 的跨仓需求索引。
+# requirements: []

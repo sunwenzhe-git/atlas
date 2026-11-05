@@ -83,6 +83,7 @@ if str(HERE.parent) not in sys.path:
 from _support.siblings import load_module  # noqa: E402
 from _support.manual_block import parse_manual  # noqa: E402
 from _support.layout import LayoutError, load_layout  # noqa: E402
+from _support.solution import load_manifest  # noqa: E402
 
 # 用例 ID 文法体单源（正文归 rings/e2e/reference.md §5.3）；锚点在使用处自留。
 case_id = load_module("case_id")
@@ -119,13 +120,93 @@ def _sha16(data: str | bytes) -> str:
     return hashlib.sha256(data.encode("utf-8") if isinstance(data, str) else data).hexdigest()[:16]
 
 
+def _git_status_entries(root: Path) -> list[tuple[str, str]] | None:
+    """`git status --porcelain -z` 的 (XY, path) 列表（NUL 分隔；不解析 C-quote）。"""
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain", "-z",
+             "--untracked-files=all"],
+            capture_output=True, check=True,
+        )
+    except Exception:
+        return None
+    parts = res.stdout.decode("utf-8", "replace").split("\0")
+    entries: list[tuple[str, str]] = []
+    for part in parts:
+        if not part:
+            continue
+        if len(part) >= 4 and part[2] == " ":
+            entries.append((part[:2], part[3:]))
+        else:
+            entries.append((part[:2], part))
+    return entries
+
+
+def _git_status_paths(root: Path) -> list[str] | None:
+    entries = _git_status_entries(root)
+    return None if entries is None else [path for _xy, path in entries]
+
+
 def repo_head(root: Path) -> str | None:
     return _git_output(root, "rev-parse", "HEAD")
 
 
+def _is_repo_root(path: Path) -> bool:
+    top = _git_output(path, "rev-parse", "--show-toplevel")
+    if not top:
+        return False
+    try:
+        return Path(top).resolve() == Path(path).resolve()
+    except OSError:
+        return False
+
+
+def _solution_member_rels(root: Path) -> list[str]:
+    try:
+        data = load_manifest(root)
+    except Exception:
+        return []
+    return [m["path"] for m in data["members"]]
+
+
+def _solution_members(root: Path) -> list[Path]:
+    """solution 根 ⇒ 成员仓路径；非 solution / 清单非法时返回空表（保持旧行为）。"""
+    try:
+        data = load_manifest(root)
+    except Exception:
+        return []
+    return [(Path(root) / m["path"]).resolve() for m in data["members"]]
+
+
+def _is_member_status_path(path: str, member_rels: list[str]) -> bool:
+    p = path.rstrip("/")
+    return any(p == rel or rel.startswith(p + "/") or p.startswith(rel + "/")
+               for rel in member_rels)
+
+
 def repo_git_dirty(root: Path) -> bool | None:
-    out = _git_output(root, "status", "--porcelain")
-    return None if out is None else bool(out.strip())
+    root = Path(root)
+    member_rels = _solution_member_rels(root)
+    entries = _git_status_entries(root)
+    if entries is None:
+        return None
+    if entries:
+        if not member_rels:
+            return True
+        # 只豁免 untracked（`??`）的成员折叠行 `?? members/` / `?? web/`；
+        # 成员被 solution 根误跟踪成 `A web` / `M web` 时必须算脏（守卫违规）。
+        if any(not (xy.strip() == "??" and _is_member_status_path(path, member_rels))
+               for xy, path in entries):
+            return True
+    for member in _solution_members(root):
+        if not member.is_dir() or not _is_repo_root(member):
+            continue
+        st = _git_status_paths(member)
+        if st is None:
+            continue
+        if st:
+            return True
+    return False
 
 
 # D128 #31：运行期产物目录 / 后缀闭集单源——`scripts_hash` 与 `script_file_map` 共用，
@@ -345,6 +426,29 @@ def _content_digest(path: Path) -> str:
     return digest
 
 
+def _member_app_entries(root: Path, member: Path) -> list[str] | None:
+    try:
+        rel_member = member.resolve().relative_to(Path(root).resolve()).as_posix()
+    except (OSError, ValueError):
+        return None
+    if not _is_repo_root(member):
+        return None
+    tracked = _git_paths(member, "ls-files", "-z")
+    if tracked is None:
+        return None
+    untracked = _git_paths(member, "ls-files", "-o", "--exclude-standard", "-z") or []
+    try:
+        e2e_rel = load_layout(member).e2e_dir.resolve().relative_to(member).as_posix()
+    except (LayoutError, ValueError):
+        e2e_rel = "product/e2e"
+    entries = []
+    for rel in sorted(set(tracked) | set(untracked)):
+        if not _is_app_path(rel, e2e_rel):
+            continue
+        entries.append(f"{rel_member}/{rel}\0{_content_digest(member / rel)}")
+    return entries
+
+
 def app_fingerprint(root: Path) -> str | None:
     """应用代码的**内容**指纹（与提交指针无关；D174）。
 
@@ -352,7 +456,20 @@ def app_fingerprint(root: Path) -> str | None:
     都不该让全部用例失效。范围 = 工作区里 git 已跟踪 + 未忽略的新文件，
     排除 E2E 环（脚本/索引/账本）、`.atlas/`、`node_modules/` 与 `*.md`
     （文档不是运行时证据）；未提交改动天然计入（读的是工作区内容）。
+
+    solution 根（`atlas.solution.yaml`）下，成员代码在各自仓库内：按成员仓
+    `ls-files` 枚举并加成员前缀，避免 solution 根只看到 `?? members/` 目录。
     """
+    root = Path(root).resolve()
+    members = _solution_members(root)
+    if members:
+        entries: list[str] = []
+        for member in members:
+            part = _member_app_entries(root, member)
+            if part is None:
+                return None
+            entries += part
+        return _sha16("\n".join(entries))
     if _git_output(root, "rev-parse", "--is-inside-work-tree") != "true":
         return None
     tracked = _git_paths(root, "ls-files", "-z")
@@ -361,14 +478,14 @@ def app_fingerprint(root: Path) -> str | None:
     untracked = _git_paths(root, "ls-files", "-o", "--exclude-standard", "-z") or []
     lay = load_layout(root)
     try:
-        e2e_rel = lay.e2e_dir.resolve().relative_to(Path(root).resolve()).as_posix()
+        e2e_rel = lay.e2e_dir.resolve().relative_to(root).as_posix()
     except ValueError:
         e2e_rel = "product/e2e"
     entries = []
     for rel in sorted(set(tracked) | set(untracked)):
         if not _is_app_path(rel, e2e_rel):
             continue
-        entries.append(f"{rel}\0{_content_digest(Path(root) / rel)}")
+        entries.append(f"{rel}\0{_content_digest(root / rel)}")
     return _sha16("\n".join(entries))
 
 

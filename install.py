@@ -3,7 +3,7 @@
 
 用法：
   bash install.sh [--target <项目根>] [--update] [--force] [--dry-run] [--no-skill] [--no-patch] [--no-wiring]
-                  [--assets-root <dir>] [--adr-dir <dir>]
+                  [--no-trellis] [--assets-root <dir>] [--adr-dir <dir>]
 （install.sh 已退化为薄 wrapper，本文件是装配单源；`python3 install.py` 等价。）
 
 装配行为：
@@ -67,6 +67,7 @@ DRY_RUN = False
 INSTALL_SKILL = True
 INSTALL_PATCH = True
 INSTALL_WIRING = True
+NO_TRELLIS = False
 ASSETS_ROOT_ARG = ""
 ADR_DIR_ARG = ""
 
@@ -218,7 +219,7 @@ def check(label: str, path: str) -> None:
 
 def main() -> None:
     global TARGET, IS_UPDATE, FORCE, DRY_RUN, INSTALL_SKILL, INSTALL_PATCH, INSTALL_WIRING
-    global ASSETS_ROOT_ARG, ADR_DIR_ARG, FAIL
+    global NO_TRELLIS, ASSETS_ROOT_ARG, ADR_DIR_ARG, FAIL
 
     argv = sys.argv[1:]
     i = 0
@@ -244,6 +245,9 @@ def main() -> None:
             i += 1
         elif a == "--no-wiring":
             INSTALL_WIRING = False
+            i += 1
+        elif a == "--no-trellis":
+            NO_TRELLIS = True
             i += 1
         elif a == "--assets-root":
             ASSETS_ROOT_ARG = argv[i + 1] if i + 1 < len(argv) else ""
@@ -281,21 +285,24 @@ def main() -> None:
         say("      如需首次装配，请执行: atlas init")
         die(1)
 
-    if not os.path.isdir(os.path.join(TARGET, ".trellis")):
-        if shutil.which("trellis"):
-            if DRY_RUN:
-                # F54 补洞（2026-11-03）：干跑零落盘——trellis init 会写 .trellis/，跳过。
-                say("提示：目标项目尚未初始化 Trellis（--dry-run：跳过 trellis init，不落盘）。")
-            else:
-                say("提示：目标项目尚未初始化 Trellis，尝试自动执行 trellis init...")
-                subprocess.run(["trellis", "init"], cwd=TARGET, check=False)
-    if not os.path.isdir(os.path.join(TARGET, ".trellis")):
-        say("警告：目标项目没有 .trellis/（未初始化 Trellis）。")
-        say("      atlas 的需求级衔接依赖 Trellis，请先在目标项目执行 trellis init。")
-        say("      （如果未安装，请执行: npm i -g @mindfoldhq/trellis）")
-        if not FORCE:
-            say("      如确认要继续，请加 --force。")
-            die(1)
+    if NO_TRELLIS:
+        say("提示：--no-trellis：跳过 Trellis 初始化与 .trellis 骨架。")
+    else:
+        if not os.path.isdir(os.path.join(TARGET, ".trellis")):
+            if shutil.which("trellis"):
+                if DRY_RUN:
+                    # F54 补洞（2026-11-03）：干跑零落盘——trellis init 会写 .trellis/，跳过。
+                    say("提示：目标项目尚未初始化 Trellis（--dry-run：跳过 trellis init，不落盘）。")
+                else:
+                    say("提示：目标项目尚未初始化 Trellis，尝试自动执行 trellis init...")
+                    subprocess.run(["trellis", "init"], cwd=TARGET, check=False)
+        if not os.path.isdir(os.path.join(TARGET, ".trellis")):
+            say("警告：目标项目没有 .trellis/（未初始化 Trellis）。")
+            say("      atlas 的需求级衔接依赖 Trellis，请先在目标项目执行 trellis init。")
+            say("      （如果未安装，请执行: npm i -g @mindfoldhq/trellis）")
+            if not FORCE:
+                say("      如确认要继续，请加 --force。")
+                die(1)
 
     # ── 临时守卫（2026-09-28 加；副本先改、源包后回灌的分歧窗口防 rm -rf 卷走）──
     if (not DRY_RUN and os.path.isdir(os.path.join(TARGET, ".atlas"))
@@ -549,9 +556,13 @@ def main() -> None:
     # ---------------------------------------------------------------- 4. 骨架
 
     say("[4/6] 建立骨架")
-    skeleton = [".trellis/spec/structure/domains",
-                ".trellis/spec/structure/global",
-                e2e_cases_rel]
+    skeleton = [
+        e2e_cases_rel,
+        ".trellis/spec/structure/domains",
+        ".trellis/spec/structure/global",
+    ]
+    if NO_TRELLIS:
+        skeleton = [d for d in skeleton if not d.startswith(".trellis/")]
     for d in skeleton:
         run(f"mkdir -p {TARGET}/{d}", action=lambda d=d: mkdir_p(Path(TARGET) / d))
         gitkeep = os.path.join(TARGET, d, ".gitkeep")
@@ -733,7 +744,8 @@ def main() -> None:
     c("ADR 模板", f"{atlas_dest}/templates/adr/template.md")
     c("审查指引模板", f"{atlas_dest}/templates/reviews/README.md")
     c("stack-profile（资产根）", stack_profile)
-    c("structure spec 根", os.path.join(TARGET, ".trellis", "spec", "structure"))
+    if not NO_TRELLIS:
+        c("structure spec 根", os.path.join(TARGET, ".trellis", "spec", "structure"))
     c("e2e 用例分片目录", e2e_cases_dir)
 
     if INSTALL_PATCH and not DRY_RUN and os.path.isfile(
