@@ -402,6 +402,82 @@ def collect_e2e_declared_dims(prd_files) -> dict[str, set[str]]:
     return declared
 
 
+BACKEND_DIM_HEADER = "后端适用覆盖维度"
+
+
+def collect_unaccepted_dim_tables(prd_files) -> list[dict]:
+    """逐表收集「有维度内容但表头未被采信」的表（RFC-20261105-01，落点 b1）。
+
+    与 `collect_e2e_declared_dims` 共用同一遍 `iter_md_tables` 扫描，但两个聚合**互不依赖、
+    互不覆盖**：好表的声明照常统计，坏表的诊断也不因同文件存在好表而消失。
+    判据（逐字实现 RFC §3.1）：
+      已采信   := `is_canonical_ac_header(表头)` ∧ `适用覆盖维度` ∈ 表头
+      有维度内容 := ∃ AC 行 ∃ 列 j≥3 使 `parse_dims_cell` 非空（不排除 `适用覆盖维度` 列）
+      未采信有维度 := ¬已采信 ∧ 有维度内容
+    reason 三分支互斥且穷尽（**不得**出现无兜底的 if/elif：落不到 reason 即 bug）：
+      I1 ∧ ¬I2        ⇒ `header_ok_order_rejected`
+      ¬I1 ∧ I3==后端列 ⇒ `backend_column`
+      ¬I1 ∧ I3≠后端列 ⇒ `misspelled_header`
+    诊断文案只含文件名 / 1 基列号 / 表头原文 / reason（**不含任何 AC ID**，RFC §5.1 H-1）。
+    """
+    out: list[dict] = []
+    for p in prd_files:
+        seg = p.read_text(encoding="utf-8")
+        for header, rows in ac_coverage.iter_md_tables(seg):
+            hdr = [ac_coverage.strip_md_cell(c) for c in header]
+            if "AC ID" not in hdr:
+                continue
+            ac_idx = hdr.index("AC ID")
+            # 列号 → 表头原文（只记 j≥3 且有维度内容的列；列序最小者 = I3）
+            dim_cols: dict[int, str] = {}
+            for row in rows:
+                if ac_idx >= len(row):
+                    continue
+                if not AC_RE.match(ac_coverage.strip_md_cell(row[ac_idx])):
+                    continue
+                for j in range(3, len(row)):
+                    dims, _looks = parse_dims_cell(row[j])
+                    if dims:
+                        dim_cols.setdefault(j, hdr[j] if j < len(hdr) else "")
+            if not dim_cols:
+                continue
+            i1 = E2E_DIM_HEADER in hdr
+            i2 = is_canonical_ac_header(hdr)
+            if i1 and i2:
+                continue  # 已采信：合法表整体不诊断
+            if i1:
+                # I1 ∧ ¬I2：表头名对、前三列/列序未通过（指向 `适用覆盖维度` 列）
+                col = hdr.index(E2E_DIM_HEADER)
+                reason = "header_ok_order_rejected"
+            else:
+                # ¬I1：I3 = 列序最小且表头非 `适用覆盖维度` 的维度列
+                col = min(dim_cols)
+                reason = ("backend_column" if dim_cols[col] == BACKEND_DIM_HEADER
+                          else "misspelled_header")
+            out.append({"file": p.name, "col": col + 1,
+                        "header": hdr[col] if col < len(hdr) else "",
+                        "reason": reason})
+    return out
+
+
+_UNACCEPTED_REASON_SUFFIX = {
+    "misspelled_header": "",
+    "backend_column": "= 后端列，非 E2E 列",
+    "header_ok_order_rejected": "表头正确但列序未通过",
+}
+
+
+def format_unaccepted_dim_note(tables: list[dict]) -> str:
+    """`未采信表=N（…）` 的唯一格式化出口（文案与渲染哨兵 `未采信表=` 耦合，改文案须同步渲染器）。"""
+    if not tables:
+        return ""
+    parts = [
+        f"{t['file']} 第{t['col']}列表头「{t['header']}」{_UNACCEPTED_REASON_SUFFIX[t['reason']]}"
+        for t in tables
+    ]
+    return f"未采信表={len(tables)}（{'；'.join(parts)}）"
+
+
 def validate(root: Path) -> Result:
     res = Result()
     try:
@@ -712,6 +788,9 @@ def validate(root: Path) -> Result:
     # Batch B（RFC-20261103-08）：列定位从「第 4 格位置」改为「表头名 `适用覆盖维度`」——
     # 表切分仍走同一 `_support`，逐表处理；表头不符的表按未声明跳过。
     declared_ac_dims = collect_e2e_declared_dims(prd_files)
+    # RFC-20261105-01（b1）：诊断与 `declared_ac_dims` **无关**——一张好表不得压掉同文件坏表的
+    # 诊断，故本量在三个出口（PASS / WARN / N/A）之外独立计算、共用同一 `note` 拼接。
+    dim_header_note = format_unaccepted_dim_note(collect_unaccepted_dim_tables(prd_files))
 
     covered_ac_dims: dict[str, set[str]] = {}
     bad_case_dims: list[str] = []
@@ -729,7 +808,8 @@ def validate(root: Path) -> Result:
             covered_ac_dims.setdefault(acid, set()).update(found)
 
     if not declared_ac_dims:
-        res.add("AC × 覆盖维度", "N/A", "域级 PRD 验收标准表未声明「适用覆盖维度」列（按需启用）")
+        res.add("AC × 覆盖维度", "N/A",
+                "域级 PRD 验收标准表未声明「适用覆盖维度」列（按需启用）" + dim_header_note)
     else:
         dim_gaps: list[str] = []
         covered_ac_set = {g["关联AC"] for g in grid}
@@ -764,7 +844,7 @@ def validate(root: Path) -> Result:
         ])
         status = "WARN" if (dim_gaps or bad_case_dims) else "PASS"
         detail = "；".join(detail_parts) if detail_parts else f"{total_declared} 条覆盖就绪 AC 声明维度全量覆盖"
-        res.add("AC × 覆盖维度", status, detail)
+        res.add("AC × 覆盖维度", status, detail + dim_header_note)
 
     # 零证据用例须挂结构类 AC（契约 §8.2；2026-09-25 补，`3509 §B36` + `§B50`）：
     # `expected` **全部**带 `initial:` 的用例 = 零证据用例（它自己声明「不构成验证」）——
@@ -1345,7 +1425,9 @@ def main() -> int:
         print(f"validate_e2e_index @ {root}")
         for c in res.checks:
             line = f"  [{c['level']:<4}] {c['check']}"
-            if c["detail"] and c["level"] not in ("PASS", "N/A"):
+            # RFC-20261105-01 b1：`N/A` 全开（既有 7 处 detail 均为固定中文短语）；`PASS` 仅在
+            # detail 带诊断（字面量哨兵 `未采信表=`）时才多打一行——改 note 文案须同步此处。
+            if c["detail"] and (c["level"] not in ("PASS",) or "未采信表=" in c["detail"]):
                 line += f" —— {c['detail']}"
             print(line)
         print(res.status)
