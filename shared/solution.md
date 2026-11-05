@@ -1,6 +1,6 @@
 # atlas 共享契约 — 多仓方案层（solution，Phase 1）
 
-> **状态**：Phase 1（2026-11-04）。只做 `federated` 的只读整合；`unified`、成员代码提交、import/export、multi-root impact/closeout 属 Phase 2/3，见源包提案 RFC-20261104-02（装配态无 proposals）。
+> **状态**：Phase 1（2026-11-04）+ solution task 增量（2026-11-05）。父级只做只读整合与**窄写成员任务卡**（`.trellis/tasks`）；`unified`、成员代码提交、import/export、multi-root impact/closeout 属 Phase 2/3，见源包提案 RFC-20261104-02 / RFC-20261105-02（装配态无 proposals）。
 >
 > 本层不复制 PRD / 域事实 / E2E；它只拥有清单、锁、父级 PRD 与跨仓声明。资产归属的单源是 `atlas.solution.yaml` 的 `members[].assets`。
 
@@ -38,7 +38,12 @@
 | `contracts[].id` | 否 | 唯一 |
 | `contracts[].producer` / `consumer` | 否 | 必须是 members 名称 |
 | `contracts[].producer_path` / `consumer_path` | 否 | 相对各自成员仓的文件路径 |
-| `requirements` | 否 | Phase 1 只登记存在性，不解析 |
+| `requirements[].id` | 否 | 父级需求 ID；与 `member` 组合唯一 |
+| `requirements[].acs` | 否 | 父级 AC ID，顿号/逗号分隔；必须是 `solution-prd.md` AC 表的定义行 |
+| `requirements[].member` | 否 | 必须是 members 名称 |
+| `requirements[].task_slug` | 否 | Trellis slug；不含路径分隔符 / `..` / `MM-DD-` 前缀；创建后冻结 |
+| `requirements[].scope` | 否 | 单行本地 scope；含 `#` 时必须加引号；只在成员任务 `solution.md` 中展开 |
+| `requirements[].assignee` | 否 | 可选；缺省 = 成员 `.trellis/.developer` |
 
 模板：`templates/atlas.solution.yaml`（字段样板；运行期解析以本契约为准，模板不参与判定）。
 
@@ -50,11 +55,14 @@ atlas solution adopt [--name <名>] [--member <名>=<路径> ...]        # 识�
 atlas solution status                                               # 只读聚合
 atlas solution check                                                # 只读检查（语义全 WARN）
 atlas solution lock --update                                        # 人工刷新锁
+atlas solution task create --requirement <REQ> [--dry-run|--apply]   # 父级需求 → 成员任务卡
+atlas solution task status [--requirement <REQ>]                     # 只读对账
 ```
 
 - `init` 装配完整 `.atlas`（共享契约 / 校验器 / 脚本；`--no-trellis` 跳过 Trellis 初始化与 `.trellis` 骨架），不修改成员仓。
 - `adopt` 不移动、不复制成员资产；自动识别直属子目录中「git 仓 + Atlas 资产」的成员。
 - `check` 的 manifest schema / 路径逃逸是输入错误（exit 2）；成员非 git、缺 Atlas 资产、被 ignore、被跟踪/gitlink、锁漂移、PRD 骨架未补齐 ⇒ WARN。
+- `task create` 默认 dry-run，`--apply` 才写成员 `.trellis/tasks`：固定 `--no-start`（不领取）、用 `--meta solution/requirement/member` 做幂等、写 `solution.md` 指针并 `add-context`；不写代码/资产/PRD，不自动 commit。重复/失败显式报告；`--resume`/`--update` 只处理已有任务。
 - `commit` 入口保留给 Phase 2；Phase 1 调用时显式报「未交付」。
 
 ## 4. 父级 PRD
@@ -75,6 +83,8 @@ atlas solution lock --update                                        # 人工刷�
 - `import` / `export`：成员资产迁移（Phase 3；旧源删除，历史归 git）。
 - solution 级 Trellis `packages`：Phase 1 不创建 `.trellis/`；若 solution 根已有 `.trellis/config.yaml`，`check` 只做成员 `path` 文本校验（不校验 `git: true`）；生成与完整语义校验归 Phase 2。
 - 跨仓代码图谱 / 调用链影响面不在 Phase 1。
+- 自动领取/自动启动不在本层：`task create` 只创建任务卡；成员仍需 `/trellis:start` 选择任务。
+- 父级 `task create` 是 Phase 1 的唯一窄写例外：只写成员 `.trellis/tasks`（任务卡/指针/context），不写成员代码/资产/PRD。
 
 ## 7. 相关契约
 
