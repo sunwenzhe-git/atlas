@@ -365,8 +365,65 @@ python3 scripts/closeout_derive.py --diff-base d1674e3 --root .
 | 跨批 `index.json` 并发 | 是 **lost-update（丢去重），不是损坏**：并发写只会让两批各自漏记一条索引，manifest 仍完整可读。锁作用域定死为「`index.json` 读-改-写 + 单次 manifest tmp→replace」；不锁归档复制、不锁跨批远端 |
 | `test_global_teardown_absent_in_legacy_projects` | 接近恒真（无 teardown 的旧输出本就不会报错），保留为**兼容性姿态**，**不计入有效反钉/判据数量**（§5.1 已标注） |
 | M180 的证明强度 | 证明的是**代码路径**（回退硬杀会让 `[soft-kill]` 红），**不是 Playwright 在 SIGTERM 下的 flush 行为**；与 S1-20a「模拟进程」的断言强度一致，不得在验收里当成真实行为已验证 |
-| Playwright 对 `globalTeardown` 抛错的处理 | **未真跑验证**：本稿只保证 teardown 自身吞异常、CLI 退出码 0（`test_teardown_cli_never_exits_nonzero`），**不断言** Playwright 会把绿轮记为成功。实现批须真跑一次确认；**未确认前不得宣称该路径安全**，也不得把「Playwright 退出码仍 0」写成已测事实 |
+| Playwright 对 `globalTeardown` 抛错的处理 | **2026-11-05 真跑：已升级为缺陷**。Playwright 把 teardown 抛错收进 `results.json` 的 `errors[]` 并令**退出码 = 1**、`.last-run.json` 记 `status: failed`；`atlas_check` 只看退出码（`scripts/atlas_check.py:889`）⇒ 用例面 `3 passed` 的绿批仍被判 `FAIL E2E 真跑`，`atlas_verify` 遂 exit 1、停在 run 步。**已实测只在函数体外的 throw 上触发**；函数体内（归档 CLI 失败）确实被吞。原话、退出码与复现步骤见本节末「缺陷记录」 |
 | 解释器依赖 | `_support/evidence_archive.py` **只用标准库**；`ATLAS_PYTHON`（缺省 `python3`）只需能跑标准库 + `zipfile`。目标项目无 `python3` 时 teardown 落 **WARN**、不翻红（与 CLI 吞异常同口径） |
+
+**缺陷记录：`globalTeardown` 抛错会把绿批翻红（2026-11-05 实测，未改代码）**
+
+- **环境**：源包 `main` @ `401a7dd`；靶场 = `tests/fixtures/verify_playground` 原样复制到 `/tmp/atlas-td-lab/playground`，用 `install.sh --target … --force` + `gen_e2e_scripts.py --root … --apply` 装配（未新造工程）。注入点 = 发射物 `<e2e>/scripts/atlas-evidence-teardown.ts` 的 `globalTeardown()` 首行、`try` 之前：`throw new Error('EVIDENCE_TEARDOWN_INTENTIONAL')`；用例本身 3 条全绿。
+- **复现步骤**（cwd = `<e2e>/scripts`；第 1 步清场，第 2–4 步读数）：
+  1. `rm -rf .atlas-run`
+  2. `/Users/sunwenzhe/n/bin/playwright test -c playwright.config.ts`
+  3. `python3 <源包>/scripts/atlas_check.py --root <靶场>`
+  4. `python3 <源包>/scripts/atlas_verify.py --root <靶场>`
+- **第 2 步原话**（未改写，stdout 全文尾部；stderr 为空）：
+
+```
+EXIT=1
+---STDOUT---
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium] › home.spec.ts:237:5 › test_home__zero_step_baseline (874ms)
+  ✓  2 [chromium] › home.spec.ts:241:5 › E2E-HOME-001 点击后标题就绪 (431ms)
+  ✓  3 [chromium] › home.spec.ts:252:5 › E2E-HOME-002 点击后面板展开 (327ms)
+Error: EVIDENCE_TEARDOWN_INTENTIONAL
+
+   at atlas-evidence-teardown.ts:13
+
+  11 |
+  12 | export default async function globalTeardown() {
+> 13 |   throw new Error('EVIDENCE_TEARDOWN_INTENTIONAL');
+     |         ^
+  14 |   try {
+  15 |     execFileSync(process.env.ATLAS_PYTHON ?? 'python3', [
+  16 |       resolve(repoRoot, '.atlas/_support/evidence_archive.py'),
+    at globalTeardown (/private/tmp/atlas-td-lab/playground/product/e2e/scripts/atlas-evidence-teardown.ts:13:9)
+
+  3 passed (3.3s)
+  1 error was not a part of any test, see above for details
+```
+
+- **失败是否进 `results.json`**：是。`results.json` 的 `errors[0]` = `{"message": "Error: EVIDENCE_TEARDOWN_INTENTIONAL", "location": {"file": "<e2e>/scripts/atlas-evidence-teardown.ts", "line": 13, "column": 9}}`；同文件 `stats` = `{"expected": 3, "skipped": 0, "unexpected": 0, "flaky": 0}`（**用例面无失败**）；`.atlas-run/.last-run.json` = `{"status": "failed", "failedTests": []}`。
+- **第 3 步原话**（`atlas_check`，EXIT=1）：
+
+```
+  FAIL E2E 真跑（六页）                 3 passed 1 error
+...
+================================================================
+❌ 门禁失败详情 (Failures Breakdown):
+▶ [E2E 真跑（六页）] (Exit Code: 1)
+ • 命令: NODE_PATH=/Users/sunwenzhe/n/lib/node_modules /Users/sunwenzhe/n/bin/playwright test -c playwright.config.ts
+ • Error: EVIDENCE_TEARDOWN_INTENTIONAL
+ • > 13 |   throw new Error('EVIDENCE_TEARDOWN_INTENTIONAL');
+================================================================
+FAIL
+```
+
+- **第 4 步原话**（`atlas_verify`，EXIT=1，stderr 单行、stdout 为空）：`[FAIL] 停在 run 步(下游不执行);已完步:['pre']`；未生成 `product/e2e/reviews/*-verify` 留档。
+- **对照跑**：① 还原 teardown（正常）后同一命令 `EXIT=0`、`3 passed`，`atlas_verify` `EXIT=0` 并留档 `2026-11-05-verify`；② `ATLAS_PYTHON=/nonexistent/atlas-python`（令函数体内 `execFileSync` 抛错）⇒ `EXIT=0`、`3 passed`、`.last-run.json` = `{"status": "passed"}`，且 stdout/stderr **无任何 WARN/错误原话**（`stdio: 'ignore'` + 空 `catch` ⇒ 静默；与「落 WARN」表述不符，仅记录）。
+- **结论**：`try/catch` 只覆盖函数体；**函数体外的 throw（以及模块加载/转译失败等）不被吞**，会把全绿批的退出码变成 1、把 `atlas_check`/`atlas_verify` 的 verdict 翻成 FAIL，并阻断留档。这与「归档失败只该 WARN，绝不能把绿轮翻红」的设计承诺冲突 ⇒ **缺陷，待修，不在本记录内改代码**。
+- **现场还原**：靶场 teardown 逐字节还原（`sha256 = 9495dd96a991af8225767cf9fab54c48252672b72cea7762e1ef200057dc381b`，注入前后一致）；`tests/fixtures/verify_playground` 全程未改动（`git status --porcelain` 为空，11 个文件 `sha256` 与起始记录逐一相同）。
 
 ---
 
@@ -396,7 +453,7 @@ python3 scripts/closeout_derive.py --diff-base d1674e3 --root .
 |---|---|---|---|
 | 发射钉 | `test_emitted_config_carries_global_teardown` | 既有 `make(root)` 生成项目，读发射的 `playwright.config.ts` 与 `scripts/atlas-evidence-teardown.ts` | config 文本匹配 `'./atlas-evidence-teardown.ts'` 且**不得出现** `'./scripts/atlas-evidence-teardown.ts'`；teardown 文件含 `execFileSync` 调用 `evidence_archive.py --phase post-run`；原配置其余内容逐字节不变 |
 | 仅归档钉（**subprocess 调 Python CLI**） | `test_global_teardown_cli_archives_without_touching_verdict` | `subprocess.run([sys.executable, evidence_archive.py, "--phase", "post-run", "--root", tmp])`，预置 `.atlas-run` 证据面 | 生成 `<id>-post-run/manifest.json`；`phase="post-run"`；**无 verdict 字段**；进程退出码 0 |
-| 吞异常钉（应修 2a，**只测可观测的那半**） | `test_teardown_cli_never_exits_nonzero` | 直接调 Python CLI，注入 `PermissionError` | **CLI 退出码仍 0**；stderr 有记录；**不**断言 Playwright 退出码（未真跑） |
+| 吞异常钉（应修 2a，**只测可观测的那半**） | `test_teardown_cli_never_exits_nonzero` | 直接调 Python CLI，注入 `PermissionError` | **CLI 退出码仍 0**；stderr 有记录；该钉本身**不**断言 Playwright 退出码；Playwright 侧实跑结论见 §4.6「缺陷记录」（函数体外抛错 ⇒ exit 1 / 翻 FAIL） |
 | 缺席钉（兼容姿态，**不计入有效反钉/判据数量**） | `test_global_teardown_absent_in_legacy_projects` | 未接入归档模块的旧生成器输出 | 不报错、不阻断（N/A）；接近恒真，只作旧项目兼容 |
 
 **P11 `.gitignore` 钉（落 `tests/test_gen_e2e_scripts.py`，五条对应 §2.1 可判定闭集与 M181–M185）：**
