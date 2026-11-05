@@ -3469,6 +3469,64 @@ def test_teardown_warns_on_missing_python_and_stays_zero() -> None:
         assert "ATLAS-EVIDENCE WARN: teardown 归档失败" in p.stderr, p.stderr[-400:]
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node 不在 PATH")
+def test_teardown_warns_last_stderr_line_on_child_exit_one() -> None:
+    """P12 行为钉：归档 CLI **非 0 退出** ⇒ rc 0，WARN 带子进程 stderr 的**末行**。
+
+    覆盖「子进程正常启动但自己失败」的可见性路径（与 ENOENT 的 spawn 失败分开）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        scripts = root / "product" / "e2e" / "scripts"
+        fake = root / "fake-python-exit-one.sh"
+        fake.write_text(
+            "#!/bin/sh\n"
+            "echo 'archive: began' 1>&2\n"
+            "echo 'FAKE-PY-BOOM: last stderr line' 1>&2\n"
+            "exit 1\n",
+            encoding="utf-8")
+        fake.chmod(0o755)
+        (scripts / "atlas-evidence-teardown.mjs").write_text(
+            (scripts / "atlas-evidence-teardown.ts").read_text(encoding="utf-8"), encoding="utf-8")
+        (scripts / "teardown-driver.mjs").write_text(
+            "import td from './atlas-evidence-teardown.mjs';\nawait td();\n", encoding="utf-8")
+        env = dict(os.environ, ATLAS_PYTHON=str(fake))
+        p = subprocess.run([shutil.which("node"), "teardown-driver.mjs"],
+                           cwd=str(scripts), capture_output=True, text=True, timeout=120, env=env)
+        assert p.returncode == 0, (p.stdout[-400:], p.stderr[-400:])
+        assert "ATLAS-EVIDENCE WARN: teardown 归档失败: FAKE-PY-BOOM: last stderr line" in p.stderr, p.stderr[-400:]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node 不在 PATH")
+def test_teardown_timeout_bounds_hanging_python_and_stays_zero() -> None:
+    """P12 行为钉：归档 CLI 挂死 ⇒ `ATLAS_EVIDENCE_TIMEOUT_MS` 兜断，rc 0 + WARN。
+
+    发射物 `execFileSync` 缺省 `timeout=30000`，测试用 300ms 覆盖以免拖慢套件。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        scripts = root / "product" / "e2e" / "scripts"
+        fake = root / "fake-python-hang.sh"
+        fake.write_text("#!/bin/sh\nexec sleep 5\n", encoding="utf-8")
+        fake.chmod(0o755)
+        (scripts / "atlas-evidence-teardown.mjs").write_text(
+            (scripts / "atlas-evidence-teardown.ts").read_text(encoding="utf-8"), encoding="utf-8")
+        (scripts / "teardown-driver.mjs").write_text(
+            "import td from './atlas-evidence-teardown.mjs';\nawait td();\n", encoding="utf-8")
+        env = dict(os.environ, ATLAS_PYTHON=str(fake), ATLAS_EVIDENCE_TIMEOUT_MS="300")
+        started = time.monotonic()
+        p = subprocess.run([shutil.which("node"), "teardown-driver.mjs"],
+                           cwd=str(scripts), capture_output=True, text=True, timeout=120, env=env)
+        elapsed = time.monotonic() - started
+        assert p.returncode == 0, (p.stdout[-400:], p.stderr[-400:])
+        assert elapsed < 3, elapsed
+        assert "ATLAS-EVIDENCE WARN: teardown 归档失败" in p.stderr, p.stderr[-400:]
+
+
 def test_trace_policy_is_per_case_generated_artifact() -> None:
     """B4 钉：逐用例策略清单是生成物（每案 `request_assertion`），不是单个 bool。
 
