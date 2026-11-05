@@ -316,9 +316,9 @@ if c["detail"] and (c["level"] not in ("PASS",) or "未采信表=" in c["detail"
 | 计数面 | 当前 | (a) | (b1)/(b2) | (c) | (d) |
 |---|---|---|---|---|---|
 | 校验器 10（`atlas_check.VALIDATORS`，[docs/map/index.md:106](file:///Users/sunwenzhe/Desktop/atlas/docs/map/index.md#L106)） | 10 | 不动 | 不动（仍改同一校验器） | 不动 | 不动 |
-| 出厂测试文件 55（[index.md:108](file:///Users/sunwenzhe/Desktop/atlas/docs/map/index.md#L108) / [gates.md:113](file:///Users/sunwenzhe/Desktop/atlas/shared/gates.md#L113)） | 55 | 不动 | **不动**（钉进既有 `test_validators.py`） | 不动 | 不动 |
+| 出厂测试文件 56（[index.md:108](file:///Users/sunwenzhe/Desktop/atlas/docs/map/index.md#L108) / [gates.md:114](file:///Users/sunwenzhe/Desktop/atlas/shared/gates.md#L114)） | 56 | 不动 | **不动**（钉进既有 `test_validators.py`） | 不动 | 不动 |
 | `install.py` 自检 66 条（[index.md:113](file:///Users/sunwenzhe/Desktop/atlas/docs/map/index.md#L113)） | 66 | 不动 | 不动 | 不动 | 不动 |
-| 共享内核 13 件（[index.md:112](file:///Users/sunwenzhe/Desktop/atlas/docs/map/index.md#L112)） | 13 | 不动 | 不动（复用既有 `iter_md_tables` / `parse_dims_cell`，**不新增解析器**） | 不动 | 不动 |
+| 共享内核 14 件（[index.md:112](file:///Users/sunwenzhe/Desktop/atlas/docs/map/index.md#L112)） | 14 | 不动 | 不动（复用既有 `iter_md_tables` / `parse_dims_cell`，**不新增解析器**） | 不动 | 不动 |
 | `shared/gates.md:47` 自述「`test_validators.py` 185 条」 | 185 | 不动 | **187**（+2 钉：主钉 + 对偶钉；该行人工计数需同步；canonical 对账门只查「N 个测试文件」类，不查这一行，但写死计数不对账会踩 `3509 §B105` 的旧教训） | 187 | 187 |
 
 > 表内 (c)/(d) 列仅为被否案留痕；**定案 = b1**（2026-11-05 裁定）。
@@ -328,7 +328,7 @@ if c["detail"] and (c["level"] not in ("PASS",) or "未采信表=" in c["detail"
 * `shared/gates.md` §2.1 `validate_e2e_index.py` 行（`:47`）：在「AC × 覆盖维度列按表头名定位」后加半句「未采信表 ⇒ 该门 detail 点名（PASS/WARN/N/A 三出口；不改判定；三种 reason 分列）」，并把 `185` → `187`。
 * `rings/e2e/reference.md:336` 与 `:615`：「表头不符 ⇒ 该表按未声明（N/A）」后补「并在 detail 点名未采信表（**不因同文件另有合法表而消失**；不改判定）」。
 * `docs/map/gates.md:55` 摘要行：追加「+ 未采信表诊断」。
-* `docs/map/index.md` / `atlas-map.html`：**计数不变**（10 / 55 / 13 全不动）；`install.py` 自检 66 条本批未触及，**未逐条重数**（不作"已复核"宣称）；`atlas-map.html:355` 的 tip 文案可选更新（无锚）。
+* `docs/map/index.md` / `atlas-map.html`：**计数不变**（10 / 56 / 66 / 14 全不动）；`install.py` 自检 66 条本批未触及，**未逐条重数**（不作"已复核"宣称）；`atlas-map.html:355` 的 tip 文案可选更新（无锚）。
 * 锚点实查：`docs/map/` 内**没有**指向 `validate_e2e_index.py` 的「符号（path:line）」锚（`grep -rn "validate_e2e_index" docs/map/` 仅 `atlas-map.html:355`、`e2egen.md:64`、`gates.md:55` 三处纯文本），故函数体行号漂移不会触发 `test_map_anchors.py`；但按纪律落地仍须跑 `python3 -m pytest tests/test_map_anchors.py -q`。
 
 **「改判定」（选 (c)/(d)）额外要动的面**：
