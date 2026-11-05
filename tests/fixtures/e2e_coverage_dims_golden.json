@@ -1,5 +1,5 @@
 {
-  "note": "D153 E2E 纯抽取 golden：parse_dims_cell 的 7 组语料；tests/test_shared_kernel.py 逐条比对。looks = 是否含疑似维度写法（任意 C+数字，含合法 token）。Batch B（RFC-20261103-08）追加 e2e_dim_header_cases：合法表头只有「适用覆盖维度」，tests/test_validators.py 逐条比对。2026-11-04（D156 单案）追加 e2e_canonical_header_cases：前三列须按序为 AC ID / 场景 / 回指规则，第二列仅 场景 与 场景（Given / When / Then）两形态（异义 场景… 列按 N/A），非 canonical 列序按 N/A。",
+  "note": "D153 E2E 纯抽取 golden：parse_dims_cell 的 7 组语料；tests/test_shared_kernel.py 逐条比对。looks = 是否含疑似维度写法（任意 C+数字，含合法 token）。Batch B（RFC-20261103-08）追加 e2e_dim_header_cases：合法表头只有「适用覆盖维度」，tests/test_validators.py 逐条比对。2026-11-04（D156 单案）追加 e2e_canonical_header_cases：前三列须按序为 AC ID / 场景 / 回指规则，第二列仅 场景 与 场景（Given / When / Then）两形态（异义 场景… 列按 N/A），非 canonical 列序按 N/A。2026-11-05（RFC-20261105-01）追加 e2e_dim_header_reject_cases：未采信表诊断（有维度内容的错表头 ⇒ detail 点名，三种 reason 分列；无维度内容 ⇒ 0 诊断）。",
   "parse_dims_cell": [
     {"raw": "C01-C02", "dims": ["C01", "C02"], "looks": true},
     {"raw": "C01正常流", "dims": ["C01"], "looks": true},
@@ -14,6 +14,12 @@
     {"header": "覆盖维度", "accepted": false},
     {"header": "后端适用覆盖维度", "accepted": false},
     {"header": "备注", "accepted": false}
+  ],
+  "e2e_dim_header_reject_cases": [
+    {"header": "覆盖维度", "cells": "C01-C02", "expect_reason": "misspelled_header"},
+    {"header": "后端适用覆盖维度", "cells": "C01-C02", "expect_reason": "backend_column"},
+    {"header": "覆盖维度", "cells": "—", "expect_reason": null},
+    {"header": "备注", "cells": "无", "expect_reason": null}
   ],
   "e2e_canonical_header_cases": [
     {"columns": ["AC ID", "场景", "回指规则", "适用覆盖维度"], "accepted": true},

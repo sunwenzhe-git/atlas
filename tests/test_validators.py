@@ -1627,6 +1627,244 @@ def test_e2e_dim_header_requires_canonical_first_three_columns() -> None:
         assert "C03" not in check["detail"] and "C04" not in check["detail"], check
 
 
+def test_e2e_dim_header_unaccepted_table_is_diagnosed() -> None:
+    """RFC-20261105-01（b1）：有维度内容但表头未被采信 ⇒ `AC × 覆盖维度` 三出口点名。
+
+    分组（RFC §5.2）：① 有维度的错表头 #2/#3/#9/#11/#7/#8/#14；② 无维度 #4/#5（只断言 0 诊断 +
+    输出逐字不变）。level 按 case 逐条断言，**不整组套同一 level**；#14 钉死 `PASS`（夹具固定
+    "用例覆盖 C01"）——若落 `WARN`，旧渲染式本就打印 detail ⇒ 渲染面 #14 侧不咬。
+    """
+    import contextlib
+    import io
+    import json
+    golden = json.loads(
+        (Path(__file__).resolve().parent / "fixtures" / "e2e_coverage_dims_golden.json")
+        .read_text(encoding="utf-8")
+    )
+    INDEX_WITH_PAGE = INDEX_GOOD + "\n## 页面\n\n| 页面 | 路由 | 所属域 | 状态 |\n|---|---|---|---|\n| home | / | home | 已实现 |\n"
+    AC = "`AC-HOME-001`"
+    NA_BASE = "域级 PRD 验收标准表未声明「适用覆盖维度」列（按需启用）"
+
+    def table(columns: list[str], cells: list[str]) -> str:
+        return (
+            "| " + " | ".join(columns) + " |\n"
+            + "|" + "---|" * len(columns) + "\n"
+            + "| " + " | ".join(cells) + " |"
+        )
+
+    def prd(*tables: str) -> str:
+        return "---\ndomain: home\n---\n\n## 五、验收标准\n\n" + "\n\n".join(tables) + "\n"
+
+    good_cols = ["AC ID", "场景", "回指规则", "适用覆盖维度"]
+
+    def good(dims: str, acid: str = AC) -> str:
+        return table(good_cols, [acid, "首页展示正常", "HOME-R-001", dims])
+
+    bad_cols = ["AC ID", "场景", "回指规则", "覆盖维度"]
+
+    def bad(dims: str, acid: str = AC) -> str:
+        return table(bad_cols, [acid, "首页展示正常", "HOME-R-001", dims])
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_index(root, INDEX_WITH_PAGE)
+        prd_dir = root / "product" / "prd"
+        prd_dir.mkdir(parents=True, exist_ok=True)
+        prd_path = prd_dir / "home-prd.md"
+        mk_cases(root, CASE_GOOD.strip()[:-3] + "覆盖维度:\n  - C01\n```\n")
+
+        def run(text: str):
+            prd_path.write_text(text, encoding="utf-8")
+            res = ve.validate(root)
+            check = next(c for c in res.checks if c["check"] == "AC × 覆盖维度")
+            suspects = ve.collect_unaccepted_dim_tables([prd_path])
+            return check, suspects
+
+        def cli_line(text: str) -> str:
+            prd_path.write_text(text, encoding="utf-8")
+            buf = io.StringIO()
+            old_argv = sys.argv
+            sys.argv = ["validate_e2e_index", "--root", str(root)]
+            try:
+                with contextlib.redirect_stdout(buf):
+                    ve.main()
+            finally:
+                sys.argv = old_argv
+            return next(line for line in buf.getvalue().splitlines()
+                        if "AC × 覆盖维度" in line)
+
+        # 分组 ①-a：单表错表头（夹具逐例：覆盖维度 / 后端列 / 无维度 / 备注无维度）
+        for case in golden["e2e_dim_header_reject_cases"]:
+            text = prd(table(["AC ID", "场景", "回指规则", case["header"]],
+                             [AC, "首页展示正常", "HOME-R-001", case["cells"]]))
+            check, suspects = run(text)
+            assert check["level"] == "N/A", (case, check)
+            if case["expect_reason"]:
+                assert suspects == [{"file": "home-prd.md", "col": 4,
+                                     "header": case["header"], "reason": case["expect_reason"]}], (case, suspects)
+                assert f"第4列表头「{case['header']}」" in check["detail"], (case, check)
+                # H-1：诊断文案不得出现任何 AC ID（通配，覆盖 AC-HOME-001 / AC-BE-002 等）
+                assert re.search(r"AC-[A-Z0-9]+-\d+", check["detail"]) is None, (case, check)
+            else:
+                assert suspects == [], (case, suspects)
+                assert check["detail"] == NA_BASE, (case, check)
+
+        # #2 / #3 的诊断整句逐字（文案与渲染哨兵 `未采信表=` 的耦合点）
+        check, suspects = run(prd(table(["AC ID", "场景", "回指规则", "覆盖维度"],
+                                       [AC, "首页展示正常", "HOME-R-001", "C01-C02"])))
+        assert check["detail"] == NA_BASE + "未采信表=1（home-prd.md 第4列表头「覆盖维度」）", check
+        check, suspects = run(prd(table(["AC ID", "场景", "回指规则", "后端适用覆盖维度"],
+                                       [AC, "首页展示正常", "HOME-R-001", "C01-C02"])))
+        assert check["detail"] == (
+            NA_BASE + "未采信表=1（home-prd.md 第4列表头「后端适用覆盖维度」= 后端列，非 E2E 列）"
+        ), check
+
+        # #9：表头名对、前三列/列序未通过 ⇒ header_ok_order_rejected（唯一维度格在该列）
+        check, suspects = run(prd(table(["场景", "AC ID", "回指规则", "适用覆盖维度"],
+                                       ["首页展示正常", AC, "HOME-R-001", "C01"])))
+        assert check["level"] == "N/A", check
+        assert suspects == [{"file": "home-prd.md", "col": 4,
+                             "header": "适用覆盖维度", "reason": "header_ok_order_rejected"}], suspects
+        assert "第4列表头「适用覆盖维度」表头正确但列序未通过" in check["detail"], check
+        assert re.search(r"AC-[A-Z0-9]+-\d+", check["detail"]) is None, check
+
+        # #11：误写列（列序最小）优先，后端列不单独点名
+        check, suspects = run(prd(table(
+            ["AC ID", "场景", "回指规则", "覆盖维度", "后端适用覆盖维度"],
+            [AC, "首页展示正常", "HOME-R-001", "C01", "C02"])))
+        assert check["level"] == "N/A", check
+        assert suspects == [{"file": "home-prd.md", "col": 4,
+                             "header": "覆盖维度", "reason": "misspelled_header"}], suspects
+        assert "后端列，非 E2E 列" not in check["detail"], check
+        assert re.search(r"AC-[A-Z0-9]+-\d+", check["detail"]) is None, check
+
+        # 分组 ①-b：一坏一好（旧实现被 `if not declared_ac_dims` 压制为 0 诊断）
+        # #7 坏表在后 ⇒ PASS（好表 AC-001 的 C01 被用例覆盖）
+        check, suspects = run(prd(good("C01"), bad("C03-C04", "`AC-HOME-002`")))
+        assert check["level"] == "PASS", check
+        assert suspects == [{"file": "home-prd.md", "col": 4,
+                             "header": "覆盖维度", "reason": "misspelled_header"}], suspects
+        assert "未采信表=1（home-prd.md 第4列表头「覆盖维度」）" in check["detail"], check
+        # 好表声明照常统计 ⇒ 诊断与 declared 同时存在（压制回归的正向钉）
+        assert check["detail"].startswith("1 条覆盖就绪 AC 声明维度全量覆盖"), check
+        assert re.search(r"AC-[A-Z0-9]+-\d+", check["detail"]) is None, check
+
+        # #8 同 AC 坏表 + 好表缺 C02 ⇒ WARN；基础缺口文案含 AC ID，H-1 只对诊断段断言
+        check, suspects = run(prd(good("C01-C02"), bad("C03-C04")))
+        assert check["level"] == "WARN" and "AC-HOME-001缺C02" in check["detail"], check
+        assert suspects == [{"file": "home-prd.md", "col": 4,
+                             "header": "覆盖维度", "reason": "misspelled_header"}], suspects
+        assert re.search(r"AC-[A-Z0-9]+-\d+", check["detail"].split("未采信表=", 1)[1]) is None, check
+
+        # #14 坏表在前、好表在后 ⇒ 确定性 PASS（渲染面 #14 侧的钉子）
+        check, suspects = run(prd(bad("C03-C04", "`AC-HOME-002`"), good("C01")))
+        assert check["level"] == "PASS", check
+        assert suspects == [{"file": "home-prd.md", "col": 4,
+                             "header": "覆盖维度", "reason": "misspelled_header"}], suspects
+        assert check["detail"] == (
+            "1 条覆盖就绪 AC 声明维度全量覆盖"
+            + "未采信表=1（home-prd.md 第4列表头「覆盖维度」）"
+        ), check
+
+        # 分组 ②：#4（有列无维度）/ #5（3 列）⇒ 0 诊断、detail 与今天逐字一致
+        for text in (
+            prd(table(bad_cols, [AC, "首页展示正常", "HOME-R-001", "—"])),
+            prd(table(["AC ID", "场景", "回指规则"], [AC, "首页展示正常", "HOME-R-001"])),
+        ):
+            check, suspects = run(text)
+            assert check["level"] == "N/A", check
+            assert suspects == [], suspects
+            assert check["detail"] == NA_BASE, check
+
+        # 渲染面：N/A（#2）与带 note 的 PASS（#14）都必须把诊断打到 CLI 行
+        line = cli_line(prd(bad("C01-C02")))
+        assert "[N/A ] AC × 覆盖维度" in line and "未采信表=" in line, line
+        line = cli_line(prd(bad("C03-C04", "`AC-HOME-002`"), good("C01")))
+        assert "[PASS] AC × 覆盖维度" in line and "未采信表=" in line, line
+
+
+def test_e2e_dim_header_accepted_has_no_diagnostic() -> None:
+    """RFC-20261105-01 对偶反面包（M190 专用杀伤面）：合法表 ⇒ 收集器空 + detail 逐字不变 + 无禁词。
+
+    输入 = §3.2 #1 / #1b / #12 / #13。"放开 N/A detail 打印 ≠ 诊断泛化到所有 AC 表"：
+    断言 A（收集器返回空）是硬面；#12 专门看住「合法后端列不被误当被丢弃的 E2E 声明」。
+    """
+    import contextlib
+    import io
+    INDEX_WITH_PAGE = INDEX_GOOD + "\n## 页面\n\n| 页面 | 路由 | 所属域 | 状态 |\n|---|---|---|---|\n| home | / | home | 已实现 |\n"
+    AC = "`AC-HOME-001`"
+    NA_BASE = "域级 PRD 验收标准表未声明「适用覆盖维度」列（按需启用）"
+    PASS_BASE = "1 条覆盖就绪 AC 声明维度全量覆盖"
+    FORBIDDEN = ("未采信", "表头未识别", "表头正确但列序未通过", "后端列，非 E2E 列")
+
+    def table(columns: list[str], cells: list[str]) -> str:
+        return (
+            "| " + " | ".join(columns) + " |\n"
+            + "|" + "---|" * len(columns) + "\n"
+            + "| " + " | ".join(cells) + " |"
+        )
+
+    def prd(*tables: str) -> str:
+        return "---\ndomain: home\n---\n\n## 五、验收标准\n\n" + "\n\n".join(tables) + "\n"
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_index(root, INDEX_WITH_PAGE)
+        prd_dir = root / "product" / "prd"
+        prd_dir.mkdir(parents=True, exist_ok=True)
+        prd_path = prd_dir / "home-prd.md"
+        mk_cases(root, CASE_GOOD.strip()[:-3] + "覆盖维度:\n  - C01\n```\n")
+
+        def run(text: str):
+            prd_path.write_text(text, encoding="utf-8")
+            res = ve.validate(root)
+            check = next(c for c in res.checks if c["check"] == "AC × 覆盖维度")
+            suspects = ve.collect_unaccepted_dim_tables([prd_path])
+            return check, suspects
+
+        def cli_line(text: str) -> str:
+            prd_path.write_text(text, encoding="utf-8")
+            buf = io.StringIO()
+            old_argv = sys.argv
+            sys.argv = ["validate_e2e_index", "--root", str(root)]
+            try:
+                with contextlib.redirect_stdout(buf):
+                    ve.main()
+            finally:
+                sys.argv = old_argv
+            return next(line for line in buf.getvalue().splitlines()
+                        if "AC × 覆盖维度" in line)
+
+        cases = [
+            # #1：合法表有维度、用例只覆盖 C01 ⇒ WARN（缺 C02）
+            (prd(table(["AC ID", "场景", "回指规则", "适用覆盖维度"],
+                       [AC, "首页展示正常", "HOME-R-001", "C01-C02"])),),
+            # #1b：合法表、第 4 格空 ⇒ N/A（合法"无声明"，不是被丢弃）
+            (prd(table(["AC ID", "场景", "回指规则", "适用覆盖维度"],
+                       [AC, "首页展示正常", "HOME-R-001", "—"])), "N/A"),
+            # #12：canonical 5 列带合法后端列 ⇒ 已采信（只取 E2E 列）
+            (prd(table(["AC ID", "场景", "回指规则", "后端适用覆盖维度", "适用覆盖维度"],
+                       [AC, "首页展示正常", "HOME-R-001", "C02", "C01"])), "PASS"),
+            # #13：canonical 5 列带自造错名列（§3.3-6 盲区）⇒ 已采信、不诊断
+            (prd(table(["AC ID", "场景", "回指规则", "覆盖维度", "适用覆盖维度"],
+                       [AC, "首页展示正常", "HOME-R-001", "C02", "C01"]), ), "PASS"),
+        ]
+        want_detail = ["维度缺口=['AC-HOME-001缺C02']", NA_BASE, PASS_BASE, PASS_BASE]
+
+        for (text, *maybe_level), detail_want in zip(cases, want_detail):
+            level = maybe_level[0] if maybe_level else "WARN"
+            check, suspects = run(text)
+            # 断言 A（M190 的直接杀伤面）：合法表不得进 suspects
+            assert suspects == [], (text, suspects)
+            assert check["level"] == level, check
+            assert check["detail"] == detail_want, check
+            for word in FORBIDDEN:
+                assert word not in check["detail"], (word, check)
+                assert word not in cli_line(text), (word, text)
+
+
 def test_is_canonical_ac_header_only_two_scene_forms() -> None:
     """H 收紧（`REVIEW-20261104-02` §3 / C3）：第二列只认 `场景` 与 `场景（Given / When / Then）`。
 
