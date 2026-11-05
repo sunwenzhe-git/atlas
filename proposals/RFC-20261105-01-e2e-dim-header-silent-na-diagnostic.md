@@ -336,6 +336,18 @@ if c["detail"] and (c["level"] not in ("PASS",) or "未采信表=" in c["detail"
 * (c)：`scripts/atlas_check.py`（`[SKIP` 分支）+ `shared/gates.md` §2.2 编排行（新增状态取值）+ 渲染器 + 可能的 `atlas_verify._parse_rows` 状态闭集；`gates.md` 的「10 校验器」不变。
 * (d)：`DESIGN.md` §12 **必须新增决策行**（显式推翻 D130 ④ 的「绝不产生破坏存量的永久红门」），并走 DR1（旧行号 `DESIGN.md:599` + 新证据）；`gates.md` §2.1 行改「错表头 ⇒ FAIL」；`rings/e2e/reference.md:336/615` 的「N/A 兜底」全部改写；`docs/map/gates.md:55` 同步。
 
+**全量复跑留证（2026-11-05，实现后评审应修 7）**：
+
+* 命令：`PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q -p no:cacheprovider`
+* 结果（27 分钟后人工中断）：`269 passed, 2 skipped in 1623.48s (0:27:03)`，`KeyboardInterrupt` 落在
+  `/opt/homebrew/.../python3.12/selectors.py:415`；中断前日志在 `17%` 后连续 54 个点、**超过 2 分钟字节数零增长**。
+* 卡点定位（单跑复现）：`tests/test_atlas_verify_playground.py::test_playground_red_batch_keeps_evidence_and_skips_archive`
+  单独运行同样挂起（74.07s 后中断、`no tests ran`）。该用例是真跑级 Playwright 批（注红 → 跑 E2E → 查 trace），
+  属本沙箱环境下无法跑完的用例，**与本批改动无关**。
+* **结论修正**：此前"全量 exit 1 只是沙箱拦写盘"的归因**撤回**（未留证据，不再宣称）。可证的是：`test_validators.py`
+  187 条单跑 `187 passed in 1.47s`、无拦截行；全量在本机卡在该 Playwright 用例，未产出最终汇总，
+  故"全绿"不作宣称。全量最终结论待有浏览器能力的 CI 环境复跑。
+
 ---
 
 ## 7. 编号与同日撞号
