@@ -296,16 +296,17 @@ if c["detail"] and (c["level"] not in ("PASS",) or "未采信表=" in c["detail"
 * **夹具**：`tests/fixtures/e2e_coverage_dims_golden.json` 追加键 `e2e_dim_header_reject_cases`（每例 `{header, cells, expect_reason|null}`），**不新建 Fixture 文件**。
 * **反面包**：既有四条钉必须全绿不动 —— `test_e2e_index_coverage_dimensions_pass_and_warn`（M131）、`test_e2e_dim_header_located_by_name`（M174）、`test_e2e_dim_header_requires_canonical_first_three_columns`（H）、`test_is_canonical_ac_header_only_two_scene_forms`（H 收紧）。
 
-### 5.3 变异（仓内实况最大 = **M187**；M131 是旧号，不续用）
+### 5.3 变异（仓内实况：M191 已被 teardown、M192 已被 run_python 占用；M188–M190 空闲，本批按此取号；M131 是旧号，不续用）
 
 | 号 | 手法 | 预期红/绿 |
 |---|---|---|
 | **M188** | 删诊断聚合（`collect_unaccepted_dim_tables` 恒返回空 / 删 detail 拼接） | 主钉红；对偶钉绿；既有四条钉绿 |
 | **M189** | 渲染器判定式回退为旧的 `level not in ("PASS","N/A")`（`:` 原句） | 主钉第 6 条红，**跨两种 level**：#2（N/A，detail 不打印）与 #14（PASS，note 不打印）；对偶钉绿（合法表无 note，PASS 本就不打印 detail，输出不变） |
-| **M190** | **在收集器注入**：`collect_unaccepted_dim_tables` 去掉 `¬已采信` 守卫，并允许 `reason=None`（**不新增第四种 reason**）；splice 的 `未采信表=N（…）` 格式化无条件执行（不依赖 reason 命中） | **对偶钉红**：断言 A（`collect_unaccepted_dim_tables` 对 #1/#12/#13 返回 `[]`）先红；#1 `AC ID/场景/回指规则/适用覆盖维度` + `C01-C02` 的 detail 也新增 `未采信表=1（… 第4列 …）`，撞禁词 `未采信`；主钉绿（错表头照常诊断，#14 仍 `PASS`）；既有钉绿 |
+| **M190** | **在收集器注入**：`collect_unaccepted_dim_tables` 去掉 `¬已采信` 守卫（**实测注入面仅此一行**）；`reason=None` 与"`未采信表=N（…）` 格式化无条件执行"是**设计约束、不是本次注入面**——摘守卫后 #1 已落到既有 `header_ok_order_rejected`，无需第四种兜底 reason（报告 `M190.txt` 如实登记该差异） | **对偶钉红**：断言 A（`collect_unaccepted_dim_tables` 对 #1/#12/#13 返回 `[]`）先红；#1 `AC ID/场景/回指规则/适用覆盖维度` + `C01-C02` 的 suspects 非空（`reason=header_ok_order_rejected`），渲染面撞禁词 `未采信`；主钉绿（错表头照常诊断，#14 仍 `PASS`）；既有钉绿 |
 
 * 四段协议（基线 GREEN → 注入 RED → 逐字节还原 → 复绿），报告 `.atlas/runs/mutation-proof/M188.txt` / `M189.txt` / `M190.txt`（各含注入 diff）。
-* **M189 的一一对应**：钉必须同时断言 N/A 行（#2）与带 note 的 PASS 行（#14）；只断言其一时，回退旧判定式只会让另一半红，另一半"假绿"。两条断言落在同一钉内、共用一个回退注入，故仍是一变异对一钉。
+* **M189 的一一对应**：钉必须同时断言 N/A 行（#2）与带 note 的 PASS 行（#14）；只断言其一时，回退旧判定式只会让另一半红，另一半"假绿"。两条断言落在同一钉内、共用一个回退注入，故仍是一变异对一钉。主钉实现为"先收集两条 CLI 行、再统一断言"，失败信息同时打印两条行（`M189.txt` 实测 `{'N/A': …, 'PASS': …}` 两行均无 `未采信表=`）。
+* **M190 注入面收窄**：`reason=None` 与"无条件格式化"是防止未来把诊断绑进 reason 分类的**设计约束**，本批未注它们；实测注入面只有守卫行。报告不得据此宣称"`reason=None` 路径已验证"。
 * **计数不变**：钉仍是 2 个测试函数（主钉 + 对偶钉，收集器断言并入对偶钉），`shared/gates.md:47` 的 `185 → 187` 不变；不新增测试文件。
 
 ---
@@ -315,9 +316,9 @@ if c["detail"] and (c["level"] not in ("PASS",) or "未采信表=" in c["detail"
 | 计数面 | 当前 | (a) | (b1)/(b2) | (c) | (d) |
 |---|---|---|---|---|---|
 | 校验器 10（`atlas_check.VALIDATORS`，[docs/map/index.md:106](file:///Users/sunwenzhe/Desktop/atlas/docs/map/index.md#L106)） | 10 | 不动 | 不动（仍改同一校验器） | 不动 | 不动 |
-| 出厂测试文件 52（[index.md:108](file:///Users/sunwenzhe/Desktop/atlas/docs/map/index.md#L108) / [gates.md:113](file:///Users/sunwenzhe/Desktop/atlas/shared/gates.md#L113)） | 52 | 不动 | **不动**（钉进既有 `test_validators.py`） | 不动 | 不动 |
+| 出厂测试文件 55（[index.md:108](file:///Users/sunwenzhe/Desktop/atlas/docs/map/index.md#L108) / [gates.md:113](file:///Users/sunwenzhe/Desktop/atlas/shared/gates.md#L113)） | 55 | 不动 | **不动**（钉进既有 `test_validators.py`） | 不动 | 不动 |
 | `install.py` 自检 66 条（[index.md:113](file:///Users/sunwenzhe/Desktop/atlas/docs/map/index.md#L113)） | 66 | 不动 | 不动 | 不动 | 不动 |
-| 共享内核 12 件（[index.md:112](file:///Users/sunwenzhe/Desktop/atlas/docs/map/index.md#L112)） | 12 | 不动 | 不动（复用既有 `iter_md_tables` / `parse_dims_cell`，**不新增解析器**） | 不动 | 不动 |
+| 共享内核 13 件（[index.md:112](file:///Users/sunwenzhe/Desktop/atlas/docs/map/index.md#L112)） | 13 | 不动 | 不动（复用既有 `iter_md_tables` / `parse_dims_cell`，**不新增解析器**） | 不动 | 不动 |
 | `shared/gates.md:47` 自述「`test_validators.py` 185 条」 | 185 | 不动 | **187**（+2 钉：主钉 + 对偶钉；该行人工计数需同步；canonical 对账门只查「N 个测试文件」类，不查这一行，但写死计数不对账会踩 `3509 §B105` 的旧教训） | 187 | 187 |
 
 > 表内 (c)/(d) 列仅为被否案留痕；**定案 = b1**（2026-11-05 裁定）。
@@ -327,7 +328,7 @@ if c["detail"] and (c["level"] not in ("PASS",) or "未采信表=" in c["detail"
 * `shared/gates.md` §2.1 `validate_e2e_index.py` 行（`:47`）：在「AC × 覆盖维度列按表头名定位」后加半句「未采信表 ⇒ 该门 detail 点名（PASS/WARN/N/A 三出口；不改判定；三种 reason 分列）」，并把 `185` → `187`。
 * `rings/e2e/reference.md:336` 与 `:615`：「表头不符 ⇒ 该表按未声明（N/A）」后补「并在 detail 点名未采信表（**不因同文件另有合法表而消失**；不改判定）」。
 * `docs/map/gates.md:55` 摘要行：追加「+ 未采信表诊断」。
-* `docs/map/index.md` / `atlas-map.html`：**计数不变**（10 / 52 / 66 / 12 全不动）；`atlas-map.html:355` 的 tip 文案可选更新（无锚）。
+* `docs/map/index.md` / `atlas-map.html`：**计数不变**（10 / 55 / 13 全不动）；`install.py` 自检 66 条本批未触及，**未逐条重数**（不作"已复核"宣称）；`atlas-map.html:355` 的 tip 文案可选更新（无锚）。
 * 锚点实查：`docs/map/` 内**没有**指向 `validate_e2e_index.py` 的「符号（path:line）」锚（`grep -rn "validate_e2e_index" docs/map/` 仅 `atlas-map.html:355`、`e2egen.md:64`、`gates.md:55` 三处纯文本），故函数体行号漂移不会触发 `test_map_anchors.py`；但按纪律落地仍须跑 `python3 -m pytest tests/test_map_anchors.py -q`。
 
 **「改判定」（选 (c)/(d)）额外要动的面**：
