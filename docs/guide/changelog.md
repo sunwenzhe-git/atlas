@@ -4,6 +4,51 @@
 
 ---
 
+## [Unreleased]
+
+### 🧭 多仓 solution 层 Phase 1（federated，RFC-20261104-02）
+
+* **新增**：`atlas solution init|adopt|status|check|lock`（`_support/solution.py` + `scripts/atlas_solution.py`）——父级 meta git 仓只跟踪 Atlas 资产、清单、锁与父级 PRD，成员仓保持独立。Phase 1 只交付 `federated`；`unified` 与 `solution commit` 显式回绝并指向 Phase 2。
+* **底座硬约束**（实测得出，已写进契约）：成员目录必须 untracked 且不被任何 ignore 规则命中——`.gitignore` 会同时盲掉宿主内容搜索与代码图谱；`status.showUntrackedFiles=no` 会盲掉所有 status 消费者。守卫覆盖 ignore 四栈 / gitlink（mode `160000`）/ 非 git 成员 / 清单路径逃逸，Phase 1 一律 WARN，不新增语义硬门。
+* **契约/文档**：`shared/solution.md`、`shared/layout.md` §5、`shared/gates.md` solution 行、`templates/atlas.solution.yaml`、`docs/guide/quick-start.md`。
+* **装配**：`install.py` 新增 `--no-trellis`（solution init 不再触发交互式 trellis 初始化、不写 `.trellis` 骨架）；`bin/atlas.js` 接 `solution` 子命令并透传包根。
+* **E2E 控制台**：脏检查与应用指纹认得成员（`git status --porcelain -z --untracked-files=all`，只过滤 untracked 成员路径，指纹加 `member/` 前缀）；非 git 仓与成员外目录显式降级。
+* **测试**：`tests/test_atlas_solution.py` 24 条、`tests/test_solution_guards.py` 11 条、`tests/test_solution_e2e_console.py` 5 条。
+
+### 🧭 solution task：父级需求派发成员任务卡（RFC-20261105-02）
+
+* **新增**：`atlas solution task <需求ID> [--dry-run|--apply] [--resume] [--update] [--members a,b]`（`_support/solution_task.py`）——读 solution 清单与父级 PRD 的 `requirements[].scope`，逐成员调用成员仓的 `task.py create --no-start --meta solution/requirement/member`，再写任务目录下的 `solution.md` 与 `add-context implement|check`。缺省只预演、不写盘；建卡后不领取、不改代码、不提交；部分失败即停并逐条报告。
+* **判据**：AC 定义前置检查、成员 `task.py` 能力探测、跨日 slug 撞名检测、归档目录布局兼容、精选上下文缺失时 `--resume` 修复并 WARN；指派人依次取需求声明 → 环境变量 → 成员 `.trellis/.developer` → 主 worktree。
+* **测试**：`tests/test_solution_task.py` 16 条（内嵌 fake `task.py` 复刻真实 CLI 语义）；另在真实 Trellis 副本跑通 create / meta / no-start / add-context / start / archive 全链，经 `ATLAS_REAL_TRELLIS_TASK` 门控。
+
+### 🧭 E2E 运行证据三点归档（RFC-20261104-01 S1）
+
+* **新增**：`_support/evidence_archive.py` 共享内核——起跑前 / 每个失败或超时 / 收跑后三点归档；manifest 按内容 sha256 去重、进程锁、独占目录、符号链接越界拒绝、归档失败只 WARN 不抛。消费者：`e2e_console.py`（`_kill` 改 SIGTERM → grace → SIGKILL）、`atlas_verify.py`（pre-run 与 fail 两处，报告带 `evidence_archive`）、`gen_e2e_scripts.py`（发射 `globalTeardown` 接线 + 逐用例 trace 策略清单 + 根 `.gitignore` 忽略行）。
+* **修**：`globalTeardown` 零模块加载副作用、全部工作收进单个 try/catch、失败只写一行 `ATLAS-EVIDENCE` WARN 且不改判运行结果；发射物 `execFileSync` 加 timeout（缺省 120s，非法值/0 回退缺省，`ATLAS_EVIDENCE_TIMEOUT_MS` 可覆盖）兜断挂死；`stdio` 改 `pipe` 让子进程 stderr 可见（缺 python 的解释不再静默）。
+* **launcher**：`run_python.js` 在 ESM 宿主（`"type": "module"`）下经 dynamic import 运行。
+* **测试**：内容钉 + 行为钉（缺 python ⇒ exit 0 带 WARN / 子进程 exit 1 ⇒ WARN 带 stderr 末行 / 挂死 ⇒ timeout 兜断且 rc 0 / 非法值回退仍归档）；变异 M191 摘 try/catch ⇒ 行为钉红。
+* **口径同步**：共享内核 11→12、install 自检 65→66、`docs/map` 计数与 `rings/e2e/reference.md` 归档点。
+
+### 🧭 E2E 索引表头采信收紧 + 未采信逐表诊断（RFC-20261103-08 / RFC-20261105-01，D156）
+
+* **修**：AC×覆盖维度列按表头名 `适用覆盖维度` 定位（不再按第四格位置），错表头不会被静默读成声明（变异 M174）；`collect_e2e_declared_dims` 要求前三列固定为 `AC ID / 场景 / 回指规则`（第二列允许 `场景（Given / When / Then）` 括注），坏表整表 N/A 且不抹掉同文件好表；`场景数量 / 场景说明` 这类以「场景」开头的异义列不再被采信；`_script_inventory()` 单源化，`scripts_hash` 与 `script_file_map` 共用同一白名单（M175），运行产物不再进 `scripts_hash`（缺陷 #31 指纹假漂移）。
+* **新增**：`collect_unaccepted_dim_tables` 与 `declared_ac_dims` 同遍扫描、互不依赖，逐表点名未采信表（文件 / 列 / 表头 / 原因），诊断在 PASS / WARN / N/A 三出口共用同一 note——合法好表不再压掉同文件坏表的告警。
+* **文档**：`templates/` 与 `docs/` 三处半句补「未采信表诊断」，级别不变只加 detail；写明前三列固定是语义与次序固定、非逐字固定。
+* **测试**：`tests/test_validators.py` 计数 183→184→185→187（主钉 + 对偶钉 + 前缀两形态 + `atlas-prepare` key 形态钉）；变异 M188/M189/M190 的注入面与留证如实登记（M190 实测只咬收集器守卫行，另两面属设计约束，不宣称已验证）。
+
+### 🧭 评审闭包：连续 carried 缺前提只 WARN + Major 需可触发路径（RFC-20261104-01 S2/S4）
+
+* `review_closure.py`：上一轮取 events 中 `< latest` 且 `kind=="check"` 的最大轮号（不再用跨轮去重的 `prior_round`）；轮差 1 且两轮均 open ⇒ 最新轮须带 `premise` + `discriminating_check{command, expected_if_false}`，缺失进 `premise_required` + warnings，退出码仍 0、不进 `atlas_check`；同轮重复只在本轮内去重、等级取最严档；上一轮已 resolves 关闭后重开不算连续。
+* `review_policy.py`：可选 `premise` / `discriminating_check` 形状校验（形状面 exit 2）。
+* 契约：`shared/independent-review.md` §10.4 要求 Major 写触发条件与已检查的上游守卫，给不出可触发路径的候选直接丢弃（不降级为 Minor）；§10.5 与 `templates/reviews/README` 同步该纪律。
+* **测试**：`tests/test_review_closure.py` +10、`tests/test_review_report.py` +1；变异 M176/M176b 四段协议已过（报告不入库）。
+
+### 🧭 消融普查与研究留档
+
+* P6 全门册 LOGO 消融普查：10 个校验器各摘一轮、全程逐字节还原、0 轮异常退出，含盘点 / 签名矩阵 / 成本份额 / 语料矩阵 / 缺口清单与复算声明（覆盖率 10/17，文档口径 10/34）。
+* 消融扩批：7 行 inline 记录 + 语料矩阵。
+* 提案对账：批量回填已落地 RFC 的状态与主键（20261015 / 1016 / 1017 / 1026 / 1101 / 1103 系列）、D156 单案签字口径、执行层边界（P1-3）、REVIEW-20261104-01/-02 的评审应修收口；QUEUE 机器状态行刷新与 2026-11-03 巡检记录。
+
 ## [v0.2.0-beta.28] - 2026-11-03
 
 ### 🧭 E2E 就绪触发段（RFC-20261103-07）
