@@ -1745,9 +1745,11 @@ def test_e2e_dim_header_unaccepted_table_is_diagnosed() -> None:
         assert check["level"] == "PASS", check
         assert suspects == [{"file": "home-prd.md", "col": 4,
                              "header": "覆盖维度", "reason": "misspelled_header"}], suspects
-        assert "未采信表=1（home-prd.md 第4列表头「覆盖维度」）" in check["detail"], check
-        # 好表声明照常统计 ⇒ 诊断与 declared 同时存在（压制回归的正向钉）
-        assert check["detail"].startswith("1 条覆盖就绪 AC 声明维度全量覆盖"), check
+        # 好表声明照常统计 ⇒ 诊断与 declared 同时存在（压制回归的正向钉）；整句逐字，与 #14 同形
+        assert check["detail"] == (
+            "1 条覆盖就绪 AC 声明维度全量覆盖"
+            + "未采信表=1（home-prd.md 第4列表头「覆盖维度」）"
+        ), check
         assert re.search(r"AC-[A-Z0-9]+-\d+", check["detail"]) is None, check
 
         # #8 同 AC 坏表 + 好表缺 C02 ⇒ WARN；基础缺口文案含 AC ID，H-1 只对诊断段断言
@@ -1777,11 +1779,14 @@ def test_e2e_dim_header_unaccepted_table_is_diagnosed() -> None:
             assert suspects == [], suspects
             assert check["detail"] == NA_BASE, check
 
-        # 渲染面：N/A（#2）与带 note 的 PASS（#14）都必须把诊断打到 CLI 行
-        line = cli_line(prd(bad("C01-C02")))
-        assert "[N/A ] AC × 覆盖维度" in line and "未采信表=" in line, line
-        line = cli_line(prd(bad("C03-C04", "`AC-HOME-002`"), good("C01")))
-        assert "[PASS] AC × 覆盖维度" in line and "未采信表=" in line, line
+        # 渲染面：N/A（#2）与带 note 的 PASS（#14）都必须把诊断打到 CLI 行。
+        # 先各取一行再统一断言：M189 注入时失败信息同时暴露两条行，证明两侧都失守（不是只红 N/A）。
+        lines = {
+            "N/A": cli_line(prd(bad("C01-C02"))),
+            "PASS": cli_line(prd(bad("C03-C04", "`AC-HOME-002`"), good("C01"))),
+        }
+        assert ("[N/A ] AC × 覆盖维度" in lines["N/A"] and "未采信表=" in lines["N/A"]
+                and "[PASS] AC × 覆盖维度" in lines["PASS"] and "未采信表=" in lines["PASS"]), lines
 
 
 def test_e2e_dim_header_accepted_has_no_diagnostic() -> None:
