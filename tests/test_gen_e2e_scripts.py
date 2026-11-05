@@ -3420,7 +3420,7 @@ def test_teardown_carrier_uses_sibling_python_and_swallows() -> None:
         assert "ATLAS_PYTHON ?? 'python3'" in ts
         assert "'--phase', 'post-run'" in ts
         assert "evidence_archive.py" in ts
-        assert "catch" in ts
+        assert "} catch (e) {" in ts, "必须是函数体一级 catch 块，不能被头部注释里的「try/catch」满足"
         assert "fileURLToPath" not in ts, "Playwright 以 CJS 转译 .ts，import.meta 不可用"
 
 
@@ -3496,14 +3496,17 @@ def test_teardown_warns_last_stderr_line_on_child_exit_one() -> None:
         p = subprocess.run([shutil.which("node"), "teardown-driver.mjs"],
                            cwd=str(scripts), capture_output=True, text=True, timeout=120, env=env)
         assert p.returncode == 0, (p.stdout[-400:], p.stderr[-400:])
-        assert "ATLAS-EVIDENCE WARN: teardown 归档失败: FAKE-PY-BOOM: last stderr line" in p.stderr, p.stderr[-400:]
+        lines = p.stderr.strip().splitlines()
+        assert len(lines) == 1, p.stderr[-400:]
+        assert lines[0] == "ATLAS-EVIDENCE WARN: teardown 归档失败: FAKE-PY-BOOM: last stderr line", p.stderr[-400:]
+        assert "archive: began" not in p.stderr, "只取末行，不得把子进程 stderr 全文倒出来"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node 不在 PATH")
 def test_teardown_timeout_bounds_hanging_python_and_stays_zero() -> None:
     """P12 行为钉：归档 CLI 挂死 ⇒ `ATLAS_EVIDENCE_TIMEOUT_MS` 兜断，rc 0 + WARN。
 
-    发射物 `execFileSync` 缺省 `timeout=30000`，测试用 300ms 覆盖以免拖慢套件。
+    发射物 `execFileSync` 缺省 `timeout=120000`，测试用 300ms 覆盖以免拖慢套件。
     """
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -3523,8 +3526,39 @@ def test_teardown_timeout_bounds_hanging_python_and_stays_zero() -> None:
                            cwd=str(scripts), capture_output=True, text=True, timeout=120, env=env)
         elapsed = time.monotonic() - started
         assert p.returncode == 0, (p.stdout[-400:], p.stderr[-400:])
+        assert elapsed >= 0.2, elapsed
         assert elapsed < 3, elapsed
+        assert "ETIMEDOUT" in p.stderr or "Command failed" in p.stderr, p.stderr[-400:]
         assert "ATLAS-EVIDENCE WARN: teardown 归档失败" in p.stderr, p.stderr[-400:]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node 不在 PATH")
+@pytest.mark.parametrize("raw", ["abc", "0", "-1", "Infinity"])
+def test_teardown_illegal_timeout_falls_back_and_still_archives(raw: str) -> None:
+    """P12 行为钉：`ATLAS_EVIDENCE_TIMEOUT_MS` 非法值/0 ⇒ **回退缺省 120s**，归档照常执行。
+
+    不能把「非法值 ⇒ 永不归档」钉成绿：`Number('abc')=NaN`、`Infinity`、`0`、
+    负值若直传 `execFileSync` 会抛 `ERR_OUT_OF_RANGE`（catch 但根本不 spawn）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        scripts = root / "product" / "e2e" / "scripts"
+        marker = root / "archived-marker.txt"
+        fake = root / "fake-python-ok.sh"
+        fake.write_text(f"#!/bin/sh\nprintf 'archived\\n' > '{marker}'\nexit 0\n", encoding="utf-8")
+        fake.chmod(0o755)
+        (scripts / "atlas-evidence-teardown.mjs").write_text(
+            (scripts / "atlas-evidence-teardown.ts").read_text(encoding="utf-8"), encoding="utf-8")
+        (scripts / "teardown-driver.mjs").write_text(
+            "import td from './atlas-evidence-teardown.mjs';\nawait td();\n", encoding="utf-8")
+        env = dict(os.environ, ATLAS_PYTHON=str(fake), ATLAS_EVIDENCE_TIMEOUT_MS=raw)
+        p = subprocess.run([shutil.which("node"), "teardown-driver.mjs"],
+                           cwd=str(scripts), capture_output=True, text=True, timeout=120, env=env)
+        assert p.returncode == 0, (p.stdout[-400:], p.stderr[-400:])
+        assert marker.exists() and marker.read_text() == "archived\n", "回退后必须真的 spawn 归档 CLI"
+        assert "归档失败" not in p.stderr, p.stderr[-400:]
 
 
 def test_trace_policy_is_per_case_generated_artifact() -> None:
