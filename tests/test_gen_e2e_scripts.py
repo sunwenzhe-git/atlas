@@ -3424,6 +3424,51 @@ def test_teardown_carrier_uses_sibling_python_and_swallows() -> None:
         assert "fileURLToPath" not in ts, "Playwright 以 CJS 转译 .ts，import.meta 不可用"
 
 
+def test_teardown_never_throws_and_has_no_module_side_effects() -> None:
+    """P12 缺陷钉（2026-11-05 真跑）：模块加载期零副作用 + 函数体内无裸 throw / exit。
+
+    真跑证据：teardown 抛错 ⇒ Playwright exit 1 ⇒ `atlas_check` 把 `3 passed` 的绿批判 FAIL
+    （`RFC-20261104-01` §4.6）。变异 M191 删掉 try/catch ⇒ 行为钉
+    `test_teardown_warns_on_missing_python_and_stays_zero` 红。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        ts = (root / "product" / "e2e" / "scripts" / "atlas-evidence-teardown.ts").read_text(encoding="utf-8")
+        head, _, body = ts.partition("export default async function globalTeardown()")
+        assert body, ts
+        # 模块加载期零副作用：顶层不得读 cwd / spawn / 退出
+        assert "process." not in head, head
+        assert "spawnSync(" not in head and "execFileSync(" not in head, head
+        # 函数体内：一层 try/catch 包住全部工作；无裸 throw（rethrow）、无 process.exit
+        assert "try {" in body and "catch" in body, body
+        assert "throw " not in body, body
+        assert "process.exit" not in ts, ts
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node 不在 PATH")
+def test_teardown_warns_on_missing_python_and_stays_zero() -> None:
+    """P12 行为钉：`ATLAS_PYTHON` 指向不存在解释器 ⇒ 退出码 0 + stderr 一行 WARN。
+
+    归档失败必须**可见**（不再是 `stdio: 'ignore'` + 空 catch 的静默），但不得改变退出码。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        scripts = root / "product" / "e2e" / "scripts"
+        (scripts / "atlas-evidence-teardown.mjs").write_text(
+            (scripts / "atlas-evidence-teardown.ts").read_text(encoding="utf-8"), encoding="utf-8")
+        (scripts / "teardown-driver.mjs").write_text(
+            "import td from './atlas-evidence-teardown.mjs';\nawait td();\n", encoding="utf-8")
+        env = dict(os.environ, ATLAS_PYTHON="/nonexistent/atlas-python")
+        p = subprocess.run([shutil.which("node"), "teardown-driver.mjs"],
+                           cwd=str(scripts), capture_output=True, text=True, timeout=120, env=env)
+        assert p.returncode == 0, (p.stdout[-400:], p.stderr[-400:])
+        assert "ATLAS-EVIDENCE WARN: teardown 归档失败" in p.stderr, p.stderr[-400:]
+
+
 def test_trace_policy_is_per_case_generated_artifact() -> None:
     """B4 钉：逐用例策略清单是生成物（每案 `request_assertion`），不是单个 bool。
 

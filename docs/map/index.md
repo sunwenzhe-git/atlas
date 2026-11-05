@@ -79,7 +79,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 ### 7. E2E 生成与控制台
 
-- `scripts/gen_e2e_scripts.py`(2726 行,全仓最大单件):用例分片(中文 DSL)编译为 Playwright `.spec.ts`。动词值域封闭(`click/hover/type/dispatch/…`,第三词即中止——治旧副本静默吸收陌生动词);登录形态三态(real/fabricated/none);独立审查有 Critical 拒绝写盘;前置未声明 ⇒ exit 3 `not_ready`。
+- `scripts/gen_e2e_scripts.py`(2734 行,全仓最大单件):用例分片(中文 DSL)编译为 Playwright `.spec.ts`。动词值域封闭(`click/hover/type/dispatch/…`,第三词即中止——治旧副本静默吸收陌生动词);登录形态三态(real/fabricated/none);独立审查有 Critical 拒绝写盘;前置未声明 ⇒ exit 3 `not_ready`。
 - `scripts/gen_testid_stub.py`:老页面 testid 实然盘点薄桩(adopt 开户交尾件;缺失由 validate_testids 自愈)。
 - `scripts/e2e_console.py`(1551 行):纯标准库 SSE 评审控制台(默认 `127.0.0.1:4190`),500ms 慢动作回放、逐用例三值走查、提交即解锁人工 Review、逐用例内容指纹(fp: test 块/同文件共享段/共享脚本/应用代码)防旧账本挂新执行;超时软杀(SIGTERM→grace→SIGKILL)。
 - 生成物(落 `<e2e>/scripts/`,与 `playwright.config.ts` 同目录):`atlas-evidence-teardown.ts`(`globalTeardown` → `_support/evidence_archive.py --phase post-run`,只复制不判定)、`.atlas-trace-policy.json`(逐用例 `request_assertion`,进 `scripts_hash`)。
@@ -111,7 +111,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 | 共享契约 | 9 份 | `shared/` |
 | 共享内核 | 13 件 | `_support/` |
 | install.py 自检声明 | 66 条 | `install.py` |
-| 最大单件 | `scripts/gen_e2e_scripts.py` 2726 行 | — |
+| 最大单件 | `scripts/gen_e2e_scripts.py` 2734 行 | — |
 
 ## L1 铺设计划(2026-10-25 定稿)
 

@@ -233,7 +233,7 @@
 |---|---|
 | `shared/layout.md:10-17` | §1 标题「四个落点」→「五个落点」，表体加 `<项目根>/.atlas-evidence/` 一行（归属 = 运行证据；`install.sh` 不覆盖、不清空） |
 | `scripts/gen_e2e_scripts.py:2575-2577`（现有 `.gitignore` 写盘函数；2573-2574 是 auth setup） | **P11=A**：写者扩展为「根 `.gitignore` 缺失则创建、存在则只追加缺失行」；保留原内容与行序；`patches/project-wiring/apply-wiring.py:342` 的「不首创」在此**仅对 `.atlas-evidence/` 等运行产物忽略行放开**（D183 记录） |
-| `scripts/gen_e2e_scripts.py:2405`（config 发射） | **P12**：发射两个东西——① config 里 `globalTeardown: './atlas-evidence-teardown.ts'`（**相对 config 目录解析**；config 位于 `<e2e>/scripts/`，见 `_support/layout.py:107-108`，故**不得写 `./scripts/…`**，否则会解析到 `<e2e>/scripts/scripts/` 而模块不存在、绿轮被 teardown 抛错翻红）；② **新文件 `<e2e>/scripts/atlas-evidence-teardown.ts`**，内部 `execFileSync(process.env.ATLAS_PYTHON ?? "python3", [<repo>/.atlas/_support/evidence_archive.py, "--phase", "post-run", ...])`，**吞掉所有异常**（不得让 teardown 抛错把 PASS 翻成 FAIL）。teardown **只 copy + 写 manifest，不判定、不改 verdict**。**受 P13 影响的部分**：被 SIGKILL（软杀失败后的兜底）时 teardown 不执行 ⇒ 该次无 post-run 归档，按 S1-20b 落 WARN + `partial`；起跑前归档仍只由包装器做，teardown 不替代它。**`scripts_hash` 影响**：`.ts` 与 `.atlas-trace-policy.json` 都在 `scripts/e2e_console.py:157` 白名单内 ⇒ **会进指纹，属一次性基线变化**，实现交付记录须附新 `scripts_hash`。**口径（复核应修回填，2026-11-05）**：新 `scripts_hash` 实算值在**首个真实仓首跑时记录**，**本次不做静态基线**。两个文件同时列入 `docs/map` 文件清单。**共享内核仍是 11→12**（该文件不在 `_support/`，不构成第 13 件） |
+| `scripts/gen_e2e_scripts.py:2405`（config 发射） | **P12**：发射两个东西——① config 里 `globalTeardown: './atlas-evidence-teardown.ts'`（**相对 config 目录解析**；config 位于 `<e2e>/scripts/`，见 `_support/layout.py:107-108`，故**不得写 `./scripts/…`**，否则会解析到 `<e2e>/scripts/scripts/` 而模块不存在、绿轮被 teardown 抛错翻红）；② **新文件 `<e2e>/scripts/atlas-evidence-teardown.ts`**，内部 `execFileSync(process.env.ATLAS_PYTHON ?? "python3", [<repo>/.atlas/_support/evidence_archive.py, "--phase", "post-run", ...])`，**模块加载期零副作用、teardown 永不抛错**（硬约束：全部工作包在函数体一层 `try/catch`；catch 只向 stderr 写一行 `ATLAS-EVIDENCE WARN`，不 rethrow、不 `process.exit`；`stdio` 不得 `'ignore'`，失败必须可见），**不得让 teardown 抛错把 PASS 翻成 FAIL**（2026-11-05 真跑：函数体外抛错曾使退出码 1 / verdict 翻 FAIL，已修并回归）。teardown **只 copy + 写 manifest，不判定、不改 verdict**。**受 P13 影响的部分**：被 SIGKILL（软杀失败后的兜底）时 teardown 不执行 ⇒ 该次无 post-run 归档，按 S1-20b 落 WARN + `partial`；起跑前归档仍只由包装器做，teardown 不替代它。**`scripts_hash` 影响**：`.ts` 与 `.atlas-trace-policy.json` 都在 `scripts/e2e_console.py:157` 白名单内 ⇒ **会进指纹，属一次性基线变化**，实现交付记录须附新 `scripts_hash`。**口径（复核应修回填，2026-11-05）**：新 `scripts_hash` 实算值在**首个真实仓首跑时记录**，**本次不做静态基线**。两个文件同时列入 `docs/map` 文件清单。**共享内核仍是 11→12**（该文件不在 `_support/`，不构成第 13 件） |
 | `scripts/gen_e2e_scripts.py`（策略清单） | **B4**：生成期按用例产出 **`<e2e>/scripts/.atlas-trace-policy.json`**（与 `playwright.config.ts` 同目录）：`{case_id: {"request_assertion": bool}}`；运行期再叠加 `ATLAS_REQUEST_TRACE` 得每案 `trace_enabled`。它是**生成物、进 `scripts_hash`**（一次性基线变化；新 `scripts_hash` 实算值在首个真实仓首跑时记录，不做静态基线），并列入 `docs/map` 文件清单 |
 | `_support/layout.py` | 新增 `e2e_evidence_dir` 属性（`root / ".atlas-evidence"`）；`path_for` 增键 |
 | 新增 `_support/evidence_archive.py` | `archive_run_artifacts(root, *, source, phase, scripts_hash=None)`：白名单枚举、流式复制、sha256、tmp+replace 写 manifest、独占创建目录（`-2` 顺延）、符号链接越界拒绝、失败 WARN；**不删任何源文件/旧归档** |
@@ -338,8 +338,8 @@ python3 scripts/closeout_derive.py --diff-base d1674e3 --root .
 - **S1/P13：M180**。变异 = `_kill` 回退为直接 `proc.kill()`（SIGKILL，跳过 SIGTERM + grace）；预期 `test_archived_trace_is_independently_consumable[soft-kill]` 红（脚本未及 flush trace ⇒ 归档缺 `trace.zip` 或 zip 空），`[plain]` 档仍绿。**注意：M180 证明的是代码路径，不是 Playwright 的 SIGTERM flush 行为**，与 S1-20a 的断言强度匹配。四段同上。
 - **S1/P13 兜底：M186**。变异 = 删掉 grace 到期后的 SIGKILL 升级（进程挂起不退出）；预期 `test_sigterm_ignored_escalates_to_sigkill` 红（测试超时/无 `partial`）。
 - **P11 `.gitignore` 五条：M181–M185**。一一对钉：M181 去掉「缺失则创建」⇒ `test_gitignore_created_when_absent` 红；M182 改成整文件重写/覆盖 ⇒ `test_gitignore_append_preserves_existing_bytes` 红；M183 把只读当可写/吞异常不 WARN ⇒ `test_gitignore_readonly_warns` 红；M184 对已跟踪文件误判 WARN ⇒ `test_gitignore_tracked_file_appended_without_warn` 红；M185 忽略闭集反选、强行追加 ⇒ `test_gitignore_negation_rule_conflict_warns` 红。四段同上。
-- **P12 吞异常：M187**。变异 = 去掉 teardown 的 `try/catch` 包裹；预期 `test_teardown_cli_never_exits_nonzero` 红（注入异常后 CLI 退出码非 0）。
-- **编号自查**：M176 → M176b → … → M187；**M176b 是子号，不占新号**；仓内实际最大为 M175，落稿前实查全仓 `M181`–`M187` 均未占用，无撞号。用途分工：**M176 = S2 前提复核**；**M176b = S2 旧公式回退**；**M177 = S1 失败归档接线**；**M178 = S1 证据不得反向充当通过证据**；**M179 = P12 teardown 发射**；**M180 = P13 回退硬杀**；**M181–M185 = P11 `.gitignore` 五种路径**；**M186 = P13 删 grace 后升级**；**M187 = teardown CLI 吞异常**。
+- **P12 吞异常：M187**。变异 = 去掉 teardown 的 `try/catch` 包裹；预期 `test_teardown_cli_never_exits_nonzero` 红（注入异常后 CLI 退出码非 0）。**实况更正（2026-11-05）**：M187 实跑判据为内容钉 `test_teardown_carrier_uses_sibling_python_and_swallows`（见报告）；运行期逃逸由新增行为钉 + **M191**（§4.6「缺陷 + 已修」）覆盖，二者不重号。
+- **编号自查**：M176 → M176b → … → M187；**M176b 是子号，不占新号**；仓内实际最大为 M175，落稿前实查全仓 `M181`–`M187` 均未占用，无撞号。用途分工：**M176 = S2 前提复核**；**M176b = S2 旧公式回退**；**M177 = S1 失败归档接线**；**M178 = S1 证据不得反向充当通过证据**；**M179 = P12 teardown 发射**；**M180 = P13 回退硬杀**；**M181–M185 = P11 `.gitignore` 五种路径**；**M186 = P13 删 grace 后升级**；**M187 = teardown CLI 吞异常**；**M191 = teardown 发射物删 `try/catch`（运行期逃逸，2026-11-05 缺陷回归）**。
 - 测试内既有局部变异编号（`M1..M11`）不动。
 
 ---
@@ -365,10 +365,10 @@ python3 scripts/closeout_derive.py --diff-base d1674e3 --root .
 | 跨批 `index.json` 并发 | 是 **lost-update（丢去重），不是损坏**：并发写只会让两批各自漏记一条索引，manifest 仍完整可读。锁作用域定死为「`index.json` 读-改-写 + 单次 manifest tmp→replace」；不锁归档复制、不锁跨批远端 |
 | `test_global_teardown_absent_in_legacy_projects` | 接近恒真（无 teardown 的旧输出本就不会报错），保留为**兼容性姿态**，**不计入有效反钉/判据数量**（§5.1 已标注） |
 | M180 的证明强度 | 证明的是**代码路径**（回退硬杀会让 `[soft-kill]` 红），**不是 Playwright 在 SIGTERM 下的 flush 行为**；与 S1-20a「模拟进程」的断言强度一致，不得在验收里当成真实行为已验证 |
-| Playwright 对 `globalTeardown` 抛错的处理 | **2026-11-05 真跑：已升级为缺陷**。Playwright 把 teardown 抛错收进 `results.json` 的 `errors[]` 并令**退出码 = 1**、`.last-run.json` 记 `status: failed`；`atlas_check` 只看退出码（`scripts/atlas_check.py:889`）⇒ 用例面 `3 passed` 的绿批仍被判 `FAIL E2E 真跑`，`atlas_verify` 遂 exit 1、停在 run 步。**已实测只在函数体外的 throw 上触发**；函数体内（归档 CLI 失败）确实被吞。原话、退出码与复现步骤见本节末「缺陷记录」 |
+| Playwright 对 `globalTeardown` 抛错的处理 | **2026-11-05 真跑：缺陷已修**。修前：函数体外抛错 ⇒ `results.json.errors[]` + **退出码 1**、`.last-run.json` `failed`；`atlas_check` 只看退出码（`scripts/atlas_check.py:889`）⇒ 用例面 `3 passed` 仍判 `FAIL`，`atlas_verify` 停在 run。修后：发射物模块加载期零副作用、全部工作包在 `try/catch` ⇒ **函数体内抛错 = 退出码 0、`3 passed`、`.last-run.json` `passed`，仅 stderr 一行 `ATLAS-EVIDENCE WARN`**；`atlas_check` E2E 行回到 `WARN`。修前/修后原话见本节末「缺陷 + 已修」 |
 | 解释器依赖 | `_support/evidence_archive.py` **只用标准库**；`ATLAS_PYTHON`（缺省 `python3`）只需能跑标准库 + `zipfile`。目标项目无 `python3` 时 teardown 落 **WARN**、不翻红（与 CLI 吞异常同口径） |
 
-**缺陷记录：`globalTeardown` 抛错会把绿批翻红（2026-11-05 实测，未改代码）**
+**缺陷 + 已修：`globalTeardown` 抛错会把绿批翻红（2026-11-05 真跑，修前 / 修后两段）**
 
 - **环境**：源包 `main` @ `401a7dd`；靶场 = `tests/fixtures/verify_playground` 原样复制到 `/tmp/atlas-td-lab/playground`，用 `install.sh --target … --force` + `gen_e2e_scripts.py --root … --apply` 装配（未新造工程）。注入点 = 发射物 `<e2e>/scripts/atlas-evidence-teardown.ts` 的 `globalTeardown()` 首行、`try` 之前：`throw new Error('EVIDENCE_TEARDOWN_INTENTIONAL')`；用例本身 3 条全绿。
 - **复现步骤**（cwd = `<e2e>/scripts`；第 1 步清场，第 2–4 步读数）：
@@ -425,6 +425,35 @@ FAIL
 - **结论**：`try/catch` 只覆盖函数体；**函数体外的 throw（以及模块加载/转译失败等）不被吞**，会把全绿批的退出码变成 1、把 `atlas_check`/`atlas_verify` 的 verdict 翻成 FAIL，并阻断留档。这与「归档失败只该 WARN，绝不能把绿轮翻红」的设计承诺冲突 ⇒ **缺陷，待修，不在本记录内改代码**。
 - **现场还原**：靶场 teardown 逐字节还原（`sha256 = 9495dd96a991af8225767cf9fab54c48252672b72cea7762e1ef200057dc381b`，注入前后一致）；`tests/fixtures/verify_playground` 全程未改动（`git status --porcelain` 为空，11 个文件 `sha256` 与起始记录逐一相同）。
 
+**修复（同一缺陷，2026-11-05）**
+
+- **代码**：`scripts/gen_e2e_scripts.py` 发射物（`atlas-evidence-teardown.ts`）改为 —— 模块加载期零副作用（无顶层 `process.cwd()` / spawn / 退出）；全部工作在 `globalTeardown()` 的一层 `try/catch` 内；`execFileSync` 的 `stdio` 由 `'ignore'` 改为 `encoding: 'utf8'`（失败取 `err.stderr` 末行，否则 `err.message`）；catch **只**向 stderr 写一行 `ATLAS-EVIDENCE WARN: teardown 归档失败: <原因>`，不 rethrow、不 `process.exit`。
+- **钉**（`tests/test_gen_e2e_scripts.py`，不新增文件）：
+  - `test_teardown_never_throws_and_has_no_module_side_effects`：发射物内容 —— 顶层无 `process.`、无 `spawnSync(` / `execFileSync(`；函数体有 `try {` + `catch`、无裸 `throw`、全文无 `process.exit`。
+  - `test_teardown_warns_on_missing_python_and_stays_zero`：行为 —— `ATLAS_PYTHON=/nonexistent/atlas-python` 直跑发射物 ⇒ **退出码 0** 且 stderr 含 `ATLAS-EVIDENCE WARN`。
+- **变异 M191**（删掉发射物的 `try/catch`，令 `execFileSync` 的 ENOENT 逃出）：四段协议 —— 基线 GREEN（`4 passed`）→ 注入 RED（`1 failed`，node driver `EXIT=1`，`Error: spawnSync /nonexistent/atlas-python ENOENT`）→ 还原 `sha256` 一致（`a19ab22c932b5ad3567ced850b810eece12051de80e595c70d4705029af1de18`）→ 复绿；报告 `.atlas/runs/mutation-proof/M191.txt`（gitignored，不提交）。
+- **真跑复验**（靶场 `/tmp/atlas-td-lab2/playground`，由本笔装配；teardown 在 `try` 内首行注入 `throw new Error('EVIDENCE_TEARDOWN_INTENTIONAL')`，用例 3 条全绿）：
+
+```
+EXIT=0
+Running 3 tests using 1 worker
+  ✓  1 [chromium] › home.spec.ts:237:5 › test_home__zero_step_baseline (851ms)
+  ✓  2 [chromium] › home.spec.ts:241:5 › E2E-HOME-001 点击后标题就绪 (453ms)
+  ✓  3 [chromium] › home.spec.ts:252:5 › E2E-HOME-002 点击后面板展开 (310ms)
+  3 passed (3.1s)
+---STDERR---
+ATLAS-EVIDENCE WARN: teardown 归档失败: EVIDENCE_TEARDOWN_INTENTIONAL
+---LAST-RUN---
+{"status": "passed", "failedTests": []}
+---RESULTS-STATS/ERRORS---
+stats {'expected': 3, 'skipped': 0, 'unexpected': 0, 'flaky': 0}
+errors []
+```
+
+- **`atlas_check` 同场景**（EXIT=0）：`  WARN E2E 真跑（六页）                 3 passed ｜ 运行器来自全局兜底…`（不再 `FAIL`，仅因机器全局兜底降档 WARN）。
+- **`ATLAS_PYTHON` 不存在**：`EXIT=0`、`3 passed`、`ATLAS-EVIDENCE WARN: teardown 归档失败: spawnSync /nonexistent/atlas-python ENOENT`、`.last-run.json` = `{"status": "passed", "failedTests": []}`。
+- **还原**：靶场 teardown 还原至 `sha256 = bf43b6fe23458f5d99f184df624626a7ca93a7971b2c043837be45ff17b10f39`（修后基线）；`tests/fixtures/verify_playground` 未改动（`git status --porcelain` 为空，11 个文件 `sha256` 不变）。
+
 ---
 
 ## 5. 测试钉
@@ -453,7 +482,7 @@ FAIL
 |---|---|---|---|
 | 发射钉 | `test_emitted_config_carries_global_teardown` | 既有 `make(root)` 生成项目，读发射的 `playwright.config.ts` 与 `scripts/atlas-evidence-teardown.ts` | config 文本匹配 `'./atlas-evidence-teardown.ts'` 且**不得出现** `'./scripts/atlas-evidence-teardown.ts'`；teardown 文件含 `execFileSync` 调用 `evidence_archive.py --phase post-run`；原配置其余内容逐字节不变 |
 | 仅归档钉（**subprocess 调 Python CLI**） | `test_global_teardown_cli_archives_without_touching_verdict` | `subprocess.run([sys.executable, evidence_archive.py, "--phase", "post-run", "--root", tmp])`，预置 `.atlas-run` 证据面 | 生成 `<id>-post-run/manifest.json`；`phase="post-run"`；**无 verdict 字段**；进程退出码 0 |
-| 吞异常钉（应修 2a，**只测可观测的那半**） | `test_teardown_cli_never_exits_nonzero` | 直接调 Python CLI，注入 `PermissionError` | **CLI 退出码仍 0**；stderr 有记录；该钉本身**不**断言 Playwright 退出码；Playwright 侧实跑结论见 §4.6「缺陷记录」（函数体外抛错 ⇒ exit 1 / 翻 FAIL） |
+| 吞异常钉（应修 2a，**只测可观测的那半**） | `test_teardown_cli_never_exits_nonzero` | 直接调 Python CLI，注入 `PermissionError` | **CLI 退出码仍 0**；stderr 有记录；该钉本身**不**断言 Playwright 退出码；Playwright 侧实跑结论见 §4.6「缺陷 + 已修」（函数体外抛错 ⇒ exit 1 / 翻 FAIL；已修，函数体内抛错 ⇒ exit 0 + 一行 WARN） |
 | 缺席钉（兼容姿态，**不计入有效反钉/判据数量**） | `test_global_teardown_absent_in_legacy_projects` | 未接入归档模块的旧生成器输出 | 不报错、不阻断（N/A）；接近恒真，只作旧项目兼容 |
 
 **P11 `.gitignore` 钉（落 `tests/test_gen_e2e_scripts.py`，五条对应 §2.1 可判定闭集与 M181–M185）：**
@@ -635,7 +664,7 @@ python3 scripts/atlas_check.py --root . --fast
 | P9 | D156 单案修复的 QUEUE owner = `master` | §4.5.3 |
 | P10 | 不做 `--verify-archive` | §2.1 末条、§2.6 |
 | **P11 = A** | 生成器在根 `.gitignore` 缺失时创建并追加 `.atlas-evidence/`；**这是改一条已落地裁决**（`patches/project-wiring/apply-wiring.py:342`），故须记 D183；范围仅限运行产物忽略行 | §2.1（含 6 条冲突路径）、§4.1、§4.5.4、§7.2 |
-| **P12 = 同批** | `globalTeardown` 作为**补充**落进生成器发射的 config，并发射 `<e2e>/scripts/atlas-evidence-teardown.ts`（与 config 同目录；`globalTeardown` 写 `'./atlas-evidence-teardown.ts'`；subprocess 调 `evidence_archive.py --phase post-run`、吞异常）：只 copy + 写 manifest、不判定、不改 verdict；本体仍是 `atlas_verify`/`e2e_console` | §2.1 第三个归档点、§2.5 否决论证、§4.1、§6（`scripts_hash`/docs/map） |
+| **P12 = 同批** | `globalTeardown` 作为**补充**落进生成器发射的 config，并发射 `<e2e>/scripts/atlas-evidence-teardown.ts`（与 config 同目录；`globalTeardown` 写 `'./atlas-evidence-teardown.ts'`；subprocess 调 `evidence_archive.py --phase post-run`、模块加载期零副作用、永不抛错（失败只写一行 WARN））：只 copy + 写 manifest、不判定、不改 verdict；本体仍是 `atlas_verify`/`e2e_console` | §2.1 第三个归档点、§2.5 否决论证、§4.1、§6（`scripts_hash`/docs/map） |
 | **P13 = A** | `_kill` 改软杀：SIGTERM → `kill_grace_secs`（默认 5s，0–15s）→ 仍不退才 SIGKILL；超时判定先发生、grace 后仍置 `timed_out` ⇒ FAIL；只对 node 进程发 SIGTERM | §2.5、§3.1 S1-20a/20b、§4.1 |
 
 本轮范围外（不在本稿实现，也不留可选项）：`--verify-archive` 事后对账、证据保留期/自动清理、S3 的 Launch/Doctor/Cleanup（§2.6）。
