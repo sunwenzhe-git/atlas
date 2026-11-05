@@ -25,5 +25,18 @@ contracts:
     consumer: <成员标识>
     consumer_path: <消费文件相对成员仓路径>
 
-# Phase 1 不解析 requirements；保留给 Phase 2/3 的跨仓需求索引。
+# 跨仓需求 → 成员任务卡（Phase 1 增量；atlas solution task create 读取）。
+# 每个成员一条；AC 正文只在 solution-prd.md，这里只存引用与本地 scope。
+# requirements:
+#   - id: REQ-001
+#     acs: AC-SOLUTION-001,AC-SOLUTION-002
+#     member: <成员标识>
+#     task_slug: req-001-api
+#     scope: "实现跨仓同步 API"
+#     assignee: <可选；缺省 = 成员 .trellis/.developer>
+#   - id: REQ-001
+#     acs: AC-SOLUTION-001
+#     member: <另一成员标识>
+#     task_slug: req-001-ui
+#     scope: "接入同步入口"
 # requirements: []

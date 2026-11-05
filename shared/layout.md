@@ -107,7 +107,7 @@ layout:
 ├── atlas.config.yaml
 ├── atlas.solution.yaml          # members / mode / assets / contracts
 ├── atlas.solution.lock.json
-├── .atlas/                      # solution 层只读检查
+├── .atlas/                      # solution 层检查与任务编排（task create 只窄写成员任务卡）
 ├── <assets_root>/               # 父级 PRD / E2E / stack-profile
 └── <member>/                    # 成员仓：untracked、不 ignore、保留自己的 .git
 ```

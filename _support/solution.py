@@ -100,8 +100,8 @@ def parse_manifest_text(text: str) -> dict:
     支持：顶层标量；`members:` / `contracts:` 的 `- key: value` 列表；
     `requirements:` 只登记存在性（Phase 1 不解析）。不支持嵌套列表 / 多行标量。
     """
-    data: dict = {"members": [], "contracts": [], "requirements_present": False,
-                  "unknown": []}
+    data: dict = {"members": [], "contracts": [], "requirements": [],
+                  "requirements_present": False, "unknown": []}
     section = None
     cur: dict | None = None
     for raw in text.splitlines():
@@ -116,7 +116,7 @@ def parse_manifest_text(text: str) -> dict:
                 cur = None
                 if section == "requirements":
                     data["requirements_present"] = True
-                elif section not in ("members", "contracts"):
+                elif section not in ("members", "contracts", "requirements"):
                     data["unknown"].append(section)
                     section = "__unknown__"
                 continue
@@ -132,6 +132,8 @@ def parse_manifest_text(text: str) -> dict:
                 data["contracts"] = []
             elif key == "requirements":
                 data["requirements_present"] = True
+                if val not in (None, "[]"):
+                    raise SolutionError("requirements 必须是列表（空值写 requirements: []）")
             else:
                 data["unknown"].append(key)
             section = None
@@ -139,7 +141,7 @@ def parse_manifest_text(text: str) -> dict:
             continue
         if section == "__unknown__":
             continue
-        if section in ("members", "contracts"):
+        if section in ("members", "contracts", "requirements"):
             if s.startswith("- "):
                 cur = {}
                 data[section].append(cur)
@@ -150,9 +152,11 @@ def parse_manifest_text(text: str) -> dict:
                 raise SolutionError(f"无法解析 {section} 列表行: {raw!r}")
             key, val = s.split(":", 1)
             key = key.strip()
-            known = ("name", "path", "assets", "kind", "stack_profile") \
-                if section == "members" else \
-                ("id", "producer", "producer_path", "consumer", "consumer_path")
+            known = {
+                "members": ("name", "path", "assets", "kind", "stack_profile"),
+                "contracts": ("id", "producer", "producer_path", "consumer", "consumer_path"),
+                "requirements": ("id", "acs", "member", "task_slug", "assignee", "scope"),
+            }[section]
             if key not in known:
                 cur.setdefault("unknown", []).append(key)
                 continue
@@ -240,13 +244,56 @@ def validate_manifest(data: dict, root: Path, phase1: bool = True) -> dict:
         })
         seen_ids.add(cid)
 
+    requirements: list[dict] = []
+    seen_req_keys: set[tuple[str, str]] = set()
+    for item in data.get("requirements") or []:
+        if not isinstance(item, dict):
+            raise SolutionError("requirements 项必须是映射")
+        rid = _validate_name(item.get("id"), "requirements[].id")
+        member = str(item.get("member") or "").strip()
+        if member not in seen_names:
+            raise SolutionError(f"requirement {rid} 的 member 必须是 members 名称")
+        acs_raw = item.get("acs")
+        if isinstance(acs_raw, list):
+            acs = [str(a).strip() for a in acs_raw if str(a).strip()]
+        else:
+            acs = [a.strip() for a in re.split(r"[、,，]", str(acs_raw or "")) if a.strip()]
+        if not acs:
+            raise SolutionError(f"requirement {rid} 缺少 acs")
+        for ac in acs:
+            if not re.fullmatch(r"AC-[A-Z0-9]+-\d{3}", ac):
+                raise SolutionError(f"requirement {rid} 的 AC ID 非法: {ac!r}")
+        slug = str(item.get("task_slug") or "").strip()
+        if not _valid_task_slug(slug):
+            raise SolutionError(f"requirement {rid} 的 task_slug 非法: {slug!r}")
+        scope = str(item.get("scope") or "").strip()
+        if not scope:
+            raise SolutionError(f"requirement {rid} 缺少 scope")
+        assignee = str(item.get("assignee") or "").strip()
+        if assignee:
+            _validate_name(assignee, "requirements[].assignee")
+        key = (rid, member)
+        if key in seen_req_keys:
+            raise SolutionError(f"requirements 重复（id+member）: {rid} / {member}")
+        seen_req_keys.add(key)
+        requirements.append({
+            "id": rid,
+            "acs": acs,
+            "member": member,
+            "task_slug": slug,
+            "assignee": assignee or None,
+            "scope": scope,
+            "unknown": list(item.get("unknown") or []),
+        })
+
     return {
         "version": SCHEMA_VERSION,
         "solution": name.strip(),
         "mode": mode,
         "members": members,
         "contracts": contracts,
-        "requirements_present": bool(data.get("requirements_present")),
+        "requirements": requirements,
+        "requirements_present": bool(requirements) or bool(data.get("requirements_present")),
         "unknown": list(data.get("unknown") or []),
     }
 
@@ -565,7 +612,22 @@ def _member_entries(members: list[tuple[str, str, str]]) -> list[dict]:
     return out
 
 
-def _manifest_text(name: str, members: list[dict], contracts: list[dict] | None = None) -> str:
+def _valid_task_slug(slug: str) -> bool:
+    if not slug or "/" in slug or "\\" in slug or ".." in slug:
+        return False
+    if re.match(r"^\d{2}-\d{2}-", slug):
+        return False
+    return True
+
+
+def _yaml_value(value: str) -> str:
+    """清单值：含 `#` 时加引号，避免被行内注释截断。"""
+    s = str(value)
+    return f'"{s}"' if "#" in s else s
+
+
+def _manifest_text(name: str, members: list[dict], contracts: list[dict] | None = None,
+                   requirements: list[dict] | None = None) -> str:
     lines = [
         "# atlas solution（多仓方案层；Phase 1 = federated）",
         "version: 1",
@@ -592,6 +654,20 @@ def _manifest_text(name: str, members: list[dict], contracts: list[dict] | None 
             ]
     else:
         lines.append("contracts: []")
+    if requirements:
+        lines.append("requirements:")
+        for r in requirements:
+            acs = r["acs"] if isinstance(r["acs"], list) else [
+                a.strip() for a in re.split(r"[、,，]", str(r["acs"])) if a.strip()]
+            lines += [
+                f"  - id: {r['id']}",
+                f"    acs: {','.join(acs)}",
+                f"    member: {r['member']}",
+                f"    task_slug: {r['task_slug']}",
+                f"    scope: {_yaml_value(r['scope'])}",
+            ]
+            if r.get("assignee"):
+                lines.append(f"    assignee: {r['assignee']}")
     return "\n".join(lines) + "\n"
 
 
@@ -690,7 +766,8 @@ status: draft
 
 def init_solution(root: Path, name: str, members: list[tuple[str, str, str]],
                   assets_root: str = "product", install: bool = True,
-                  contracts: list[dict] | None = None) -> Path:
+                  contracts: list[dict] | None = None,
+                  requirements: list[dict] | None = None) -> Path:
     root = Path(root).resolve()
     if manifest_path(root).exists():
         raise SolutionError(f"{MANIFEST_NAME} 已存在：{manifest_path(root)}")
@@ -704,7 +781,8 @@ def init_solution(root: Path, name: str, members: list[tuple[str, str, str]],
         "mode": "federated",
         "members": entries,
         "contracts": contracts or [],
-        "requirements_present": False,
+        "requirements": requirements or [],
+        "requirements_present": bool(requirements),
         "unknown": [],
     }, root, phase1=True)
     # atlas.config.yaml 是资产根的单一来源；已存在时不得用 CLI 默认值覆盖。
@@ -718,7 +796,7 @@ def init_solution(root: Path, name: str, members: list[tuple[str, str, str]],
     # 重跑不会被 manifest 存在检查挡住。
     path = manifest_path(root)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(_manifest_text(name, entries, contracts), encoding="utf-8")
+    tmp.write_text(_manifest_text(name, entries, contracts, requirements), encoding="utf-8")
     tmp.replace(path)
     return path
 
@@ -798,8 +876,17 @@ def check_solution(root: Path) -> dict:
             "status.showUntrackedFiles=no 会盲掉 _graph / atlas_check / e2e_console")
     if data.get("unknown"):
         add("清单未知键", "WARN", "；".join(data["unknown"]))
-    if data.get("requirements_present"):
-        add("requirements", "WARN", "Phase 1 不解析 requirements（仅登记存在性）")
+    if data.get("requirements"):
+        try:
+            task_core = _load_sibling("solution_task", "_atlas_solution_task_check")
+            for warning in task_core.check_requirements(root, data):
+                add("跨仓任务", "WARN", warning)
+        except Exception as exc:  # noqa: BLE001 - 对账不可用要显式出声
+            add("跨仓任务", "WARN", f"对账不可用: {type(exc).__name__}: {exc}")
+        for req in data.get("requirements") or []:
+            if req.get("unknown"):
+                add("跨仓任务", "WARN",
+                    f"{req['id']} 未知键: {'、'.join(req['unknown'])}")
 
     lock = read_lock(root)
     contracts_now = contract_states(root, data)

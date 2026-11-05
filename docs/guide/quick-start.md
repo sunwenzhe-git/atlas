@@ -175,3 +175,11 @@ atlas solution lock --update
 - 成员仓保持独立、untracked 且不被 ignore；solution 根只跟踪 Atlas 资产。
 - Phase 1 不搬移成员 PRD/结构/E2E，不做成员代码提交；`unified` 与 `import` 属 Phase 2/3。
 - 契约正文见 `shared/solution.md`。
+
+跨仓需求派单（Phase 1 增量）：
+```bash
+# 在 atlas.solution.yaml 写 requirements[]，并在 solution-prd.md 写 AC
+atlas solution task create --requirement REQ-001 --apply
+atlas solution task status --requirement REQ-001
+```
+`create` 默认 dry-run；`--apply` 只写成员 `.trellis/tasks`（`--no-start`，不自动领取），任务仍需成员自己 `/trellis:start`。
