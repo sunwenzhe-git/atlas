@@ -8,6 +8,12 @@
  * 钩子命令又是 **git 跟踪的** `.trellis/config.yaml`，写死某个平台的名字必然在另一端坏掉。
  * Node 是 Atlas 的硬依赖（CLI 就是 Node），所以用 Node 做启动器，运行时解析 Python 3.10+。
  *
+ * 为什么用动态 `import()` 而不是 CJS 的 `require`：本文件装配进**宿主仓**的 `.atlas/scripts/`，
+ * 模块类型由宿主最近的 `package.json` 决定——宿主声明 `"type": "module"` 时 `.js` 会被按
+ * ESM 解析，`require` 不存在（ReferenceError）。动态 `import()` 在 CJS 与 ESM 下都合法，
+ * 因此同一份发射物在源包（无 `"type"`）与 ESM 宿主里都能跑；不改文件名是为了不打断
+ * 已装项目里 git 跟踪的钩子路径（`.trellis/config.yaml`）。
+ *
  * 用法：
  *   node .atlas/scripts/run_python.js <脚本路径（相对项目根）> [args...]
  *
@@ -15,8 +21,6 @@
  * 失败信息写 stderr（Trellis 钩子 fail-open，会把它带进 WARN）。
  */
 'use strict';
-
-const { spawnSync } = require('child_process');
 
 const MIN_MINOR = 10;
 const WIN = process.platform === 'win32';
@@ -27,7 +31,7 @@ function parseVersion(output) {
   return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]) };
 }
 
-function windowsPythonPaths(env) {
+function windowsPythonPaths(spawnSync, env) {
   const res = spawnSync('where', ['python'], { encoding: 'utf8', env, timeout: 5000 });
   if (res.status !== 0) return [];
   return (res.stdout || '')
@@ -36,7 +40,7 @@ function windowsPythonPaths(env) {
     .filter((p) => p && !/\\windowsapps\\/i.test(p));
 }
 
-function candidates(env) {
+function candidates(spawnSync, env) {
   if (!WIN) {
     return [
       { cmd: 'python3', args: [] },
@@ -44,12 +48,12 @@ function candidates(env) {
     ];
   }
   const out = [{ cmd: 'py', args: ['-3'] }];
-  for (const p of windowsPythonPaths(env)) out.push({ cmd: p, args: [] });
+  for (const p of windowsPythonPaths(spawnSync, env)) out.push({ cmd: p, args: [] });
   return out;
 }
 
-function resolvePython(env) {
-  for (const cand of candidates(env)) {
+function resolvePython(spawnSync, env) {
+  for (const cand of candidates(spawnSync, env)) {
     const res = spawnSync(cand.cmd, [...cand.args, '--version'], {
       encoding: 'utf8',
       env,
@@ -64,7 +68,8 @@ function resolvePython(env) {
   return null;
 }
 
-function main() {
+async function main() {
+  const { spawnSync } = await import('node:child_process');
   const argv = process.argv.slice(2);
   const script = argv[0];
   if (!script) {
@@ -72,7 +77,7 @@ function main() {
     return 2;
   }
   const env = { ...process.env, PYTHONUTF8: '1' };
-  const py = resolvePython(env);
+  const py = resolvePython(spawnSync, env);
   if (!py) {
     console.error('[run_python] 未找到可用的 Python 3.10+（POSIX: python3/python；Windows: py -3 或真实 python.exe）。');
     console.error('[run_python] 结构事实刷新被跳过；安装 Python 3.10+ 后重跑 `atlas update` 即恢复。');
@@ -89,4 +94,9 @@ function main() {
   return typeof res.status === 'number' ? res.status : 1;
 }
 
-process.exit(main());
+main()
+  .then((code) => process.exit(code))
+  .catch((err) => {
+    console.error(`[run_python] 启动失败: ${err && err.message ? err.message : err}`);
+    process.exit(1);
+  });

@@ -23,13 +23,55 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+def _run_at(launcher: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["node", str(LAUNCHER), *args],
+        ["node", str(launcher), *args],
         capture_output=True,
         text=True,
         timeout=60,
     )
+
+
+def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return _run_at(LAUNCHER, args)
+
+
+def test_launcher_is_module_type_agnostic() -> None:
+    """内容钉：发射物不得依赖 CJS 的 `require`，且仍可按 CJS 语法解析。
+
+    宿主的 `package.json` 决定 `.js` 的解析模式：装配进 `"type": "module"` 的仓时，
+    `require` 不存在。启动器必须用两种模式都合法的动态 `import()`。
+    """
+    text = LAUNCHER.read_text(encoding="utf-8")
+    assert "require(" not in text, "启动器回退了 CJS 的 require（ESM 宿主会 ReferenceError）"
+    assert "await import('node:child_process')" in text, "启动器未走动态 import 入口"
+    r = subprocess.run(
+        ["node", "--check", str(LAUNCHER)], capture_output=True, text=True, timeout=60
+    )
+    assert r.returncode == 0, r.stderr
+
+
+def test_runs_from_esm_host(tmp_path: Path) -> None:
+    """行为钉：把发射物放进 `"type": "module"` 的宿主上下文，argv 与退出码仍正确。
+
+    复现 2026-11-05 的真实缺陷：CJS `require` 在 ESM 宿主里直接崩，4 条钉全红；
+    修复后本钉必须绿（变异 M192 = 回退裸 require ⇒ 本钉红）。
+    """
+    host = tmp_path / "esm-host"
+    host.mkdir()
+    (host / "package.json").write_text('{"type": "module"}\n', encoding="utf-8")
+    launcher = host / "run_python.js"
+    shutil.copyfile(LAUNCHER, launcher)
+    script = host / "echo.py"
+    script.write_text(
+        "import sys\nprint('|'.join(sys.argv[1:]))\nraise SystemExit(7)\n",
+        encoding="utf-8",
+    )
+    r = _run_at(launcher, [str(script), "a", "b"])
+    assert r.returncode == 7, (r.stdout, r.stderr)
+    assert r.stdout.strip() == "a|b", r.stdout
+    missing = _run_at(launcher, [])
+    assert missing.returncode == 2, missing.stderr
 
 
 def test_forwards_argv_and_exit_code(tmp_path: Path) -> None:
