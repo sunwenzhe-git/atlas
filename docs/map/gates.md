@@ -52,7 +52,7 @@
 | `validate_structure` | structure 产物 ⇔ 环契约 | `_meta.json` 形态 / routes 语义列留空 WARN / D 类接线态 / adapter_gaps 可见化 |
 | `validate_prd` | PRD 产物 ⇔ 环契约 | 功能→规则→AC 链路 / 域间依赖 mermaid 实线边对账 / 变更记录 5 列 |
 | `validate_testids` | testid 应然(分片)⇔ 实然(源码) | 按页双向集合相等;模板字面量展开;应然落点分档 |
-| `validate_e2e_index` | 索引 ⇔ 分片 ⇔ 契约 | 结构门 + 有意义门 + seed×models + AC 反向覆盖 + AC×覆盖维度（表头名定位，`RFC-20261103-08`） |
+| `validate_e2e_index` | 索引 ⇔ 分片 ⇔ 契约 | 结构门 + 有意义门 + seed×models + AC 反向覆盖 + AC×覆盖维度（表头名定位，`RFC-20261103-08`；未采信表诊断，`RFC-20261105-01`） |
 | `validate_e2e_mocks` | 打桩声明 ⇔ mock 契约 | mock 段形态矩阵 |
 | `validate_ac_alignment` | 后端测试 ⇔ PRD AC | 无主 AC / 无效跳过 / 双向覆盖 / 差量防退化 / 后端维度（D153） |
 | `validate_design_exemptions` | 设计档案豁免 ⇔ 工具配置 | 双向集合相等(单侧漂移 = 半遮蔽) |
