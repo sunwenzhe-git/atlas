@@ -4,7 +4,7 @@
 
 ---
 
-## [Unreleased]
+## [v0.2.0-beta.29] - 2026-11-05
 
 ### 🧭 多仓 solution 层 Phase 1（federated，RFC-20261104-02）
 
