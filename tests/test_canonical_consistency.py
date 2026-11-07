@@ -6,7 +6,7 @@
 第 29 行说「可临时启用原型环」而第 9 行说「环已移除」、模板的 `prototype:` 段头被删而两个子键
 变成孤儿挂在相邻段下。三类都属「文本之间互相否定」，而 canonical 装配面这条对账面照不到它们。
 
-判据（全部可机器判；`scan()` 现含 ①–⑤ 与 ⑦）——编号 ⑥ 已给「调度门」单独登记（`check_gates_gates_are_scheduled`，gates.md 2.2 引用为「判据⑥」）：
+判据（全部可机器判；`scan()` 现含 ①–⑤、⑦ 与 ⑧）——编号 ⑥ 已给「调度门」单独登记（`check_gates_gates_are_scheduled`，gates.md 2.2 引用为「判据⑥」）：
 
   1. **环引用自明**：文本里的 `rings/<x>/`，若 `<x>` 不是现存环 ⇒ **该行必须带退役/历史标记**
      （否则就是「活口径引用已删环」——批次 1/5 缺陷的本体）；
@@ -28,6 +28,9 @@ import re
 from pathlib import Path
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
+
+# 判据⑧（D185）：`skills/*/SKILL.md` 字符预算。预算写在测试侧，不读被审文件。
+SKILL_BUDGET_CHARS = 20000
 
 # 退役 / 历史标记：出现这些词的行，允许引用已删环（引用的语境本身说明了它是历史）
 RETIRE_MARKS = ("已退役", "退役", "已删", "删除", "已作废", "作废", "已移除", "历史", "冻结", "E1")
@@ -353,9 +356,34 @@ def check_veto_word_pins() -> dict:
                             "rings、apply、patches 三目录不扫 = 显式盲区，归 closeout sweep）")}
 
 
+def check_skill_budget() -> dict:
+    """判据⑧（D185）：每个 `skills/*/SKILL.md` 的字符数必须 `< SKILL_BUDGET_CHARS`。
+
+    预算常量写在本文件，**不从被审 skill 读取**；只做字符数断言，不建 manifest、
+    不算 hash、不校验指针。超限时 detail 并列 `(name, chars)`。
+    """
+    skill_files = sorted((PKG_ROOT / "skills").glob("*/SKILL.md"))
+    if not skill_files:
+        return {"check": "SKILL 体积预算（判据⑧）", "ok": False, "skip": False,
+                "detail": "未扫到 skills/*/SKILL.md —— 判据失效，fail-closed"}
+    over: list[str] = []
+    measured: list[str] = []
+    for f in skill_files:
+        name = f.parent.name
+        chars = len(f.read_text(encoding="utf-8"))
+        measured.append(f"{name}({chars})")
+        if chars >= SKILL_BUDGET_CHARS:
+            over.append(f"({name}, {chars})")
+    return {"check": "SKILL 体积预算（判据⑧）", "ok": not over, "skip": False,
+            "detail": ("超限（预算 < %d）：%s" % (SKILL_BUDGET_CHARS, "；".join(over)) if over
+                       else "%d 个 SKILL.md 全部 < %d：%s"
+                            % (len(skill_files), SKILL_BUDGET_CHARS, "、".join(measured)))}
+
+
 def scan() -> list[dict]:
     return [check_ring_refs_self_marking(), check_template_keys(), check_shared_refs(),
-            check_registry_counts(), check_contract_field_refs(), check_veto_word_pins()]
+            check_registry_counts(), check_contract_field_refs(), check_veto_word_pins(),
+            check_skill_budget()]
 
 
 def test_contract_field_references_are_declared() -> None:
@@ -491,6 +519,12 @@ def test_veto_word_pins_bad_input_reds_and_anchor_exempts(tmp_path, monkeypatch)
     monkeypatch.setattr(sys.modules[__name__], "_veto_scan_files", lambda: [])
     res3 = check_veto_word_pins()
     assert not res3["ok"], "空扫面必须 fail-closed"
+
+
+def test_skill_budget_under_limit() -> None:
+    """判据⑧（D185）：`skills/*/SKILL.md` 字符数 `< SKILL_BUDGET_CHARS`（单一断言）。"""
+    res = check_skill_budget()
+    assert res["ok"], res["detail"]
 
 
 def main() -> int:

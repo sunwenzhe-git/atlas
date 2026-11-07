@@ -12,6 +12,7 @@ description: "项目级 E2E 验收用例环：从 PRD 的 AC（业务预期）�
 1. 共享契约（`.atlas/shared/`）：`global-rules.md`、`stack-profile.md`、`single-source.md`、`layout.md`。
    - 路径约定：下文 `product/` 均为**默认资产根**示例；实际按项目根 `atlas.config.yaml` 的 `layout.assets_root` 解析（`shared/layout.md` §1.1）。
 2. 本环契约：`.atlas/rings/e2e/reference.md`。
+3. 术语表：读域级 PRD §九「禁用别名」列；用例文案与 testid 命名不得使用禁用别名。
 
 ## 路径
 

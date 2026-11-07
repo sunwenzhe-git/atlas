@@ -13,6 +13,7 @@ description: "项目级跨环编排环（atlas 唯一编排件）：把一条需
    - 路径约定：下文 `product/` 均为**默认资产根**示例；实际按项目根 `atlas.config.yaml` 的 `layout.assets_root` 解析（`shared/layout.md` §1.1）。
 2. 本环契约：`.atlas/apply/reference.md`。
 3. 涉及的具体环契约：`.atlas/rings/{prd,e2e,structure}/reference.md`（按参与的环读）。
+4. 术语表：域级 PRD §九「禁用别名」列是消费口径；回流 PRD 时不得把禁用别名写回正文。
 
 ## 路径
 
