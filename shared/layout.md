@@ -114,4 +114,4 @@ layout:
 
 - solution 根是独立 git 仓，只跟踪 Atlas 资产、清单、锁与父级 PRD；成员目录 **untracked 且不被任何 ignore 规则覆盖**。
 - 禁止在 solution 根 `.gitignore` / `.ignore` / `.rgignore` / `.git/info/exclude` 命中成员；禁止 `status.showUntrackedFiles=no`；消费者统一 `--untracked-files=all` 并逐成员根过滤。
-- 字段与命令契约见 `shared/solution.md`；Phase 1 只支持 `federated`，unified / 成员代码提交 / import 属 Phase 2/3。
+- 字段与命令契约见 `shared/solution.md`；Phase 1 只支持 `federated`；`unified` 与成员代码提交属 Phase 2，`import`/`export` 属 Phase 3，多 host / 跨仓图谱等增强属 Phase 4（可选）。

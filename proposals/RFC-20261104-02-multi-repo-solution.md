@@ -287,6 +287,9 @@ python3 scripts/atlas_check.py --fast
 ## 7. 分期与试点
 
 - **Phase 1（联合模式可用）**：清单 / 父级 PRD + 完整 `solution-prd.md` / 契约锁 / `status` / `check` / `adopt` / solution 最小画像 / Trellis packages 校验（仅当 `.trellis/config.yaml` 已存在；生成归 Phase 2）；只读聚合，不改成员资产；无语义硬门；Phase 1 `init` 只接受 federated（unified 显式拒绝并提示 Phase 2）；e2e_console 成员 hash / dirty 同批修（跨仓 E2E 依赖）。满足「子级先工作、父级后整合」；现有成员资产保持 `federated`。
+
+> **状态注记（2026-11-07）**：Phase 1 后续新增的 `atlas solution check --strict` 是 **opt-in** 的结构 / 可复现门（锁缺失、未跟踪、与父仓 HEAD 不一致、成员 dirty、缺 URL、版本/契约漂移 ⇒ FAIL 且 exit 1）；默认 `check` 仍全 WARN，不判跨仓语义兼容。原「无语义硬门」的决策段落保持不变。
+
 - **Phase 2（统一模式核心，含多根对账）**：`init --mode unified`；solution 自有资产；baseline v2 + 成员向量 + 成员根豁免 + `-uall`；freshness key 多根；**impact / closeout 的 actual 并集与 baseline v2 同批交付**；structure / PRD / E2E / apply 技能在 solution；Trellis packages 生成 + 工作区 Trellis；`solution_commit --member` + Phase 3.4 / task_store 时序；**统一模式不得在 multi-root actual 完成前开放**，防止假绿。
 - **Phase 3（跨仓聚合与迁移）**：跨仓 AC 聚合；`import` / `export` 迁移；mixed 态收口；现有成员资产按已拍板的渐进策略逐个迁入（旧源删除，历史归 git；每次迁完回到可运行状态）。
 - **Phase 4（可选增强）**：多 host / `targets[]`、跨仓影响面 / 图谱、成员拆分导出、更多宿主集成。

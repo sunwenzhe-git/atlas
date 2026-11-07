@@ -274,6 +274,22 @@ Agent 全量串行初始化 `structure → prd → e2e`。
 atlas check --fast
 ```
 
+#### 场景 E：多个独立子仓（solution）
+
+前后端已是多个独立 git 仓时，不要在父目录直接 `atlas init`；父级只做一次 `solution init`：
+
+```bash
+atlas solution init --name <方案名> --member web=web --member api=api
+atlas solution diff
+atlas solution check --strict
+```
+
+- 父级只建立 `atlas.solution.yaml`、锁与父级 PRD 骨架，不迁移成员资产；成员仍是普通 git 仓，日常在自己的分支开发，不受影响。
+- 父仓 `git diff` 看不到成员文件内容，成员改动用 `atlas solution diff` 对账。
+- 锁是提交进父仓、可对账的 pin；CI 按锁逐成员 clone + checkout 后跑 `atlas solution check --strict`，版本对不上直接红。
+- `unified`（成员不再各自开户、资产收归父级）属 Phase 2，当前不提供。
+- ⚠️ 成员目录是 untracked：在父仓执行 `git clean -ffdx` 会连未提交工作一起删除。
+
 ---
 
 ## 四、创新设计：E2E 用例评审控制台（人机协同终验）

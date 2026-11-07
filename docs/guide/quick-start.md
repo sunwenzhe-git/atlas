@@ -165,15 +165,19 @@ atlas console
 atlas solution init --name <方案名> --member web=web --member api=api
 # 已有成员资产时自动识别
 atlas solution adopt --name <方案名>
-# 只读查看 / 检查 / 锁定
+# 只读查看 / 对账 / 检查 / 锁定
 atlas solution status
+atlas solution diff
 atlas solution check
 atlas solution lock --update
 ```
 
+- 父级 `init` 只建立 `atlas.solution.yaml`、首版锁（成员齐全且不在 detached HEAD 时）与父级 PRD 骨架；不迁移成员资产，`unified` 属 Phase 2。
 - solution 根需先 `git init`（成员目录保持 untracked、不 ignore）；`atlas solution check` 在根非 git 时会 WARN。
-- 成员仓保持独立、untracked 且不被 ignore；solution 根只跟踪 Atlas 资产。
-- Phase 1 不搬移成员 PRD/结构/E2E，不做成员代码提交；`unified` 与 `import` 属 Phase 2/3。
+- 成员仓保持独立、untracked 且不被 ignore；solution 根只跟踪 Atlas 资产、清单与锁。
+- Phase 1 不搬移成员 PRD/结构/E2E，不做成员代码提交；`unified` 与成员代码提交属 Phase 2，`import`/`export` 属 Phase 3，多 host / 跨仓图谱等属 Phase 4 可选增强。
+- CI 门禁用 `atlas solution check --strict`：锁须随父仓提交，流水线按锁逐成员 clone + checkout 后再跑（命令样例见 `shared/solution.md` §5.1）。
+- ⚠️ 成员目录是 untracked：在 solution 根执行 `git clean -ffdx` 会删除整个成员工作区及未提交改动。
 - 契约正文见 `shared/solution.md`。
 
 跨仓需求派单（Phase 1 增量）：
