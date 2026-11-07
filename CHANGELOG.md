@@ -4,6 +4,26 @@
 
 ---
 
+## [Unreleased]
+
+### 🔒 solution：锁即可复现 pin + `check --strict` CI 门禁（RFC-20261104-02 增量）
+
+* **Phase 1 既有能力（2026-11-04/05，非本次变更）**：`atlas solution init|adopt|status|check|lock`（仅 `federated`）与 `atlas solution task`——父级只读整合成员仓，外加窄写成员任务卡；成员目录保持 untracked、不被 ignore。
+* **新增 · 成员 `url`**：清单可声明 `members[].url`；只接受 `http/https/ssh/git/file` 或 `user@host:path`，http(s) userinfo、密码、token/签名查询参数一律拒绝写入清单与锁。
+* **新增 · 锁作为可对账 pin**：锁须被父仓 Git 跟踪且与父仓 `HEAD` 一致，`url` / `path` 须与清单一致；`lock --update` 在 detached HEAD 下拒绝写入 `branch: "HEAD"`。
+* **新增 · `solution diff`**：只读对账，按成员输出自锁以来的 commit / diffstat、已暂存 / 未暂存 / 工作区改动；锁中 commit 不在本地时提示先 fetch。
+* **新增 · `check --strict`**：锁缺失 / 未被父仓跟踪 / 与 `HEAD` 不一致 / 锁↔清单 `url`·`path` 不一致 / 成员 dirty 或无法判断 / 缺 URL / 成员·契约漂移 ⇒ `FAIL`，`overall=FAIL` 时 exit 1；默认 `check` 仍为 WARN。
+* **加固 · 已跟踪路径 / gitlink 硬拒绝**：`init` / `adopt` 写清单前检查 `git ls-files -s`，成员路径已被父仓跟踪（含 mode `160000`）直接拒绝，并给出 `git rm --cached` / `.gitmodules` 修复指引。
+* **加固 · 嵌套 ignore 与 symlink 逃逸**：`.gitignore` / `.ignore` / `.rgignore` 沿成员路径逐级检测；成员 symlink 指向根外时契约哈希返回 `missing`，不读取根外文件。
+* **CI 还原口径**：父仓只存清单与锁；CI 按锁逐成员 clone + checkout 后执行 `atlas solution check --strict`，不提供自动还原命令。可直接复制的命令样例见 `shared/solution.md` §5.1。
+* **风险**：成员目录是 untracked；在 solution 根执行 `git clean -ffdx` 会删除整个成员工作区及未提交改动。
+
+### 🧭 solution 分期口径统一与 README 多仓场景
+
+* **口径**：`shared/solution.md`、`shared/layout.md`、`docs/guide/quick-start.md` 拆清 `unified` 与成员代码提交属 Phase 2、`import`/`export` 属 Phase 3、多 host / `targets[]` / 跨仓图谱等属 Phase 4 可选增强，不再写成「Phase 2/3」区间；`shared/solution.md` 补「Phase 2 交付后绿地项目恢复默认 `unified`」。
+* **RFC 勘误**：RFC-20261104-02 在 Phase 1「无语义硬门」后加状态注记，说明 `check --strict` 是 opt-in 的结构/可复现门、默认仍 WARN、不判语义兼容。
+* **README**：新增「场景 E：多个独立子仓（solution）」——父级一次 `init` 只建清单、锁与骨架；父仓 `git diff` 看不到成员内容，改用 `atlas solution diff`；CI 按锁 clone + checkout 后跑 `check --strict`；`unified` 属 Phase 2；`git clean -ffdx` 风险提示。
+
 ## [v0.2.0-beta.30] - 2026-11-06
 
 ### 🧭 E2E 覆盖维度生成纪律三件套（RFC-20261106-01）
