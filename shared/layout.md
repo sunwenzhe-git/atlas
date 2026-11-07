@@ -94,7 +94,7 @@ layout:
 
 ## 4. 约定类分流（G / I 已移出）
 
-- 编码规范（原 I 类）与 testid 约定（原 G 类）**不在 structure 环**；testid 约定**正文归 E2E 环契约**（`.atlas/rings/e2e/reference.md` §4），编码规范的判定权归目标项目自己的 lint / typecheck / test，atlas 只做收口侧审查。
+- 编码规范（原 I 类）与 testid 约定（原 G 类）**不在 structure 环**；testid 约定**正文归 E2E 环契约**（`.atlas/rings/e2e/reference.md` §4），编码规范不由 atlas 收口。Atlas 管实现期纪律与可追溯性；业务代码规范仍归项目 linter/typecheck。
 - testid 在 `<项目根>/.trellis/spec/conventions/testid.md` 落一份**派生薄桩**（祈使句 + 指针 + 由**用例分片应然清单**派生的 testid 清单），供 Trellis 原生注入到实现任务；它是派生视图，不复制命名规则词表。
 - A（技术栈 + 启动，可选）与 H（测试 / 运行，条件）的真相源均为**项目根 `README.md`**，**不入 spec**（受控例外，见 §1；仅对应两节，过确认门）。
 

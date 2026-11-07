@@ -158,7 +158,7 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
   - **开发流程/宿主适配摩擦** ⇒ 沉淀为 `.trellis/workflow.md` 补丁（`patches/`）或通过 `atlas report`（`§15`）上报开源池。
   - **事故追问与回归闭环（D131）**：出错若为线上或联调逃逸 bug，必追问：“该改动可能出什么错？哪一道检查（E2E、单测、校验门、独立审查）才是接住它的正确位置？为什么这道门当时没接住？”每确认一个此类缺陷，必须同时补齐一条可复现的 E2E 回归用例或 M 系列变异钉（连接 `duty-review/bugs.md` 与 gates 总账）。
 - **硬边界**：
-  - 不做业务代码实现期规范复盘（`BP` 边界，业务代码规范归项目自身 linter/typecheck 机器门）；实现期假设的处置与收口分档见 `global-rules.md` §18 与步骤 4 B 档——本条只排除「规范复盘」，不排除收口侧核对；
+  - 不做业务代码实现期规范复盘（`BP` 边界，业务代码规范归项目自身 linter/typecheck 机器门；`shared/global-rules.md` §18 的实现期纪律与步骤 4 B 档的测试反模式证据不属于此复盘）；
   - 所有结论必须附带具体文件、会话或提交的**证据链**（`BQ` 同源）。
 
 ## Guidance
