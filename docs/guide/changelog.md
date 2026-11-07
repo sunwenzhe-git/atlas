@@ -4,7 +4,7 @@
 
 ---
 
-## [Unreleased]
+## [v0.2.0-beta.31] - 2026-11-07
 
 ### 🔒 solution：锁即可复现 pin + `check --strict` CI 门禁（RFC-20261104-02 增量）
 
