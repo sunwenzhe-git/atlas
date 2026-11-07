@@ -42,19 +42,19 @@ $ python3 -c "print(len(open('shared/gates.md').read().splitlines()))"
 174
 ```
 
-能力宣称与触发表原文（逐行复核）：
+能力宣称与触发表核对（**只记落点与差异摘要，不复制正文**；正文以各文件为准）：
 
-```text
-README.md:123                  由内置的 Trellis 任务系统承担，Atlas 本身不侵入业务代码实现。   → 真，不改
-docs/design/overview.md:78     业务代码归执行器，Atlas 不碰业务实现                               → 改
-shared/independent-review.md:192  收口侧设门，实现过程仍不介入                                     → 改
-shared/independent-review.md:225  实现期的代码规范…不进本契约——atlas 不介入实现过程（§10 引言既定边界） → 外科改
-shared/closeout.md:149         不做业务代码实现期规范复盘（BP 边界…）                             → 补澄清
-shared/single-source.md:43     编码规范不由 atlas 收口                                           → 保留 + 补边界
-shared/layout.md:97            编码规范不由 atlas 收口                                           → 保留 + 补边界
-shared/closeout.md:20          缺陷修复类任务 → 4（修复验证 7 检查点）                            → 保留，新增实现类行
-shared/closeout.md:25          任一工作单元收尾 → 1                                              → 不动
-```
+| 落点 | 差异摘要 | 处置 |
+|---|---|---|
+| `docs/design/overview.md:78` | 流程节点把业务代码整体判给执行器，边界表述绝对化 | 改写 |
+| `shared/independent-review.md:192` | 引用 `apply` 旧口径后落「实现过程仍不介入」 | 改写 |
+| `shared/independent-review.md:225` | 以「不进本契约」界定实现期代码规范；对象写成「实现过程」 | 外科改写（对象收窄为业务代码规范的判定） |
+| `shared/closeout.md:149` | 硬边界首句否掉实现期规范复盘 | 补澄清（首句保留） |
+| `shared/single-source.md:43` | 归属句把「编码规范」整体排除 | 改写（排除对象收窄为判定权） |
+| `shared/layout.md:97` | 同句 | 同批改写 |
+| `README.md:123` | 实现期归 Trellis，Atlas 不侵入业务代码实现 | 复核为真，不改 |
+| `shared/closeout.md:20` | 缺陷修复类任务 → 4 | 保留，另加实现类触发行 |
+| `shared/closeout.md:25` | 任一工作单元收尾 → 1 | 不动（实现类行的步骤 1 由它覆盖，不重复声明） |
 
 ### 1.3 引子族锚（D156 触发面 (a)）
 
@@ -68,10 +68,10 @@ shared/closeout.md:25          任一工作单元收尾 → 1                   
 
 | # | 定案 |
 |---|---|
-| **I1** | `skills/*/SKILL.md` 字符数 ≤ **20,000**。预算常量 `SKILL_BUDGET_CHARS = 20000` 写在测试内（不读被审文件）；判据⑧只有一条断言（字符数），**不建 manifest、不建 hash、不做指针分类或双向校验**。批 1 拆分时附「外移前后 section 清单」人工核对一次；`§4.7/4.11` 摘要（`SKILL.md:21` 明示保留）不得外移。 |
-| **I2** | `shared/global-rules.md` 新增 §18：实现期假设落 Trellis Plan/Design（不建台账），命中 §7 四条签名动作即停；会改变 AC / 范围 / 用户可见行为 ⇒ 回流 PRD 决策。 |
-| **I3** | `shared/closeout.md` 步骤 4 分档：A 档（bug fix）原 7 检查点不变；B 档（feature / refactor）4 项——可追溯性、纯空白证据命令、纯后端验证命令、测试反模式自查（**只作证据观察，不判分**）。触发表新增一行「实现类任务（feature / refactor，非 bug fix）→ 4（B 档）→ 1 → 7」，并标「语义触发行，不自动派生」。 |
-| **I4** | 能力宣称 5 处改写 + 1 处澄清（`overview.md:78`、`independent-review.md:192`、`:225`、`closeout.md:149`、`single-source.md:43`、`layout.md:97`）；`README.md:123` 保留不改。`VETO_WORDS` 只加精确被否短语；D185/D186 进豁免锚。 |
+| **I1** | `skills/*/SKILL.md` 字符数 ≤ **20,000**（常量 `SKILL_BUDGET_CHARS = 20000` 写在测试内，不读被审文件）；判据⑧只有一条字符数断言，**不建 manifest / hash / 指针校验**。批 1 外移 ≥2,590 字符；`§4.7`（`### 4.7 版面纪律（硬规则）`）与 `§4.11`（`### 4.11 页面主题锁`）不得外移；内容保全核对基线与方法见 §4.3。 |
+| **I2** | `shared/global-rules.md` 新增 **§18「实现期假设处置」**；三句语义（假设归 Trellis 任务 Plan / Design、命中 §7 四条签名即停、会改 AC / 范围 / 可见行为回流 PRD）以 **D186 ②** 为准。**本 RFC 只记落点与语义边界，不复制契约正文。** |
+| **I3** | `shared/closeout.md` 步骤 4 分 A / B 档（A 档 = 原 7 检查点，不动；B 档 = 4 项，测试反模式只作证据观察、不判分）；触发表新增 **「实现类任务（feature / refactor，非 bug fix）→ 4（B 档）」**，标「语义触发行，不自动派生」。**步骤 1 已由既有「任一工作单元收尾 → 1」覆盖，不重复；步骤 7 归提交纪律。** 正文口径同 D186。 |
+| **I4** | 能力宣称 5 处改写 + 1 处澄清（落点见 §1.2；`README.md:123` 不改）。`VETO_WORDS` 只加 4 条精确短语（清单见 §4.6）；**不登记** `closeout.md:149` 与 `README.md:123` 的保留句；**不加** D185 / D186 豁免锚（理由见 §4.6）。 |
 | **I5** | 术语表增第四列「禁用别名」：模板表头、分隔行、占位行同批改 4 格；契约写明「旧三列合法、新写四列」；生产方 `atlas-prd`、消费方 `atlas-e2e` / `atlas-apply` 各加先读；**不新增 `validate_prd` 判据**，存量项目不迁移。 |
 
 ### 2.2 考虑过的备选方案及否定理由 (Considered Alternatives)
@@ -90,8 +90,8 @@ shared/closeout.md:25          任一工作单元收尾 → 1                   
   * *否定理由*：编号新增但无派生路径，且会与 D131 已裁决的步骤 4 并存；改为扩步骤 4 并分档。
 * **备选 G：Reflex 豁免台账 / 视觉冷读 / hover 探针**
   * *否定理由*：台账无读取方；冷读落错 skill（`atlas-design-review` 审决策而非视觉）；hover 当前不可稳定复现。均不采纳。
-* **备选 H：worktrunk `wt merge` / `hash_port`**
-  * *否定理由*：改历史、与提交纪律冲突；D148 不走本地 dev server。不采纳。
+* **备选 H：worktrunk `wt merge` / `hash_port`**（整条不采纳）
+  * *否定理由*：改历史、与提交纪律冲突；D148 不走本地 dev server。另：安装实测失败（§6.2），`wt` 无法进入验证面。
 
 ### 2.3 必须警惕的刺痛代价与兼容性影响 (Trade-offs)
 
@@ -108,11 +108,11 @@ shared/closeout.md:25          任一工作单元收尾 → 1                   
 - [ ] **核心契约**：`shared/global-rules.md`（新增 §18）、`shared/closeout.md`（步骤 4 分档 + 触发表 + `:149` 澄清）、`shared/independent-review.md`（`:192`、`:225`）、`shared/single-source.md:43`、`shared/layout.md:97`、`shared/gates.md` §2.5 一行
 - [ ] **环契约**：`rings/prd/reference.md:86` 术语表四列；`skills/atlas-prd/SKILL.md:14`、`skills/atlas-e2e/SKILL.md`、`skills/atlas-apply/SKILL.md` 先读
 - [ ] **模板**：`templates/prd/global.md:139-141` 四列（表头 / 分隔 / 占位同批）
-- [ ] **技能正文**：`skills/frontend-design/SKILL.md` 外移 ≥2,590 字符（`§4.7/4.11` 保留）
+- [ ] **技能正文**：`skills/frontend-design/SKILL.md` 外移 ≥2,590 字符（`§4.7/4.11` 保留，核对方法见 §4.3）；**只并入既有 `references/*.md`，不新增文件**；若必须新增，同批改 `references/README.md:39-42` 与 `SKILL.md:33`、`:39`
 - [ ] **测试防线**：`tests/test_canonical_consistency.py` 新增判据⑧（`SKILL_BUDGET_CHARS`）、`VETO_WORDS` / `VETO_EXEMPT_ANCHORS` 常量
-- [ ] **留出验证（§4.5）**：不适用 + 触发面核对（见 §4.5）
+- [ ] **留出验证（§4.5）**：三态候选 = `单案修复（无留出集）` + 必填字段（评审确认 / QUEUE 观察行 / 残留风险）+ 锚→路径族映射（见 §4.5）
 - [ ] **地图与计数器**：`docs/map/gates.md:18`（174→175）、`:20`（56→57）、`docs/map/atlas-map.html:510`（174）
-- [ ] **决策记录**：`DESIGN.md` D185 / D186 / D187；D131 行末指向性注记
+- [ ] **决策记录**：`DESIGN.md` D185 / D186 / D187（**候选，待 REVIEW 定案**）；D131 行末条件句注记
 
 **明确不做**：`README.md:123` 不改；不新建 `_manifest.json`；不新增校验器；不改 `scripts/`；不写 REVIEW 文件。
 
@@ -122,12 +122,14 @@ shared/closeout.md:25          任一工作单元收尾 → 1                   
 
 ### 4.1 四批与预期红
 
+> **批 1–3 前置**：**D185 / D186 由独立 REVIEW 定案后才开工**；D187 随判据⑧同批（批 2）。定案前本 RFC 与 DESIGN 行只能是候选。
+
 | 批 | 内容 | 预期红 |
 |---|---|---|
-| **0** | 本 RFC + D185/D186/D187 + `docs/map/gates.md:20` 56→57 + C1/worktrunk 探测 | 无（纯文档 / 地图陈旧行） |
-| **1** | I1 拆分（**不加判据⑧**）；附外移前后 section 清单 | 无；收尾复量 <20,000，`§4.7/4.11` 逐字仍在 |
+| **0** | 本 RFC + D185/D186/D187 + `docs/map/gates.md:20` 56→57 + C1 取证 + worktrunk 安装实测 | 无（纯文档 / 地图陈旧行）；worktrunk 安装失败，C3 转不采纳（§6.2） |
+| **1** | I1 拆分（**不加判据⑧**）；附外移前后 section 清单（三列，见 §4.3）；**只并入既有 `references/*.md`，不新增文件** | 无；收尾 `wc -m` < 20,000；`§4.7` / `§4.11` 与基线 `diff` 为空（§4.3） |
 | **2** | 判据⑧（常量 + 单一断言）+ I5 | 无；若批 1 未完成则判据⑧红 |
-| **3** | I2 + I3 + I4 + §2.5 行 + `VETO_WORDS` + **地图 174→175 同批** | 无；漏改地图 ⇒ `docs/map/gates.md:18` / `atlas-map.html:510` 红；漏改任一宣称 ⇒ 判据⑦红 |
+| **3** | I2 + I3 + I4 + §2.5 行 + `VETO_WORDS` + **地图 174→175 同批** | 无；漏改地图 ⇒ `docs/map/gates.md:18` / `atlas-map.html:510` 红；漏改任一宣称或误登保留句 ⇒ 判据⑦红 |
 | **4（可选）** | B1′：`SKILL.md §14` 六条硬检查标 Floor / Reflex / Finish | 无；复查 I1 预算余量 |
 
 ### 4.2 批 0 验证命令
@@ -141,9 +143,60 @@ python3 scripts/closeout_derive.py --diff-base HEAD --root .
 
 ---
 
+### 4.3 内容保全核对（批 1 专用，可复算）
+
+* **基线**：批 0 提交 `c0acc61` 中的 `skills/frontend-design/SKILL.md`，即 `git show c0acc61:skills/frontend-design/SKILL.md`。
+* **两段锚**：`### 4.7 版面纪律（硬规则）`、`### 4.11 页面主题锁`；每段范围 = 从该标题行到下一个同级或更高级标题之前。
+* **方法**（批 1 收尾执行，输出贴进批 1 提交说明）：
+  1. `git show c0acc61:skills/frontend-design/SKILL.md > /tmp/skill.before.md`
+  2. 从 before / after 各抽两段，分别落 `/tmp/sec47.before` / `/tmp/sec47.after` / `/tmp/sec411.before` / `/tmp/sec411.after`
+  3. `diff -u /tmp/sec47.before /tmp/sec47.after` 与 `diff -u /tmp/sec411.before /tmp/sec411.after` **均须为空**
+  4. `wc -m skills/frontend-design/SKILL.md` **须 < 20000**
+* **section 清单（固定三列，行数 = 实际外移 section 数）**：
+
+| before heading（原文件） | after heading（目标文件） | target file |
+|---|---|---|
+| `## …` | `## …` | `references/<name>.md` |
+
+> 批 1 **只并入既有 `references/*.md`，不新增文件**。若实际必须新增：同批更新 `references/README.md:39-42`（11 中文 / 43 英文 / 54 文件）与 `SKILL.md:33`、`:39`，并在此清单登记；否则这三处保持原值。
+
+### 4.4 批 3 §2.5 新增行（逐字候选，批 3 直接落笔）
+
+| 门 | 对账平面 | 查什么 | **不查什么** | 预算 + 触发物 | 假绿测试（等级） |
+|---|---|---|---|---|---|
+| **实现期假设处置与收口分档**（`global-rules.md` §18 + `closeout.md` 步骤 4 B 档，2026-11-07，`RFC-20261107-01` / D186） | 实现期假设 ⇔ 任务记录 / 收口证据 | `[语义]` ① 实现期新假设落 Trellis 任务 Plan / Design（不另建台账）；② 命中 §7 四条签名动作 ⇒ 先停并取确认；③ 会改变 AC / 范围 / 用户可见行为 ⇒ 回流 PRD 决策；④ 实现类任务（feature / refactor，非 bug fix）收口按步骤 4 B 档 4 项自证：可追溯性 / 纯空白证据命令 / 纯后端验证命令 / 测试反模式（**只作证据观察，不判分**） | 假设**是否真被记录**（无机器判据）；B 档 4 项证据**是否充分**（归独立审查）；测试反模式**是否成立**（只观察）；§7 四条签名之外的越权（归用户确认门） | 实现期任务落笔 / 收口时（人按触发表自查） | **不设机器判据**（语义项，`3509 §96`）；B 档无退出码；不新增校验器 |
+
+---
+
 ### 4.5 留出验证（D156，`shared/gates.md` §2.5）
 
-* **触发面核对**：(a) §1.3 已述，非 `bugs.md` 同根归纳 ⇒ 不触发；(b) 本 RFC 触及门 / 契约判据（判据⑧、判据⑦常量、步骤 4 范围、§2.5 行）⇒ **候选触发**。原始输出如下（批 0 实收）：
+**先分开两件事**：
+
+* **判定权**：三态（`闭族` / `未闭族` / `单案修复（无留出集）`）**只能由独立 REVIEW 判定**；本节只给候选结论与证据，**不构成判定**。
+* **必填字段**（D156；`shared/gates.md:108` + `DESIGN.md:631`）：① 评审确认；② QUEUE 观察行 owner / 补验期限；③ 残留风险。
+
+| 必填项 | 当前状态 |
+|---|---|
+| ① 评审确认 | **待独立 REVIEW**（不自签；REVIEW 结论落 `proposals/REVIEW-20261107-0X-*.md` 后回填此处） |
+| ② QUEUE 观察行 | **草案，未写入** `duty-review/QUEUE.md`：owner = @sunwenzhe；补验期限 = 2026-12-07（默认「下一次相关变更前」，取更早者）；观察项 = 判据⑧ + 判据⑦上线后 30 天内的假阳 / 假阴。**未写入原因**：该文件存在批 0 前的未提交改动，本轮约束「不动、不提交」；待 REVIEW 确认后由维护者写入。 |
+| ③ 残留风险 | ① 判据⑧可被规避（压缩空白 / 塞 frontmatter / 整段搬进单个 references）；② 外移内容是否被模型读取无机器证明（§5 盲区 1–2）；③ 判据⑦新增词若误伤未来合法表述，需人工豁免；④ B 档 4 项无退出码，可能流于形式；⑤ I5 四列模板对存量三列项目存在不迁移窗口。 |
+
+* **触发面 (a)**：§1.3 已述，非 `bugs.md` 同根归纳 ⇒ 不触发。
+* **触发面 (b)**：本 RFC 改门 / 契约判据 ⇒ 机械命中。按 §2.5 要求记「锚 → 路径族」映射与误报：
+
+| 锚（判据落点） | 路径族（DR4 口径 A 聚类单元） | 近 30 天 fix 类提交触达次数 | 误报判读 |
+|---|---|---|---|
+| 判据⑧ / 判据⑦（`tests/test_canonical_consistency.py`） | `tests/` | 7 | 判据高频扩展入口，非同一病根复发 |
+| 判据⑦ 扫描面 + 5 处宣称 | `shared/` | `gates.md` 60 / `independent-review.md` 13 / `closeout.md` 8 / `single-source.md` 3 / `layout.md` 1 | 门登记总账与契约台账，触达来自不同主题的新增 / 修订 |
+| 步骤 4 范围 / `:149` 澄清 | `shared/` | `closeout.md` 8 | 同上 |
+| §2.5 新增行 | `shared/` | `gates.md` 60 | 同上 |
+| I5 术语表四列 | `templates/` / `rings/` / `skills/` | `templates/prd/global.md` 0 / `rings/prd/reference.md` 6 / `skills/*` 1 | 模板与环契约编辑，非缺陷复发 |
+| 文档宣称 | `docs/` | `atlas-map.html` 30 / `changelog.md` 35 / `map/gates.md` 8 / `design/overview.md` 2 | 地图与 changelog 是交付面 |
+
+  * 计数命令：`git log --since="30 days ago" --name-only --pretty=format: --grep='fix\|修\|红\|回归' | sed '/^$/d' | sort | uniq -c | sort -rn`
+  * **误报结论**：口径 A 只数「同一路径 30 天内被 fix 类提交触达 ≥3 次」，**不区分病根**；本 RFC 的锚落在台账类 / 交付面文件上，族计数必然 ≥3，**属机械命中、实质误报**。口径 B（`bugs.md` 段 + 段首同根归纳）未命中（§1.3）。
+* **三态候选（只候选）**：`单案修复（无留出集）`。理由：判据⑧是新增静态上限，无既有判据可翻转；判据⑦只改常量集合、不改判定逻辑；B 档无退出码。若 REVIEW 认定机械命中即须按触发态处理，则**本 RFC 无可行留出集**（迁移由本批自己执行，独立性三条均不成立），应由 REVIEW 明确驳回或接受。
+* **原始输出**（批 0 实收）：
 
 ```text
 $ git diff --name-only
@@ -160,8 +213,22 @@ $ python3 scripts/closeout_derive.py --diff-base HEAD --root .
 [自动] 步骤 1 —— 触发：任一工作单元收尾；改 `DESIGN.md` §12 决策（尤其含「被否：」的行）/ 撤回或收窄某项能力宣称（判据指针：closeout.md §2 步骤 1）
 ```
 
-* **三态结论（候选，最终判定留给独立 REVIEW）**：`单案修复（无留出集）`——理由：判据⑧是新增静态上限，无既有判据翻转面可留出；判据⑦只改常量集合、不改判定逻辑；步骤 4 B 档无退出码。若 REVIEW 认定「契约判据变更」必须留出，则补留出集候选：`skills/frontend-design/SKILL.md` 字符数从 22,590 → <20,000 的单次迁移（独立性存疑：迁移由本批自己执行，见 §5 盲区）。
-* **D 行状态**：D185 / D186 / D187 均标「候选，待独立 REVIEW 定案」；REVIEW 归位后再改为已定案。
+* **D 行状态**：D185 / D186 / D187 均为候选，定案权在独立 REVIEW（见 §4.1 前置）。
+
+### 4.6 批 3 的 `VETO_WORDS`（逐字清单）
+
+```python
+VETO_WORDS = [
+    "不碰业务实现",              # docs/design/overview.md:78
+    "实现过程仍不介入",          # shared/independent-review.md:192
+    "不介入实现过程",            # shared/independent-review.md:225
+    "编码规范不由 atlas 收口",   # shared/single-source.md:43 / shared/layout.md:97
+]
+```
+
+* **不登记** `不做业务代码实现期规范复盘`（`shared/closeout.md:149` 终稿保留该句）；**不登记** `不侵入业务代码实现`（`README.md:123` 保留）。登记任一句都会在批 3 首次跑判据⑦时自红。
+* **不加 D185 / D186 到 `VETO_EXEMPT_ANCHORS`**：判据⑦扫描面 = `docs/**.md`（除 `.vitepress`）+ `shared/**.md` + 顶层 `README.md`（`tests/test_canonical_consistency.py:311-328`）；`DESIGN.md` 与 `proposals/**` **不在扫描面**，加了也对它们无效。5 处宣称同批改写后不留 veto 短语，无需豁免锚；若批 3 实测某行必须保留短语，再在该行同处加 `D186` 指针并单独议锚。
+* **顺序**：改写与登记**同批**（先改后登记），否则未改写的旧句会让判据⑦在批 3 中途红。
 
 ---
 
@@ -183,20 +250,33 @@ $ python3 scripts/closeout_derive.py --diff-base HEAD --root .
 - **缺什么**：①可复现的 compact 触发途径；②压缩前后的规则快照；③「规则是否仍在」的判读口径。
 - **结论**：C1 保持待取证，不进入契约；不编造实录。
 
-### 6.2 worktrunk 可用性探测
+### 6.2 C3 worktrunk —— **不采纳（安装实测失败）**
 
 ```text
 $ command -v wt
 （无输出）
-$ brew info worktrunk
-worktrunk: stable 0.81.0 (bottled), HEAD
-CLI for Git worktree management, designed for parallel AI agent workflows
-Conflicts with: wiredtiger (both install `wt`)
-Not installed
+$ brew list --formula | grep -x worktrunk
+（无输出）
+$ ls -d /opt/homebrew/Cellar/worktrunk
+（不存在）
+$ brew install worktrunk
+…退出 1：Dir.rmdir: Operation not permitted @ dir_s_rmdir
+  - /opt/homebrew/var/homebrew/tmp/.cellar/verify-…/homebrew-tar…
+  from unpack_strategy/tar.rb:40 → sandbox_operation.rb:31
 ```
 
-- **结论**：可安装（brew 有 bottled formula），**未安装**，可用性未验证；`wt` 与 `wiredtiger` 存在二进制名冲突。
-- **处置**：按拍板「装不上才删」——可安装 ⇒ C3 保留在待取证，不删除；不自行安装（系统变更待确认）。
+尝试记录（4 次，均为同一失败点）：
+
+| # | 方式 | 结果 |
+|---|---|---|
+| 1 | `brew install worktrunk`（默认） | 失败：`sandbox_operation.rb extract` 内 `Dir.rmdir` EPERM |
+| 2 | 关闭 Trae 沙箱后重跑 | 同一失败点 |
+| 3 | `HOMEBREW_NO_SANDBOX=1` | 同一失败点 |
+| 4 | `HOMEBREW_TEMP=/tmp/brew-tmp` | 同一失败点（仍落在 `/opt/homebrew/var/homebrew/tmp/.cellar`） |
+
+* **结论**：**装不上**（Homebrew 解包阶段的临时目录清理被系统拒绝），`wt --version` / `wt list --help` 无法实测。
+* **处置**：按拍板「装不上就整条删除，记入不采纳」——**C3 整条删除**，不保留半条；`wt merge` / `hash_port` 一并归入已否的备选 H（§2.2），不再单列。
+* **残留痕迹**：无（`wt` 不在 PATH、`brew list` 无 `worktrunk`、`Cellar` 无目录）。
 
 ---
 
@@ -204,8 +284,8 @@ Not installed
 
 | 既有条款 | 咬合关系 | 本批动作 |
 |---|---|---|
-| `DESIGN.md:600` D131（步骤 4 = bug fix 7 检查点） | 本批扩其作用域 | D186 明文扩面；D131 行末补指向注记，正文不动 |
-| `DESIGN.md:631` D156（留出验证三态） | 本 RFC 候选触发 | §4.5 只写候选结论，由 REVIEW 定 |
+| `DESIGN.md` D131（步骤 4 = bug fix 7 检查点） | 本批拟扩其作用域（**以 D186 定案为前提**） | D186 明文扩面；D131 行末注记已改为条件句（「若 D186 定案…」），正文不动 |
+| `DESIGN.md` D156（留出验证三态） | 本 RFC 机械命中触发面 (b) | §4.5 只写候选结论与必填字段，判定归 REVIEW |
 | `DESIGN.md:653` D177（前端复用记录归任务） | 与「假设记录归 Trellis」同源 | 不引用 D177；由 D186 承载 |
 | `shared/gates.md` §2.5（流程门 10 行） | 新增 1 行纪律 | 174→175，地图同批 |
 | `tests/test_canonical_consistency.py:301-328`（判据⑦） | 宣称守卫 | 同批改写后再加 `VETO_WORDS` |
