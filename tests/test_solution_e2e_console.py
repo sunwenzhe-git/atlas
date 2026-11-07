@@ -48,7 +48,8 @@ def make_solution(tmp_path: Path) -> Path:
         [("web", "web", "frontend"), ("api", "api", "backend")],
         install=False,
     )
-    git(tmp_path, "add", "atlas.config.yaml", "atlas.solution.yaml", "product")
+    git(tmp_path, "add", "atlas.config.yaml", "atlas.solution.yaml",
+        "atlas.solution.lock.json", "product")
     git(tmp_path, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "assets")
     return tmp_path
 
@@ -70,7 +71,8 @@ def test_non_ascii_member_path(tmp_path: Path) -> None:
     member = make_repo(tmp_path / "web 测试", {"src/a.js": "export const a = 1;\n"})
     core.init_solution(tmp_path, "demo", [("web 测试", "web 测试", "frontend")],
                        install=False)
-    git(tmp_path, "add", "atlas.config.yaml", "atlas.solution.yaml", "product")
+    git(tmp_path, "add", "atlas.config.yaml", "atlas.solution.yaml",
+        "atlas.solution.lock.json", "product")
     git(tmp_path, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "assets")
     assert console.repo_git_dirty(tmp_path) is False
     (member / "src" / "a.js").write_text("export const a = 2;\n", encoding="utf-8")
