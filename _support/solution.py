@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""atlas solution —— 多仓方案层（Phase 1：federated）。
+"""atlas solution —— 多仓方案层（federated + pinned workspace）。
 
-本模块只做 Phase 1 的只读整合：
-- 清单 / 锁的解析与校验；
-- 成员 git 状态、Atlas 资产存在性、ignore / gitlink / 非 git 守卫；
-- 跨仓契约文件指纹；
-- `status` / `check` / `lock` / `init` / `adopt`。
+Phase 1 提供只读整合：清单 / 锁解析、成员 git 状态、ignore / gitlink / 非 git 守卫、
+跨仓契约指纹、`status` / `check` / `lock` / `init` / `adopt`。
+
+本次增量（Unreleased）把锁升级为可复现基线：
+- 清单可记录 `members[].url`；URL 做 scheme 白名单并拒绝内嵌凭据；
+- 锁记录成员 `url / branch / head(commit)`，作为 `check --strict` 的判据；
+- `check --strict` 把锁缺失 / 锁未跟踪 / 版本或契约漂移 / dirty / 缺 URL 升为 FAIL；
+- `diff` 只读对账：成员相对锁的提交 / diffstat 与工作区改动。
+
+CI 按锁还原由流水线自行 clone + checkout 承担（见 `shared/solution.md` §5.1），本模块不提供自动还原命令。
 
 **不做**：unified 资产搬迁、成员代码提交（solution_commit）、impact / closeout 多根对账。
 这些属于 Phase 2/3；遇到 `mode: unified` 必须显式拒绝，不得静默降级。
@@ -23,6 +28,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlsplit, urlunsplit
 
 MANIFEST_NAME = "atlas.solution.yaml"
 LOCK_NAME = "atlas.solution.lock.json"
@@ -94,6 +100,76 @@ def _scalar(raw: str):
     return v
 
 
+_URL_SCHEMES = ("http", "https", "ssh", "git", "file")
+_CREDENTIAL_QUERY = re.compile(
+    r"(?:^|[?&])(?:access_token|private_token|token|auth|key|sig|signature|"
+    r"x-amz-signature|x-amz-credential|x-amz-security-token)=", re.I)
+_SCP_LIKE = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:[^/].*$")
+
+
+def _redact_url(raw: str) -> str:
+    """错误信息里的脱敏展示：只遮蔽 userinfo 与 token 查询参数。"""
+    try:
+        parts = urlsplit(raw)
+    except ValueError:
+        return "<redacted>"
+    netloc = parts.netloc
+    if "@" in netloc:
+        user = netloc.rsplit("@", 1)[0]
+        masked = "***" if ":" not in user else f"{user.split(':', 1)[0]}:***"
+        netloc = f"{masked}@{netloc.rsplit('@', 1)[1]}"
+    query = re.sub(
+        r"(?i)((?:access_token|private_token|token|auth|key|sig|signature|"
+        r"x-amz-signature|x-amz-credential|x-amz-security-token)=)[^&]*",
+        r"\1***", parts.query)
+    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+
+
+def _validate_url(raw, field: str) -> str | None:
+    """成员仓远端地址：scheme 白名单 + 拒绝内嵌凭据 / 参数注入。
+
+    允许 http/https/ssh/git/file、SCP 形式 `user@host:path`、本地绝对或 ./ 路径；
+    拒绝 `ext::`（git 可执行命令）、前导 `-`、控制字符 / 空白。
+    http(s) 的 userinfo 与常见 token 查询参数一律拒绝，避免凭据落进清单与锁。
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    if s.startswith("-") or re.search(r"[\x00-\x1f\s]", s):
+        raise SolutionError(f"{field} 含非法字符（控制字符 / 空白 / 前导 -）: {raw!r}")
+    parts = urlsplit(s)
+    scheme = parts.scheme.lower()
+    if scheme:
+        if scheme not in _URL_SCHEMES:
+            raise SolutionError(
+                f"{field} 的 scheme 不在白名单（{'/'.join(_URL_SCHEMES)}）: {raw!r}")
+        if scheme in ("http", "https", "file") and (parts.username or parts.password):
+            raise SolutionError(
+                f"{field} 含内嵌凭据（userinfo），禁止写入清单/锁；"
+                f"请改用 SSH 或凭据管理器: {_redact_url(s)!r}")
+        if parts.password:
+            raise SolutionError(
+                f"{field} 含密码，禁止写入清单/锁；请改用 SSH 或凭据管理器: "
+                f"{_redact_url(s)!r}")
+        if _CREDENTIAL_QUERY.search(parts.query):
+            raise SolutionError(
+                f"{field} 查询参数含 token/签名，禁止写入清单/锁: {_redact_url(s)!r}")
+        return s
+    if _SCP_LIKE.match(s):
+        # SCP 形式只允许 user@host:path；出现 user:pass@ 视为密码。
+        userinfo = s.split("@", 1)[0]
+        if ":" in userinfo:
+            raise SolutionError(
+                f"{field} 含内嵌密码，禁止写入清单/锁: {_redact_url(s)!r}")
+        return s
+    if s.startswith("/") or s.startswith("./") or s.startswith("../"):
+        return s
+    raise SolutionError(
+        f"{field} 不是受支持的仓库地址（需要 scheme 白名单、SCP 形式或本地路径）: {raw!r}")
+
+
 def parse_manifest_text(text: str) -> dict:
     """解析 `atlas.solution.yaml` 的受限 YAML 子集。
 
@@ -153,7 +229,7 @@ def parse_manifest_text(text: str) -> dict:
             key, val = s.split(":", 1)
             key = key.strip()
             known = {
-                "members": ("name", "path", "assets", "kind", "stack_profile"),
+                "members": ("name", "path", "url", "assets", "kind", "stack_profile"),
                 "contracts": ("id", "producer", "producer_path", "consumer", "consumer_path"),
                 "requirements": ("id", "acs", "member", "task_slug", "assignee", "scope"),
             }[section]
@@ -213,6 +289,7 @@ def validate_manifest(data: dict, root: Path, phase1: bool = True) -> dict:
         members.append({
             "name": mname,
             "path": mpath,
+            "url": _validate_url(item.get("url"), f"members[{mname}].url"),
             "assets": assets,
             "kind": str(item.get("kind") or "fullstack").strip() or "fullstack",
             "stack_profile": str(item.get("stack_profile") or "").strip(),
@@ -309,6 +386,11 @@ def _git(cwd: Path, *args: str, timeout: int = 15) -> tuple[int, str, str]:
     return p.returncode, p.stdout, p.stderr
 
 
+def _git_lines(cwd: Path, *args: str, timeout: int = 15) -> list[str] | None:
+    rc, out, _ = _git(cwd, *args, timeout=timeout)
+    return out.splitlines() if rc == 0 else None
+
+
 def _is_git(path: Path) -> bool:
     """成员必须是**自己的仓根**；仅位于 solution 根工作树内不算。"""
     if not path.is_dir():
@@ -324,6 +406,13 @@ def _is_git(path: Path) -> bool:
 
 def _head(path: Path) -> str | None:
     rc, out, _ = _git(path, "rev-parse", "HEAD")
+    return out.strip() if rc == 0 and out.strip() else None
+
+
+def _member_url(path: Path) -> str | None:
+    if not _is_git(path):
+        return None
+    rc, out, _ = _git(path, "remote", "get-url", "origin")
     return out.strip() if rc == 0 and out.strip() else None
 
 
@@ -417,18 +506,40 @@ def _pattern_matches(pattern: str, rel: str) -> bool:
     return regex.match(rel) is not None
 
 
+def _ignore_sources(root: Path, rel: str) -> list[tuple[str, Path]]:
+    """成员路径上所有可能生效的 ignore 文件：根级 + 逐级祖先目录。
+
+    `.gitignore` / `.ignore` / `.rgignore` 在子目录同样生效；只查根级会漏掉
+    `apps/.ignore` 这类嵌套规则。返回 (相对该 ignore 文件的目录, 文件路径)。
+    """
+    sources: list[tuple[str, Path]] = []
+    for name in (".gitignore", ".ignore", ".rgignore"):
+        path = root / name
+        if path.is_file():
+            sources.append(("", path))
+    base = PurePosixPath()
+    for part in PurePosixPath(rel).parts[:-1]:
+        base = base / part
+        for name in (".gitignore", ".ignore", ".rgignore"):
+            path = root / base / name
+            if path.is_file():
+                sources.append((base.as_posix(), path))
+    exclude = root / ".git" / "info" / "exclude"
+    if exclude.is_file():
+        sources.append(("", exclude))
+    return sources
+
+
 def _ignored_by_file(root: Path, rel: str) -> list[str]:
     reasons: list[str] = []
-    ignore_files = [
-        root / ".gitignore", root / ".ignore", root / ".rgignore",
-        root / ".git" / "info" / "exclude",
-    ]
-    for path in ignore_files:
+    rel_path = PurePosixPath(rel)
+    for base, path in _ignore_sources(root, rel):
+        sub = rel if not base else rel_path.relative_to(base).as_posix()
         ignored = False
         for pattern in _ignore_patterns(path):
             neg = pattern.startswith("!")
             body = pattern[1:].strip() if neg else pattern
-            if _pattern_matches(body, rel):
+            if _pattern_matches(body, sub):
                 ignored = not neg
         if ignored:
             reasons.append(str(path.relative_to(root)))
@@ -450,11 +561,35 @@ def _tracked_member_paths(root: Path, rel: str) -> list[str]:
     return [ln for ln in out.splitlines() if ln.strip()]
 
 
+def _assert_members_untracked(root: Path, entries: list[dict]) -> None:
+    """init/adopt 写清单前硬拒绝：成员路径已被父仓跟踪（含 submodule gitlink）。
+
+    只 WARN 会让“父仓 diff 看不到成员内容”的假象被带进新方案；
+    这里要求先解除跟踪，工作区文件保留。
+    """
+    for m in entries:
+        tracked = _tracked_member_paths(root, m["path"])
+        if not tracked:
+            continue
+        gitlinks = [ln for ln in tracked if ln.split(maxsplit=1)[0] == "160000"]
+        if gitlinks:
+            raise SolutionError(
+                f"成员 {m['name']} 路径 {m['path']} 已被 solution 仓登记为 submodule/gitlink"
+                f"（mode 160000，{len(gitlinks)} 条）。请先执行 `git rm --cached {m['path']}` "
+                f"并删除 .gitmodules 中对应条目（保留工作区文件），再重试；"
+                "不要把 submodule 与 solution 混用。")
+        raise SolutionError(
+            f"成员 {m['name']} 路径 {m['path']} 已被 solution 仓跟踪（{len(tracked)} 条）。"
+            f"请先执行 `git rm -r --cached {m['path']}`（保留工作区），"
+            "确认 .gitignore/.ignore/.rgignore 不命中该路径，再重试。")
+
+
 def member_state(root: Path, member: dict) -> dict:
     path = (root / member["path"]).resolve()
     state = {
         "name": member["name"],
         "path": member["path"],
+        "url": member.get("url") or None,
         "exists": path.is_dir(),
         "git": _is_git(path),
         "branch": None,
@@ -481,6 +616,12 @@ def member_state(root: Path, member: dict) -> dict:
         state["head"] = _head(path)
         state["dirty"] = _status_lines(path)
         state["atlas_baseline"] = _atlas_baseline(path)
+        if not state["url"]:
+            try:
+                # origin 可能内嵌凭据：非法地址不进入状态，避免 status --json 泄露。
+                state["url"] = _validate_url(_member_url(path), f"member {member['name']}.url")
+            except SolutionError:
+                state["url"] = None
     return state
 
 
@@ -497,40 +638,62 @@ def _sha256_file(path: Path) -> str:
         return "missing"
 
 
+def _safe_member_file(root: Path, member_rel: str, file_rel: str) -> Path | None:
+    """契约文件必须落在 solution 根内；symlink 指向根外时返回 None，不读外部文件。"""
+    root_r = root.resolve()
+    member_dir = (root / member_rel).resolve()
+    try:
+        member_dir.relative_to(root_r)
+    except ValueError:
+        return None
+    target = (member_dir / file_rel).resolve()
+    try:
+        target.relative_to(root_r)
+    except ValueError:
+        return None
+    return target
+
+
 def contract_states(root: Path, data: dict) -> list[dict]:
     by_name = {m["name"]: m for m in data["members"]}
     out: list[dict] = []
     for c in data.get("contracts") or []:
-        producer = root / by_name[c["producer"]]["path"] / c["producer_path"]
-        consumer = root / by_name[c["consumer"]]["path"] / c["consumer_path"]
+        producer = _safe_member_file(root, by_name[c["producer"]]["path"], c["producer_path"])
+        consumer = _safe_member_file(root, by_name[c["consumer"]]["path"], c["consumer_path"])
         out.append({
             "id": c["id"],
             "producer": c["producer"],
             "producer_path": c["producer_path"],
-            "producer_sha256": _sha256_file(producer),
+            "producer_sha256": _sha256_file(producer) if producer else "missing",
             "consumer": c["consumer"],
             "consumer_path": c["consumer_path"],
-            "consumer_sha256": _sha256_file(consumer),
+            "consumer_sha256": _sha256_file(consumer) if consumer else "missing",
         })
     return out
 
 
 def lock_payload(root: Path, data: dict) -> dict:
+    members: list[dict] = []
+    for m in data["members"]:
+        s = member_state(root, m)
+        if s["git"] and s.get("branch") == "HEAD":
+            raise SolutionError(
+                f"成员 {s['name']} 处于 detached HEAD（branch=HEAD）；"
+                "请先切回分支再执行 lock --update，避免锁里写入不可复现的分支名")
+        members.append({
+            "name": s["name"],
+            "path": s["path"],
+            "url": m.get("url"),
+            "branch": s["branch"],
+            "head": s["head"],
+            "atlas_baseline": s["atlas_baseline"],
+        })
     return {
         "schema_version": SCHEMA_VERSION,
         "solution": data["solution"],
         "mode": data["mode"],
         "locked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "members": [
-            {
-                "name": s["name"],
-                "path": s["path"],
-                "branch": s["branch"],
-                "head": s["head"],
-                "atlas_baseline": s["atlas_baseline"],
-            }
-            for s in (member_state(root, m) for m in data["members"])
-        ],
+        "members": members,
         "contracts": contract_states(root, data),
     }
 
@@ -554,6 +717,19 @@ def read_lock(root: Path) -> dict | None:
         if not isinstance(val, list) or any(not isinstance(item, dict) for item in val):
             return None
     return data
+
+
+def lock_tracking(root: Path) -> dict:
+    """锁文件是否被父仓跟踪、且与父仓 HEAD 一致（CI 复现的前提）。"""
+    if not _is_git(root):
+        return {"tracked": False, "consistent": None}
+    rc, _, _ = _git(root, "ls-files", "--error-unmatch", "--", LOCK_NAME)
+    tracked = rc == 0
+    consistent = None
+    if tracked:
+        rc2, _, _ = _git(root, "diff", "--quiet", "HEAD", "--", LOCK_NAME)
+        consistent = rc2 == 0
+    return {"tracked": tracked, "consistent": consistent}
 
 
 # ---------------------------------------------------------------- init / adopt
@@ -604,10 +780,17 @@ def _install_atlas(root: Path, assets_root: str) -> None:
         raise SolutionError("装配 .atlas 不完整（缺 VERSION 或 shared/solution.md）；请重试")
 
 
-def _member_entries(members: list[tuple[str, str, str]]) -> list[dict]:
+def _member_entries(members: list[tuple], root: Path | None = None) -> list[dict]:
     out: list[dict] = []
-    for name, path, kind in members:
-        out.append({"name": name, "path": _safe_rel(path, f"member {name}.path"),
+    for item in members:
+        name, path, kind = item[0], item[1], item[2]
+        explicit_url = item[3] if len(item) > 3 else None
+        rel = _safe_rel(path, f"member {name}.path")
+        url = explicit_url
+        if not url and root is not None:
+            url = _member_url(Path(root) / rel)
+        out.append({"name": name, "path": rel,
+                    "url": _validate_url(url, f"member {name}.url"),
                     "assets": "member", "kind": kind or "fullstack"})
     return out
 
@@ -639,6 +822,10 @@ def _manifest_text(name: str, members: list[dict], contracts: list[dict] | None 
         lines += [
             f"  - name: {m['name']}",
             f"    path: {m['path']}",
+        ]
+        if m.get("url"):
+            lines.append(f"    url: {_yaml_value(m['url'])}")
+        lines += [
             "    assets: member",
             f"    kind: {m.get('kind') or 'fullstack'}",
         ]
@@ -764,7 +951,7 @@ status: draft
 """)
 
 
-def init_solution(root: Path, name: str, members: list[tuple[str, str, str]],
+def init_solution(root: Path, name: str, members: list[tuple],
                   assets_root: str = "product", install: bool = True,
                   contracts: list[dict] | None = None,
                   requirements: list[dict] | None = None) -> Path:
@@ -772,9 +959,11 @@ def init_solution(root: Path, name: str, members: list[tuple[str, str, str]],
     if manifest_path(root).exists():
         raise SolutionError(f"{MANIFEST_NAME} 已存在：{manifest_path(root)}")
     name = _validate_name(name, "solution 名称")
-    entries = _member_entries(members)
+    entries = _member_entries(members, root)
     if not entries:
         raise SolutionError("Phase 1 至少需要一个成员仓（--member name=path）")
+    # 写清单前硬拒绝：成员已被父仓跟踪（含 gitlink）时不进入 solution 模型。
+    _assert_members_untracked(root, entries)
     validate_manifest({
         "version": SCHEMA_VERSION,
         "solution": name,
@@ -798,6 +987,12 @@ def init_solution(root: Path, name: str, members: list[tuple[str, str, str]],
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(_manifest_text(name, entries, contracts, requirements), encoding="utf-8")
     tmp.replace(path)
+    # 成员齐全且不在 detached HEAD 时立即写入首版锁：
+    # init 即钉住一组可复现版本；成员尚未 clone 时暂不写，避免 head=None 的“假锁”。
+    data = load_manifest(root)
+    states = [member_state(root, m) for m in data["members"]]
+    if all(s["git"] and s.get("branch") not in (None, "HEAD") for s in states):
+        write_lock(root, data)
     return path
 
 
@@ -816,7 +1011,7 @@ def detect_members(root: Path) -> list[tuple[str, str, str]]:
 def adopt_solution(root: Path, name: str, members: list[tuple[str, str, str]] | None = None,
                    assets_root: str = "product", install: bool = True) -> tuple[Path, list[dict]]:
     root = Path(root).resolve()
-    entries = _member_entries(members or detect_members(root))
+    entries = _member_entries(members or detect_members(root), root)
     if not entries:
         raise SolutionError("未检测到带 Atlas 资产的成员仓；请用 --member name=path 显式指定")
     path = init_solution(root, name, [(m["name"], m["path"], m.get("kind", "fullstack"))
@@ -834,6 +1029,12 @@ def status(root: Path) -> dict:
     data = load_manifest(root)
     states = [member_state(root, m) for m in data["members"]]
     lock = read_lock(root)
+    for s in states:
+        prev = _lock_member(lock, s["name"])
+        s["locked_head"] = (prev or {}).get("head")
+        s["head_drift"] = bool(prev and prev.get("head")
+                               and prev.get("head") != s.get("head"))
+        s["dirty_count"] = len(s["dirty"]) if isinstance(s.get("dirty"), list) else None
     return {
         "solution": data["solution"],
         "mode": data["mode"],
@@ -860,19 +1061,20 @@ def _lock_contract(lock: dict | None, cid: str) -> dict | None:
     return None
 
 
-def check_solution(root: Path) -> dict:
+def check_solution(root: Path, strict: bool = False) -> dict:
     root = Path(root).resolve()
     data = load_manifest(root)
     results: list[dict] = []
+    level = "FAIL" if strict else "WARN"
     add = lambda name, status, detail: results.append(
         {"check": name, "status": status, "detail": detail})
 
     add("清单 schema", "PASS", f"{data['solution']} / {data['mode']} / {len(data['members'])} 成员")
     if not _is_git(root):
-        add("solution 根", "WARN", "不是 git 仓；成员 untracked 没有基线，建议先 git init")
+        add("solution 根", level, "不是 git 仓；成员 untracked 没有基线，建议先 git init")
     rc, cfg_out, _ = _git(root, "config", "--get", "status.showUntrackedFiles")
     if rc == 0 and cfg_out.strip().lower() == "no":
-        add("git 配置", "WARN",
+        add("git 配置", level,
             "status.showUntrackedFiles=no 会盲掉 _graph / atlas_check / e2e_console")
     if data.get("unknown"):
         add("清单未知键", "WARN", "；".join(data["unknown"]))
@@ -890,64 +1092,92 @@ def check_solution(root: Path) -> dict:
 
     lock = read_lock(root)
     contracts_now = contract_states(root, data)
+    if lock is not None:
+        tracking = lock_tracking(root)
+        if not tracking["tracked"]:
+            add("契约锁跟踪", level,
+                f"{LOCK_NAME} 未被父仓 Git 跟踪；CI 无法从父仓 commit 还原锁定版本")
+        elif tracking["consistent"] is False:
+            add("契约锁跟踪", level,
+                f"{LOCK_NAME} 与父仓 HEAD 不一致；请提交锁文件后再跑 CI")
     if lock is None:
-        add("契约锁", "WARN", f"缺少 {LOCK_NAME}；运行 atlas solution lock --update")
+        add("契约锁", level, f"缺少 {LOCK_NAME}；运行 atlas solution lock --update")
     else:
         for s in data["members"]:
             prev = _lock_member(lock, s["name"])
             cur = member_state(root, s)
             if prev is None:
-                add(f"锁/{s['name']}", "WARN", "锁中没有该成员")
+                add(f"锁/{s['name']}", level, "锁中没有该成员")
                 continue
+            if not prev.get("head"):
+                add(f"锁/{s['name']}", level, "锁中没有 commit，无法复现成员版本")
             if prev.get("head") != cur.get("head"):
-                add(f"锁/{s['name']}", "WARN",
+                add(f"锁/{s['name']}", level,
                     f"HEAD 漂移：锁定 {str(prev.get('head'))[:12]} → 当前 {str(cur.get('head'))[:12]}")
             if prev.get("branch") != cur.get("branch"):
-                add(f"锁/{s['name']}", "WARN",
+                add(f"锁/{s['name']}", level,
                     f"分支漂移：锁定 {prev.get('branch')!r} → 当前 {cur.get('branch')!r}")
             if prev.get("atlas_baseline") != cur.get("atlas_baseline"):
-                add(f"锁/{s['name']}", "WARN",
+                add(f"锁/{s['name']}", level,
                     f"成员 Atlas baseline 漂移：锁定 {str(prev.get('atlas_baseline'))[:12]} → "
                     f"当前 {str(cur.get('atlas_baseline'))[:12]}")
+            if prev.get("path") != s["path"]:
+                add(f"锁/{s['name']}", level,
+                    f"锁中 path={prev.get('path')!r} 与清单 {s['path']!r} 不一致")
+            manifest_url = s.get("url") or ""
+            lock_url = prev.get("url") or ""
+            if not manifest_url and not lock_url:
+                if strict:
+                    add(f"锁/{s['name']}", "FAIL",
+                        "清单与锁都没有 url；新机器 / CI 无法 bootstrap 成员")
+            elif lock_url != manifest_url:
+                add(f"锁/{s['name']}", level,
+                    "锁中 url 与清单不一致；重新执行 lock --update 并提交")
         for c in contracts_now:
             prev = _lock_contract(lock, c["id"])
             if prev is None:
-                add(f"锁/契约 {c['id']}", "WARN", "锁中没有该契约")
+                add(f"锁/契约 {c['id']}", level, "锁中没有该契约")
                 continue
             for side in ("producer_sha256", "consumer_sha256"):
                 if prev.get(side) != c[side]:
-                    add(f"锁/契约 {c['id']}", "WARN", f"{side} 漂移（需人工确认跨仓影响）")
+                    add(f"锁/契约 {c['id']}", level, f"{side} 漂移（需人工确认跨仓影响）")
         member_names = {m["name"] for m in data["members"]}
         contract_ids = {c["id"] for c in contracts_now}
         for lm in lock.get("members") or []:
             if lm.get("name") not in member_names:
-                add("锁", "WARN", f"锁中成员已不在清单: {lm.get('name')}")
+                add("锁", level, f"锁中成员已不在清单: {lm.get('name')}")
         for lc in lock.get("contracts") or []:
             if lc.get("id") not in contract_ids:
-                add("锁", "WARN", f"锁中契约已不在清单: {lc.get('id')}")
+                add("锁", level, f"锁中契约已不在清单: {lc.get('id')}")
     for c in contracts_now:
         missing = [side for side in ("producer_sha256", "consumer_sha256")
                    if c[side] == "missing"]
         if missing:
-            add(f"契约 {c['id']}", "WARN",
+            add(f"契约 {c['id']}", level,
                 "文件缺失：" + "、".join(side.replace("_sha256", "") for side in missing))
 
     for m in data["members"]:
         s = member_state(root, m)
         prefix = f"成员 {s['name']}"
         if not s["exists"]:
-            add(prefix, "WARN", f"路径不存在: {s['path']}")
+            add(prefix, level, f"路径不存在: {s['path']}")
             continue
         if s["escaped"]:
-            add(prefix, "WARN", "成员路径 resolve 后逃逸出 solution 根（symlink？）")
+            add(prefix, level, "成员路径 resolve 后逃逸出 solution 根（symlink？）")
         if not s["git"]:
-            add(prefix, "WARN", "不是 git 仓")
+            add(prefix, level, "不是 git 仓")
         if not s["atlas_assets"]:
             add(prefix, "WARN", "未检测到 Atlas 资产（atlas.config.yaml / product/stack-profile.yaml / 结构 meta）")
         if s["ignored"]:
-            add(prefix, "WARN", "成员路径命中 ignore：" + "、".join(s["ignored"]))
+            add(prefix, level, "成员路径命中 ignore：" + "、".join(s["ignored"]))
         if s["tracked"]:
-            add(prefix, "WARN", f"成员路径已被 solution 仓跟踪（{len(s['tracked'])} 条，疑似 gitlink）")
+            add(prefix, level, f"成员路径已被 solution 仓跟踪（{len(s['tracked'])} 条，疑似 gitlink）")
+        if strict and s["git"]:
+            if s["dirty"] is None:
+                add(prefix, "FAIL", "无法判断工作区是否 dirty（git status 失败）")
+            elif s["dirty"]:
+                add(prefix, "FAIL",
+                    f"工作区有 {len(s['dirty'])} 处未提交改动；strict 要求成员干净")
         if s.get("unknown"):
             add(prefix, "WARN", "成员未知键：" + "、".join(s["unknown"]))
 
@@ -978,9 +1208,60 @@ def check_solution(root: Path) -> dict:
         add("Trellis packages", "SKIP",
             "solution 根无 .trellis/config.yaml（Phase 1 不生成；Phase 2）")
 
-    overall = "WARN" if any(r["status"] == "WARN" for r in results) else "PASS"
+    if any(r["status"] == "FAIL" for r in results):
+        overall = "FAIL"
+    elif any(r["status"] == "WARN" for r in results):
+        overall = "WARN"
+    else:
+        overall = "PASS"
     return {"solution": data["solution"], "mode": data["mode"],
             "overall": overall, "checks": results}
+
+
+def diff_solution(root: Path) -> dict:
+    """只读对账：每个成员相对锁的提交、diffstat 与工作区改动。"""
+    root = Path(root).resolve()
+    data = load_manifest(root)
+    lock = read_lock(root)
+    members: list[dict] = []
+    for m in data["members"]:
+        path = (root / m["path"]).resolve()
+        prev = _lock_member(lock, m["name"]) or {}
+        entry = {
+            "name": m["name"],
+            "path": m["path"],
+            "git": _is_git(path),
+            "branch": None,
+            "head": None,
+            "locked_head": prev.get("head"),
+            "lock_commit_present": None,
+            "commits": [],
+            "diffstat": [],
+            "staged": [],
+            "unstaged": [],
+            "worktree": [],
+            "worktree_ok": None,
+        }
+        if entry["git"]:
+            entry["branch"] = _branch(path)
+            entry["head"] = _head(path)
+            locked = prev.get("head")
+            if locked:
+                rc, _, _ = _git(path, "cat-file", "-e", f"{locked}^{{commit}}")
+                entry["lock_commit_present"] = rc == 0
+                if rc == 0 and locked != entry["head"]:
+                    entry["commits"] = _git_lines(
+                        path, "log", "--oneline", "--max-count=50",
+                        f"{locked}..HEAD") or []
+                    entry["diffstat"] = _git_lines(
+                        path, "diff", "--stat", f"{locked}..HEAD") or []
+            entry["staged"] = _git_lines(path, "diff", "--cached", "--stat") or []
+            entry["unstaged"] = _git_lines(path, "diff", "--stat") or []
+            worktree = _status_lines(path)
+            entry["worktree_ok"] = worktree is not None
+            entry["worktree"] = worktree or []
+        members.append(entry)
+    return {"solution": data["solution"], "mode": data["mode"], "members": members}
 
 
 def _assets_root(root: Path) -> str:
@@ -999,13 +1280,19 @@ def render_status(data: dict) -> str:
     lines = [f"solution: {data['solution']} ({data['mode']})", "members:"]
     for s in data["members"]:
         head = (s.get("head") or "—")[:12]
-        dirty = "clean" if s.get("dirty") == [] else (
-            "dirty" if s.get("dirty") else "n/a")
+        dirty_n = s.get("dirty_count")
+        dirty = "clean" if dirty_n == 0 else (f"dirty:{dirty_n}" if dirty_n else "n/a")
         ignored = "ignored" if s.get("ignored") else "ok"
+        if s.get("head_drift"):
+            drift = "drift"
+        elif s.get("locked_head"):
+            drift = "locked"
+        else:
+            drift = "no-lock"
         lines.append(
             f"  {s['name']:<16} {s['path']:<20} git={str(s['git']).lower():<5} "
-            f"branch={s.get('branch') or '—':<12} head={head:<12} {dirty:<5} "
-            f"atlas={'yes' if s['atlas_assets'] else 'no':<3} {ignored}")
+            f"branch={s.get('branch') or '—':<12} head={head:<12} {dirty:<8} "
+            f"{drift:<7} atlas={'yes' if s['atlas_assets'] else 'no':<3} {ignored}")
     lines.append(f"lock: {'present' if data['lock']['present'] else 'missing'}"
                  + (f" ({data['lock']['locked_at']})" if data['lock'].get('locked_at') else ""))
     return "\n".join(lines)
@@ -1015,4 +1302,42 @@ def render_check(data: dict) -> str:
     lines = [f"solution check: {data['overall']}"]
     for r in data["checks"]:
         lines.append(f"  [{r['status']}] {r['check']}: {r['detail']}")
+    return "\n".join(lines)
+
+
+def render_diff(data: dict) -> str:
+    lines = [f"solution diff: {data['solution']} ({data['mode']})"]
+    for m in data["members"]:
+        if not m["git"]:
+            lines.append(f"  [{m['name']}] {m['path']}  ! 不是 git 仓")
+            continue
+        locked = (m.get("locked_head") or "—")[:12]
+        lines.append(
+            f"  [{m['name']}] {m['path']} branch={m.get('branch') or '—'} "
+            f"head={(m.get('head') or '—')[:12]} locked={locked}")
+        if not m.get("locked_head"):
+            lines.append("    lock=—（未锁定，仅显示工作区）")
+        elif m.get("lock_commit_present") is False:
+            lines.append("    ! 锁中 commit 不在本地；请先 fetch 对应成员")
+        elif m["commits"]:
+            lines.append(f"    自锁以来提交 {len(m['commits'])} 条:")
+            lines += [f"      {c}" for c in m["commits"]]
+            if m["diffstat"]:
+                lines.append("    自锁以来 diffstat:")
+                lines += [f"      {c}" for c in m["diffstat"]]
+        if m["staged"]:
+            lines.append("    已暂存:")
+            lines += [f"      {c}" for c in m["staged"]]
+        if m["unstaged"]:
+            lines.append("    未暂存:")
+            lines += [f"      {c}" for c in m["unstaged"]]
+        if m["worktree"]:
+            lines.append(f"    工作区 {len(m['worktree'])} 项:")
+            lines += [f"      {c}" for c in m["worktree"][:30]]
+            if len(m["worktree"]) > 30:
+                lines.append(f"      …（其余 {len(m['worktree']) - 30} 项省略）")
+        if m.get("worktree_ok") is False:
+            lines.append("    ! git status 失败，无法判断工作区")
+        if not any((m["commits"], m["staged"], m["unstaged"], m["worktree"])):
+            lines.append("    clean（相对锁无差异）")
     return "\n".join(lines)

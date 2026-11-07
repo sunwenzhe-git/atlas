@@ -5,10 +5,12 @@
   atlas solution init --name <名> --member <名>=<路径> [--member ...] [--no-install]
   atlas solution adopt [--name <名>] [--member <名>=<路径> ...]
   atlas solution status [--json]
-  atlas solution check [--json]
+  atlas solution diff [--json]
+  atlas solution check [--strict] [--json]
   atlas solution lock --update [--json]
 
 Phase 1 只做只读整合；unified / 成员代码提交（commit）在 Phase 2。
+`check --strict` 用于 CI：锁缺失 / 未跟踪 / 版本或契约漂移 / 成员 dirty / 缺 URL 判 FAIL。
 契约正文见 `.atlas/shared/solution.md`。
 """
 from __future__ import annotations
@@ -85,8 +87,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_status = sub.add_parser("status", help="只读聚合成员状态")
     _add_common(p_status)
 
-    p_check = sub.add_parser("check", help="只读检查清单/守卫/锁（Phase 1 全 WARN）")
+    p_diff = sub.add_parser("diff", help="只读对账：成员相对锁的提交/文件改动")
+    _add_common(p_diff)
+
+    p_check = sub.add_parser("check", help="只读检查清单/守卫/锁；--strict 用于 CI 门禁")
     _add_common(p_check)
+    p_check.add_argument("--strict", action="store_true",
+                         help="锁缺失/未跟踪/漂移/dirty/缺 URL 判 FAIL，并返回非零")
 
     p_lock = sub.add_parser("lock", help="查看或更新契约锁")
     _add_common(p_lock)
@@ -174,11 +181,17 @@ def main(argv: list[str] | None = None) -> int:
                   else core.render_status(data))
             return 0
 
+        if args.cmd == "diff":
+            data = core.diff_solution(root)
+            print(json.dumps(data, ensure_ascii=False, indent=2) if args.json
+                  else core.render_diff(data))
+            return 0
+
         if args.cmd == "check":
-            data = core.check_solution(root)
+            data = core.check_solution(root, strict=args.strict)
             print(json.dumps(data, ensure_ascii=False, indent=2) if args.json
                   else core.render_check(data))
-            return 0
+            return 1 if data["overall"] == "FAIL" else 0
 
         if args.cmd == "lock":
             if not args.update:

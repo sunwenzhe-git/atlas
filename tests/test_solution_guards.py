@@ -6,6 +6,8 @@ import importlib.util
 import subprocess
 from pathlib import Path
 
+import pytest
+
 PKG_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -65,14 +67,13 @@ def test_dotignore_member_warns(tmp_path: Path) -> None:
     assert "命中 ignore" in details(result)
 
 
-def test_gitlink_member_warns(tmp_path: Path) -> None:
+def test_gitlink_member_rejected_at_init(tmp_path: Path) -> None:
     make_solution_root(tmp_path)
     make_repo(tmp_path / "web")
     git(tmp_path, "add", "web")
-    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")],
-                       install=False)
-    result = core.check_solution(tmp_path)
-    assert "已被 solution 仓跟踪" in details(result)
+    with pytest.raises(core.SolutionError, match="gitlink|submodule"):
+        core.init_solution(tmp_path, "demo", [("web", "web", "frontend")],
+                           install=False)
 
 
 def test_non_git_member_warns(tmp_path: Path) -> None:
@@ -119,6 +120,18 @@ def test_common_parent_ignore_warns(tmp_path: Path) -> None:
     core.init_solution(tmp_path, "demo", [("web", "members/web", "frontend")],
                        install=False)
     assert "命中 ignore" in details(core.check_solution(tmp_path))
+
+
+def test_nested_ignore_in_parent_dir_warns(tmp_path: Path) -> None:
+    make_solution_root(tmp_path)
+    (tmp_path / "members").mkdir()
+    (tmp_path / "members" / ".ignore").write_text("web/\n", encoding="utf-8")
+    make_repo(tmp_path / "members" / "web")
+    core.init_solution(tmp_path, "demo", [("web", "members/web", "frontend")],
+                       install=False)
+    result = core.check_solution(tmp_path)
+    assert "命中 ignore" in details(result)
+    assert "members/.ignore" in details(result)
 
 
 def test_symlink_escape_warns(tmp_path: Path) -> None:

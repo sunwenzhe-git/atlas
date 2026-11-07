@@ -6,6 +6,7 @@
 #
 # Phase 1 只支持 mode: federated（成员各自持有 Atlas 资产）。
 # 成员目录必须 untracked 且不被任何 ignore 规则覆盖；不要在 solution 根 .gitignore 中忽略成员。
+# 成员路径若已被父仓跟踪（含 submodule gitlink），init/adopt 会直接拒绝。
 version: 1
 solution: <方案名>
 mode: federated
@@ -13,6 +14,8 @@ mode: federated
 members:
   - name: <成员标识>
     path: <成员仓相对路径>
+    url: <远端地址>          # 可选；仅 http/https/ssh/git/file 或 user@host:path
+                            # 禁止内嵌 userinfo/token；检测到会拒绝写入清单与锁
     assets: member          # Phase 1 只允许 member；solution 属 Phase 2 unified
     kind: fullstack         # frontend | backend | fullstack | mobile（供 solution stack-profile 使用）
 

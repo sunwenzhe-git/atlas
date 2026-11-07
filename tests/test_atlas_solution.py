@@ -104,6 +104,26 @@ def test_lock_roundtrip_and_head_drift(tmp_path: Path) -> None:
     assert any("HEAD 漂移" in c["detail"] for c in drift["checks"])
 
 
+def test_diff_reports_commits_since_lock(tmp_path: Path) -> None:
+    member = make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")],
+                       install=False)
+    core.write_lock(tmp_path, core.load_manifest(tmp_path))
+    (member / "new.txt").write_text("new\n", encoding="utf-8")
+    git(member, "add", "new.txt")
+    git(member, "-c", "user.email=a@b", "-c", "user.name=a",
+        "commit", "-qm", "member change")
+    entry = core.diff_solution(tmp_path)["members"][0]
+    assert entry["head"] != entry["locked_head"]
+    assert any("member change" in c for c in entry["commits"])
+    assert "自锁以来提交" in core.render_diff({"solution": "demo",
+                                               "mode": "federated",
+                                               "members": [entry]})
+    res = run_cli(tmp_path, "--root", str(tmp_path), "diff", "--json")
+    assert res.returncode == 0, res.stderr
+    assert json.loads(res.stdout)["members"][0]["name"] == "web"
+
+
 def test_contract_fingerprint_drift(tmp_path: Path) -> None:
     make_repo(tmp_path / "api", {"openapi.yaml": "openapi: 3.0.0\n"})
     make_repo(tmp_path / "web", {"client.ts": "// client\n"})
@@ -151,6 +171,11 @@ def run_cli(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
                           capture_output=True, text=True)
 
 
+def commit_root(root: Path, *paths: str) -> None:
+    git(root, "add", *paths)
+    git(root, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "root")
+
+
 def test_init_rejects_duplicate_member_names(tmp_path: Path) -> None:
     make_repo(tmp_path / "web")
     with pytest.raises(core.SolutionError, match="重复"):
@@ -188,8 +213,111 @@ def test_check_pass_positive(tmp_path: Path) -> None:
     (tmp_path / "product" / "prd" / "solution-prd.md").write_text(
         "# solution\n\n无占位符\n", encoding="utf-8")
     core.write_lock(tmp_path, core.load_manifest(tmp_path))
+    commit_root(tmp_path, core.MANIFEST_NAME, core.LOCK_NAME)
     result = core.check_solution(tmp_path)
     assert result["overall"] == "PASS", result["checks"]
+
+
+def test_check_strict_fails_when_lock_untracked_or_stale(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    member = make_repo(tmp_path / "web")
+    git(member, "remote", "add", "origin", "https://example.com/web.git")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")],
+                       install=False)
+    result = core.check_solution(tmp_path, strict=True)
+    assert result["overall"] == "FAIL"
+    assert any("未被父仓 Git 跟踪" in c["detail"] for c in result["checks"])
+
+    commit_root(tmp_path, core.MANIFEST_NAME, core.LOCK_NAME)
+    assert core.check_solution(tmp_path, strict=True)["overall"] != "FAIL"
+
+    lock_path = tmp_path / core.LOCK_NAME
+    lock_path.write_text(lock_path.read_text(encoding="utf-8") + "\n",
+                         encoding="utf-8")
+    stale = core.check_solution(tmp_path, strict=True)
+    assert stale["overall"] == "FAIL"
+    assert any("与父仓 HEAD 不一致" in c["detail"] for c in stale["checks"])
+
+
+def test_check_strict_fails_on_member_dirty(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    member = make_repo(tmp_path / "web")
+    git(member, "remote", "add", "origin", "https://example.com/web.git")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")],
+                       install=False)
+    commit_root(tmp_path, core.MANIFEST_NAME, core.LOCK_NAME)
+    (member / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+    result = core.check_solution(tmp_path, strict=True)
+    assert result["overall"] == "FAIL"
+    assert any("未提交改动" in c["detail"] for c in result["checks"])
+
+
+def test_check_strict_fails_without_member_url(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")],
+                       install=False)
+    commit_root(tmp_path, core.MANIFEST_NAME, core.LOCK_NAME)
+    result = core.check_solution(tmp_path, strict=True)
+    assert result["overall"] == "FAIL"
+    assert any("都没有 url" in c["detail"] for c in result["checks"])
+
+
+def test_lock_rejects_detached_head(tmp_path: Path) -> None:
+    member = make_repo(tmp_path / "web")
+    git(member, "checkout", "--detach", "HEAD")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")],
+                       install=False)
+    with pytest.raises(core.SolutionError, match="detached HEAD"):
+        core.write_lock(tmp_path, core.load_manifest(tmp_path))
+
+
+def test_url_rejects_credentials_and_ext_scheme(tmp_path: Path) -> None:
+    make_repo(tmp_path / "web")
+    with pytest.raises(core.SolutionError, match="内嵌凭据"):
+        core.init_solution(
+            tmp_path, "demo",
+            [("web", "web", "frontend", "https://user:token@example.com/a.git")],
+            install=False)
+    with pytest.raises(core.SolutionError, match="白名单"):
+        core.init_solution(
+            tmp_path, "demo",
+            [("web", "web", "frontend", "ext::sh")],
+            install=False)
+
+
+def test_contract_symlink_escape_is_missing(tmp_path: Path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-secret.yaml"
+    outside.write_text("secret\n", encoding="utf-8")
+    make_repo(tmp_path / "api", {"openapi.yaml": "openapi: 3.0.0\n"})
+    web = make_repo(tmp_path / "web", {"client.ts": "// inside\n"})
+    (web / "client.ts").unlink()
+    (web / "client.ts").symlink_to(outside)
+    core.init_solution(
+        tmp_path, "demo",
+        [("api", "api", "backend"), ("web", "web", "frontend")],
+        install=False,
+        contracts=[{"id": "c1", "producer": "api", "producer_path": "openapi.yaml",
+                    "consumer": "web", "consumer_path": "client.ts"}],
+    )
+    states = {c["id"]: c for c in core.contract_states(
+        tmp_path, core.load_manifest(tmp_path))}
+    assert states["c1"]["consumer_sha256"] == "missing"
+
+
+def test_cli_check_strict_exit_code(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    member = make_repo(tmp_path / "web")
+    git(member, "remote", "add", "origin", "https://example.com/web.git")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")],
+                       install=False)
+    res = run_cli(tmp_path, "--root", str(tmp_path), "check", "--strict")
+    assert res.returncode == 1, res.stdout
+    assert "FAIL" in res.stdout
+
+    commit_root(tmp_path, core.MANIFEST_NAME, core.LOCK_NAME)
+    res = run_cli(tmp_path, "--root", str(tmp_path), "check", "--strict")
+    assert res.returncode == 0, res.stdout
 
 
 @pytest.mark.skipif(not (PKG_ROOT / "install.py").is_file(),
