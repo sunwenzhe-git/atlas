@@ -18,6 +18,7 @@
 | 独立审查报告落盘（①②④⑤ 任一实例） | 1（含 `validate_review_report --dir <报告目录>`，2026-10-06 起） |
 | 影响面报告已产出（`.trellis/tasks/<ID>/impact.json` 存在）的收口 | 1（含 `impact_reconcile --task <ID> --diff-base <ref>` 对账门：predicted vs 实际 diff 双向差集 ⇒ WARN，B191-1，2026-10-07 起） |
 | 缺陷修复类任务（bug fix） | **4**（修复验证 7 检查点）→ 1 → 7 |
+| 实现类任务（feature / refactor，非 bug fix） | **4（B 档）** → 1 → 7（语义触发行，不自动派生；「实现类任务」= 落业务代码的 feature / refactor；bug fix 走上一行，纯文档 / 纯契约改动不算） |
 | 改动触及核心业务链路 / 权限 / CI / 依赖 / 契约 | **3**（变更风险定档与人工审批）→ 1 |
 | 域 / 里程碑收口且出现 ≥2 次同类纠偏（或用户点名复盘） | **11**（harness 复盘，按需） |
 | ADR 演进链出现 `adr_cycle_detected` WARN（validate_adr stdout 自带 F36 修复指令） | 1（含 ADR 终审：`superseded_by` 指向**移出环外**的有效编号或撤销现行非终态取代行；validate_adr 复跑复绿——WARN 是终审信号不是失败，`shared/gates.md` §2.1） |
@@ -73,7 +74,9 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
 - **审批主体纪律**：Agent 生成的审查通过（即使带 status=PASS）**永远不算人工审批名额**；审查必须由具备最终交付责任的人类开发者执行或确认。
 - **系统性修复的留出验证定档（2026-10-27，D156）**：改门 / 校验器 / 契约判据的批次，定档时必须附**触发 (b) 路径交叉检查**结论——`git diff --name-only` + `scripts/closeout_derive.py` 输出 ↔ DR4 段级锚路径族（`bugs.md` 同根归纳段）手工对照，记「锚 → 路径族」映射与误报，并粘贴 `git diff --name-only` 与 `closeout_derive.py` 的原始输出（命令 + 输出，不得只写结论）；命中 ⇒ 该 RFC §4.5 必须走留出验证三态（`闭族` / `未闭族` / `单案修复（无留出集）`）。触发 (a) = RFC §1 引子族锚或 ≥3 条独立审查重复 finding。**盲区明写**：语义映射不可机判，本步是纪律面（触发靠自述、可被逃）；评审侧对称检查 = `shared/independent-review.md` §9，流程门登记 = `shared/gates.md` §2.5。
 
-### 步骤 4 — 缺陷修复验证（7 检查点，2026-10-21，D131）
+### 步骤 4 — 实现类与缺陷修复的收口验证（A/B 档，2026-10-21 D131 / 2026-11-07 D186）
+
+**A 档 — 缺陷修复（7 检查点，原 7 条逐字不动）**
 
 > 针对缺陷修复类任务（bug fix），禁止直接改业务代码和声称「已修复」，必须在收口前逐条确认 7 个检查点：
 
@@ -84,6 +87,15 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
 5. **状态转换完整**：改动未破坏组件生命周期、加载态、禁用态或状态机原有流转；
 6. **回归范围界定**：排查上下游调用方，明确受影响的关联页面与组件；
 7. **闭环证据留存**：修复后红测试转绿、附带真实执行日志或快照截图，在收口报告中明确指出「关闭依据在哪」。
+
+**B 档 — 实现类任务（feature / refactor，非 bug fix）**
+
+> 4 项只作**证据观察，不判分**、无退出码；结论落收口记录即可。
+
+1. **可追溯性**：本轮改动可追溯到 Trellis 任务 Plan / Design 中的假设与决策；不另建台账（`global-rules.md` §18）。
+2. **纯空白证据命令**：声称「无实质改动」时，给出可复跑的纯空白证据（如 `git diff -w` / `git diff --ignore-all-space`）。
+3. **纯后端验证命令**：非视觉 / 后端改动给出可复跑的后端验证命令与输出。
+4. **测试反模式**：是否出现「只为通过用例而写的特例」等反模式——**只作证据观察，不判分**。
 
 ### 步骤 5 — 回灌登记
 
@@ -146,7 +158,7 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
   - **开发流程/宿主适配摩擦** ⇒ 沉淀为 `.trellis/workflow.md` 补丁（`patches/`）或通过 `atlas report`（`§15`）上报开源池。
   - **事故追问与回归闭环（D131）**：出错若为线上或联调逃逸 bug，必追问：“该改动可能出什么错？哪一道检查（E2E、单测、校验门、独立审查）才是接住它的正确位置？为什么这道门当时没接住？”每确认一个此类缺陷，必须同时补齐一条可复现的 E2E 回归用例或 M 系列变异钉（连接 `duty-review/bugs.md` 与 gates 总账）。
 - **硬边界**：
-  - 不做业务代码实现期规范复盘（`BP` 边界，业务代码规范归项目自身 linter/typecheck 机器门）；
+  - 不做业务代码实现期规范复盘（`BP` 边界，业务代码规范归项目自身 linter/typecheck 机器门）；实现期假设的处置与收口分档见 `global-rules.md` §18 与步骤 4 B 档——本条只排除「规范复盘」，不排除收口侧核对；
   - 所有结论必须附带具体文件、会话或提交的**证据链**（`BQ` 同源）。
 
 ## Guidance

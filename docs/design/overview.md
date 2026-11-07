@@ -75,7 +75,7 @@ Trellis 开需求卡（.trellis/tasks/<需求ID>/prd.md；ID = task 目录名，
    ↓   报告 → .trellis/tasks/<需求ID>/atlas-apply.md
    ↓   任一环失败 / 影响面定不下来 ⇒ 停在 planning，不得进入实现
    ↓
-② Trellis 实现（业务代码归执行器，Atlas 不碰业务实现）
+② Trellis 实现（业务代码归执行器；实现期假设按 §18 归任务 Plan / Design，Atlas 只做收口侧审查）
    ↓
 ③ 收口：实例 ⑤ 实现代码审查 → E2E red → green → 验收走查门
    → 运行态报错现场留底与结构化证据链快照
