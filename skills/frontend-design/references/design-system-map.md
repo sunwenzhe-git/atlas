@@ -1,6 +1,6 @@
 # 设计系统选型地图
 
-_原 SKILL.md Section 2 逐字移入。_
+_原 SKILL.md Section 2 逐字移入；Section 13（边界与移交）于批 1 同步并入。_
 
 拿到 design read（Section 0）和旋钮（Section 1）之后，选对地基。**有官方包的东西，不要自己发明 CSS。** **不要把一种审美潮流伪装成官方系统。**
 
@@ -39,3 +39,21 @@ _原 SKILL.md Section 2 逐字移入。_
 | 极光 / mesh 渐变 | SVG 或层叠径向渐变。无库。 |
 | 动态字体 | 原生 CSS 动画、滚动驱动动画、劫持场景用 GSAP。无库。 |
 | **Apple Liquid Glass** | Apple 只为 Apple 平台记录过它。**不存在官方的 `liquid-glass.css`。** Web 上的实现都是用 `backdrop-filter` + 层叠描边 + 高光做的**近似**。必须明确标注这是近似。 |
+
+## 13. 边界与移交
+
+范围路由（本文开头）负责把表面分流到营销层或应用层。这一节只裁决一件事：**哪些表面的视觉设计要移交出去，以及移交之后什么仍然留下。**
+
+**视觉移交**（路由表里的「应用」表面）——视觉设计交给对应的官方系统，Section 3 的约定与 Section 6 的合规基线照常生效：
+
+* dashboard / admin panel / 密集产品界面 → Section 2.A 里的 Fluent、Carbon、Atlassian 或 Polaris。
+* 数据表格 → TanStack Table 或 AG Grid。
+* 多步表单 / 向导 → 表单专用范式。6.E 的表单合规照常生效。
+* 代码编辑器 → Monaco / CodeMirror 及其官方皮肤。
+* 实时协作界面（在线状态、光标、OT 感知）→ 协作专用方案。
+
+**完全出范围**——本 skill 什么都不贡献：
+
+* 原生桌面与原生移动 App → 直接用 Apple HIG / Material 及平台自身规范。
+
+遇到视觉移交的表面，**明确说出来**，指出用哪套系统，然后照常套用 Section 6。可访问性、焦点、键盘操作、目标尺寸、表单校验体验和性能指标，不因为设计系统接管了视觉就变成可选项。**设计语言交出去，地板留下。**

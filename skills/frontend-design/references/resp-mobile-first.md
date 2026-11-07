@@ -81,3 +81,11 @@ Mobile-first design starts with the smallest viewport and progressively enhances
 - Aligns with Google's mobile-first indexing
 
 Reference: [Google Mobile-First Indexing](https://developers.google.com/search/docs/crawling-indexing/mobile/mobile-sites-mobile-first-indexing)
+
+## 6.H 响应式（原 SKILL.md 逐字移入）
+
+* 移动优先，用 `min-width` 查询，断点见 3.E。`references/resp-mobile-first.md`
+* 非对称版面（variance 4-10）在 768px 以下塌成严格单列，见 `references/knob-definitions.md`。
+* **容器查询**用于「必须在任意容器宽度下成立」的组件，而不只看视口宽度。`references/resp-container-queries.md`
+* `min-h-[100dvh]`，绝不用 `h-screen`。
+* 版面层级、留白、阅读路径、邻近性等通用版面规则：`references/layout-*.md`（`layout-visual-hierarchy`、`layout-whitespace`、`layout-f-pattern`、`layout-grid-system`、`layout-single-cta`、`layout-proximity-grouping`）

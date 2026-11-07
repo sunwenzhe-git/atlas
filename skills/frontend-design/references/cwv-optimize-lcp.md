@@ -57,3 +57,15 @@ LCP measures how long the largest visible element takes to render. A slow LCP (o
 - Set explicit width/height to prevent layout shifts
 
 Reference: [web.dev LCP](https://web.dev/articles/lcp)
+
+## 6.F Core Web Vitals 与交付（原 SKILL.md 逐字移入）
+
+* **LCP < 2.5s**：hero 图用 `next/image priority` 或预加载，**绝不延迟加载**。`references/cwv-optimize-lcp.md`、`references/cwv-lazy-load-offscreen.md`
+* **INP < 200ms**：重活移出主线程。`references/cwv-improve-inp.md`
+* **CLS < 0.1**：图片显式给 `width`/`height` 或 `aspect-ratio`，字体度量对齐，不late 注入横幅。`references/cwv-minimize-cls.md`
+* 交付：`srcset` + `sizes`，WebP/AVIF 优于 JPEG，内联关键 CSS。`references/cwv-responsive-images.md`、`references/cwv-critical-css.md`
+* 字体：`next/font` 或自托管 `@font-face` 配 `font-display: swap`；预加载关键字重时**必须带 `crossorigin`**（同源也要）。`references/typo-font-display.md`、`references/typo-preload-fonts.md`
+* 正文流体字号用 `clamp()`，下限 16px、上限 20px。`references/resp-fluid-typography.md`
+* 行高与行宽见 6.K。细则：`references/typo-line-height.md`、`references/typo-readable-line-length.md`
+* **交付前跑一次 Lighthouse。**
+* **交付前跑机器检查：`npx impeccable detect src/`（或对本地预览 URL 跑，用渲染后布局查对比度、溢出、触控目标）。exit 2 的 findings 必须先处理或写明豁免理由；零安装、零 token，不依赖模型自查。**

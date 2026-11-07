@@ -47,10 +47,10 @@ license: MIT
 | 表面 | 识别信号 | 适用内容 |
 |---|---|---|
 | **营销** | landing page、官网、作品集、关于页、发布页、定价页，以及上述页面的改版 | 全部适用：Section 0 到 9、11、14 |
-| **应用**（浏览器内的 Web 产品界面）| dashboard、admin panel、settings、表格密集视图、多步表单 / 向导、代码编辑器、实时协作界面 | **视觉设计交给**整套官方设计系统（Section 2.A 按品类指明用哪个），依据 Section 13。本 skill 在这里只贡献 **Section 3** 的约定 + **Section 6** 的合规基线。Section 4.7 的 hero 硬规则、4.8 的图片策略、4.9 的营销内容密度**不适用**，它们属于营销表面 |
+| **应用**（浏览器内的 Web 产品界面）| dashboard、admin panel、settings、表格密集视图、多步表单 / 向导、代码编辑器、实时协作界面 | **视觉设计交给**整套官方设计系统（Section 2.A 按品类指明用哪个），依据 `references/design-system-map.md` 的 Section 13。本 skill 在这里只贡献 **Section 3** 的约定 + **Section 6** 的合规基线。Section 4.7 的 hero 硬规则、4.8 的图片策略、4.9 的营销内容密度**不适用**，它们属于营销表面 |
 | **混合** | 产品界面外面套着营销壳、文档站、既有落地页又有应用的工具 | 营销路由套营销层，应用路由套应用层。在 design read 里声明哪个是哪个 |
 
-**这里的「应用」指 Web 产品界面，不是原生 App。** 指的是用 HTML、CSS、React、Tailwind 写的、跑在浏览器里、用 Core Web Vitals 衡量的 dashboard / 后台 / 向导。原生桌面与原生移动 App **完全不在本 skill 范围**，请直接用 Apple HIG 或 Material 及平台自身规范。完整清单见 Section 13。
+**这里的「应用」指 Web 产品界面，不是原生 App。** 指的是用 HTML、CSS、React、Tailwind 写的、跑在浏览器里、用 Core Web Vitals 衡量的 dashboard / 后台 / 向导。原生桌面与原生移动 App **完全不在本 skill 范围**，请直接用 Apple HIG 或 Material 及平台自身规范。完整清单见 `references/design-system-map.md` 的 Section 13。
 
 这套路由存在的意义是拦住两类错误：
 
@@ -246,18 +246,7 @@ Section 4 的其余部分（字体池与衬线纪律 4.1、配色校准与调色
 
 ### 6.C 动效时长与缓动
 
-| 动作 | 时长 |
-|---|---|
-| 悬停 / 聚焦状态 | 100-150ms |
-| 按钮反馈 | 100-200ms |
-| 下拉 / 手风琴 / 展开 | 200-300ms |
-| 弹层 / 对话框 | 200-400ms |
-| 页面转场 | 300-500ms |
-| 滚动驱动编排 | **由滚动距离决定，无 ms 上限** |
-
-* 微交互遵守上表，**表内任何一项不超过 500ms**。滚动驱动的工作（GSAP ScrollTrigger、CSS `animation-timeline`、pin 住的 section、横向平移）由滚动距离驱动，**不受上表约束，但绝不受 6.B 豁免**。
-* **缓动**：主曲线 `cubic-bezier(0.16, 1, 0.3, 1)`（expo-out）。弹层可用 `cubic-bezier(0.32, 0.72, 0, 1)`。Material 的 `cubic-bezier(0.4, 0, 0.2, 1)` 仅当 brief 建立在自带 motion token 的设计系统上时使用。**一页一条主曲线。移动绝不使用 `linear`。**
-* 细则：`references/anim-duration-easing.md`、`references/anim-reduced-motion.md`
+时基过渡按动作类型取 100-500ms（表内任何一项不超过 500ms）；滚动驱动编排由滚动距离决定，不受时长表约束但绝不豁免 6.B。主曲线 `cubic-bezier(0.16, 1, 0.3, 1)`，一页一条，移动绝不 `linear`。完整时长表、弹层曲线与 Material 条件见 **`references/anim-duration-easing.md`**、**`references/anim-reduced-motion.md`**。
 
 ### 6.D 可访问性机制（全部强制）
 
@@ -278,15 +267,7 @@ Section 4 的其余部分（字体池与衬线纪律 4.1、配色校准与调色
 * 用对的 `type` / `inputmode`，以及对的 `autocomplete` token，让浏览器和密码管理器能自动填充。`references/form-input-types.md`、`references/form-autocomplete.md`
 
 ### 6.F Core Web Vitals 与交付
-* **LCP < 2.5s**：hero 图用 `next/image priority` 或预加载，**绝不延迟加载**。`references/cwv-optimize-lcp.md`、`references/cwv-lazy-load-offscreen.md`
-* **INP < 200ms**：重活移出主线程。`references/cwv-improve-inp.md`
-* **CLS < 0.1**：图片显式给 `width`/`height` 或 `aspect-ratio`，字体度量对齐，不late 注入横幅。`references/cwv-minimize-cls.md`
-* 交付：`srcset` + `sizes`，WebP/AVIF 优于 JPEG，内联关键 CSS。`references/cwv-responsive-images.md`、`references/cwv-critical-css.md`
-* 字体：`next/font` 或自托管 `@font-face` 配 `font-display: swap`；预加载关键字重时**必须带 `crossorigin`**（同源也要）。`references/typo-font-display.md`、`references/typo-preload-fonts.md`
-* 正文流体字号用 `clamp()`，下限 16px、上限 20px。`references/resp-fluid-typography.md`
-* 行高与行宽见 6.K。细则：`references/typo-line-height.md`、`references/typo-readable-line-length.md`
-* **交付前跑一次 Lighthouse。**
-* **交付前跑机器检查：`npx impeccable detect src/`（或对本地预览 URL 跑，用渲染后布局查对比度、溢出、触控目标）。exit 2 的 findings 必须先处理或写明豁免理由；零安装、零 token，不依赖模型自查。**
+LCP < 2.5s、INP < 200ms、CLS < 0.1；图片显式给 `width`/`height` 或 `aspect-ratio`，hero 图绝不延迟加载；正文流体字号 `clamp()` 16-20px；字体用 `next/font` 或自托管 `@font-face` + `font-display: swap`，预加载关键字体必须带 `crossorigin`。图片交付、字体、行高与行宽的完整细则见 **`references/cwv-optimize-lcp.md`**、`references/cwv-*`、`references/typo-*`、`references/resp-fluid-typography.md`。交付前跑一次 Lighthouse，并跑 `npx impeccable detect src/`（exit 2 的 findings 先处理或写明豁免）。
 
 ### 6.G 暗色模式
 * **任何面向消费者的页面都强制**。一开始就同时设计两种模式，未经明确指示不得只做单模式。尊重 `prefers-color-scheme`，默认跟随系统，除非品牌坚持。
@@ -294,11 +275,7 @@ Section 4 的其余部分（字体池与衬线纪律 4.1、配色校准与调色
 * 完整协议：`references/dark-mode-protocol.md`。token：`references/color-semantic-palette.md`、`references/color-dark-mode.md`
 
 ### 6.H 响应式
-* 移动优先，用 `min-width` 查询，断点见 3.E。`references/resp-mobile-first.md`
-* 非对称版面（variance 4-10）在 768px 以下塌成严格单列，见 `references/knob-definitions.md`。
-* **容器查询**用于「必须在任意容器宽度下成立」的组件，而不只看视口宽度。`references/resp-container-queries.md`
-* `min-h-[100dvh]`，绝不用 `h-screen`。
-* 版面层级、留白、阅读路径、邻近性等通用版面规则：`references/layout-*.md`（`layout-visual-hierarchy`、`layout-whitespace`、`layout-f-pattern`、`layout-grid-system`、`layout-single-cta`、`layout-proximity-grouping`）
+移动优先，用 `min-width` 查询，断点见 3.E；非对称版面（variance 4-10）在 768px 以下塌成严格单列；全高容器用 `min-h-[100dvh]`，绝不用 `h-screen`。容器查询、版面层级 / 留白 / 阅读路径等细则见 **`references/resp-mobile-first.md`**、`references/resp-container-queries.md`、`references/layout-*.md`。
 
 ### 6.I DOM 开销
 * 颗粒 / 噪点滤镜只允许加在固定的 `pointer-events-none` 伪元素上，**绝不加在滚动容器上**，那会导致持续 GPU 重绘，移动端帧率直接崩。
@@ -307,39 +284,15 @@ Section 4 的其余部分（字体池与衬线纪律 4.1、配色校准与调色
 ### 6.J z-index
 **绝不**乱撒 `z-50` / `z-10`。z-index 只用于系统性层级（sticky 导航、弹层、遮罩、颗粒），并把层级表写进项目常量文件。
 
-### 6.K 两份源 skill 打架处的裁决（已定，不要逐项目再议）
+### 6.K 两份源 skill 打架处的裁决
 
-* **Display 行高**。**绝不用裸 `leading-none`。** 单行 display 最低 `leading-[1.05]`。两行及以上，或斜体词里含 `y g j p q` 降部字母：`leading-[1.1]` 并留 `pb-1`。紧度靠 `tracking-tighter`，不靠零行高。
-* **正文行高与行宽**。无冲突。canonical 分档只在 `references/typo-line-height.md`（40-60ch：1.5-1.6；60-80ch：1.6-1.8）。Section 4.1 的默认（`leading-relaxed` + `max-w-[65ch]`）落在 60-80ch 档内。
-* **动效时长**。按类型切开：时基过渡遵守 6.C 且不超过 500ms；距离基的滚动编排不受表约束，但**绝不豁免 6.B**。移动用 `linear` 无论如何都禁止。
-* **字体选择，按表面切而不是按元素切。** *营销表面*：品牌字覆盖导航和按钮，身份感就是目的，FOUT 靠 `font-display: swap` + 预加载关键字重解决。*应用表面*：品牌字与衬线字只留给标题和品牌时刻，导航、按钮、label、输入框、表格用系统字栈，因为控件上「即时渲染」优先于品牌字体。`references/typo-system-font-stack.md`
-* **命中区 vs 密度**。地板赢。DENSITY 9 的驾驶舱照样是 44px 的导航和图标按钮、间距 8px。见 6.D。
-* **行宽与栅格**。无冲突。正文 65ch，标题可以到 85ch。高 variance 下的非对称用栅格内的分数轨道表达（`grid-template-columns: 2fr 1fr 1fr`），**绝不用魔法宽度**，两边都禁任意百分比并要求 CSS Grid。
-* **CTA 数量与暗色模式**。无冲突。一个主操作、一个意图一个标签；两种模式都支持、整页锁定一个主题。
+七条已定裁决（display 行高、正文行高与行宽、动效时长、字体按表面切、命中区 vs 密度、行宽与栅格、CTA 与暗色模式）不以项目为单位再议，逐字正文见 **`references/design-directives.md`** 的 6.K。
 
 ---
 
 ## 9. AI 味（禁止模式）
 
-这些是模型想「看起来像设计过」时会自动掉进去的签名。除 brief 明确要求，一律硬禁。**完整带注解的禁令清单（含 9.F 摘要背后的全部条目）在 `references/ai-tells.md`，产出任何版面之前先读它。**
-
-### 9.A 视觉与 CSS
-不要霓虹 / 外发光。不要纯黑。不要过饱和强调色。大标题不要渐变文字。不要自定义鼠标指针。
-
-### 9.B 字体
-默认避开 `Inter`（见 4.1）。不要只靠巨大 H1 喊叫，用字重和颜色建立层级。衬线用于编辑 / 奢华 / 出版，**不用于产品界面**。
-
-### 9.C 版面与间距
-padding 与 margin 在数学上一致，不留位置尴尬的漂浮元素。**禁止三等分 feature 卡片。**
-
-### 9.D 内容与数据
-不要通用人名（「John Doe」「Sarah Chan」），不要通用头像，不要假精确数字（`99.99%`、`50%`），不要创业套壳品牌名（「Acme」「Nexus」「SmartFlow」），不要填充动词（「Elevate」「Seamless」「Unleash」「Next-Gen」）。
-
-### 9.E 外部资源与组件
-不要手写 SVG 图标，只用 Phosphor / HugeIcons / Radix / Tabler。不要 div 拼的假截图。不要挂掉的 Unsplash 链接。`shadcn/ui` 只能用改造过的状态，不能是默认样式。
-
-### 9.F 生产测试里的高频 AI 味
-一律禁止。完整枚举（hero 里的版本号、`Scroll` 滚动提示、装饰性状态圆点、middle-dot 滥用、「Quietly in use at」式措辞等几十条，每条带注解和替代方案）以 **`references/ai-tells.md`** 为 canonical——阅读地图已要求产出任何版面之前先读它，此处不再维护第二份枚举。
+这些是模型想「看起来像设计过」时会自动掉进去的签名。除 brief 明确要求，一律硬禁。9.A–9.F（视觉与 CSS、字体、版面与间距、内容与数据、外部资源与组件、生产测试高频条目）的完整带注解清单以 **`references/ai-tells.md`** 为 canonical，产出任何版面之前先读它。9.G 因最高频且可机械判读，保留在下面。
 
 ### 9.G 破折号禁令（最高频的 AI 味）
 
@@ -357,21 +310,7 @@ padding 与 margin 在数学上一致，不留位置尴尬的漂浮元素。**�
 
 ## 13. 边界与移交
 
-范围路由（本文开头）负责把表面分流到营销层或应用层。这一节只裁决一件事：**哪些表面的视觉设计要移交出去，以及移交之后什么仍然留下。**
-
-**视觉移交**（路由表里的「应用」表面）——视觉设计交给对应的官方系统，Section 3 的约定与 Section 6 的合规基线照常生效：
-
-* dashboard / admin panel / 密集产品界面 → Section 2.A 里的 Fluent、Carbon、Atlassian 或 Polaris。
-* 数据表格 → TanStack Table 或 AG Grid。
-* 多步表单 / 向导 → 表单专用范式。6.E 的表单合规照常生效。
-* 代码编辑器 → Monaco / CodeMirror 及其官方皮肤。
-* 实时协作界面（在线状态、光标、OT 感知）→ 协作专用方案。
-
-**完全出范围**——本 skill 什么都不贡献：
-
-* 原生桌面与原生移动 App → 直接用 Apple HIG / Material 及平台自身规范。
-
-遇到视觉移交的表面，**明确说出来**，指出用哪套系统，然后照常套用 Section 6。可访问性、焦点、键盘操作、目标尺寸、表单校验体验和性能指标，不因为设计系统接管了视觉就变成可选项。**设计语言交出去，地板留下。**
+哪些表面的视觉设计要移交、移交之后什么仍留下，逐字正文见 **`references/design-system-map.md`** 的 Section 13。一句话：应用表面把设计语言交给对应官方系统，**地板（Section 3 约定 + Section 6 合规基线）留下**；原生桌面与移动 App 完全出范围，直接用 Apple HIG / Material 及平台自身规范。
 
 ---
 

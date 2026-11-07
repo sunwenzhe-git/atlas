@@ -192,3 +192,13 @@ LLM 默认只做「静态成功态」。完整循环每次都要实现：
 * 例外：brief 明确要求「Color Block Story」或「Theme Switch on Scroll」手法，**且**那是一次刻意的构图（一次完整主题切换配强转场，而不是随机交替），此时每页允许一次。
 * 默认做法：在页面层面选定浅色、暗色或 auto（`prefers-color-scheme`）并锁住。同一主题家族内的 section 背景色差可以（`bg-zinc-950` 紧挨 `bg-zinc-900`）；在 `bg-zinc-950` 的页面中间翻成 `bg-amber-50` 就是破损。
 * 使用自带主题机制的设计系统（Radix Themes、带 `<Theme>` 的 shadcn/ui）时，在 `layout.tsx` 或页面根节点**只设一次**主题。不要让各个 section 各自覆盖。
+
+### 6.K 两份源 skill 打架处的裁决（已定，不要逐项目再议）
+
+* **Display 行高**。**绝不用裸 `leading-none`。** 单行 display 最低 `leading-[1.05]`。两行及以上，或斜体词里含 `y g j p q` 降部字母：`leading-[1.1]` 并留 `pb-1`。紧度靠 `tracking-tighter`，不靠零行高。
+* **正文行高与行宽**。无冲突。canonical 分档只在 `references/typo-line-height.md`（40-60ch：1.5-1.6；60-80ch：1.6-1.8）。Section 4.1 的默认（`leading-relaxed` + `max-w-[65ch]`）落在 60-80ch 档内。
+* **动效时长**。按类型切开：时基过渡遵守 6.C 且不超过 500ms；距离基的滚动编排不受表约束，但**绝不豁免 6.B**。移动用 `linear` 无论如何都禁止。
+* **字体选择，按表面切而不是按元素切。** *营销表面*：品牌字覆盖导航和按钮，身份感就是目的，FOUT 靠 `font-display: swap` + 预加载关键字重解决。*应用表面*：品牌字与衬线字只留给标题和品牌时刻，导航、按钮、label、输入框、表格用系统字栈，因为控件上「即时渲染」优先于品牌字体。`references/typo-system-font-stack.md`
+* **命中区 vs 密度**。地板赢。DENSITY 9 的驾驶舱照样是 44px 的导航和图标按钮、间距 8px。见 6.D。
+* **行宽与栅格**。无冲突。正文 65ch，标题可以到 85ch。高 variance 下的非对称用栅格内的分数轨道表达（`grid-template-columns: 2fr 1fr 1fr`），**绝不用魔法宽度**，两边都禁任意百分比并要求 CSS Grid。
+* **CTA 数量与暗色模式**。无冲突。一个主操作、一个意图一个标签；两种模式都支持、整页锁定一个主题。

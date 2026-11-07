@@ -68,6 +68,7 @@ Too-slow animations feel laggy; too-fast ones feel jarring. Proper duration and 
 | Dropdowns/accordions | 200-300ms |
 | Modals/dialogs | 200-400ms |
 | Page transitions | 300-500ms |
+| Scroll-driven choreography | No ms cap - driven by scroll distance |
 
 **Common easing curves:**
 - `ease-out`: Fast start, slow end (entering)
@@ -77,11 +78,13 @@ Too-slow animations feel laggy; too-fast ones feel jarring. Proper duration and 
 Reference: [Material Design Motion](https://m3.material.io/styles/motion/easing-and-duration/tokens-specs)
 ---
 
-**Scope note (merged skill, SKILL.md 6.C).** The 100-500ms table above governs **time-based** transitions.
+**Scope note (merged skill, SKILL.md 6.C).** The 100-500ms table above governs **time-based** transitions, and no
+row in it exceeds 500ms.
 **Distance-based** scroll choreography (GSAP ScrollTrigger, CSS `animation-timeline`, pinned or horizontally
 panned sections) is driven by scroll distance and is exempt from the table - but never from
 `anim-reduced-motion.md`.
 
 Primary easing for a tasteful marketing surface is `cubic-bezier(0.16, 1, 0.3, 1)` (expo-out). Keep the Material
-standard `cubic-bezier(0.4, 0, 0.2, 1)` above for Material / enterprise-system builds. Modals may use
+standard `cubic-bezier(0.4, 0, 0.2, 1)` above only when the brief builds on a design system that ships its own
+motion tokens (Material / enterprise-system builds). Modals may use
 `cubic-bezier(0.32, 0.72, 0, 1)`. **Pick one primary curve per page.** Never `linear` for movement.
