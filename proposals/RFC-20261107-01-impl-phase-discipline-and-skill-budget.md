@@ -132,7 +132,9 @@ $ python3 -c "print(len(open('shared/gates.md').read().splitlines()))"
 | **1** | I1 拆分（**不加判据⑧**）；附外移前后 section 清单（三列，见 §4.3）；**只并入既有 `references/*.md`，不新增文件** | 无；收尾 `wc -m` < 20000；`§4.7` / `§4.11` 与基线 `diff` 为空（§4.3） |
 | **2** | 判据⑧（常量 + 单一断言）+ I5 | 无；若批 1 未完成则判据⑧红 |
 | **3** | I2 + I3 + I4 + §2.5 行 + `VETO_WORDS` + **地图 174→175 同批** + `duty-review/QUEUE.md` 观察行 1 行 | 无；漏改地图 ⇒ `docs/map/gates.md:18` / `atlas-map.html:510` 红；漏改任一宣称或误登保留句 ⇒ 判据⑦红；`grep -F '实现期纪律判据上线观察（RFC-20261107-01' duty-review/QUEUE.md` 期望 **1 行** |
-| **4（可选）** | B1′：`SKILL.md §14` 六条硬检查标 Floor / Reflex / Finish | 无；复查 I1 预算余量 |
+| **4（延后）** | B1′：`SKILL.md §14` 六条硬检查标 Floor / Reflex / Finish | 不执行；理由与重开条件见下 |
+
+**批 4 延后（2026-11-08 定）**：现 `skills/frontend-design/SKILL.md` 19,821 字符，距判据⑧上限 20,000 仅余 179；批 4 最少要 46 字符（六条标签）+ 图例 42（紧凑）或 70（完整），做完余量只剩 63–91，之后任何措辞增补都会被预算判据卡住。且三级标注除 §14 清单本身**无消费方**，产出无法被验证。**重开条件**：出现第二个消费方，或预算上调有依据（实测分布支撑）。
 
 ### 4.2 批 0 验证命令
 
@@ -230,11 +232,10 @@ VETO_WORDS = [
     "不碰业务实现",              # docs/design/overview.md:78
     "实现过程仍不介入",          # shared/independent-review.md:192
     "不介入实现过程",            # shared/independent-review.md:225
-    "编码规范不由 atlas 收口",   # shared/single-source.md:43 / shared/layout.md:97
 ]
 ```
 
-* **不登记** `不做业务代码实现期规范复盘`（`shared/closeout.md:149` 终稿保留该句）；**不登记** `不侵入业务代码实现`（`README.md:123` 保留）。登记任一句都会在批 3 首次跑判据⑦时自红。
+* **不登记** `不做业务代码实现期规范复盘`（`shared/closeout.md` 终稿保留该句）；**不登记** `不侵入业务代码实现`（`README.md:123` 保留）；**不登记** `编码规范不由 atlas 收口`——该句为真（`shared/single-source.md:43` / `shared/layout.md:97` 定稿保留），禁止它属过度 sweep。登记任一句都会在批 3 首次跑判据⑦时自红。
 * **不加 D185 / D186 到 `VETO_EXEMPT_ANCHORS`**：判据⑦扫描面 = `docs/**.md`（除 `.vitepress`）+ `shared/**.md` + 顶层 `README.md`（`tests/test_canonical_consistency.py:311-328`）；`DESIGN.md` 与 `proposals/**` **不在扫描面**，加了也对它们无效。5 处宣称同批改写后不留 veto 短语，无需豁免锚；若批 3 实测某行必须保留短语，再在该行同处加 `D186` 指针并单独议锚。
 * **顺序**：改写与登记**同批**（先改后登记），否则未改写的旧句会让判据⑦在批 3 中途红。
 

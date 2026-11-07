@@ -4,6 +4,17 @@
 
 ---
 
+## [Unreleased]
+
+### 🧭 实现期纪律、收口分档与 SKILL 体积预算（RFC-20261107-01 / D185 / D186 / D187）
+
+* **新增 · 实现期纪律**：`shared/global-rules.md` §18——实现期新假设落 Trellis 任务 Plan / Design，不另建台账；命中用户确认门四条签名动作即停并取确认；假设会改变 AC / 范围 / 用户可见行为 ⇒ 回流 PRD 决策，不在实现期就地改口径。
+* **收口步骤 4 分 A/B 档**：bug fix 仍走原 7 个检查点（逐字不变）；实现类任务（feature / refactor）走 B 档 4 项——可追溯性、纯空白证据命令、纯后端验证命令、测试反模式，**只作证据观察、不判分、无退出码**。触发表新增「实现类任务」行，标注为语义触发行、不自动派生。
+* **新增 · SKILL.md 体积判据⑧**：`skills/*/SKILL.md` 字符数须 < 20,000（预算常量写在测试侧）；超限即 FAIL 并列出超限文件与字符数。
+* **PRD 术语表新增第四列「禁用别名」**：模板表头 / 分隔 / 占位同批四列；旧三列仍合法、存量项目不迁移，不新增校验判据。
+* **定位表述收紧**：分清「不写业务代码」与「实现期设纪律」——`docs/design/overview.md`、`shared/independent-review.md`、`shared/single-source.md`、`shared/layout.md`、`shared/closeout.md` 同步；`README.md` 原句保留。
+* **行为不变项**：未新增校验器，未改 `validate_prd.py`，未新增机器门（判据⑧除外）；实现期纪律为纪律面，无机器判据。
+
 ## [v0.2.0-beta.31] - 2026-11-07
 
 ### 🔒 solution：锁即可复现 pin + `check --strict` CI 门禁（RFC-20261104-02 增量）
