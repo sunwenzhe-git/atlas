@@ -218,6 +218,30 @@ def test_shared_case_demand_column_must_list_all_consumers(tmp_path: Path) -> No
     assert e2e_checks(tmp_path)["父仓 E2E 需求列一致"]["status"] == "PASS"
 
 
+def test_demand_column_is_not_a_selector(tmp_path: Path) -> None:
+    data = make_solution(tmp_path, [req("REQ-001", "web", case_ids=["E2E-SOLUTION-001"])])
+    write_rows(tmp_path, [row("E2E-SOLUTION-001"), row("E2E-SOLUTION-002", demand="REQ-001")])
+    grid = e2e.read_index(tmp_path)
+    assert e2e.select(data, "REQ-001", grid)["selected"] == ["E2E-SOLUTION-001"]
+
+
+def test_empty_case_ids_is_blocked_not_pass(tmp_path: Path) -> None:
+    text = (
+        "version: 1\nsolution: demo\nmode: federated\n"
+        "members:\n  - name: web\n    path: web\n    assets: member\n"
+        "requirements:\n"
+        "  - id: REQ-001\n    member: web\n    acs: AC-SOLUTION-001\n"
+        "    task_slug: web-task\n    scope: 演示\n    case_ids:\n"
+    )
+    (tmp_path / "web").mkdir()
+    data = core.validate_manifest(core.parse_manifest_text(text), tmp_path)
+    write_rows(tmp_path, [row("E2E-SOLUTION-001")])
+    result = e2e.status(data, e2e.read_index(tmp_path), "REQ-001")
+    assert result["requirements"][0]["selected"] == []
+    assert result["verdict"] == "BLOCKED"
+    assert result["exit"] == 3
+
+
 def test_single_consumer_demand_column_may_be_empty(tmp_path: Path) -> None:
     make_solution(tmp_path, [req("REQ-001", "web", case_ids=["E2E-SOLUTION-001"])])
     write_rows(tmp_path, [row("E2E-SOLUTION-001")])

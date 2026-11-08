@@ -177,3 +177,15 @@ def test_member_a_local_case_stays_fresh_when_member_b_changes(tmp_path: Path) -
     # 成员 A 根算 current（无 solution_root 标记）：它自己的应用没变 ⇒ 仍 fresh。
     assert cons.case_review_state("E2E-LOCAL", snap,
                                   dict(run_prov))["state"] == "fresh"
+
+
+# ---------------------------------------------------------------- 写边界（RFC §4.5.4 #5）
+
+def test_parent_console_writes_only_parent_ledger(tmp_path: Path) -> None:
+    make_parent_with_members(tmp_path)
+    cons.Ledger(tmp_path, "tester").append(
+        {"kind": "submit", "source": "app", "cases": {}})
+    assert (cons.load_layout(tmp_path).console_dir / "events.jsonl").is_file()
+    for name in ("web", "api"):
+        assert not (cons.load_layout(tmp_path / name).console_dir
+                    / "events.jsonl").exists()
