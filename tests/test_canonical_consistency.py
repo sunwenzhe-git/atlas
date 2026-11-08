@@ -368,12 +368,14 @@ def check_skill_budget() -> dict:
         # 装配副本态（PKG_ROOT = 采纳仓的 `.atlas/`）不下发根 `skills/`：skill 瘦桩装到
         # 各平台目录，判据⑧的被审对象只在源包存在 ⇒ N/A，不 fail-closed（否则所有采纳仓
         # 的 `pytest .atlas/tests` 恒红，atlas check 的「对齐测试」门恒 FAIL）。
-        # 源包仍 fail-closed：`install.sh` 是源包标记，删掉 skills/ 不会被判成 N/A。
-        if not (PKG_ROOT / "install.sh").is_file():
+        # 识别用**装配戳**（install.py 写入的 `VERSION` / `MANIFEST.json`），不用包内普通文件：
+        # 源包根两者都不存在 ⇒ 删任何文件都藏不住判据（假阴堵死）。
+        assembled = (PKG_ROOT / "VERSION").is_file() or (PKG_ROOT / "MANIFEST.json").is_file()
+        if assembled:
             return {"check": "SKILL 体积预算（判据⑧）", "ok": True, "skip": True,
-                    "detail": "装配副本态（无根 skills/ 且无 install.sh）：判据⑧ N/A —— 被审对象只在源包"}
+                    "detail": "装配副本态（根有 VERSION / MANIFEST.json 装配戳）：判据⑧ N/A —— 被审对象只在源包"}
         return {"check": "SKILL 体积预算（判据⑧）", "ok": False, "skip": False,
-                "detail": "未扫到 skills/*/SKILL.md —— 判据失效，fail-closed"}
+                "detail": "未扫到 skills/*/SKILL.md 且无装配戳 —— 判据失效，fail-closed"}
     over: list[str] = []
     measured: list[str] = []
     for f in skill_files:
@@ -533,6 +535,42 @@ def test_skill_budget_under_limit() -> None:
     """判据⑧（D185）：`skills/*/SKILL.md` 字符数 `< SKILL_BUDGET_CHARS`（单一断言）。"""
     res = check_skill_budget()
     assert res["ok"], res["detail"]
+
+
+def test_skill_budget_fail_closed_without_skills_or_stamp(tmp_path, monkeypatch) -> None:
+    """判据⑧ 假阴回归钉：无 `skills/` 且无装配戳（源包态）⇒ fail-closed。"""
+    import sys
+    monkeypatch.setattr(sys.modules[__name__], "PKG_ROOT", tmp_path)
+    res = check_skill_budget()
+    assert not res["ok"] and not res["skip"], res["detail"]
+
+
+def test_skill_budget_assembled_copy_is_na(tmp_path, monkeypatch) -> None:
+    """判据⑧：装配戳（`VERSION` 或 `MANIFEST.json`）⇒ 无 `skills/` 判 N/A。"""
+    import sys
+    monkeypatch.setattr(sys.modules[__name__], "PKG_ROOT", tmp_path)
+    (tmp_path / "VERSION").write_text("0.0.0\n", encoding="utf-8")
+    res = check_skill_budget()
+    assert res["ok"] and res["skip"], res["detail"]
+    (tmp_path / "VERSION").unlink()
+    (tmp_path / "MANIFEST.json").write_text("{}", encoding="utf-8")
+    res = check_skill_budget()
+    assert res["ok"] and res["skip"], res["detail"]
+
+
+def test_skill_budget_counts_chars_when_skills_present(tmp_path, monkeypatch) -> None:
+    """判据⑧：有 `skills/` 即按字符数判（超限 FAIL、不超 PASS），装配戳不改变结论。"""
+    import sys
+    monkeypatch.setattr(sys.modules[__name__], "PKG_ROOT", tmp_path)
+    (tmp_path / "VERSION").write_text("0.0.0\n", encoding="utf-8")
+    skill = tmp_path / "skills" / "big" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("x" * SKILL_BUDGET_CHARS, encoding="utf-8")
+    res = check_skill_budget()
+    assert not res["ok"] and not res["skip"] and "big" in res["detail"], res["detail"]
+    skill.write_text("x" * (SKILL_BUDGET_CHARS - 1), encoding="utf-8")
+    res = check_skill_budget()
+    assert res["ok"] and not res["skip"], res["detail"]
 
 
 def main() -> int:
