@@ -36,10 +36,12 @@ contracts:
 #     member: <成员标识>
 #     task_slug: req-001-api
 #     scope: "实现跨仓同步 API"
+#     case_ids: E2E-SOLUTION-001,E2E-SOLUTION-002  # 父仓跨仓 E2E 选择器；多成员需求必填
 #     assignee: <可选；缺省 = 成员 .trellis/.developer>
 #   - id: REQ-001
 #     acs: AC-SOLUTION-001
 #     member: <另一成员标识>
 #     task_slug: req-001-ui
 #     scope: "接入同步入口"
+#     # cross_repo_e2e: none  # 仅单成员需求可声明「无跨仓 E2E」；与 case_ids 互斥
 # requirements: []
