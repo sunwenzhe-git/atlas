@@ -305,7 +305,65 @@ def init(root: Path, migrate: bool = False) -> dict:
 
 # ---------------------------------------------------------------- status（一期最小）
 
-def status(data: dict, index: dict, requirement: str | None = None) -> dict:
+_AC_COVERAGE_EMPTY = {"state": "not_ready", "ac_total": 0, "attached": 0,
+                      "zero_attached": []}
+
+
+def _domain_ready(index_text: str, domain: str) -> bool:
+    """父仓域是否 `覆盖就绪`：域内页面全部 `已实现` 或 `覆盖就绪: 是`（RFC §3.6）。"""
+    mod = load_module("validate_e2e_index")
+    for header, body in mod.tables(index_text):
+        names = [c.strip() for c in header]
+        if not any(n.startswith("页面") for n in names):
+            continue
+        if not any(n.startswith("路由") for n in names):
+            continue
+        domain_i = next((i for i, n in enumerate(names) if n.startswith("域")), None)
+        status_i = next((i for i, n in enumerate(names) if n.startswith("实现状态")), None)
+        cov_i = next((i for i, n in enumerate(names) if n.startswith("覆盖就绪")), None)
+        if domain_i is None or status_i is None:
+            continue
+        rows = []
+        for raw in body:
+            cells = list(raw) + [""] * (len(names) - len(raw))
+            if domain not in re.split(r"\s*·\s*", cells[domain_i]):
+                continue
+            coverage = cells[cov_i] if cov_i is not None else ""
+            rows.append(coverage == "是" or (coverage != "否"
+                                             and cells[status_i] == "已实现"))
+        if rows:
+            return all(rows)
+    return False
+
+
+def _ac_coverage(root: Path | None, index: dict) -> dict:
+    """父仓 AC 反向覆盖（RFC §3.6）：`ac_total` / `attached` / `zero_attached[]`。
+
+    `state=not_ready`（骨架 `未实现` / `覆盖就绪: 否`）不参与 `verdict`。
+    """
+    if root is None or not index.get("present") or not index.get("ok"):
+        return dict(_AC_COVERAGE_EMPTY)
+    prd = load_module("layout").load_layout(Path(root)).prd_dir / "solution-prd.md"
+    if not prd.is_file():
+        return dict(_AC_COVERAGE_EMPTY)
+    try:
+        prd_text = prd.read_text(encoding="utf-8")
+        index_text = index_path(root).read_text(encoding="utf-8")
+    except OSError:
+        return dict(_AC_COVERAGE_EMPTY)
+    defs = {m.group(1) for m in
+            re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|", prd_text, re.M)}
+    attached = {r.get("关联AC", "").strip() for r in index["rows"]} & defs
+    front = prd_text.split("---")[1] if prd_text.startswith("---") else ""
+    hit = re.search(r"^domain:\s*\"?([^\s\"]+)", front, re.M)
+    ready = _domain_ready(index_text, hit.group(1) if hit else "solution")
+    return {"state": "ready" if ready else "not_ready",
+            "ac_total": len(defs), "attached": len(attached),
+            "zero_attached": sorted(defs - attached)}
+
+
+def status(data: dict, index: dict, requirement: str | None = None,
+           root: Path | None = None) -> dict:
     """只读盘点：命中数 / BLOCKED / N/A 与合成 verdict；不执行、不写盘。"""
     req_ids = []
     for req in data.get("requirements") or []:
@@ -321,17 +379,22 @@ def status(data: dict, index: dict, requirement: str | None = None) -> dict:
         result = select(data, rid, index)
         rows.append({"requirement": rid, **result})
     states = {r["state"] for r in rows}
+    coverage = _ac_coverage(root, index)
     if "fail" in states:
         verdict, code = "FAIL", 1
     elif "blocked" in states:
         verdict, code = "BLOCKED", 3
+    elif coverage["state"] == "ready" and coverage["zero_attached"]:
+        # 覆盖就绪域仍有零挂靠 AC：不得显示 PASS（RFC §3.6）。
+        verdict, code = "INCOMPLETE", 0
     elif states and states <= {"na"}:
         verdict, code = "N/A", 0
     elif not rows:
         verdict, code = "BLOCKED", 3
     else:
-        verdict, code = "OK", 0
+        verdict, code = "PASS", 0
     return {"requirement": requirement, "verdict": verdict, "exit": code,
             "requirements": rows,
+            "parent": {"ac_coverage": coverage},
             "case_ids": sorted({cid for r in rows for cid in r["case_ids"]}),
             "selected": sorted({cid for r in rows for cid in r["selected"]})}

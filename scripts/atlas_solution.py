@@ -291,7 +291,8 @@ def main(argv: list[str] | None = None) -> int:
 
             data = core.load_manifest(root)
             if args.e2e_cmd == "status":
-                result = kernel.status(data, kernel.read_index(root), args.requirement)
+                result = kernel.status(data, kernel.read_index(root),
+                                       args.requirement, root=root)
                 if args.json:
                     print(json.dumps(result, ensure_ascii=False, indent=2))
                 else:

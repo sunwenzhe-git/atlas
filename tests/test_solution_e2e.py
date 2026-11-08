@@ -201,7 +201,7 @@ def test_selector_hits_existing_case(tmp_path: Path) -> None:
     assert checks["父仓 E2E 选择器接线"]["status"] == "PASS"
     grid = e2e.read_index(tmp_path)
     assert e2e.select(data, "REQ-001", grid)["selected"] == ["E2E-SOLUTION-001"]
-    assert e2e.status(data, grid, "REQ-001")["verdict"] == "OK"
+    assert e2e.status(data, grid, "REQ-001")["verdict"] == "PASS"
 
 
 def test_shared_case_demand_column_must_list_all_consumers(tmp_path: Path) -> None:
@@ -231,6 +231,43 @@ def test_orphan_case_is_warned_not_deleted(tmp_path: Path) -> None:
     assert checks["父仓 E2E 孤儿用例"]["status"] == "WARN"
     assert "E2E-SOLUTION-009" in checks["父仓 E2E 孤儿用例"]["detail"]
     assert core.check_solution(tmp_path)["e2e"]["orphan_cases"] == ["E2E-SOLUTION-009"]
+
+
+def _mark_solution_flow_ready(root: Path) -> None:
+    path = e2e.index_path(root)
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace("| solution-flow | / | solution | 未实现 | 否 |",
+                                 "| solution-flow | / | solution | 已实现 | 是 |"),
+                    encoding="utf-8")
+
+
+def _write_solution_prd(root: Path) -> None:
+    (root / "product" / "prd" / "solution-prd.md").write_text(
+        "---\ndomain: \"solution\"\n---\n\n"
+        "| AC ID | 描述 |\n|---|---|\n"
+        "| AC-SOLUTION-001 | 已挂靠 |\n| AC-SOLUTION-002 | 未挂靠 |\n",
+        encoding="utf-8")
+
+
+def test_status_reports_incomplete_ac_coverage(tmp_path: Path) -> None:
+    data = make_solution(tmp_path, [req("REQ-001", "web", case_ids=["E2E-SOLUTION-001"])])
+    write_rows(tmp_path, [row("E2E-SOLUTION-001")])
+    _mark_solution_flow_ready(tmp_path)
+    _write_solution_prd(tmp_path)
+    result = e2e.status(data, e2e.read_index(tmp_path), "REQ-001", root=tmp_path)
+    assert result["verdict"] == "INCOMPLETE"
+    coverage = result["parent"]["ac_coverage"]
+    assert coverage["state"] == "ready"
+    assert coverage["zero_attached"] == ["AC-SOLUTION-002"]
+
+
+def test_status_skeleton_ac_coverage_is_not_ready(tmp_path: Path) -> None:
+    data = make_solution(tmp_path, [req("REQ-001", "web", case_ids=["E2E-SOLUTION-001"])])
+    write_rows(tmp_path, [row("E2E-SOLUTION-001")])
+    _write_solution_prd(tmp_path)
+    result = e2e.status(data, e2e.read_index(tmp_path), "REQ-001", root=tmp_path)
+    assert result["parent"]["ac_coverage"]["state"] == "not_ready"
+    assert result["verdict"] == "PASS"
 
 
 # ---------------------------------------------------------------- init / migrate
