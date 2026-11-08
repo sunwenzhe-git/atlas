@@ -365,6 +365,13 @@ def check_skill_budget() -> dict:
     """
     skill_files = sorted((PKG_ROOT / "skills").glob("*/SKILL.md"))
     if not skill_files:
+        # 装配副本态（PKG_ROOT = 采纳仓的 `.atlas/`）不下发根 `skills/`：skill 瘦桩装到
+        # 各平台目录，判据⑧的被审对象只在源包存在 ⇒ N/A，不 fail-closed（否则所有采纳仓
+        # 的 `pytest .atlas/tests` 恒红，atlas check 的「对齐测试」门恒 FAIL）。
+        # 源包仍 fail-closed：`install.sh` 是源包标记，删掉 skills/ 不会被判成 N/A。
+        if not (PKG_ROOT / "install.sh").is_file():
+            return {"check": "SKILL 体积预算（判据⑧）", "ok": True, "skip": True,
+                    "detail": "装配副本态（无根 skills/ 且无 install.sh）：判据⑧ N/A —— 被审对象只在源包"}
         return {"check": "SKILL 体积预算（判据⑧）", "ok": False, "skip": False,
                 "detail": "未扫到 skills/*/SKILL.md —— 判据失效，fail-closed"}
     over: list[str] = []
