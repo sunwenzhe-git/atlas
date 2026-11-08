@@ -65,8 +65,33 @@ if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _support.siblings import load_module  # noqa: E402
 
+
+def _solution_root(root: Path) -> bool:
+    """父仓模式（RFC-20261108-02）：`atlas.solution.yaml` 存在且 `mode: federated`。"""
+    p = root / "atlas.solution.yaml"
+    if not p.is_file():
+        return False
+    try:
+        return re.search(r"^mode:\s*federated\s*$", p.read_text(encoding="utf-8"),
+                         re.M) is not None
+    except OSError:
+        return False
+
+
+def _declares_case_ids(root: Path) -> bool:
+    p = root / "atlas.solution.yaml"
+    if not p.is_file():
+        return False
+    try:
+        return re.search(r"^\s+case_ids:\s*\S", p.read_text(encoding="utf-8"),
+                         re.M) is not None
+    except OSError:
+        return False
+
+
 # 保名兼容（本文件内与外部按名引用）
-parse_block = load_module("case_block").parse_block
+case_block = load_module("case_block")
+parse_block = case_block.parse_block
 # 查询串单源（`_support/url_merge.py`）：键提取 / 去 query 后的路径形态，与生成器**同一函数对象**
 url_merge = load_module("url_merge")
 # 用例 ID 文法体单源（正文归 rings/e2e/reference.md §5.3；锚点本处自留）
@@ -354,6 +379,8 @@ def gather_shards(cases: Path) -> tuple[dict[str, dict], dict[str, str]]:
                 continue
             d = parse_block(b.group(1))
             d["_file"] = md.name
+            # 原始块体（RFC-20261108-02：父仓「成员依赖」必填要区分「未写」与「写了空列表」）。
+            d["_body"] = b.group(1)
             blocks[m.group(1)] = d
     return blocks, pages
 
@@ -489,7 +516,18 @@ def validate(root: Path) -> Result:
     index = e2e / "e2e-index.md"
     cases = e2e / "cases"
     shard_files = sorted(cases.glob("*.md")) if cases.is_dir() else []
+    parent = _solution_root(root)
     if not index.is_file() and not shard_files:
+        if parent:
+            # RFC-20261108-02 §3.7：父仓模式不再判 N/A。
+            if _declares_case_ids(root):
+                res.add("门控态", "FAIL",
+                        "父仓清单已声明 case_ids，但 e2e-index.md 缺失；"
+                        "运行 atlas solution e2e init")
+            else:
+                res.add("门控态", "WARN",
+                        "父仓 E2E 未初始化；运行 atlas solution e2e init")
+            return res
         res.add("门控态", "N/A", "无索引且无分片 → 空骨架")
         return res
 
@@ -543,6 +581,47 @@ def validate(root: Path) -> Result:
              + _fix(root, "在分片的 atlas-case 块补齐 "
                           "id/pages/precondition/step/expected/testid"))
             if block_bad else "")
+
+    # 父仓「成员依赖」必填（RFC-20261108-02 §3.7 / §5.4）：缺失 FAIL、清单外成员 FAIL、
+    # 共享用例（同一 case 被多个需求引用）的并集不一致 FAIL。成员依赖只服务 BLOCKED 与
+    # 清单校验，不承担 stale 粒度。
+    if parent:
+        member_names: set[str] = set()
+        consumers: dict[str, set[str]] = {}
+        members_by_rid: dict[str, set[str]] = {}
+        try:
+            manifest = load_module("solution").load_manifest(root)
+            member_names = {m["name"] for m in manifest["members"]}
+            for r in manifest.get("requirements") or []:
+                members_by_rid.setdefault(r["id"], set()).add(r["member"])
+                for cid in r.get("case_ids") or []:
+                    consumers.setdefault(cid, set()).add(r["id"])
+        except Exception:  # noqa: BLE001 - 清单不可读时由清单门报错，这里不重复红
+            member_names = set()
+        dep_missing: list[str] = []
+        dep_unknown: list[str] = []
+        dep_union: list[str] = []
+        for cid, d in blocks.items():
+            if "成员依赖" not in case_block.block_keys(d.get("_body", "")):
+                dep_missing.append(cid)
+                continue
+            vals = d.get("成员依赖") or []
+            unknown = [v for v in vals if member_names and v not in member_names]
+            if unknown:
+                dep_unknown.append(f"{cid}:{unknown}")
+            rids = consumers.get(cid, set())
+            if len(rids) > 1:
+                expected = set().union(*(members_by_rid.get(r, set()) for r in rids))
+                if set(vals) != expected:
+                    dep_union.append(f"{cid}: 期望={sorted(expected)} 实际={sorted(vals)}")
+        res.add("成员依赖必填", "PASS" if not dep_missing else "FAIL",
+                f"缺失={_format_list(dep_missing)}"
+                + (_fix(root, "父仓用例块补 `成员依赖:`（空列表也写冒号，勿写 `[]`）")
+                   if dep_missing else ""))
+        res.add("成员依赖成员存在", "PASS" if not dep_unknown else "FAIL",
+                f"清单外成员={_format_list(dep_unknown)}")
+        res.add("成员依赖共享并集", "PASS" if not dep_union else "FAIL",
+                f"不一致={_format_list(dep_union)}")
 
     orphan = sorted(set(blocks) - set(ids))
     dead = sorted(set(ids) - set(blocks))
@@ -695,8 +774,18 @@ def validate(root: Path) -> Result:
     if not prd_files:
         res.add("关联AC 可达", "N/A", "门控态：无域级 PRD")
     else:
-        corpus = "".join(p.read_text(encoding="utf-8") for p in prd_files)
-        unreachable = [g["用例ID"] for g in grid if g["关联AC"] not in corpus]
+        if parent:
+            # 父仓模式（RFC-20261108-02 §3.7）：`关联AC` 必须命中 AC 表**定义行**，
+            # 不是散文提及。定义行形态 = 表格首列 `AC-<CODE>-NNN`。
+            defs: set[str] = set()
+            for pf in prd_files:
+                seg = pf.read_text(encoding="utf-8")
+                defs |= {m.group(1) for m in
+                         re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|", seg, re.M)}
+            unreachable = [g["用例ID"] for g in grid if g["关联AC"] not in defs]
+        else:
+            corpus = "".join(p.read_text(encoding="utf-8") for p in prd_files)
+            unreachable = [g["用例ID"] for g in grid if g["关联AC"] not in corpus]
         res.add("关联AC 可达", "PASS" if not unreachable else "FAIL", f"不可达={unreachable[:8]}")
 
     # AC 反向覆盖（追溯门，契约 §8.2；2026-10-04 补，`3509 §B186-2`）——追溯链末段

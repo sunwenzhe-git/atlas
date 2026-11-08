@@ -41,6 +41,21 @@ from _support.layout import LayoutError, load_layout  # noqa: E402
 
 parse_block = load_module("case_block").parse_block
 
+# RFC-20261108-02 §3.7：父仓模式的 testid 命名空间按成员仓隔离，不在 solution 根合并扫描。
+_TESTID_NOTE = "见 RFC-20261108-02 §3.7 三条缓解"
+
+
+def _solution_root(root: Path) -> bool:
+    """父仓模式：`atlas.solution.yaml` 存在且 `mode: federated`。"""
+    p = Path(root) / "atlas.solution.yaml"
+    if not p.is_file():
+        return False
+    try:
+        return re.search(r"^mode:\s*federated\s*$", p.read_text(encoding="utf-8"),
+                         re.M) is not None
+    except OSError:
+        return False
+
 
 def _format_list(items: list[str] | set[str], max_show: int = 20) -> str:
     lst = sorted(items) if isinstance(items, set) else list(items)
@@ -558,6 +573,13 @@ def validate(root: Path) -> Result:
         return res
     cases = lay.e2e_cases_dir
     globs = app_globs(root, lay)
+
+    # RFC-20261108-02 §3.7：父仓模式返回 N/A（显式原因），不把成员合并成一个站点扫描。
+    if _solution_root(root):
+        res.add("门控态", "N/A",
+                "父仓模式（atlas.solution.yaml）：testid 命名空间按成员仓隔离，"
+                "不在 solution 根合并扫描；" + _TESTID_NOTE)
+        return res
 
     # 门控态：抽取源或用例目录缺一 —— 本环无输入（本环比的是**两个集合**，缺一侧就没得比）。
     # 注意抽取源要**真的在磁盘上**（只看 globs 已声明会把「刚接入、代码还没落地」误判为有输入）。
