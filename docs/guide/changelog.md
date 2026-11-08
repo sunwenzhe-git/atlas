@@ -4,7 +4,16 @@
 
 ---
 
-## [Unreleased]
+## [v0.2.0-beta.32] - 2026-11-08
+
+### 🧭 多仓方案层 E2E：父仓持跨仓 E2E（一期，RFC-20261108-02）
+
+* **新增 CLI**：`atlas solution e2e init|status|verify`——`init` 幂等补父仓 `e2e-index.md` 骨架（`solution-flow` 虚拟页写 `未实现` + `覆盖就绪: 否`，反向视图行留空单元格）；`status` 只读输出选择器命中数 / `BLOCKED` / `N/A` 与退出码；`verify` 只跑父仓 E2E 专项检查，FAIL 退出 1。
+* **清单选择器**：`requirements[].case_ids` 是父仓跨仓用例唯一真相；仅单成员需求允许 `cross_repo_e2e: none`，同一 `requirement.id` 出现 ≥2 个成员行时必须给 `case_ids`，缺失或写 `none` ⇒ `atlas solution check` FAIL；`case_ids` 为空 ⇒ 运行期 `BLOCKED`，不退化成「跑全部」或 PASS。
+* **父仓校验分支**：`validate_e2e_index` 父仓模式校验 `关联AC` 命中 `solution-prd.md` 定义行、索引 `需求` 列与清单一致，并输出孤儿用例审计（WARN）；`validate_testids` 在 solution 根判 N/A，不把成员合并成单站点扫描。
+* **控制台 provenance**：父仓账本按成员根记录 provenance / 指纹，评审新鲜度按父仓模式分支——无 run-time `prov` ⇒ `stale`，单仓模式保持 `legacy`；`reviewed.pass` 绑定最近一次 run 的 `prov` / `run_id`，重签不重跑仍为 `stale`。
+* **判据⑧副本态**：`.atlas/tests` 对齐测试改用装配戳（`VERSION` / `MANIFEST.json`）识别装配副本，副本态判 N/A，不再因根 `skills/` 缺失 fail-closed 判整门 FAIL（#56）。
+* **边界**：一期只支持经统一入口网关的同源跨仓流；成员本地 E2E 不迁移、不接管；只读聚合视图属二期（未放行）。
 
 ### 🧭 实现期纪律、收口分档与 SKILL 体积预算（RFC-20261107-01 / D185 / D186 / D187）
 
