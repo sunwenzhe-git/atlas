@@ -42,7 +42,12 @@ from _support.layout import LayoutError, load_layout  # noqa: E402
 parse_block = load_module("case_block").parse_block
 
 # RFC-20261108-02 §3.7：父仓模式的 testid 命名空间按成员仓隔离，不在 solution 根合并扫描。
-_TESTID_NOTE = "见 RFC-20261108-02 §3.7 三条缓解"
+# 三条缓解：① 跨仓用例禁写成员 testid，或必须标注成员归属；② 成员 `app_hash` 变化必须重跑
+# （只重签不算 `fresh`）；③ QUEUE 观察行 `solution-testid-namespace`（owner 待指派，期限二期
+# 实现批复审前 / 一期上线后 30 天内，以先到者为准）。
+_TESTID_NOTE = ("缓解：① 跨仓用例禁写成员 testid 或标注成员归属；"
+                "② 成员 app_hash 变化必须重跑（只重签不算 fresh）；"
+                "③ QUEUE 观察行 solution-testid-namespace 跟踪")
 
 
 def _solution_root(root: Path) -> bool:

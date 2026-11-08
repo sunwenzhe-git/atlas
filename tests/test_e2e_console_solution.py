@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 from pathlib import Path
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
@@ -109,3 +110,70 @@ def test_is_solution_root_detects_federated_manifest(tmp_path: Path) -> None:
     assert cons._is_solution_root(tmp_path) is True
     (tmp_path / "atlas.solution.yaml").unlink()
     assert cons._is_solution_root(tmp_path) is False
+
+
+# ---------------------------------------------------------------- H3 / H5：成员内容变化
+
+def _git(path: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(path), *args], check=True,
+                   capture_output=True, text=True)
+
+
+def make_parent_with_members(tmp_path: Path) -> None:
+    for name in ("web", "api"):
+        repo = tmp_path / name
+        repo.mkdir()
+        _git(repo, "init")
+        (repo / "app.txt").write_text("v1\n", encoding="utf-8")
+        _git(repo, "add", "app.txt")
+        _git(repo, "-c", "user.email=a@b.c", "-c", "user.name=t",
+             "commit", "-m", "init")
+    solution.init_solution(
+        tmp_path, "demo",
+        [("web", "web", "frontend"), ("api", "api", "backend")],
+        install=False,
+    )
+
+
+def test_parent_app_hash_aggregates_all_members(tmp_path: Path) -> None:
+    make_parent_with_members(tmp_path)
+    before = cons.app_fingerprint(tmp_path)
+    web_before = cons.app_fingerprint(tmp_path / "web")
+    assert before and web_before
+    (tmp_path / "api" / "app.txt").write_text("v2\n", encoding="utf-8")
+    after = cons.app_fingerprint(tmp_path)
+    assert after and after != before
+    # 成员 A 自己的根指纹不受成员 B 改动影响。
+    assert cons.app_fingerprint(tmp_path / "web") == web_before
+
+
+def test_member_change_makes_all_parent_cases_stale(tmp_path: Path) -> None:
+    make_parent_with_members(tmp_path)
+    old = cons.app_fingerprint(tmp_path)
+    run_prov = {"head_sha": "h", "scripts_hash": "s", "git_dirty": False,
+                "actor_type": "human", "app_hash": old, "shared_hash": "sh",
+                "cases": {"E2E-A": {"script": "a.ts", "block": "b1", "rest": "r1"},
+                          "E2E-B": {"script": "b.ts", "block": "b2", "rest": "r2"}}}
+    (tmp_path / "api" / "app.txt").write_text("v2\n", encoding="utf-8")
+    new = cons.app_fingerprint(tmp_path)
+    assert new != old
+    current = dict(run_prov, app_hash=new, solution_root=True)
+    for cid in ("E2E-A", "E2E-B"):
+        snap = cons._compact({"ok": True, "prov": run_prov,
+                              "reviewed": {"pass": True}}, prov=run_prov, cid=cid)
+        # 依赖 B 的与不依赖 B 的父仓用例都不豁免。
+        assert cons.case_review_state(cid, snap, current)["state"] == "stale"
+
+
+def test_member_a_local_case_stays_fresh_when_member_b_changes(tmp_path: Path) -> None:
+    make_parent_with_members(tmp_path)
+    web_hash = cons.app_fingerprint(tmp_path / "web")
+    run_prov = {"head_sha": "hw", "scripts_hash": "sw", "git_dirty": False,
+                "actor_type": "human", "app_hash": web_hash, "shared_hash": "sh",
+                "cases": {"E2E-LOCAL": {"script": "l.ts", "block": "b", "rest": "r"}}}
+    snap = cons._compact({"ok": True, "prov": run_prov,
+                          "reviewed": {"pass": True}}, prov=run_prov, cid="E2E-LOCAL")
+    (tmp_path / "api" / "app.txt").write_text("v2\n", encoding="utf-8")
+    # 成员 A 根算 current（无 solution_root 标记）：它自己的应用没变 ⇒ 仍 fresh。
+    assert cons.case_review_state("E2E-LOCAL", snap,
+                                  dict(run_prov))["state"] == "fresh"
