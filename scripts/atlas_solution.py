@@ -44,6 +44,16 @@ def _load_solution_task():
     return mod
 
 
+def _load_solution_e2e():
+    path = PKG_ROOT / "_support" / "solution_e2e.py"
+    spec = importlib.util.spec_from_file_location("_atlas_solution_e2e_cli", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"无法加载 {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _parse_member(raw: str) -> tuple[str, str, str]:
     if "=" not in raw:
         raise ValueError(f"--member 必须是 name=path 形式: {raw!r}")
@@ -117,6 +127,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_ts = task_sub.add_parser("status", help="只读查看 requirement → 成员任务")
     _add_common(p_ts)
     p_ts.add_argument("--requirement", default=None)
+
+    p_e2e = sub.add_parser("e2e", help="父仓跨仓 E2E（一期）：status / verify / init")
+    e2e_sub = p_e2e.add_subparsers(dest="e2e_cmd", required=True)
+    p_es = e2e_sub.add_parser("status", help="只读选择器命中数 / BLOCKED / N/A")
+    _add_common(p_es)
+    p_es.add_argument("--requirement", default=None, help="只看指定 requirements[].id")
+    p_ev = e2e_sub.add_parser("verify", help="只读跑父仓 E2E 专项检查（FAIL 退出 1）")
+    _add_common(p_ev)
+    p_ei = e2e_sub.add_parser("init", help="幂等创建父仓 e2e-index.md 骨架")
+    _add_common(p_ei)
+    p_ei.add_argument("--migrate", action="store_true",
+                      help="为存量父仓用例批量补 成员依赖:（输出涉及清单）")
     return ap
 
 
@@ -246,6 +268,54 @@ def main(argv: list[str] | None = None) -> int:
                 for warning in result["warnings"]:
                     print(f"  [WARN] {warning}")
             return 0
+
+        if args.cmd == "e2e":
+            kernel = _load_solution_e2e()
+            if not kernel.is_solution_root(root):
+                raise core.SolutionError(
+                    "不是父仓（需要 atlas.solution.yaml 且 mode: federated）")
+            if args.e2e_cmd == "init":
+                result = kernel.init(root, migrate=args.migrate)
+                if args.json:
+                    print(json.dumps(result, ensure_ascii=False, indent=2))
+                else:
+                    print(f"[{'OK' if result['created'] else 'SKIP'}] "
+                          f"父仓 E2E 索引: {result['index']}")
+                    if result["migrated"]:
+                        print(f"[MIGRATE] 补 成员依赖: 的用例 {len(result['migrated'])} 条：")
+                        for item in result["migrated"]:
+                            print(f"  - {item['file']}: {item['case'] or '(无 id)'}")
+                    elif args.migrate:
+                        print("[MIGRATE] 无需要迁移的用例")
+                return 0
+
+            data = core.load_manifest(root)
+            if args.e2e_cmd == "status":
+                result = kernel.status(data, kernel.read_index(root), args.requirement)
+                if args.json:
+                    print(json.dumps(result, ensure_ascii=False, indent=2))
+                else:
+                    print(f"solution e2e status: {result['verdict']}")
+                    for row in result["requirements"]:
+                        print(f"  {row['requirement']}: {row['state']}"
+                              + (f" → {row['selected']}" if row["selected"] else "")
+                              + (f" ({row['reason']})" if row["reason"] else ""))
+                return result["exit"]
+
+            # verify：只判父仓 E2E 专项检查，不把无关的锁/契约 WARN 混进来。
+            report = core.check_solution(root)
+            checks = [c for c in report["checks"] if c["check"].startswith("父仓 E2E")]
+            verdict = "FAIL" if any(c["status"] == "FAIL" for c in checks) else "PASS"
+            payload = {"verdict": verdict, "checks": checks,
+                       "audit": report.get("e2e")}
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print(f"solution e2e verify: {verdict}")
+                for c in checks:
+                    print(f"  [{c['status']}] {c['check']}"
+                          + (f" — {c['detail']}" if c["detail"] else ""))
+            return 1 if verdict == "FAIL" else 0
 
         if args.cmd == "commit":
             print("[FAIL] solution commit 属于 Phase 2，尚未交付；"
