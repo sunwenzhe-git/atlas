@@ -70,4 +70,4 @@
 
 ---
 
-<!-- 机器状态行（勿读）：上次巡检 2026-11-08 11:08 · 可写面 = 本文件 + duty-review/bugs.md · 待拍板空（本轮三件已按 A 收口）· 在途批：未推提交 9（写入时 `git rev-list --count origin/main..HEAD` 实测 8，加本笔提交）· 工作树：本批 4 文件在写（duty-review/QUEUE.md、duty-review/bugs.md、tests/test_duty_bug_families.py、proposals/PLAN-20261108-01-closeout.md，随本笔一并提交）· 深看基线 2026-11-04 17:12 → HEAD 9211fc1（本笔提交前；区间含 beta.30/31 收口 + RFC-20261107-01 批 1–3 与 REVIEW-20261108-01 D156 三态确认）· 新增存量：自感知上报段（§15）6 案（#50–#55，日期 2026-11-07，状态开放，待出方案）· D156 观察行已落（RFC-20261107-01，转定案的 grep 验收待复验）-->
+<!-- 机器状态行（勿读）：上次巡检 2026-11-08 11:08 · 可写面 = 本文件 + duty-review/bugs.md · 待拍板空（本轮三件已按 A 收口）· 在途批：未推提交 9（写入时 `git rev-list --count origin/main..HEAD` 实测 8，加本笔提交）· 工作树：本批 4 文件在写（duty-review/QUEUE.md、duty-review/bugs.md、tests/test_duty_bug_families.py、proposals/PLAN-20261108-01-closeout.md，随本笔一并提交）· 深看基线 2026-11-04 17:12 → HEAD 9211fc1（本笔提交前；区间含 beta.30/31 收口 + RFC-20261107-01 批 1–3 与 REVIEW-20261108-01 D156 三态确认）· 新增存量：自感知上报段（§15）6 案（#50–#55，日期 2026-11-07，状态开放，待出方案）· D156 观察行已落（`duty-review/QUEUE.md:42`），已按 `0e82b9e` 转定案（grep 验收 1 行）-->
