@@ -2,7 +2,7 @@
 
 > **状态**：Phase 1（2026-11-04）+ solution task 增量（2026-11-05）+ 可复现锁 / `check --strict` 增量（2026-11-07，`[Unreleased]`）。父级只做只读整合与**窄写成员任务卡**（`.trellis/tasks`）；`unified` 与成员代码提交属 Phase 2，`import`/`export` 属 Phase 3，多 host / `targets[]`、跨仓影响面与图谱、成员拆分导出属 Phase 4 可选增强，见源包提案 RFC-20261104-02 / RFC-20261105-02（装配态无 proposals）。
 >
-> 本层不复制 PRD / 域事实 / E2E；它只拥有清单、锁、父级 PRD 与跨仓声明。资产归属的单源是 `atlas.solution.yaml` 的 `members[].assets`。
+> 本层不复制成员 PRD / 域事实 / 成员 E2E；父仓持有跨仓 E2E，成员保留本地 E2E。父仓跨仓 E2E 的清单选择器是 `requirements[].case_ids`：**多成员需求必须有 `case_ids`（禁止 `cross_repo_e2e: none`）**；单成员需求 `case_ids` 或 `cross_repo_e2e: none` 二选一，两者都无 ⇒ `solution check` FAIL。资产归属的单源是 `atlas.solution.yaml` 的 `members[].assets`。
 
 ## 1. 落点
 
@@ -46,6 +46,15 @@
 | `requirements[].task_slug` | 否 | Trellis slug；不含路径分隔符 / `..` / `MM-DD-` 前缀；创建后冻结 |
 | `requirements[].scope` | 否 | 单行本地 scope；含 `#` 时必须加引号；只在成员任务 `solution.md` 中展开 |
 | `requirements[].assignee` | 否 | 可选；缺省 = 成员 `.trellis/.developer` |
+| `requirements[].case_ids` | 否 | 父仓跨仓 E2E 的**需求级选择器**，逗号/顿号分隔；用例 ID 文法见 `rings/e2e/reference.md` §5.3。同一 `requirement.id` 最多一行携带；不得与 `cross_repo_e2e` 同时出现 |
+| `requirements[].cross_repo_e2e` | 否 | 唯一合法值 `none`；只允许**单成员需求**用它声明「没有跨仓 E2E」。同一 `requirement.id` 最多一行携带 |
+
+**父仓跨仓 E2E 选择器口径**（RFC-20261108-02 一期）：
+
+- **多成员需求**（同一 `requirement.id` 出现 ≥2 个 `member` 行）**必须**给 `case_ids`；写 `cross_repo_e2e: none` 或两者皆无 ⇒ `solution check` FAIL。
+- **单成员需求** `case_ids` 或 `cross_repo_e2e: none` 二选一；两者皆无 ⇒ `solution check` FAIL。
+- `case_ids` 是唯一选例真相；索引的 `需求` / `关联AC` 列只做追溯与人读。
+- 父仓资产落点与入口见 `rings/e2e/reference.md` §10.1；`atlas solution e2e init` 幂等补 `e2e-index.md` 骨架，`--migrate` 为存量用例批量补 `成员依赖:`。
 
 模板：`templates/atlas.solution.yaml`（字段样板；运行期解析以本契约为准，模板不参与判定）。
 
