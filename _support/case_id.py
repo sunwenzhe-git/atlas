@@ -23,4 +23,5 @@ GRAMMAR = r"E2E-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{3}"
 CONSUMERS = (
     "validators/validate_e2e_index.py",
     "scripts/e2e_console.py",
+    "_support/solution.py",
 )

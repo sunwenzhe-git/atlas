@@ -59,6 +59,10 @@ _SP = _load_sibling("stack_profile", "_atlas_solution_stack_profile")
 strip_inline_comment = _SP.strip_inline_comment
 yaml_scalar = _SP.yaml_scalar
 
+# 用例 ID 文法单源（`rings/e2e/reference.md` §5.3）。
+# 取用者必须登记进 `_support/case_id.py::CONSUMERS`（`tests/test_tools.py` 普查钉）。
+case_id = _load_sibling("case_id", "_atlas_solution_case_id")
+
 
 # ---------------------------------------------------------------- manifest
 
@@ -173,8 +177,9 @@ def _validate_url(raw, field: str) -> str | None:
 def parse_manifest_text(text: str) -> dict:
     """解析 `atlas.solution.yaml` 的受限 YAML 子集。
 
-    支持：顶层标量；`members:` / `contracts:` 的 `- key: value` 列表；
-    `requirements:` 只登记存在性（Phase 1 不解析）。不支持嵌套列表 / 多行标量。
+    支持：顶层标量；`members:` / `contracts:` / `requirements:` 的 `- key: value`
+    列表（`requirements` 逐行解析 `id / acs / member / task_slug / assignee / scope /
+    case_ids / cross_repo_e2e`）。不支持嵌套列表 / 多行标量。
     """
     data: dict = {"members": [], "contracts": [], "requirements": [],
                   "requirements_present": False, "unknown": []}
@@ -231,7 +236,8 @@ def parse_manifest_text(text: str) -> dict:
             known = {
                 "members": ("name", "path", "url", "assets", "kind", "stack_profile"),
                 "contracts": ("id", "producer", "producer_path", "consumer", "consumer_path"),
-                "requirements": ("id", "acs", "member", "task_slug", "assignee", "scope"),
+                "requirements": ("id", "acs", "member", "task_slug", "assignee", "scope",
+                                 "case_ids", "cross_repo_e2e"),
             }[section]
             if key not in known:
                 cur.setdefault("unknown", []).append(key)
@@ -349,6 +355,28 @@ def validate_manifest(data: dict, root: Path, phase1: bool = True) -> dict:
         assignee = str(item.get("assignee") or "").strip()
         if assignee:
             _validate_name(assignee, "requirements[].assignee")
+        # 选择器（一期）：`case_ids` 是**需求级**属标量，逗号/顿号分隔；`cross_repo_e2e`
+        # 唯一合法值 `none`。文法 / 去重在这里；「多成员必须 case_ids / 单成员二选一」
+        # 是跨行语义，归 `solution check`（不在此抛 SolutionError，避免清单加载提前打断）。
+        case_ids_present = "case_ids" in item
+        raw_case_ids = item.get("case_ids")
+        if isinstance(raw_case_ids, list):
+            case_ids = [str(c).strip() for c in raw_case_ids if str(c).strip()]
+        else:
+            case_ids = [c.strip() for c in re.split(r"[、,，]", str(raw_case_ids or ""))
+                        if c.strip()]
+        seen_case_ids: set[str] = set()
+        for cid in case_ids:
+            if not re.fullmatch(case_id.GRAMMAR, cid):
+                raise SolutionError(f"requirement {rid} 的 case_id 文法非法: {cid!r}")
+            if cid in seen_case_ids:
+                raise SolutionError(f"requirement {rid} 的 case_ids 重复: {cid!r}")
+            seen_case_ids.add(cid)
+        cross_present = "cross_repo_e2e" in item
+        cross_repo_e2e = str(item.get("cross_repo_e2e") or "").strip() or None
+        if cross_repo_e2e is not None and cross_repo_e2e != "none":
+            raise SolutionError(
+                f"requirement {rid} 的 cross_repo_e2e 只能是 none: {cross_repo_e2e!r}")
         key = (rid, member)
         if key in seen_req_keys:
             raise SolutionError(f"requirements 重复（id+member）: {rid} / {member}")
@@ -360,8 +388,27 @@ def validate_manifest(data: dict, root: Path, phase1: bool = True) -> dict:
             "task_slug": slug,
             "assignee": assignee or None,
             "scope": scope,
+            "case_ids": case_ids,
+            "case_ids_present": case_ids_present,
+            "cross_repo_e2e": cross_repo_e2e,
+            "cross_repo_e2e_present": cross_present,
             "unknown": list(item.get("unknown") or []),
         })
+
+    # 选择器互斥（清单内语义）：同一 `requirement.id` 最多一行携带 `case_ids`、
+    # 最多一行携带 `cross_repo_e2e`，且两者不得同时出现。
+    by_req: dict[str, list[dict]] = {}
+    for req in requirements:
+        by_req.setdefault(req["id"], []).append(req)
+    for rid, rows in by_req.items():
+        case_rows = [r for r in rows if r["case_ids_present"]]
+        none_rows = [r for r in rows if r["cross_repo_e2e_present"]]
+        if len(case_rows) > 1:
+            raise SolutionError(f"requirement {rid} 有多行携带 case_ids（选择器歧义）")
+        if len(none_rows) > 1:
+            raise SolutionError(f"requirement {rid} 有多行携带 cross_repo_e2e")
+        if case_rows and none_rows:
+            raise SolutionError(f"requirement {rid} 同时出现 case_ids 与 cross_repo_e2e")
 
     return {
         "version": SCHEMA_VERSION,
@@ -855,6 +902,13 @@ def _manifest_text(name: str, members: list[dict], contracts: list[dict] | None 
             ]
             if r.get("assignee"):
                 lines.append(f"    assignee: {r['assignee']}")
+            case_ids = r.get("case_ids") or []
+            if isinstance(case_ids, str):
+                case_ids = [a.strip() for a in re.split(r"[、,，]", case_ids) if a.strip()]
+            if case_ids:
+                lines.append(f"    case_ids: {','.join(case_ids)}")
+            if r.get("cross_repo_e2e"):
+                lines.append(f"    cross_repo_e2e: {r['cross_repo_e2e']}")
     return "\n".join(lines) + "\n"
 
 
@@ -1090,6 +1144,16 @@ def check_solution(root: Path, strict: bool = False) -> dict:
                 add("跨仓任务", "WARN",
                     f"{req['id']} 未知键: {'、'.join(req['unknown'])}")
 
+    # 父仓跨仓 E2E（RFC-20261108-02 一期）：索引存在性 / 选择器 / 引用 / 接线 / 需求列一致性。
+    e2e_audit = None
+    try:
+        e2e_core = _load_sibling("solution_e2e", "_atlas_solution_e2e")
+        e2e_audit = e2e_core.check(root, data)
+        for item in e2e_audit["checks"]:
+            add(item["check"], item["status"], item["detail"])
+    except Exception as exc:  # noqa: BLE001 - 专门检查不可用必须出声
+        add("父仓 E2E", "FAIL", f"检查不可用: {type(exc).__name__}: {exc}")
+
     lock = read_lock(root)
     contracts_now = contract_states(root, data)
     if lock is not None:
@@ -1215,7 +1279,7 @@ def check_solution(root: Path, strict: bool = False) -> dict:
     else:
         overall = "PASS"
     return {"solution": data["solution"], "mode": data["mode"],
-            "overall": overall, "checks": results}
+            "overall": overall, "checks": results, "e2e": e2e_audit}
 
 
 def diff_solution(root: Path) -> dict:

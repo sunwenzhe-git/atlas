@@ -48,7 +48,10 @@ strip_inline_comment = load_module("stack_profile").strip_inline_comment
 # `hash参数`（2026-10-22，HashRouter 场景）：`#` 之后 hash 查询串的**键清单**（值同样内联在
 # `goto` 的 hash 查询里）——与 `参数:` 分载体，值来自 `window.location.hash` 的查询段。
 # `覆盖维度`（2026-10-21，`DESIGN.md` D130）：前端适配版 C01-C14 场景维度列表。
-_BLOCK_KEYS = ("pages", "precondition", "seed", "mock", "step", "expected", "testid", "落点", "会话", "参数", "hash参数", "覆盖维度")
+# `成员依赖`（RFC-20261108-02 二期字段，按一期改动面先落）：父仓跨仓用例依赖的成员名列表；
+# **必填（允许空列表）**。空列表规范写法是 `成员依赖:`（冒号后留空）；手写的字面量 `[]`
+# 也在解析侧归一为空列表——`parse_block` 对块键是 `append`，不归一会得到 `["[]"]`。
+_BLOCK_KEYS = ("pages", "precondition", "seed", "mock", "step", "expected", "testid", "落点", "会话", "参数", "hash参数", "覆盖维度", "成员依赖")
 
 
 def parse_block(body: str, extra_keys: tuple[str, ...] = ()) -> dict:
@@ -78,4 +81,21 @@ def parse_block(body: str, extra_keys: tuple[str, ...] = ()) -> dict:
                 # 标量键：行内 `#` 注释剥掉（同一函数对象，见模块 docstring 的「为什么两支持不同口径」）。
                 d[k] = strip_inline_comment(v)
                 key = None
+    # `成员依赖` 空列表归一：`成员依赖:`（无值）与手写 `成员依赖: []` 都表示空列表。
+    d["成员依赖"] = [v for v in d.get("成员依赖") or [] if v != "[]"]
     return d
+
+
+def block_keys(body: str) -> set[str]:
+    """块体里**显式出现**的键集合（用于区分「未写」与「写了空列表」）。
+
+    `parse_block` 会把键空间内所有键初始化为列表，单看返回值无法判断 `成员依赖:` 是否真的
+    写在块里；父仓「`成员依赖` 必填（允许空列表）」的门需要这个存在性信号。
+    """
+    keys: set[str] = set()
+    for line in body.splitlines():
+        s = line.strip()
+        if not s or s.startswith("- ") or ":" not in s:
+            continue
+        keys.add(s.split(":", 1)[0].strip())
+    return keys

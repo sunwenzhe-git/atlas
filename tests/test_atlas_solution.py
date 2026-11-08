@@ -22,7 +22,16 @@ def load_core():
     return mod
 
 
+def load_e2e_kernel():
+    path = PKG_ROOT / "_support" / "solution_e2e.py"
+    spec = importlib.util.spec_from_file_location("_atlas_solution_e2e_test", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 core = load_core()
+e2e_kernel = load_e2e_kernel()
 
 
 def git(cwd: Path, *args: str) -> None:
@@ -212,6 +221,8 @@ def test_check_pass_positive(tmp_path: Path) -> None:
     (tmp_path / ".atlas").mkdir()
     (tmp_path / "product" / "prd" / "solution-prd.md").write_text(
         "# solution\n\n无占位符\n", encoding="utf-8")
+    # 干净样本包含已初始化的父仓 E2E 骨架（RFC-20261108-02：未初始化是 WARN）。
+    e2e_kernel.init(tmp_path)
     core.write_lock(tmp_path, core.load_manifest(tmp_path))
     commit_root(tmp_path, core.MANIFEST_NAME, core.LOCK_NAME)
     result = core.check_solution(tmp_path)
