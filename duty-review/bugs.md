@@ -68,6 +68,6 @@
 - #53 确认口径缺少证据状态且 AC 无法承载字段契约：未实测字段可写确认，大量用例无 AC 可挂（标“—”）导致异常/边界用例断链〔日期 2026-11-07｜状态 开放｜族 判据可被形态满足｜证 issue #53〕
 - #54 验收资产缺失被判空骨架且用例先行失效：validate_e2e_index 在方案层无索引无分片判 N/A 空骨架放行，用例在任务目录成第二落点，实现先于用例〔日期 2026-11-07｜状态 开放｜族 判据可被形态满足｜证 issue #54〕
 - #55 资产更新记录与上游版本无绑定：atlas-apply.md 无上游 PRD version/digest，上游改版后 apply 记录陈旧但 check 无感〔日期 2026-11-07｜状态 开放｜族 判据可被形态满足｜证 issue #55〕
-- #56 判据⑧在装配副本态恒红——采纳仓无根 `skills/`，扫描为空被 fail-closed 判成整条「对齐测试」门 FAIL：批 2（`021bb38`）上线判据⑧后，采纳仓 `pytest .atlas/tests` 恒 1 failed（1209 passed），嵌套 atlas_check 因此 FAIL ⇒ atlas_verify 停在 run 步 ⇒ `test_atlas_verify_playground` 两例红。[逃逸: 「对齐测试(.atlas/tests)」门本应只判源包 skill 体积，未区分装配副本 —— 根因 = 判据⑧扫描面为空即 fail-closed，而 `.atlas/` 按设计不下发根 `skills/`；修 = 装配戳（`VERSION` / `MANIFEST.json`）分流，装配副本判 N/A（`5a02e3b` / 本笔）]〔日期 2026-11-08｜状态 已修·待复验｜族 判据可被形态满足｜证 commit 5a02e3b〕
+- #56 判据⑧在装配副本态恒红——采纳仓无根 `skills/`，扫描为空被 fail-closed 判成整条「对齐测试」门 FAIL：批 2（`021bb38`）上线判据⑧后，采纳仓整包 `pytest .atlas/tests` 恒 `1 failed / 1209 passed`，嵌套 atlas_check 因此 FAIL ⇒ atlas_verify 停在 run 步 ⇒ `test_atlas_verify_playground` 两例红。[逃逸: 「对齐测试(.atlas/tests)」门本应只判源包 skill 体积，未区分装配副本 —— 根因 = 判据⑧扫描面为空即 fail-closed，而 `.atlas/` 按设计不下发根 `skills/`；修 = 装配戳（`VERSION` / `MANIFEST.json`）分流，装配副本判 N/A（`0c8d196`；中间态 `5a02e3b` 的 `install.sh` 判别已被取代）]〔日期 2026-11-08｜状态 已修·待复验｜族 判据可被形态满足｜证 commit 0c8d196〕
 
-留出验证（D156）= **未闭族**：pre-fix 红 / post-fix 绿 已取证（装配态 `pytest .atlas/tests`：`021bb38` 1 failed → `5a02e3b` 10 passed）；反面包 = 源包态「无 `skills/` 且无装配戳」仍 fail-closed（钉 `test_skill_budget_fail_closed_without_skills_or_stamp`）；变异增量 = 撤 N/A 分支 ⇒ 装配态病例复红而其余钉全绿（临时实验，未留钉）；仍缺 = 独立 REVIEW + 真实采纳仓复验。**不得标 `闭族`、不得标 `单案修复（无留出集）`**；判定权归 REVIEW。
+- 留出验证：RFC-20261108-01 / REVIEW-20261108-02
