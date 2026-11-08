@@ -1227,10 +1227,14 @@ def test_submit_attaches_provenance_and_committed_computes_stale() -> None:
     prov_v1 = {"head_sha": "11111112222222", "scripts_hash": "aaaa1111", "git_dirty": False,
                "actor_type": "human", "app_hash": "app111", "shared_hash": "sh111",
                "cases": {"E2E-001": {"script": "scripts/demo.spec.ts", "block": "b1", "rest": "r1"}}}
-    compacted = cons._compact({"ok": True, "reviewed": {"pass": True, "checked_at": "12:00"}},
-                              prov=prov_v1, cid="E2E-001")
+    compacted = cons._compact({"ok": True, "prov": prov_v1,
+                               "reviewed": {"pass": True, "checked_at": "12:00"}},
+                              prov={"app_hash": "app222", "shared_hash": "sh222", "cases": {}},
+                              cid="E2E-001")
     assert compacted["prov"]["head_sha"] == "11111112222222"
     assert compacted["prov"]["fp"]["block"] == "b1"
+    # RFC-20261108-02：fp.app 来自运行期 prov，不是提交时当前值。
+    assert compacted["prov"]["fp"]["app"] == "app111"
     assert compacted["reviewed"]["pass"] is True
 
     with tempfile.TemporaryDirectory() as td:

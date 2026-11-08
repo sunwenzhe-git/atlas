@@ -178,6 +178,14 @@ def _solution_members(root: Path) -> list[Path]:
     return [(Path(root) / m["path"]).resolve() for m in data["members"]]
 
 
+def _is_solution_root(root: Path) -> bool:
+    """父仓模式（RFC-20261108-02）：`atlas.solution.yaml` 存在且 `mode: federated`。"""
+    try:
+        return load_manifest(root).get("mode") == "federated"
+    except Exception:
+        return False
+
+
 def _is_member_status_path(path: str, member_rels: list[str]) -> bool:
     p = path.rstrip("/")
     return any(p == rel or rel.startswith(p + "/") or p.startswith(rel + "/")
@@ -517,6 +525,11 @@ def repo_provenance(root: Path) -> dict:
     }
 
 
+def run_provenance(root: Path) -> dict:
+    """运行期 provenance（RFC-20261108-02 §3.5）：随 `done` 事件回传，`_compact` 只认它。"""
+    return dict(repo_provenance(root), **review_fingerprint(root))
+
+
 def case_review_state(cid: str, snap: dict, current: dict | None) -> dict:
     """计算单个用例在当前内容下的评审新鲜度。
 
@@ -538,6 +551,13 @@ def case_review_state(cid: str, snap: dict, current: dict | None) -> dict:
     if not reviewed.get("pass"):
         return {"state": "unreviewed", "reason": "未评审"}
     prov = snap.get("prov")
+    # 父仓模式（RFC-20261108-02 §3.5 / §3.6）：`reviewed.pass` 必须绑定**最近一次 run**
+    # 的 run-time provenance。提交时用当前值补的 prov 没有 `fp` ⇒ fail-closed 为 stale。
+    # 单仓分支不走这里，保持 D128 / D174 既有语义逐字节不变。
+    if current is not None and current.get("solution_root"):
+        if not isinstance(prov, dict) or not isinstance(prov.get("fp"), dict):
+            return {"state": "stale",
+                    "reason": "父仓模式无 run-time provenance，需重跑后重审", "prov": prov}
     if not prov or not isinstance(prov, dict) or (not prov.get("head_sha") and not prov.get("scripts_hash")):
         return {"state": "legacy", "reason": "历史快照无提交指纹，需重审"}
     if current is None:
@@ -938,6 +958,9 @@ class Runner:
         self.done: dict | None = None
         self.held_case: str | None = None   # 窗口被保留中的那条用例（可手动关窗）
         self._proc: subprocess.Popen | None = None
+        # RFC-20261108-02 §3.5：运行期 provenance（起跑时快照），随 done 回传；
+        # 直接调 `_run` 的测试/工具不设置 ⇒ done 不带 prov，父仓模式据此 fail-closed。
+        self.run_prov: dict | None = None
 
     def start(self, case: dict, nodeid: str, slowmo: int, source: str, base_url: str) -> tuple[bool, str]:
         # node 单轨（2026-10-12 迁移批）：运行器先行解析 + **可解析性判据**（issue #24）。
@@ -962,6 +985,8 @@ class Runner:
             self.case = case["id"]
             self.lines = []
             self.done = None
+        # 运行期 provenance 在起跑前快照（`_run` 只回传，不重新计算）。
+        self.run_prov = run_provenance(self.root)
         threading.Thread(target=self._run, args=(case, nodeid, slowmo, source, base_url, pw_bin, nm_dir), daemon=True).start()
         return True, ""
 
@@ -1039,6 +1064,8 @@ class Runner:
                       "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
                       "tail": "\n".join(_clean(ln) for ln in raw[-80:]),
                       "prep_failed": True}
+                if self.run_prov:
+                    ev["prov"] = self.run_prov
                 with self.cond:
                     self.running = False
                     self.done = ev
@@ -1128,6 +1155,9 @@ class Runner:
               "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
               # 失败原文是人工评审的输入 ⇒ 交给页面留在本地草稿里（提交时随快照一起落账本）
               "tail": "\n".join(_clean(ln) for ln in raw[-80:])}
+        # RFC-20261108-02 §3.5：运行期 provenance 随 done 回传；提交时不得用当前值替代。
+        if self.run_prov:
+            ev["prov"] = self.run_prov
         with self.cond:
             self.running = False
             self.done = ev
@@ -1220,6 +1250,9 @@ def _compact(entry: dict, prov: dict | None = None, cid: str | None = None) -> d
 
     D174：`prov` 带当前指纹面（`cases` / `shared_hash` / `app_hash`）时，逐用例落
     `prov.fp = {script, block, rest, shared, app}` —— 评审新鲜度按内容复算，不再绑 HEAD。
+    RFC-20261108-02 §3.5：`fp` **只能**来自运行期 provenance（`entry["prov"]`，由 `done`
+    事件回传）；提交时传入的 `prov` 是当前值，不得拿来补 `fp.app`，否则「跑完再改应用、
+    只重签」会被误判 fresh。无运行期 provenance ⇒ 不写 `fp`，父仓模式据此 fail-closed。
     """
     out = {"ok": bool(entry.get("ok")), "exit": entry.get("exit"),
            "duration_ms": entry.get("duration_ms"), "timeout": bool(entry.get("timeout")),
@@ -1229,7 +1262,8 @@ def _compact(entry: dict, prov: dict | None = None, cid: str | None = None) -> d
         out["reviewed"] = {"pass": bool(reviewed.get("pass")),
                            "checked_at": reviewed.get("checked_at"),
                            "unchecked_at": reviewed.get("unchecked_at")}
-    p = entry.get("prov") or prov
+    run_prov = entry.get("prov") if isinstance(entry.get("prov"), dict) else None
+    p = run_prov or prov
     if p and isinstance(p, dict):
         out["prov"] = {
             "head_sha": p.get("head_sha"),
@@ -1237,15 +1271,18 @@ def _compact(entry: dict, prov: dict | None = None, cid: str | None = None) -> d
             "git_dirty": p.get("git_dirty"),
             "actor_type": p.get("actor_type", "human"),
         }
-        if cid and isinstance(prov, dict) and ("cases" in prov or "shared_hash" in prov):
-            cf = (prov.get("cases") or {}).get(cid) or {}
-            out["prov"]["fp"] = {
-                "script": cf.get("script"),
-                "block": cf.get("block"),
-                "rest": cf.get("rest"),
-                "shared": prov.get("shared_hash"),
-                "app": prov.get("app_hash"),
-            }
+        if cid and isinstance(run_prov, dict):
+            if isinstance(run_prov.get("fp"), dict):
+                out["prov"]["fp"] = dict(run_prov["fp"])
+            elif "cases" in run_prov or "shared_hash" in run_prov:
+                cf = (run_prov.get("cases") or {}).get(cid) or {}
+                out["prov"]["fp"] = {
+                    "script": cf.get("script"),
+                    "block": cf.get("block"),
+                    "rest": cf.get("rest"),
+                    "shared": run_prov.get("shared_hash"),
+                    "app": run_prov.get("app_hash"),
+                }
     if not out["ok"] and entry.get("tail"):
         out["tail"] = "\n".join(str(entry["tail"]).splitlines()[-80:])
     return out
@@ -1312,6 +1349,7 @@ class App:
                     "committed": {"ts": None, "actor": None, "cases": {}},
                     "provenance": current_prov}
         current = dict(current_prov, **review_fingerprint(self.root))
+        current["solution_root"] = _is_solution_root(self.root)
         committed = self.ledger.committed_snapshot(source, current)
         return {
             "source": source,
@@ -1473,6 +1511,7 @@ class Handler(BaseHTTPRequestHandler):
         # 指纹在 writeback 前获取，避免 writeback 自身修改索引使 git_dirty 假阳性（D128）
         prov = repo_provenance(self.app.root)
         current = dict(prov, **review_fingerprint(self.app.root))
+        current["solution_root"] = _is_solution_root(self.app.root)
         res = writeback(self.app.root, draft, apply, source)
         if apply:
             snap = {cid: _compact(v, current, cid) for cid, v in draft.items()}
