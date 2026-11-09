@@ -62,7 +62,7 @@ def write_rows(root: Path, rows: list[tuple[str, ...]]) -> None:
 
 
 def row(cid: str, demand: str = "", page: str = "solution-flow") -> tuple[str, ...]:
-    return (cid, page, "跨仓流", "功能", "AC-SOLUTION-001", demand, "待测", "", "cases/x.md")
+    return (cid, page, "跨仓流", "功能", "AC-SOLUTION-001", demand, "green", "", "cases/x.md")
 
 
 def e2e_checks(root: Path) -> dict[str, dict]:
@@ -289,7 +289,8 @@ def test_status_skeleton_ac_coverage_is_not_ready(tmp_path: Path) -> None:
     data = make_solution(tmp_path, [req("REQ-001", "web", case_ids=["E2E-SOLUTION-001"])])
     write_rows(tmp_path, [row("E2E-SOLUTION-001")])
     _write_solution_prd(tmp_path)
-    result = e2e.status(data, e2e.read_index(tmp_path), "REQ-001", root=tmp_path)
+    # 纯选择器/覆盖判定（不挂父仓根）：not_ready 不得被误判为 INCOMPLETE。
+    result = e2e.status(data, e2e.read_index(tmp_path), "REQ-001")
     assert result["parent"]["ac_coverage"]["state"] == "not_ready"
     assert result["verdict"] == "PASS"
 
