@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -269,3 +270,146 @@ def test_aggregate_is_reserved_reviews_name() -> None:
     text = (PKG_ROOT / "rings" / "e2e" / "reference.md").read_text(encoding="utf-8")
     assert "`aggregate/`" in text
     assert "保留名" in text
+
+
+# ---------------------------------------------------------------- 控制台逐条只读聚合
+# 契约 `rings/e2e/reference.md §10.1.2` 第 6 条：父仓只看不跑，复合键区分同名用例。
+
+def test_console_member_cases_grouped_with_composite_key(tmp_path: Path) -> None:
+    make_parent(tmp_path, [req("REQ-001", "web", case_ids="E2E-SOLUTION-001")])
+    parent_index(tmp_path, ["E2E-SOLUTION-001"])
+    seed_member_submit(tmp_path / "web", "E2E-WEB-001")
+
+    payload = cons.member_snapshots(tmp_path)
+    assert payload["scope"] == "solution"
+    assert [m["name"] for m in payload["members"]] == ["web", "api"]
+    web = next(m for m in payload["members"] if m["name"] == "web")
+    assert web["state"] == "ok"
+    assert web["readonly"] is True
+    assert web["run_blocked_reason"] == cons.MEMBER_READONLY_REASON
+    assert web["counts"] == {"total": 1, "green": 1, "red": 0,
+                             "blocked": 0, "skipped": 0}
+    assert web["review"]["fresh"] == 1
+    row = web["cases"][0]
+    assert row["uid"] == "web:E2E-WEB-001"
+    assert row["id"] == "E2E-WEB-001"          # 本地 ID 不被改写
+    assert row["member"] == "web"
+    assert row["scope"] == "member"
+    assert row["review_state"]["state"] == "fresh"
+    assert payload["conflicts"] == []
+
+
+def test_console_member_id_conflict_keeps_both_rows(tmp_path: Path) -> None:
+    make_parent(tmp_path, [req("REQ-001", "web", case_ids="E2E-SOLUTION-001")])
+    parent_index(tmp_path, ["E2E-SOLUTION-001"])
+    # 真实场景：两个成员各自独立编号，撞号合法——不得合并、不得覆盖。
+    for p in (tmp_path / "api" / "product" / "e2e").rglob("*.md"):
+        p.write_text(p.read_text(encoding="utf-8").replace("E2E-API-001", "E2E-WEB-001"),
+                     encoding="utf-8")
+
+    payload = cons.member_snapshots(tmp_path)
+    assert payload["conflicts"] == [{"case_id": "E2E-WEB-001", "members": ["web", "api"]}]
+    uids = sorted(c["uid"] for m in payload["members"] for c in m["cases"])
+    assert uids == ["api:E2E-WEB-001", "web:E2E-WEB-001"]
+    assert "E2E-WEB-001" in (tmp_path / "api" / "product" / "e2e" / "e2e-index.md").read_text(
+        encoding="utf-8")
+
+
+def test_console_member_missing_is_disclosed(tmp_path: Path) -> None:
+    import shutil
+    make_parent(tmp_path, [req("REQ-001", "web", case_ids="E2E-SOLUTION-001")])
+    parent_index(tmp_path, ["E2E-SOLUTION-001"])
+    shutil.rmtree(tmp_path / "api")
+
+    api = next(m for m in cons.member_snapshots(tmp_path)["members"] if m["name"] == "api")
+    assert api["state"] == "missing"
+    assert "api" in (api["reason"] or "")
+    assert api["cases"] == []
+
+
+def test_console_member_without_local_e2e_is_not_red(tmp_path: Path) -> None:
+    import shutil
+    make_parent(tmp_path, [req("REQ-001", "web", case_ids="E2E-SOLUTION-001")])
+    parent_index(tmp_path, ["E2E-SOLUTION-001"])
+    shutil.rmtree(tmp_path / "api" / "product" / "e2e")
+
+    api = next(m for m in cons.member_snapshots(tmp_path)["members"] if m["name"] == "api")
+    assert api["state"] == "no_local_e2e"
+    assert api["counts"] == {"total": 0, "green": 0, "red": 0,
+                             "blocked": 0, "skipped": 0}
+    assert api["cases"] == []
+
+
+def test_console_single_root_has_no_member_section(tmp_path: Path) -> None:
+    root = tmp_path / "single"
+    init_repo(root)
+    assert cons.member_snapshots(root) == {
+        "scope": "single", "members": [], "conflicts": []}
+
+
+def test_console_member_view_is_read_only(tmp_path: Path) -> None:
+    make_parent(tmp_path, [req("REQ-001", "web", case_ids="E2E-SOLUTION-001")])
+    parent_index(tmp_path, ["E2E-SOLUTION-001"])
+    seed_member_submit(tmp_path / "web", "E2E-WEB-001")
+    before = hashes(tmp_path)
+    cons.member_snapshots(tmp_path)
+    assert hashes(tmp_path) == before
+
+
+# ---------------------------------------------------------------- 成员控制台入口（深链 + 启动命令）
+# 契约 `rings/e2e/reference.md §10.1.2` 第 6 条：父仓只给入口，执行/评审/账本仍归成员进程。
+
+def test_console_member_exposes_console_entry_and_command(tmp_path: Path) -> None:
+    make_parent(tmp_path, [req("REQ-001", "web", case_ids="E2E-SOLUTION-001")])
+    parent_index(tmp_path, ["E2E-SOLUTION-001"])
+
+    payload = cons.member_snapshots(tmp_path, 4200)
+    web = next(m for m in payload["members"] if m["name"] == "web")
+    api = next(m for m in payload["members"] if m["name"] == "api")
+    # 端口 = 父仓端口 + 1 + 清单序号（web 在前 ⇒ 4201，api 次之 ⇒ 4202）。
+    assert web["console_url"] == "http://127.0.0.1:4201/"
+    assert api["console_url"] == "http://127.0.0.1:4202/"
+    assert web["root"] == str((tmp_path / "web").resolve())
+    assert f"--root {web['root']}" in web["console_cmd"]
+    assert "--port 4201 --host 127.0.0.1" in web["console_cmd"]
+    # 入口链接/命令是纯读字段：只读口径与拒绝原因不变。
+    assert web["readonly"] is True
+    assert web["run_blocked_reason"] == cons.MEMBER_READONLY_REASON
+
+
+def test_member_console_cmd_is_shell_copyable() -> None:
+    """路径含空格/中文时按 shell 规则转义，粘进终端可原样执行。"""
+    cmd = cons.member_console_cmd(Path("/tmp/有 空格/member"), 4191)
+    assert shlex.split(cmd)[-6:] == [
+        "--root", "/tmp/有 空格/member", "--port", "4191", "--host", "127.0.0.1"]
+
+
+def test_member_run_and_submit_guards_are_still_409(tmp_path: Path) -> None:
+    make_parent(tmp_path, [req("REQ-001", "web", case_ids="E2E-SOLUTION-001")])
+    parent_index(tmp_path, ["E2E-SOLUTION-001"])
+    before = hashes(tmp_path)
+
+    class Stub:
+        def __init__(self) -> None:
+            self.got: list[tuple[int, dict]] = []
+
+        def _json(self, obj: dict, code: int = 200) -> None:
+            self.got.append((code, obj))
+
+    stub = Stub()
+    cons.Handler._run(stub, {"id": "web:E2E-WEB-001", "member": True})
+    cons.Handler._submit(stub, {"draft": {"web:E2E-WEB-001": {"ok": True}}, "apply": True})
+
+    assert [code for code, _ in stub.got] == [409, 409]
+    assert all(body["readonly"] is True for _, body in stub.got)
+    assert hashes(tmp_path) == before       # 守卫在任何写盘之前返回
+
+
+def test_app_js_member_block_has_console_entry() -> None:
+    text = (PKG_ROOT / "templates" / "e2e" / "console" / "app.js").read_text(encoding="utf-8")
+    assert "打开成员控制台" in text
+    assert 'target="_blank" rel="noopener"' in text
+    assert "m.console_cmd" in text and "data-copy" in text
+    # 只加导航，不加执行/评审控件：成员行仍不接 run()/api/run。
+    assert "data-run" not in text.split("function memberBlock")[1].split("function rowHTML")[0]
+

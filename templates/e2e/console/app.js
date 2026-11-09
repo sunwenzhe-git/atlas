@@ -14,6 +14,8 @@ const S = {
   source: 'app', member: new URLSearchParams(location.search).get('member') || null, sources: {},
   cases: [], nodeids: {}, committed: { ts: null, actor: null, cases: {} },
   draft: {}, open: new Set(), outputs: {}, busy: null, logCase: null, heldCase: null,
+  // solution 根：scope='solution' + 成员逐条用例（只读聚合，见契约 §10.1.2 第 6 条）
+  scope: 'single', members: [], conflicts: [],
   filter: { type: 'all', page: 'all', unreviewed: false, q: '' },
   cfg: { slowmo: 500, timeout: 120, head: true },
 };
@@ -70,6 +72,9 @@ async function load() {
   const d = await api(`api/cases?source=${S.source}`);
   S.cases = d.cases; S.nodeids = d.nodeids; S.committed = d.committed || { cases: {} };
   S.manual = d.manual || [];
+  S.scope = d.scope || 'single';
+  S.members = d.members || [];
+  S.conflicts = d.conflicts || [];
   // 手工项并入列表（类型 manual）：与用例同列表渲染/筛选/评审，但不进「用例 N」统计
   S.cases = S.cases.concat(S.manual.map((m) => ({
     id: m.id, page: m.page, title: m.title, type: 'manual', status: 'manual',
@@ -82,6 +87,8 @@ async function load() {
   const manualNote = (d.manual_state === 'missing')
     ? ' · 手工项清单未创建（{{ATLAS_E2E_MANUAL}} 不存在）'
     : ` · 手工项 ${S.manualCount} 条`;
+  const memberNote = (S.scope === 'solution')
+    ? ` · 成员仓 ${S.members.length} 个（只读聚合，见下方独立分区）` : '';
   S.sources = d.sources || {};
   S.cfg = { slowmo: d.slowmo, timeout: d.timeout, head: d.head };
   $('slowmo').value = d.slowmo;
@@ -96,6 +103,7 @@ async function load() {
     + ` · ${d.head ? '执行时弹出浏览器窗口' : '无头执行（不弹窗口）'} · 一次跑一条 · 单条超时 ${d.timeout}s`
     + provNote
     + manualNote
+    + memberNote
     + (c.ts ? ` · 最近提交 ${hhmm(c.ts)}（${c.actor || ''}${c.reviewed_count ? ` · 评审范围 ${c.reviewed_count} 条` : ''}）` : ' · 尚未提交过');
   const pages = [...new Set(S.cases.map((x) => x.page))];
   $('f-page').innerHTML = '<option value="all">全部</option>' + pages.map((p) => `<option value="${p}">${p}</option>`).join('');
@@ -141,6 +149,7 @@ function counts() {
 }
 
 function render() {
+  renderMembers();
   const k = counts();
   const statList = [
     ['用例', k.total], ['已执行', k.ran], ['执行通过', k.pass], ['执行失败', k.bad],
@@ -173,6 +182,67 @@ function render() {
     for (const c of list) html += rowHTML(c);
   }
   tbody.innerHTML = html;
+}
+
+/* ---------------- 成员仓只读聚合（solution 根；契约 §10.1.2 第 6 条） ----------------
+ * 成员用例只在父仓「看得见」：不复制正文、不代跑、不回写成员索引/账本。
+ * 复合键 uid = 成员名:用例ID：跨成员同名 ID 不覆盖，冲突在分区顶部显式列出。
+ * 单根（scope=single）时整个分区隐藏，主表逐字节不变。
+ */
+function renderMembers() {
+  const box = $('members');
+  if (!box) return;
+  if (S.scope !== 'solution' || !S.members.length) { box.hidden = true; box.innerHTML = ''; return; }
+  box.hidden = false;
+  const conflicts = S.conflicts || [];
+  const banner = conflicts.length
+    ? `<div class="mconflict">跨成员同名用例 ${conflicts.length} 组：`
+      + conflicts.map((x) => `${esc(x.case_id)}（${esc((x.members || []).join('、'))}）`).join('；')
+      + ' —— 用 <code>成员名:用例ID</code> 复合键区分，不改成员本地 ID。</div>'
+    : '';
+  box.innerHTML = '<div class="mhead"><b>成员仓 E2E（只读聚合）</b>'
+    + '<span class="mnote">只读：父仓不复制成员用例正文、不代跑、不回写成员索引/账本；'
+    + '执行与评审请到成员仓 <code>atlas console --root &lt;member&gt;</code>。'
+    + '父仓 <code>solution-flow</code> 跨仓用例仍在上方主表。</span></div>'
+    + banner + S.members.map(memberBlock).join('');
+}
+
+function memberBlock(m) {
+  const counts = m.counts || {};
+  const review = m.review || {};
+  const ok = m.state === 'ok';
+  const head = `<div class="member-head"><span class="mname">${esc(m.name)}</span>`
+    + `<span class="mpath">${esc(m.path)}</span>`
+    + (ok ? '' : `<span class="tag stale">${esc(m.state)}</span>`)
+    + `<span class="mcount">${ok
+      ? `${counts.total || 0} 条 · 执行通过 ${counts.green || 0} / 失败 ${counts.red || 0}`
+        + ` / 不可跑 ${counts.blocked || 0} / 跳过 ${counts.skipped || 0}`
+        + ` · 评审 fresh ${review.fresh || 0} / stale ${review.stale || 0}`
+        + ` / unreviewed ${review.unreviewed || 0} / legacy ${review.legacy || 0}`
+      : esc(m.reason || '')}</span>`
+    + `<span class="tag readonly" title="${esc(m.run_blocked_reason || '')}">只读 · 父仓不可执行</span>`
+    + (m.console_url ? `<a class="mopen" href="${esc(m.console_url)}" target="_blank" rel="noopener">打开成员控制台 ↗</a>` : '')
+    + `</div>`
+    + (m.console_cmd
+      ? `<div class="mlaunch"><span class="mlabel">未启动时在终端执行：</span>`
+        + `<code>${esc(m.console_cmd)}</code>`
+        + `<button class="btn btn-ghost" data-copy="${esc(m.console_cmd)}">复制命令</button></div>`
+      : '');
+  const rows = (m.cases || []).map((c) => {
+    const rs = c.review_state || {};
+    const status = `${esc(c.status)}${c.reason ? ` · ${esc(c.reason)}` : ''}`;
+    return `<tr><td class="mcid">${esc(c.uid)}</td><td>${esc(c.title)}</td>`
+      + `<td>${status}</td>`
+      + `<td>${esc(rs.state || 'unreviewed')}${rs.reason ? ` · ${esc(rs.reason)}` : ''}</td>`
+      + `<td class="mshard"><code>${esc(c.shard)}</code></td></tr>`;
+  }).join('');
+  const table = rows
+    ? '<table class="mgrid"><colgroup><col class="w1"><col class="w2"><col class="w3">'
+      + '<col class="w4"><col class="w5"></colgroup>'
+      + '<thead><tr><th>复合键</th><th>用例</th><th>状态</th><th>评审</th><th>分片</th></tr></thead>'
+      + `<tbody>${rows}</tbody></table>`
+    : '';
+  return `<div class="member">${head}${table}</div>`;
 }
 
 function rowHTML(c) {

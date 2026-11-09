@@ -126,3 +126,32 @@ tr.row.busy td{background:var(--run-bg)}
 .chg i{color:var(--warn);font-style:normal}
 .chg b{color:var(--ok)}
 .wb-actions{display:flex;gap:var(--sp2)}
+
+/* ---- 成员仓只读聚合（solution 根；契约 §10.1.2 第 6 条） ---- */
+.members{margin:var(--sp3) var(--sp5) 0;padding:var(--sp4);background:var(--surface);
+  border:1px solid var(--border);border-left:3px solid var(--ok);border-radius:var(--r-md)}
+.mhead{display:flex;align-items:baseline;gap:var(--sp3);flex-wrap:wrap}
+.mhead b{font-size:13px;font-weight:650}
+.mnote{color:var(--muted);font-size:11.5px}
+.mconflict{margin-top:var(--sp2);padding:var(--sp2) var(--sp3);border-radius:var(--r-sm);
+  background:var(--warn-bg);color:var(--warn);border:1px solid #e8dcbb;font-size:11.5px}
+.member{margin-top:var(--sp3);padding-top:var(--sp3);border-top:1px solid var(--border)}
+.member-head{display:flex;align-items:center;gap:var(--sp2);flex-wrap:wrap}
+.mname{font-family:var(--mono);font-weight:650;font-size:12.5px}
+.mpath{font-family:var(--mono);color:var(--faint);font-size:11px}
+.mcount{color:var(--muted);font-size:11.5px}
+.tag.readonly{color:var(--run);border-color:#c9d8ea;background:var(--run-bg);font-weight:600}
+.mopen{font-size:11.5px;color:var(--ok);text-decoration:none;border-bottom:1px dotted currentColor}
+.mopen:hover{text-decoration:underline}
+.mlaunch{display:flex;align-items:center;gap:var(--sp2);flex-wrap:wrap;margin-top:var(--sp1)}
+.mlaunch .mlabel{color:var(--faint);font-size:10.5px}
+.mlaunch code{font-family:var(--mono);font-size:10.5px;color:var(--muted);background:var(--bg);
+  border:1px solid var(--border);border-radius:var(--r-sm);padding:2px 6px;word-break:break-all}
+.mgrid{width:100%;border-collapse:collapse;margin-top:var(--sp2);table-layout:fixed}
+.mgrid .w1{width:200px}.mgrid .w3{width:170px}.mgrid .w4{width:170px}.mgrid .w5{width:130px}
+.mgrid th{text-align:left;font-size:10px;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--faint);padding:var(--sp1) var(--sp2);border-bottom:1px solid var(--border)}
+.mgrid td{padding:var(--sp1) var(--sp2);border-bottom:1px solid var(--border);
+  font-size:11.5px;vertical-align:top}
+.mgrid .mcid{font-family:var(--mono);font-weight:600;word-break:break-all}
+.mgrid .mshard code{font-size:10.5px;word-break:break-all}

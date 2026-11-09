@@ -731,6 +731,12 @@ testid:
 3. **`review_state` 按成员根重算**：父仓用**成员自己的根**（`repo_provenance(member)` + `review_fingerprint(member)`）调用 `case_review_state`；**禁止**用父仓根计算成员 current。父仓用例自身的 `review_state` 用父仓根 + `solution_root=True`（无 run-time `prov` ⇒ `stale`）。单仓控制台的既有分支不变（无 prov ⇒ `legacy`）。
 4. **只读**：视图不调用执行器、不写成员 `e2e-index.md`/`cases/`/`events.jsonl`；重算结果只在内存/`--json` 中。`--snapshot` 是唯一写动作，只写 `<assets_root>/e2e/reviews/aggregate/<日期>-<REQ|ALL>.json`（`reviews` 保留名 `aggregate`），文件头声明「非成员状态第二份账本」。
 5. **verdict 合成**：`FAIL > BLOCKED > INCOMPLETE > PASS`；全部选中用例 `green` 且 `review_state=fresh` 才 `PASS`；`覆盖就绪` 域仍有零挂靠 AC ⇒ `INCOMPLETE`。成员 `no_local_e2e` 合法（不判红），`index_invalid`/`missing` 进入视图告警与 `BLOCKED`。
+6. **控制台逐条只读聚合（2026-11-09）**：`atlas console --root <solution>` 的 `/api/cases` 增加三段——`scope`（`single`|`solution`）、`members[]`、`conflicts[]`；成员索引与分片**只读**，父仓不复制成员用例正文、不新增父仓索引行、不写 `product/e2e/cases/`。
+   - **分组**：`members[]` 逐成员给出 `state`（`ok`|`no_local_e2e`|`missing`|`layout_error`|`index_invalid`）、`index`、`counts`（执行状态）、`review`（评审状态计数）与 `cases[]`；`no_local_e2e` 合法且不判红，其余状态在分区块内显式披露原因。
+   - **ID 冲突口径**：成员用例一律带 `uid = <成员名>:<用例ID>` 复合键；跨成员同名 ID **不改成员本地 ID、不合并、不覆盖**，在 `conflicts[]` 列出（`{case_id, members[]}`）并在控制台分区顶部显式提示。成员内仍以原生 ID 为准。
+   - **执行归属**：成员用例在本控制台**只读**，不渲染执行/评审控件；`/api/run` 带 `member`、`/api/submit` 草稿含 `:` 复合键 ⇒ 显式 409 拒绝。执行必须回成员仓 `atlas console --root <member>`（各自的 `e2e/scripts`、账本、`app_base_url`）。成员分区头部另给「打开成员控制台」入口链接与可直接复制的启动命令（`--root <成员绝对路径> --port <父仓端口 + 1 + 清单序号> --host 127.0.0.1`；端口确定性推导、不探测）；链接与命令**只是入口**，执行、评审与账本仍归成员进程，口径同第 4 条。
+   - **评审账本归属**：成员评审态只从**成员自己的** `reviews/console/events.jsonl` 读取并重算；父仓控制台不写成员账本，也不把成员用例写进父仓账本/索引。父仓 `solution-flow` 跨仓用例仍按第 4 条走父仓账本。
+   - **单根不变**：`--root` 为普通仓根时 `scope=single`、`members=[]`，主表与提交/回写路径逐字节不变。
 
 ## 10.2 E2E 触发段与就绪归因（2026-11-03，`RFC-20261103-07`）
 

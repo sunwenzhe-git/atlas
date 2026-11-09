@@ -154,6 +154,7 @@ atlas solution check --strict
 - 父仓用例 `review_state` 用父仓根 + `solution_root=True`：无 run-time `prov` ⇒ `stale`；单仓控制台既有分支不变（无 prov ⇒ `legacy`）。
 - 父仓用例 `成员依赖` 必填（缺失 ⇒ `validate_e2e_index` 父仓模式 FAIL）；`成员依赖:` 与字面量 `[]` 归一为空列表；`--migrate` 只生成冒号留空形态。
 - `--snapshot` 是唯一写动作，只落 `<assets_root>/e2e/reviews/aggregate/`（保留名）；聚合报告不是成员状态的第二份账本。
+- 控制台逐条只读聚合（2026-11-09）：`atlas console --root <solution>` 的 `/api/cases` 增加 `scope` / `members[]` / `conflicts[]`；成员用例按 `成员名:用例ID` 复合键分组展示，跨成员同名 ID 不改本地 ID、不合并，冲突显式列出。父仓不复制成员用例正文、不代跑、不回写成员索引/账本；执行与评审回成员仓控制台，`/api/run` 与 `/api/submit` 对成员复合键 409。成员分区另给成员控制台入口链接与可直接复制的启动命令（端口 = 父仓端口 + 1 + 清单序号，确定性推导、不探测），执行与评审仍由成员进程完成。`/` 为普通仓根时行为不变。
 
 ## 7. 相关契约
 

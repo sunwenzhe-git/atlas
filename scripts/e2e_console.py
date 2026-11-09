@@ -60,6 +60,7 @@ import threading
 import time
 from datetime import datetime
 import urllib.parse
+import shlex
 import shutil
 import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -755,6 +756,128 @@ def snapshot(root: Path) -> dict:
     return {"cases": cases, "nodeids": node_ids(e2e / "scripts")}
 
 
+# solution 根：成员用例在本控制台**只读**（RFC-20261108-02 二期·逐条聚合）。
+# 执行需要成员自己的 spec 目录 / 账本 / base_url，父仓没有可安全路由的执行器；
+# 因此不渲染执行/评审控件，`/api/run` 与 `/api/submit` 对成员复合键显式拒绝。
+MEMBER_READONLY_REASON = (
+    "成员用例在父仓只读：执行需成员自己的 spec 目录 / 账本 / base_url，父仓控制台不代跑；"
+    "评审请回成员仓 atlas console --root <member>")
+
+
+def _status_counts(cases: list[dict]) -> dict:
+    out = {"total": len(cases), "green": 0, "red": 0, "blocked": 0, "skipped": 0}
+    for c in cases:
+        st = c.get("status")
+        if st in out and st != "total":
+            out[st] += 1
+    return out
+
+
+def _review_counts(cases: list[dict]) -> dict:
+    out = {"fresh": 0, "stale": 0, "unreviewed": 0, "legacy": 0}
+    for c in cases:
+        st = (c.get("review_state") or {}).get("state")
+        if st in out:
+            out[st] += 1
+    return out
+
+
+def member_console_cmd(mroot: Path, port: int) -> str:
+    """成员控制台启动命令：可直接复制执行（路径含空格/中文时按 shell 规则转义）。
+
+    契约 `rings/e2e/reference.md §10.1.2` 第 6 条：父仓只提供入口与命令，
+    执行/评审/账本仍归成员进程。
+    """
+    argv = [sys.executable or "python3", str(Path(__file__).resolve()),
+            "--root", str(mroot), "--port", str(port), "--host", "127.0.0.1"]
+    return " ".join(shlex.quote(x) for x in argv)
+
+
+def member_snapshots(root: Path, parent_port: int = 4190) -> dict:
+    """solution 根 ⇒ 逐成员只读快照（逐条用例按成员分组）。
+
+    只读边界（契约 `rings/e2e/reference.md §10.1.2` 第 6 条 / `shared/solution.md §6.1`）：
+    只调 `snapshot()` / `Ledger.read()` / provenance 复算，不复制成员用例正文进父仓，
+    不写成员索引/账本，不代跑。非 solution 根返回空成员表 ⇒ 单根行为逐字节不变。
+
+    成员状态闭集：`ok` / `no_local_e2e` / `missing` / `layout_error` / `index_invalid`。
+    用例 ID 跨成员冲突不改本地 ID，用 `uid = <成员名>:<用例ID>` 复合键区分，
+    并在 `conflicts` 里显式列出，不静默覆盖。
+    """
+    root = Path(root)
+    if not _is_solution_root(root):
+        return {"scope": "single", "members": [], "conflicts": []}
+    entries = load_manifest(root).get("members") or []
+    members: list[dict] = []
+    owners: dict[str, list[str]] = {}
+    for idx, ent in enumerate(entries):
+        name = str(ent.get("name") or Path(str(ent.get("path") or "")).name)
+        rel = str(ent.get("path") or "")
+        mroot = (root / rel).resolve()
+        # 确定性端口（不探测）：父仓端口 + 1 + 成员序号；序号 = 清单顺序，重启后不变。
+        port = parent_port + 1 + idx
+        item = {
+            "id": name, "name": name, "path": rel, "root": str(mroot),
+            "readonly": True, "run_blocked_reason": MEMBER_READONLY_REASON,
+            "console_url": f"http://127.0.0.1:{port}/",
+            "console_cmd": member_console_cmd(mroot, port),
+            "state": "ok", "reason": None, "index": None, "cases": [],
+            "counts": {"total": 0, "green": 0, "red": 0, "blocked": 0, "skipped": 0},
+            "review": {"fresh": 0, "stale": 0, "unreviewed": 0, "legacy": 0},
+        }
+        members.append(item)
+        if not mroot.is_dir():
+            item.update(state="missing", reason=f"成员路径不存在：{rel}")
+            continue
+        try:
+            lay = load_layout(mroot)
+        except LayoutError as exc:
+            item.update(state="layout_error", reason=str(exc))
+            continue
+        item["index"] = lay.print_value("e2e_index")
+        if not lay.e2e_index.is_file():
+            item.update(state="no_local_e2e",
+                        reason="成员没有本地 E2E 索引（合法；父仓不代建、不补空骨架）")
+            continue
+        try:
+            snap = snapshot(mroot)
+        except SnapshotError as exc:
+            item.update(state="index_invalid", reason=str(exc))
+            continue
+        except Exception as exc:  # 成员侧异常不得拖垮父仓视图
+            item.update(state="index_invalid", reason=f"{type(exc).__name__}: {exc}")
+            continue
+        try:
+            current = dict(repo_provenance(mroot), **review_fingerprint(mroot))
+            committed = Ledger(mroot, "只读视图").committed_snapshot("app", current)
+        except Exception as exc:
+            committed = {"cases": {}}
+            item["review_problem"] = f"评审态未计算：{type(exc).__name__}: {exc}"
+        reviewed = committed.get("cases") or {}
+        cases = []
+        for c in snap["cases"]:
+            cid = c["id"]
+            owners.setdefault(cid, []).append(name)
+            rs = (reviewed.get(cid) or {}).get("review_state") or {}
+            row = dict(c)
+            row.update({
+                "uid": f"{name}:{cid}",
+                "member": name,
+                "scope": "member",
+                "readonly": True,
+                "run_blocked_reason": MEMBER_READONLY_REASON,
+                "review_state": {"state": rs.get("state") or "unreviewed",
+                                 "reason": rs.get("reason")},
+            })
+            cases.append(row)
+        item["cases"] = cases
+        item["counts"] = _status_counts(cases)
+        item["review"] = _review_counts(cases)
+    conflicts = [{"case_id": cid, "members": names}
+                 for cid, names in sorted(owners.items()) if len(names) > 1]
+    return {"scope": "solution", "members": members, "conflicts": conflicts}
+
+
 def node_ids(scripts_dir: Path) -> dict:
     """用例 ID → playwright 测试引用 `<file>.spec.ts:<line>`（从生成脚本里读，不猜）。
 
@@ -1340,6 +1463,8 @@ class App:
 
     def cases_payload(self, source: str) -> dict:
         current_prov = repo_provenance(self.root)
+        # 成员聚合是 pure-read（只读成员索引/账本），单根下返回空成员表。
+        scope_payload = member_snapshots(self.root, self.port)
         try:
             snap = snapshot(self.root)
         except SnapshotError as exc:
@@ -1347,7 +1472,7 @@ class App:
                     "slowmo": self.slowmo, "timeout": self.runner.timeout, "head": self.runner.head,
                     "ledger": self.layout.print_value("console_ledger"), "cases": [], "nodeids": {},
                     "committed": {"ts": None, "actor": None, "cases": {}},
-                    "provenance": current_prov}
+                    "provenance": current_prov, **scope_payload}
         current = dict(current_prov, **review_fingerprint(self.root))
         current["solution_root"] = _is_solution_root(self.root)
         committed = self.ledger.committed_snapshot(source, current)
@@ -1373,6 +1498,7 @@ class App:
             # 已提交的快照（页面草稿覆盖它；草稿在浏览器本地，见 docstring 的「乙」）
             "committed": committed,
             "provenance": current_prov,
+            **scope_payload,
         }
 
 
@@ -1474,6 +1600,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _run(self, body: dict) -> None:
         cid = body.get("id", "")
+        if body.get("member"):
+            # 成员用例在父仓只读：执行需成员自己的 scripts 目录 / 账本 / base_url，绝不代跑。
+            self._json({"ok": False, "readonly": True,
+                        "error": MEMBER_READONLY_REASON}, 409)
+            return
         source = "app"
         src = read_sources(self.app.root).get(source)
         if not src or not src.get("configured"):
@@ -1506,6 +1637,13 @@ class Handler(BaseHTTPRequestHandler):
     def _submit(self, body: dict) -> None:
         """提交 = 一次性落两处：账本追加一条快照 + 回写索引（预览/确认）。"""
         draft = body.get("draft") or {}
+        member_keys = [k for k in draft if ":" in str(k)]
+        if member_keys:
+            # 复合键只在只读视图里存在；绝不把成员用例写进父仓索引/账本。
+            self._json({"ok": False, "readonly": True,
+                        "error": "成员用例在父仓只读：拒绝把复合键写进父仓索引/账本（"
+                                 + "、".join(str(k) for k in member_keys[:5]) + "）"}, 409)
+            return
         source = "app"
         apply = bool(body.get("apply"))
         # 指纹在 writeback 前获取，避免 writeback 自身修改索引使 git_dirty 假阳性（D128）
