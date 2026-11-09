@@ -7,15 +7,19 @@
 - `requirements[].case_ids` 选择器（唯一选例真相，不读 `需求` / `关联AC` 列）；
 - `solution check` 的 E2E 专项检查（选择器要求 / 引用存在 / 接线 / `需求` 一致性 / 孤儿审计）；
 - `atlas solution e2e init`（幂等补骨架）与 `--migrate`（批量补 `成员依赖:`）；
-- `atlas solution e2e status` 的最小只读盘点。
+- `atlas solution e2e status`：二期只读聚合视图（父仓用例 + 成员本地 E2E 摘要）。
 
-**不**接管成员执行、不读写成员索引/账本；二期只读聚合视图不在本模块一期范围。
+**只读**：不接管成员执行、不写成员索引/账本；成员 `review_state` 按**成员根**重算，
+结果只在内存/`--json` 中展示，不落盘。唯一的写动作是显式 `--snapshot` 写父仓自己的
+`<assets_root>/e2e/reviews/aggregate/`（保留名，非成员状态第二份账本）。
 纯标准库；索引/分片解析复用既有校验器（同一份解析，不另写）。
 """
 from __future__ import annotations
 
+import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 if str(Path(__file__).resolve().parents[1]) not in sys.path:
@@ -362,9 +366,159 @@ def _ac_coverage(root: Path | None, index: dict) -> dict:
             "zero_attached": sorted(defs - attached)}
 
 
+# ---------------------------------------------------------------- 二期：只读聚合视图
+
+_VIEW_KIND = "solution-e2e-readonly-view"
+_READONLY_NOTE = ("只读聚合视图：成员评审以成员 events.jsonl 为准；"
+                  "本文件不是任何成员状态的第二份账本。")
+
+
+def _console():
+    """控制台内核（Ledger / 指纹 / `case_review_state`）——单一实现，不复制第二份。"""
+    return load_module("e2e_console")
+
+
+def _empty_counts() -> dict:
+    return {"total": 0, "green": 0, "red": 0, "blocked": 0, "skipped": 0}
+
+
+def _empty_review() -> dict:
+    return {"fresh": 0, "stale": 0, "unreviewed": 0, "legacy": 0}
+
+
+def read_member_summary(root: Path, member: dict) -> dict:
+    """成员本地 E2E 摘要（RFC §5.2）。**只读**：不执行、不写成员索引/账本。
+
+    `state`：`ok` / `no_local_e2e` / `index_invalid` / `missing`。
+    `review` 由父仓按**成员根**重算（同一 `case_review_state` 内核），不落盘。
+    """
+    name = member.get("name") or ""
+    rel = member.get("path") or ""
+    path = (Path(root) / rel).resolve()
+    out = {
+        "name": name, "path": rel, "state": "missing",
+        "index": None, "counts": _empty_counts(), "review": _empty_review(),
+        "ledger": None, "latest_seq": 0, "reason": None,
+    }
+    cons = _console()
+    if not path.is_dir() or not cons._is_repo_root(path):
+        out["reason"] = "成员路径缺失或不是 git 仓"
+        return out
+    lay = load_module("layout").load_layout(path)
+    index = lay.e2e_index
+    cases_dir = lay.e2e_cases_dir
+    shards = sorted(cases_dir.glob("*.md")) if cases_dir.is_dir() else []
+    out["index"] = str(index)
+    out["ledger"] = str(lay.console_dir / "events.jsonl")
+    if not index.is_file() and not shards:
+        out.update(state="no_local_e2e", reason="成员没有本地 E2E（合法，父仓不判红）")
+        return out
+    parsed = read_index(path)
+    if not parsed["present"] or not parsed["ok"]:
+        out.update(state="index_invalid", reason="成员索引缺失或主表列头不可解析")
+        return out
+    mod = load_module("validate_e2e_index")
+    blocks, _pages = mod.gather_shards(cases_dir) if cases_dir.is_dir() else ({}, {})
+    ids = [r["用例ID"] for r in parsed["rows"]]
+    if len(ids) != len(set(ids)) or set(ids) != set(blocks):
+        out.update(state="index_invalid", reason="成员索引与分片用例集合不一致")
+        return out
+    counts = _empty_counts()
+    counts["total"] = len(ids)
+    for row in parsed["rows"]:
+        key = row.get("状态") or ""
+        if key in counts and key != "total":
+            counts[key] += 1
+    # 成员根指纹：只读计算；不带 `solution_root`，保持单仓语义（无 prov ⇒ legacy）。
+    current = dict(cons.repo_provenance(path), **cons.review_fingerprint(path))
+    ledger = cons.Ledger(path, "只读视图")
+    committed = ledger.committed_snapshot("app", current)
+    submits = [e for e in ledger.read()
+               if e.get("kind") == "submit" and e.get("source", "prototype") == "app"]
+    review = _empty_review()
+    for row in parsed["rows"]:
+        cid = row["用例ID"]
+        snap = committed["cases"].get(cid) or {}
+        state = (snap.get("review_state") or cons.case_review_state(cid, {}, current))
+        key = state.get("state") if isinstance(state, dict) else "unreviewed"
+        review[key if key in review else "unreviewed"] += 1
+    out.update(state="ok", counts=counts, review=review, latest_seq=len(submits))
+    return out
+
+
+def _parent_case_rows(root: Path, index: dict, selected: list[str],
+                      member_states: dict[str, dict]) -> list[dict]:
+    """父仓跨仓用例：索引状态 + 父仓账本 review_state + `成员依赖` ⇒ BLOCKED。"""
+    cons = _console()
+    lay = load_module("layout").load_layout(root)
+    blocks = {}
+    if lay.e2e_cases_dir.is_dir():
+        blocks, _pages = load_module("validate_e2e_index").gather_shards(lay.e2e_cases_dir)
+    # 父仓根指纹：`solution_root=True` 让 `case_review_state` 走 run-time prov 的 fail-closed 分支。
+    current = dict(cons.run_provenance(root), solution_root=True)
+    committed = cons.Ledger(root, "只读视图").committed_snapshot("app", current)
+    by_id = {r["用例ID"]: r for r in index["rows"]}
+    out: list[dict] = []
+    for cid in selected:
+        row = by_id.get(cid, {})
+        deps = list((blocks.get(cid) or {}).get("成员依赖") or [])
+        blocked_by = [m for m in deps
+                      if (member_states.get(m) or {}).get("state") == "missing"]
+        snap = committed["cases"].get(cid) or {}
+        review = snap.get("review_state") or cons.case_review_state(cid, {}, current)
+        status = "blocked" if blocked_by else (row.get("状态") or "")
+        out.append({
+            "id": cid,
+            "status": status,
+            "review_state": review.get("state", "unreviewed"),
+            "members": deps,
+            "blocked_by_members": blocked_by,
+            "status_reason": ("成员不可用：" + "、".join(blocked_by)) if blocked_by
+                             else (row.get("状态原因") or ""),
+            "evidence": snap.get("evidence"),
+        })
+    return out
+
+
+def _parent_provenance(root: Path, members: list[dict]) -> dict:
+    """父仓 + 成员 provenance（只读；成员缺失记 null，不猜）。"""
+    cons = _console()
+    prov = cons.repo_provenance(root)
+    out_members = []
+    for m in members:
+        path = (Path(root) / (m.get("path") or "")).resolve()
+        if not path.is_dir() or not cons._is_repo_root(path):
+            out_members.append({"name": m.get("name"), "head": None, "app_hash": None})
+            continue
+        out_members.append({"name": m.get("name"), "head": cons.repo_head(path),
+                            "app_hash": cons.app_fingerprint(path)})
+    return {"parent": {"head": prov.get("head_sha"), "app_hash": prov.get("app_hash")},
+            "members": out_members}
+
+
+def write_snapshot(root: Path, payload: dict) -> Path:
+    """显式写父仓只读快照：`<assets_root>/e2e/reviews/aggregate/<日期>-<REQ|ALL>.json`。
+
+    只写父仓自己的保留目录；文件头声明只读与非第二真相源。成员文件零改动。
+    """
+    lay = load_module("layout").load_layout(Path(root))
+    out_dir = lay.e2e_reviews_dir / "aggregate"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    req = payload.get("requirement") or "ALL"
+    path = out_dir / f"{date.today().isoformat()}-{req}.json"
+    body = {"kind": _VIEW_KIND, "readonly": True, "note": _READONLY_NOTE, **payload}
+    path.write_text(json.dumps(body, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8")
+    return path
+
+
 def status(data: dict, index: dict, requirement: str | None = None,
-           root: Path | None = None) -> dict:
-    """只读盘点：命中数 / BLOCKED / N/A 与合成 verdict；不执行、不写盘。"""
+           root: Path | None = None, snapshot: bool = False) -> dict:
+    """只读盘点 + 二期聚合视图；不执行、不写成员盘。
+
+    `root` 给定时附成员摘要、父仓用例的 `review_state`（按成员根重算）与
+    `parent.ac_coverage`；`snapshot=True` 才写父仓 `reviews/aggregate/` 只读快照。
+    """
     req_ids = []
     for req in data.get("requirements") or []:
         if req["id"] not in req_ids:
@@ -372,29 +526,70 @@ def status(data: dict, index: dict, requirement: str | None = None,
     if requirement:
         if requirement not in req_ids:
             return {"requirement": requirement, "verdict": "FAIL", "exit": 1,
-                    "reason": "清单里没有该 requirement", "requirements": []}
+                    "reason": "清单里没有该 requirement", "requirements": [],
+                    "members": [], "parent": {"ac_coverage": dict(_AC_COVERAGE_EMPTY)}}
         req_ids = [requirement]
     rows = []
     for rid in req_ids:
         result = select(data, rid, index)
         rows.append({"requirement": rid, **result})
-    states = {r["state"] for r in rows}
+
     coverage = _ac_coverage(root, index)
-    if "fail" in states:
+    members: list[dict] = []
+    parent_cases: list[dict] = []
+    provenance: dict = {"parent": {"head": None, "app_hash": None}, "members": []}
+    if root is not None:
+        members = [read_member_summary(root, m) for m in data.get("members") or []]
+        member_states = {m["name"]: m for m in members}
+        selected = sorted({cid for r in rows for cid in r["selected"]})
+        if index.get("present") and index.get("ok"):
+            parent_cases = _parent_case_rows(root, index, selected, member_states)
+        provenance = _parent_provenance(root, data.get("members") or [])
+
+    states = {r["state"] for r in rows}
+    case_status = [c["status"] for c in parent_cases]
+    case_review = [c["review_state"] for c in parent_cases
+                   if c["status"] not in ("blocked", "skipped")]
+    blocked_by_member = any(c["blocked_by_members"] for c in parent_cases)
+    ac_incomplete = coverage["state"] == "ready" and bool(coverage["zero_attached"])
+    if "fail" in states or "red" in case_status:
         verdict, code = "FAIL", 1
     elif "blocked" in states:
         verdict, code = "BLOCKED", 3
-    elif coverage["state"] == "ready" and coverage["zero_attached"]:
-        # 覆盖就绪域仍有零挂靠 AC：不得显示 PASS（RFC §3.6）。
-        verdict, code = "INCOMPLETE", 0
     elif states and states <= {"na"}:
+        # 单成员显式 `cross_repo_e2e: none`：N/A 单列，不显示为绿（RFC §3.6）。
         verdict, code = "N/A", 0
     elif not rows:
         verdict, code = "BLOCKED", 3
+    elif root is None:
+        # 无根（纯选择器单元调用）只判选择器 + AC 覆盖，保持一期可复用。
+        verdict, code = ("INCOMPLETE", 0) if ac_incomplete else ("PASS", 0)
+    elif blocked_by_member or any(s != "green" for s in case_status):
+        verdict, code = "BLOCKED", 3
+    elif any(s != "fresh" for s in case_review):
+        verdict, code = "INCOMPLETE", 0
+    elif ac_incomplete:
+        verdict, code = "INCOMPLETE", 0
     else:
         verdict, code = "PASS", 0
-    return {"requirement": requirement, "verdict": verdict, "exit": code,
-            "requirements": rows,
-            "parent": {"ac_coverage": coverage},
+
+    payload = {
+        "schema": 1,
+        "requirement": requirement, "verdict": verdict, "exit": code,
+        "kind": _VIEW_KIND, "readonly": True, "note": _READONLY_NOTE,
+        "requirements": rows,
+        "parent": {
+            "index": str(index_path(root)) if root is not None else None,
+            "state": "ok" if index.get("present") and index.get("ok") else "missing",
             "case_ids": sorted({cid for r in rows for cid in r["case_ids"]}),
-            "selected": sorted({cid for r in rows for cid in r["selected"]})}
+            "ac_coverage": coverage,
+            "cases": parent_cases,
+            "provenance": provenance,
+        },
+        "members": members,
+        "case_ids": sorted({cid for r in rows for cid in r["case_ids"]}),
+        "selected": sorted({cid for r in rows for cid in r["selected"]}),
+    }
+    if snapshot and root is not None:
+        payload["snapshot"] = str(write_snapshot(root, payload))
+    return payload

@@ -130,9 +130,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_e2e = sub.add_parser("e2e", help="父仓跨仓 E2E（一期）：status / verify / init")
     e2e_sub = p_e2e.add_subparsers(dest="e2e_cmd", required=True)
-    p_es = e2e_sub.add_parser("status", help="只读选择器命中数 / BLOCKED / N/A")
+    p_es = e2e_sub.add_parser("status", help="只读聚合视图：父仓跨仓用例 + 成员本地 E2E 摘要")
     _add_common(p_es)
     p_es.add_argument("--requirement", default=None, help="只看指定 requirements[].id")
+    p_es.add_argument("--snapshot", action="store_true",
+                      help="另写父仓只读快照到 <assets_root>/e2e/reviews/aggregate/")
     p_ev = e2e_sub.add_parser("verify", help="只读跑父仓 E2E 专项检查（FAIL 退出 1）")
     _add_common(p_ev)
     p_ei = e2e_sub.add_parser("init", help="幂等创建父仓 e2e-index.md 骨架")
@@ -292,7 +294,8 @@ def main(argv: list[str] | None = None) -> int:
             data = core.load_manifest(root)
             if args.e2e_cmd == "status":
                 result = kernel.status(data, kernel.read_index(root),
-                                       args.requirement, root=root)
+                                       args.requirement, root=root,
+                                       snapshot=args.snapshot)
                 if args.json:
                     print(json.dumps(result, ensure_ascii=False, indent=2))
                 else:
@@ -301,6 +304,29 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"  {row['requirement']}: {row['state']}"
                               + (f" → {row['selected']}" if row["selected"] else "")
                               + (f" ({row['reason']})" if row["reason"] else ""))
+                    cases = result["parent"].get("cases") or []
+                    if cases:
+                        print("  父仓用例：")
+                        for c in cases:
+                            deps = "、".join(c["members"]) or "—"
+                            print(f"    [{c['status']}/{c['review_state']}] {c['id']}"
+                                  f" · 成员依赖={deps}"
+                                  + (f" · {c['status_reason']}" if c["status_reason"] else ""))
+                    for m in result.get("members") or []:
+                        if m["state"] != "ok":
+                            print(f"  成员 {m['name']}: {m['state']}（{m['reason']}）")
+                            continue
+                        counts = m["counts"]
+                        review = m["review"]
+                        print(f"  成员 {m['name']}: {counts['total']} 条"
+                              f"（green {counts['green']} / red {counts['red']}"
+                              f" / blocked {counts['blocked']} / skipped {counts['skipped']}）"
+                              f" · review fresh {review['fresh']} / stale {review['stale']}"
+                              f" / unreviewed {review['unreviewed']} / legacy {review['legacy']}"
+                              f" · 最近提交 #{m['latest_seq']}")
+                    if result.get("snapshot"):
+                        print(f"  只读快照：{result['snapshot']}")
+                    print("  本视图只读：成员评审以成员账本为准；本命令不写成员索引/账本。")
                 return result["exit"]
 
             # verify：只判父仓 E2E 专项检查，不把无关的锁/契约 WARN 混进来。
