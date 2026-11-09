@@ -724,6 +724,14 @@ testid:
 3. **运行前提 = 统一入口网关**：一期跨仓流只支持父仓 `e2e.app_base_url` 指向的同源网关；多 host 直连、每成员 `app_base_url` 不在本期。
 4. **索引骨架与反向视图**：`atlas solution e2e init` 幂等创建 `e2e-index.md`；页面表 `solution-flow` 初始为 `未实现` + `覆盖就绪: 否`；反向视图行必须用**空单元格**（写 `—` ⇒ `反向视图一致 FAIL`）。选择器唯一真相 = `requirements[].case_ids`；`需求` / `关联AC` 列只做追溯。
 
+## 10.1.2 父仓只读聚合视图（solution 根，2026-11-08，`RFC-20261108-02` 二期）
+
+1. **入口**：`atlas solution e2e status [--requirement <id>] [--json] [--snapshot]`；人读输出「父仓用例 + 成员本地 E2E 摘要」，`--json` 输出同一结构（`kind: solution-e2e-readonly-view`、`readonly: true`）。
+2. **父仓用例**：来自父仓索引主表 + `requirements[].case_ids` 选择；`父仓用例.成员依赖` 必填（缺失 ⇒ `validate_e2e_index` 父仓模式 FAIL；`成员依赖:` 与字面量 `[]` 都归一为空列表）。被依赖成员 `state=missing` ⇒ 该用例 `blocked`，并列入 `blocked_by_members`。
+3. **`review_state` 按成员根重算**：父仓用**成员自己的根**（`repo_provenance(member)` + `review_fingerprint(member)`）调用 `case_review_state`；**禁止**用父仓根计算成员 current。父仓用例自身的 `review_state` 用父仓根 + `solution_root=True`（无 run-time `prov` ⇒ `stale`）。单仓控制台的既有分支不变（无 prov ⇒ `legacy`）。
+4. **只读**：视图不调用执行器、不写成员 `e2e-index.md`/`cases/`/`events.jsonl`；重算结果只在内存/`--json` 中。`--snapshot` 是唯一写动作，只写 `<assets_root>/e2e/reviews/aggregate/<日期>-<REQ|ALL>.json`（`reviews` 保留名 `aggregate`），文件头声明「非成员状态第二份账本」。
+5. **verdict 合成**：`FAIL > BLOCKED > INCOMPLETE > PASS`；全部选中用例 `green` 且 `review_state=fresh` 才 `PASS`；`覆盖就绪` 域仍有零挂靠 AC ⇒ `INCOMPLETE`。成员 `no_local_e2e` 合法（不判红），`index_invalid`/`missing` 进入视图告警与 `BLOCKED`。
+
 ## 10.2 E2E 触发段与就绪归因（2026-11-03，`RFC-20261103-07`）
 
 **触发段**：`scripts/e2e_trigger.py`，由 `patches/workflow-e2e-trigger/` 挂进 Trellis 工作流的 **Phase 2 最后一轮质量检查之前**；收尾（3.5）只给控制台命令。

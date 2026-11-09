@@ -147,6 +147,14 @@ atlas solution check --strict
 - 自动领取/自动启动不在本层：`task create` 只创建任务卡；成员仍需 `/trellis:start` 选择任务。
 - 父级 `task create` 是 Phase 1 的唯一窄写例外：只写成员 `.trellis/tasks`（任务卡/指针/context），不写成员代码/资产/PRD。
 
+### 6.1 父仓只读聚合视图（二期，2026-11-08，`RFC-20261108-02`）
+
+- 入口：`atlas solution e2e status [--requirement <id>] [--json] [--snapshot]`；输出父仓跨仓用例 + 成员本地 E2E 摘要，不接管成员执行。
+- 成员 `review_state` 按**成员根**重算（成员自己的 `repo_provenance` / `review_fingerprint`），**只读不落盘**；禁止写回成员账本/索引。
+- 父仓用例 `review_state` 用父仓根 + `solution_root=True`：无 run-time `prov` ⇒ `stale`；单仓控制台既有分支不变（无 prov ⇒ `legacy`）。
+- 父仓用例 `成员依赖` 必填（缺失 ⇒ `validate_e2e_index` 父仓模式 FAIL）；`成员依赖:` 与字面量 `[]` 归一为空列表；`--migrate` 只生成冒号留空形态。
+- `--snapshot` 是唯一写动作，只落 `<assets_root>/e2e/reviews/aggregate/`（保留名）；聚合报告不是成员状态的第二份账本。
+
 ## 7. 相关契约
 
 - 布局：`shared/layout.md`
