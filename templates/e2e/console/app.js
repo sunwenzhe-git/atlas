@@ -8,10 +8,10 @@
  */
 'use strict';
 
-const DRAFT_KEY = (src) => `atlas-console-draft:v3:${src}`;
+const DRAFT_KEY = (src, member) => `atlas-console-draft:v3:${member ? `${member}/` : ''}${src}`;
 
 const S = {
-  source: 'app', sources: {},
+  source: 'app', member: new URLSearchParams(location.search).get('member') || null, sources: {},
   cases: [], nodeids: {}, committed: { ts: null, actor: null, cases: {} },
   draft: {}, open: new Set(), outputs: {}, busy: null, logCase: null, heldCase: null,
   filter: { type: 'all', page: 'all', unreviewed: false, q: '' },
@@ -24,12 +24,13 @@ const nowISO = () => new Date().toISOString().replace('T', ' ').slice(0, 19).rep
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 /* ---------------- 本地草稿 ---------------- */
+const draftKey = () => DRAFT_KEY(S.source, S.member);
 function loadDraft() {
-  try { S.draft = JSON.parse(localStorage.getItem(DRAFT_KEY(S.source)) || '{}') || {}; }
+  try { S.draft = JSON.parse(localStorage.getItem(draftKey()) || '{}') || {}; }
   catch (e) { S.draft = {}; }
 }
 function saveDraft() {
-  try { localStorage.setItem(DRAFT_KEY(S.source), JSON.stringify(S.draft)); } catch (e) { /* 忽略配额错误 */ }
+  try { localStorage.setItem(draftKey(), JSON.stringify(S.draft)); } catch (e) { /* 忽略配额错误 */ }
 }
 const srcCfg = () => S.sources[S.source] || {};
 const canRun = () => !!srcCfg().configured;
