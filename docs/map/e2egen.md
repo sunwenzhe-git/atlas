@@ -53,7 +53,7 @@ Playwright 配置层 `trace` / `screenshot` 两轨(`scripts/gen_e2e_scripts.py:2
 
 ### 8. 评审控制台(`scripts/e2e_console.py`)
 
-`snapshot`(`scripts/e2e_console.py:696`)聚合现场;`repo_provenance`(`scripts/e2e_console.py:510`)产评审指纹(应用内容指纹 + 逐文件脚本散列)防旧账本挂新执行;`Ledger`(`scripts/e2e_console.py:788`)落评审台账;`Runner`(`scripts/e2e_console.py:696`)做 500ms 慢动作回放 + 逐用例三值走查(pass/fail/skip),提交即解锁人工 Review;`resolve_pw`(`scripts/e2e_console.py:777`)复用运行器判据与全局兜底。
+`snapshot`(`scripts/e2e_console.py:701`)聚合现场;`repo_provenance`(`scripts/e2e_console.py:515`)产评审指纹(应用内容指纹 + 逐文件脚本散列)防旧账本挂新执行;`Ledger`(`scripts/e2e_console.py:701`)落评审台账;`Runner`(`scripts/e2e_console.py:701`)做 500ms 慢动作回放 + 逐用例三值走查(pass/fail/skip),提交即解锁人工 Review;`resolve_pw`(`scripts/e2e_console.py:701`)复用运行器判据与全局兜底。
 
 ## 对外接口(谁咬它)
 
