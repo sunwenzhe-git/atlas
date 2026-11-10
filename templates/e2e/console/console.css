@@ -141,10 +141,12 @@ tr.row.busy td{background:var(--run-bg)}
 .mpath{font-family:var(--mono);color:var(--faint);font-size:11px}
 .mcount{color:var(--muted);font-size:11.5px}
 .tag.readonly{color:var(--run);border-color:#c9d8ea;background:var(--run-bg);font-weight:600}
+.tag.ok{color:var(--ok);border-color:#bbf7d0;background:var(--ok-bg);font-weight:600}
 .mopen{font-size:11.5px;color:var(--ok);text-decoration:none;border-bottom:1px dotted currentColor}
 .mopen:hover{text-decoration:underline}
 .mlaunch{display:flex;align-items:center;gap:var(--sp2);flex-wrap:wrap;margin-top:var(--sp1)}
 .mlaunch .mlabel{color:var(--faint);font-size:10.5px}
+.mlaunch .mlog{color:var(--faint);font-size:10.5px}
 .mlaunch code{font-family:var(--mono);font-size:10.5px;color:var(--muted);background:var(--bg);
   border:1px solid var(--border);border-radius:var(--r-sm);padding:2px 6px;word-break:break-all}
 .mgrid{width:100%;border-collapse:collapse;margin-top:var(--sp2);table-layout:fixed}

@@ -10,8 +10,12 @@ import hashlib
 import importlib.util
 import json
 import shlex
+import socket
 import subprocess
 import sys
+import threading
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
@@ -413,3 +417,174 @@ def test_app_js_member_block_has_console_entry() -> None:
     # 只加导航，不加执行/评审控件：成员行仍不接 run()/api/run。
     assert "data-run" not in text.split("function memberBlock")[1].split("function rowHTML")[0]
 
+
+
+# ---------------------------------------------------------------- 父仓自动拉起成员控制台
+# 2026-11-10（方案 B）：父仓按「父仓端口 + 1 + 清单序号」自动拉起成员控制台，
+# 只起进程、不新增路由、不接管执行；端口被占则复用或跳过，退出只回收自己拉起的。
+
+def free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+class FakeConsole:
+    """假控制台：只实现 `/api/cases`（不带真服务/真依赖），用于验证端口判别。"""
+
+    def __init__(self, scope: str = "single") -> None:
+        self.scope = scope
+        outer = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *args):  # 安静
+                pass
+
+            def do_GET(self):  # noqa: N802
+                body = json.dumps({"scope": outer.scope}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.port = int(self.httpd.server_address[1])
+        self._th = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self._th.start()
+
+    def alive(self) -> bool:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/api/cases", timeout=1) as r:
+                return r.status == 200
+        except Exception:
+            return False
+
+    def close(self) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+def test_member_targets_ports_follow_manifest_order(tmp_path: Path) -> None:
+    make_parent(tmp_path, [req("REQ-001", "web", case_ids="E2E-SOLUTION-001")])
+    tgts = cons.member_targets(tmp_path, 4290)
+    assert [(t["name"], t["path"], t["port"]) for t in tgts] == [
+        ("web", "web", 4291), ("api", "api", 4292)]
+    assert Path(tgts[0]["root"]) == (tmp_path / "web").resolve()
+    assert cons.member_targets(tmp_path / "web", 4290) == []   # 单根不拉起
+
+
+def test_no_spawn_flag_disables_auto_start(tmp_path: Path) -> None:
+    parser = cons.build_parser()
+    assert parser.parse_args([]).no_spawn is False
+    assert parser.parse_args(["--no-spawn"]).no_spawn is True
+
+    mc = cons.MemberConsoles(tmp_path, 4290, enabled=False)
+    mc.start_all([{"name": "web", "path": "web", "root": str(tmp_path), "port": free_port()}])
+    snap = mc.snapshot("web")
+    assert snap["console_state"] == "disabled"
+    assert "--no-spawn" in snap["console_note"]
+    assert mc._threads == []          # 一个子进程都没起
+
+
+def test_port_with_member_console_is_reused_and_never_killed(tmp_path: Path) -> None:
+    fake = FakeConsole()
+    try:
+        mc = cons.MemberConsoles(tmp_path, 4290)
+        mc.start_all([{"name": "web", "path": "web", "root": str(tmp_path), "port": fake.port}])
+        mc._threads[-1].join(5)
+        snap = mc.snapshot("web")
+        assert snap["console_state"] == "reused"
+        assert "退出不回收" in snap["console_note"]
+        assert mc._owned == {}
+        mc.stop()
+        assert fake.alive() is True   # 复用的外部实例一根手指都不碰
+    finally:
+        fake.close()
+
+
+def test_port_occupied_by_other_process_is_skipped(tmp_path: Path) -> None:
+    fake = FakeConsole(scope="solution")   # 有响应但不是成员控制台（例如另一个父仓）
+    try:
+        mc = cons.MemberConsoles(tmp_path, 4290)
+        mc.start_all([{"name": "web", "path": "web", "root": str(tmp_path), "port": fake.port}])
+        mc._threads[-1].join(5)
+        snap = mc.snapshot("web")
+        assert snap["console_state"] == "skipped"
+        assert "已被占用" in snap["console_note"]
+        mc.stop()
+        assert fake.alive() is True   # 不抢占、不杀
+    finally:
+        fake.close()
+
+
+class _FakeProc:
+    def __init__(self) -> None:
+        self.terminated = False
+        self.killed = False
+        self.running = True
+
+    def poll(self):
+        return None if self.running else 0
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.running = False
+
+    def kill(self) -> None:
+        self.killed = True
+        self.running = False
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def test_stop_reaps_only_owned_children(tmp_path: Path) -> None:
+    mc = cons.MemberConsoles(tmp_path, 4290)
+    owned, other = _FakeProc(), _FakeProc()
+    mc._owned = {"web": owned}
+    mc._procs = {"web": owned, "api": other}
+    mc.stop()
+    assert owned.terminated is True
+    assert other.terminated is False and other.killed is False
+    mc.stop()                       # 幂等：第二次不再动手
+    assert owned.terminated is True
+
+
+def test_spawn_uses_member_root_cwd_and_no_spawn_flag(tmp_path: Path, monkeypatch) -> None:
+    captured: dict = {}
+
+    class _P(_FakeProc):
+        pid = 4321
+
+        def poll(self):
+            return 1                # 立刻"退出"，测试不需要等就绪轮询
+
+    def fake_popen(argv, **kw):
+        captured["argv"], captured["kw"] = argv, kw
+        return _P()
+
+    monkeypatch.setattr(cons.subprocess, "Popen", fake_popen)
+    port = free_port()
+    mc = cons.MemberConsoles(tmp_path, 4290)
+    mc.start_all([{"name": "web", "path": "web", "root": str(tmp_path), "port": port}])
+    mc._threads[-1].join(5)
+
+    argv = captured["argv"]
+    assert argv[argv.index("--root") + 1] == str(tmp_path)
+    assert argv[argv.index("--port") + 1] == str(port)
+    assert argv[argv.index("--host") + 1] == "127.0.0.1"
+    assert "--no-spawn" in argv                     # 子进程不再递归拉起
+    assert captured["kw"]["cwd"] == str(tmp_path)   # 工作目录 = 成员根
+    snap = mc.snapshot("web")
+    assert snap["console_state"] == "failed"
+    assert "启动即退出" in snap["console_note"]
+    assert str(snap["console_log"]).endswith(".log")
+
+
+def test_app_js_gates_console_link_on_ready_state() -> None:
+    text = (PKG_ROOT / "templates" / "e2e" / "console" / "app.js").read_text(encoding="utf-8")
+    block = text.split("function memberBlock")[1].split("function rowHTML")[0]
+    assert "console_state" in block
+    assert "const live = cs === 'ready' || cs === 'reused'" in block
+    assert "live && m.console_url" in block         # 未就绪不给可点链接

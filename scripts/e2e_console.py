@@ -48,11 +48,14 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import importlib.util
 import json
 import os
 import re
+import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -60,6 +63,7 @@ import threading
 import time
 from datetime import datetime
 import urllib.parse
+import urllib.request
 import shlex
 import shutil
 import subprocess
@@ -793,6 +797,27 @@ def member_console_cmd(mroot: Path, port: int) -> str:
     return " ".join(shlex.quote(x) for x in argv)
 
 
+def member_targets(root: Path, parent_port: int = 4190) -> list[dict]:
+    """清单顺序 ⇒ 成员控制台目标（名称 / 相对路径 / 绝对根 / 确定性端口）。
+
+    端口 = 父仓端口 + 1 + 成员序号（序号 = `atlas.solution.yaml` 成员顺序）；
+    不探测、不扫描，重启后稳定。只读聚合与自动拉起共用这一处推导，避免两份端口规则漂移。
+    """
+    root = Path(root)
+    if not _is_solution_root(root):
+        return []
+    out: list[dict] = []
+    for idx, ent in enumerate(load_manifest(root).get("members") or []):
+        rel = str(ent.get("path") or "")
+        out.append({
+            "name": str(ent.get("name") or Path(rel).name),
+            "path": rel,
+            "root": str((root / rel).resolve()),
+            "port": parent_port + 1 + idx,
+        })
+    return out
+
+
 def member_snapshots(root: Path, parent_port: int = 4190) -> dict:
     """solution 根 ⇒ 逐成员只读快照（逐条用例按成员分组）。
 
@@ -807,15 +832,13 @@ def member_snapshots(root: Path, parent_port: int = 4190) -> dict:
     root = Path(root)
     if not _is_solution_root(root):
         return {"scope": "single", "members": [], "conflicts": []}
-    entries = load_manifest(root).get("members") or []
     members: list[dict] = []
     owners: dict[str, list[str]] = {}
-    for idx, ent in enumerate(entries):
-        name = str(ent.get("name") or Path(str(ent.get("path") or "")).name)
-        rel = str(ent.get("path") or "")
-        mroot = (root / rel).resolve()
-        # 确定性端口（不探测）：父仓端口 + 1 + 成员序号；序号 = 清单顺序，重启后不变。
-        port = parent_port + 1 + idx
+    for tgt in member_targets(root, parent_port):
+        name = tgt["name"]
+        rel = tgt["path"]
+        mroot = Path(tgt["root"])
+        port = int(tgt["port"])
         item = {
             "id": name, "name": name, "path": rel, "root": str(mroot),
             "readonly": True, "run_blocked_reason": MEMBER_READONLY_REASON,
@@ -876,6 +899,177 @@ def member_snapshots(root: Path, parent_port: int = 4190) -> dict:
     conflicts = [{"case_id": cid, "members": names}
                  for cid, names in sorted(owners.items()) if len(names) > 1]
     return {"scope": "solution", "members": members, "conflicts": conflicts}
+
+
+MEMBER_CONSOLE_TIMEOUT = 10.0
+
+
+class MemberConsoles:
+    """solution 根下自动拉起成员控制台（2026-11-10，方案 B：自动拉起、不代理执行）。
+
+    边界：只起进程、只探端口、只在退出时回收**自己拉起的**那些。不新增 HTTP 路由、
+    不转发执行与提交、不写成员任何文件——成员账本仍由成员进程写。
+
+    端口占用（不杀、不抢）：能响应的成员控制台 ⇒ 复用（`owned=False`，退出不回收）；
+    端口被其它进程占着 ⇒ 跳过该成员并在页面披露原因；端口空闲 ⇒ 起子进程，
+    `MEMBER_CONSOLE_TIMEOUT` 内未就绪如实报失败并附日志尾部。
+
+    状态闭集：`ready` / `reused` / `starting` / `failed` / `skipped` / `disabled`。
+    """
+
+    def __init__(self, root: Path, port: int, enabled: bool = True):
+        self.root = Path(root)
+        self.port = port
+        self.enabled = enabled
+        self._lock = threading.Lock()
+        self._procs: dict[str, subprocess.Popen] = {}
+        self._owned: dict[str, subprocess.Popen] = {}
+        self._info: dict[str, dict] = {}
+        self._threads: list[threading.Thread] = []
+        self._stopping = False
+
+    # ---- 对外
+    def start_all(self, targets: list[dict]) -> None:
+        if not targets:
+            return
+        for tgt in targets:
+            if not self.enabled:
+                self._set(tgt["name"], "disabled",
+                          "--no-spawn：自动拉起已关闭，按页面命令手动启动成员控制台")
+                continue
+            th = threading.Thread(target=self._start_one, args=(tgt,),
+                                  name=f"member-console-{tgt['name']}", daemon=True)
+            th.start()
+            self._threads.append(th)
+
+    def snapshot(self, name: str) -> dict:
+        with self._lock:
+            info = dict(self._info.get(name) or {})
+        if not info:
+            info = {"console_state": "disabled",
+                    "console_note": "--no-spawn：自动拉起已关闭，按页面命令手动启动成员控制台"}
+        info.setdefault("console_log", None)
+        return info
+
+    def stop(self) -> None:
+        """只回收自己拉起的子进程；复用的外部实例一根手指都不碰。"""
+        with self._lock:
+            if self._stopping:
+                return
+            self._stopping = True
+            owned = list(self._owned.items())
+        for _name, proc in owned:
+            if proc.poll() is None:
+                try:
+                    proc.terminate()
+                except OSError:
+                    pass
+        deadline = time.monotonic() + 5.0
+        for name, proc in owned:
+            try:
+                proc.wait(timeout=max(0.05, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    pass
+            with self._lock:
+                self._owned.pop(name, None)
+
+    # ---- 内部
+    def _set(self, name: str, state: str, note: str, log: Path | None = None) -> None:
+        with self._lock:
+            self._info[name] = {"console_state": state, "console_note": note,
+                                "console_log": str(log) if log else None}
+
+    def _start_one(self, tgt: dict) -> None:
+        name, mroot, port = tgt["name"], Path(tgt["root"]), int(tgt["port"])
+        if not mroot.is_dir():
+            self._set(name, "skipped", f"成员路径不存在，不拉起：{tgt['path']}")
+            return
+        probe = self._probe(port)
+        if probe == "member":
+            self._set(name, "reused",
+                      f"端口 {port} 上已有成员控制台在响应，直接复用（非本进程拉起，退出不回收）")
+            return
+        if probe == "other":
+            self._set(name, "skipped",
+                      f"端口 {port} 已被占用（有响应，但不是可用的成员控制台——可能是旧版本或"
+                      f"别的进程），不抢占、不杀；换父仓端口可避开")
+            return
+        self._set(name, "starting", f"正在拉起成员控制台（端口 {port}）…")
+        try:
+            proc, log = self._spawn(name, mroot, port)
+        except OSError as exc:
+            self._set(name, "failed", f"拉起失败：{type(exc).__name__}: {exc}")
+            return
+        with self._lock:
+            self._procs[name] = proc
+            self._owned[name] = proc
+        deadline = time.monotonic() + MEMBER_CONSOLE_TIMEOUT
+        while time.monotonic() < deadline:
+            code = proc.poll()
+            if code is not None:
+                with self._lock:
+                    self._owned.pop(name, None)
+                self._set(name, "failed",
+                          f"成员控制台启动即退出（exit={code}）。日志尾部：{self._tail(log)}", log)
+                return
+            if self._probe(port) == "member":
+                self._set(name, "ready", f"已就绪（PID {proc.pid}，端口 {port}）", log)
+                return
+            time.sleep(0.2)
+        try:
+            proc.kill()
+            proc.wait(timeout=3)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        with self._lock:
+            self._owned.pop(name, None)
+        self._set(name, "failed",
+                  f"{MEMBER_CONSOLE_TIMEOUT:.0f}s 内未就绪（端口 {port}）。"
+                  f"日志尾部：{self._tail(log)}", log)
+
+    def _spawn(self, name: str, mroot: Path, port: int) -> tuple[subprocess.Popen, Path]:
+        safe = re.sub(r"[^0-9A-Za-z_.-]", "_", name)
+        log = Path(tempfile.gettempdir()) / f"atlas-console-{port}-{safe}.log"
+        argv = [sys.executable or "python3", str(Path(__file__).resolve()),
+                "--root", str(mroot), "--port", str(port), "--host", "127.0.0.1",
+                "--no-spawn"]  # 子进程不再递归拉起；防御 solution 嵌套
+        with open(log, "ab") as fh:
+            proc = subprocess.Popen(
+                argv, cwd=str(mroot), stdin=subprocess.DEVNULL, stdout=fh,
+                stderr=subprocess.STDOUT, start_new_session=True,
+                env=dict(os.environ, ATLAS_CONSOLE_SPAWNED="1"))
+        return proc, log
+
+    @staticmethod
+    def _probe(port: int, host: str = "127.0.0.1") -> str:
+        """端口判别：`free` 空闲 / `member` 成员控制台 / `other` 有响应但不是。"""
+        try:
+            with socket.create_connection((host, port), timeout=0.3):
+                pass
+        except OSError:
+            return "free"
+        try:
+            with urllib.request.urlopen(f"http://{host}:{port}/api/cases", timeout=1.5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return "other"
+        return "member" if data.get("scope") == "single" else "other"
+
+    @staticmethod
+    def _tail(log: Path, lines: int = 5) -> str:
+        try:
+            text = Path(log).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return "（无日志）"
+        rows = [ln.strip() for ln in text.splitlines() if ln.strip()][-lines:]
+        return " / ".join(rows) if rows else "（日志为空）"
 
 
 def node_ids(scripts_dir: Path) -> dict:
@@ -1451,10 +1645,11 @@ def writeback(root: Path, draft: dict, apply: bool, source: str = "app") -> dict
 
 class App:
     def __init__(self, root: Path, port: int, slowmo: int, timeout: int, head: bool, keep_open: bool = True,
-                 kill_grace_secs: float = 5.0):
+                 kill_grace_secs: float = 5.0, members: MemberConsoles | None = None):
         self.root = root
         self.layout = load_layout(root)
         self.port = port
+        self.members = members
         self.slowmo = slowmo
         self.actor = f"{os.environ.get('USER', 'local')}·控制台"
         self.ledger = Ledger(root, self.actor)
@@ -1465,6 +1660,12 @@ class App:
         current_prov = repo_provenance(self.root)
         # 成员聚合是 pure-read（只读成员索引/账本），单根下返回空成员表。
         scope_payload = member_snapshots(self.root, self.port)
+        # 运行期状态（自动拉起的结果）只在内存里；`--no-spawn` 时为 disabled。
+        for item in scope_payload.get("members") or []:
+            item.update(self.members.snapshot(item["name"]) if self.members else {
+                "console_state": "disabled", "console_log": None,
+                "console_note": "未启用自动拉起（未传入 MemberConsoles），按页面命令手动启动",
+            })
         try:
             snap = snapshot(self.root)
         except SnapshotError as exc:
@@ -1688,7 +1889,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="E2E 用例评审控制台")
     ap.add_argument("--root", default=str(DEFAULT_ROOT))
     ap.add_argument("--port", type=int, default=4190)
@@ -1700,7 +1901,14 @@ def main() -> int:
     ap.add_argument("--kill-grace", type=float, default=5.0,
                     help="超时软杀 grace 秒数（SIGTERM 后等待；0–15，默认 5；0=立即 SIGKILL）")
     ap.add_argument("--host", default="127.0.0.1")
-    args = ap.parse_args()
+    ap.add_argument("--no-spawn", action="store_true",
+                    help="不自动拉起成员控制台（solution 根默认按「父仓端口+1+清单序号」"
+                         "逐个拉起，退出/信号时只回收自己拉起的那些；端口被占则复用或跳过）")
+    return ap
+
+
+def main() -> int:
+    args = build_parser().parse_args()
 
     root = Path(args.root).resolve()
     try:
@@ -1708,8 +1916,27 @@ def main() -> int:
     except LayoutError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
+    targets = member_targets(root, args.port)
+    consoles = MemberConsoles(root, args.port, enabled=not args.no_spawn)
+    consoles.start_all(targets)
+    atexit.register(consoles.stop)
+
+    def _stop_on_signal(_signum, _frame):
+        consoles.stop()
+        raise KeyboardInterrupt
+
+    for _sig in (getattr(signal, "SIGINT", None), getattr(signal, "SIGTERM", None),
+                 getattr(signal, "SIGHUP", None)):
+        if _sig is None:
+            continue
+        try:
+            signal.signal(_sig, _stop_on_signal)
+        except (ValueError, OSError):
+            pass
+
     app = App(root, args.port, args.slowmo, args.timeout, not args.no_head,
-              (not args.auto_close) and (not args.no_head), kill_grace_secs=args.kill_grace)
+              (not args.auto_close) and (not args.no_head), kill_grace_secs=args.kill_grace,
+              members=consoles)
     Handler.app = app
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"E2E 用例评审控制台 → http://{args.host}:{args.port}/")
@@ -1717,10 +1944,16 @@ def main() -> int:
     print(f"  执行     : {'有头' if app.runner.head else '无头'} · slowmo={args.slowmo}ms · 并发=1 · 超时={args.timeout}s")
     print(f"  跑完关窗 : {'自动关' if not app.runner.keep_open else '**不关**（人工 review 用：手动关窗，或控制台点「关闭浏览器窗口」）'}")
     print("  落盘时机 : 点「提交」才写账本 + 回写索引（执行/勾选只存页面本地草稿）")
+    if targets:
+        mode = "关闭（--no-spawn）" if args.no_spawn else "自动拉起"
+        print(f"  成员控制台: {mode} · {len(targets)} 个"
+              f"（端口 {args.port + 1}–{args.port + len(targets)}）· 退出/信号时只回收自己拉起的那些")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\n停止。")
+    finally:
+        consoles.stop()
     return 0
 
 

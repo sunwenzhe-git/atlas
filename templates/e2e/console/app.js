@@ -202,7 +202,8 @@ function renderMembers() {
     : '';
   box.innerHTML = '<div class="mhead"><b>成员仓 E2E（只读聚合）</b>'
     + '<span class="mnote">只读：父仓不复制成员用例正文、不代跑、不回写成员索引/账本；'
-    + '执行与评审请到成员仓 <code>atlas console --root &lt;member&gt;</code>。'
+    + '控制台启动时已按「父仓端口 + 1 + 清单序号」自动拉起成员控制台（<code>--no-spawn</code> 可关），'
+    + '执行与评审在成员控制台里做。'
     + '父仓 <code>solution-flow</code> 跨仓用例仍在上方主表。</span></div>'
     + banner + S.members.map(memberBlock).join('');
 }
@@ -211,6 +212,12 @@ function memberBlock(m) {
   const counts = m.counts || {};
   const review = m.review || {};
   const ok = m.state === 'ok';
+  const cs = m.console_state || '';
+  const live = cs === 'ready' || cs === 'reused';
+  const label = {
+    ready: '控制台已就绪', reused: '复用已有控制台', starting: '控制台启动中…',
+    failed: '控制台启动失败', skipped: '未拉起（已跳过）', disabled: '自动拉起已关闭',
+  }[cs] || '';
   const head = `<div class="member-head"><span class="mname">${esc(m.name)}</span>`
     + `<span class="mpath">${esc(m.path)}</span>`
     + (ok ? '' : `<span class="tag stale">${esc(m.state)}</span>`)
@@ -221,12 +228,18 @@ function memberBlock(m) {
         + ` / unreviewed ${review.unreviewed || 0} / legacy ${review.legacy || 0}`
       : esc(m.reason || '')}</span>`
     + `<span class="tag readonly" title="${esc(m.run_blocked_reason || '')}">只读 · 父仓不可执行</span>`
-    + (m.console_url ? `<a class="mopen" href="${esc(m.console_url)}" target="_blank" rel="noopener">打开成员控制台 ↗</a>` : '')
+    + (label ? `<span class="tag ${live ? 'ok' : 'stale'}" title="${esc(m.console_note || '')}">${esc(label)}</span>` : '')
+    + (live && m.console_url
+      ? `<a class="mopen" href="${esc(m.console_url)}" target="_blank" rel="noopener">打开成员控制台 ↗</a>`
+      : '')
+    + (!live && m.console_note ? `<span class="mnote">${esc(m.console_note)}</span>` : '')
     + `</div>`
     + (m.console_cmd
-      ? `<div class="mlaunch"><span class="mlabel">未启动时在终端执行：</span>`
+      ? `<div class="mlaunch"><span class="mlabel">${live ? '备用启动命令：' : '手动启动命令：'}</span>`
         + `<code>${esc(m.console_cmd)}</code>`
-        + `<button class="btn btn-ghost" data-copy="${esc(m.console_cmd)}">复制命令</button></div>`
+        + `<button class="btn btn-ghost" data-copy="${esc(m.console_cmd)}">复制命令</button>`
+        + (m.console_log ? `<span class="mlog">日志：<code>${esc(m.console_log)}</code></span>` : '')
+        + `</div>`
       : '');
   const rows = (m.cases || []).map((c) => {
     const rs = c.review_state || {};
