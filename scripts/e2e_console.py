@@ -929,10 +929,17 @@ class MemberConsoles:
         self._stopping = False
 
     # ---- 对外
-    def start_all(self, targets: list[dict]) -> None:
+    def start_all(self, targets: list[dict], states: dict[str, str] | None = None) -> None:
         if not targets:
             return
+        states = states or {}
         for tgt in targets:
+            member_state = states.get(tgt["name"], "ok")
+            if member_state != "ok":
+                # 没有可用本地 E2E 索引的成员不占进程（起来也是空列表 + 报错页）。
+                self._set(tgt["name"], "no_index",
+                          f"无本地 E2E 索引（{member_state}），未启动控制台")
+                continue
             if not self.enabled:
                 self._set(tgt["name"], "disabled",
                           "--no-spawn：自动拉起已关闭，按页面命令手动启动成员控制台")
@@ -1917,8 +1924,10 @@ def main() -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     targets = member_targets(root, args.port)
+    states = {m["name"]: m["state"]
+              for m in (member_snapshots(root, args.port).get("members") or [])}
     consoles = MemberConsoles(root, args.port, enabled=not args.no_spawn)
-    consoles.start_all(targets)
+    consoles.start_all(targets, states)
     atexit.register(consoles.stop)
 
     def _stop_on_signal(_signum, _frame):

@@ -588,3 +588,31 @@ def test_app_js_gates_console_link_on_ready_state() -> None:
     assert "console_state" in block
     assert "const live = cs === 'ready' || cs === 'reused'" in block
     assert "live && m.console_url" in block         # 未就绪不给可点链接
+
+
+def test_no_local_e2e_member_is_not_spawned(tmp_path: Path, monkeypatch) -> None:
+    spawned: list = []
+
+    def fake_popen(argv, **kw):
+        spawned.append(argv)
+        raise AssertionError("无本地 E2E 索引的成员不应起进程")
+
+    monkeypatch.setattr(cons.subprocess, "Popen", fake_popen)
+    mc = cons.MemberConsoles(tmp_path, 4290)
+    mc.start_all([{"name": "web", "path": "web", "root": str(tmp_path), "port": free_port()}],
+                 {"web": "no_local_e2e"})
+    snap = mc.snapshot("web")
+    assert spawned == []                      # 一个子进程都没起
+    assert mc._threads == []
+    assert snap["console_state"] == "no_index"
+    assert snap["console_state"] != "ready"
+    assert "未启动控制台" in snap["console_note"]
+
+
+def test_app_js_hides_console_entry_for_members_without_index() -> None:
+    text = (PKG_ROOT / "templates" / "e2e" / "console" / "app.js").read_text(encoding="utf-8")
+    block = text.split("function memberBlock")[1].split("function rowHTML")[0]
+    assert "no_index: '无本地 E2E 索引，未启动控制台'" in block
+    assert "(ok && m.console_cmd)" in block   # 无索引成员不展示启动命令/端口/日志
+    assert "live && m.console_url" in block   # 未就绪/无索引不渲染入口链接
+    assert "m.path !== m.name" in block       # 成员名不重复展示

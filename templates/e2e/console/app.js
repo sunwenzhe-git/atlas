@@ -217,9 +217,10 @@ function memberBlock(m) {
   const label = {
     ready: '控制台已就绪', reused: '复用已有控制台', starting: '控制台启动中…',
     failed: '控制台启动失败', skipped: '未拉起（已跳过）', disabled: '自动拉起已关闭',
+    no_index: '无本地 E2E 索引，未启动控制台',
   }[cs] || '';
   const head = `<div class="member-head"><span class="mname">${esc(m.name)}</span>`
-    + `<span class="mpath">${esc(m.path)}</span>`
+    + (m.path && m.path !== m.name ? `<span class="mpath">${esc(m.path)}</span>` : '')
     + (ok ? '' : `<span class="tag stale">${esc(m.state)}</span>`)
     + `<span class="mcount">${ok
       ? `${counts.total || 0} 条 · 执行通过 ${counts.green || 0} / 失败 ${counts.red || 0}`
@@ -232,9 +233,9 @@ function memberBlock(m) {
     + (live && m.console_url
       ? `<a class="mopen" href="${esc(m.console_url)}" target="_blank" rel="noopener">打开成员控制台 ↗</a>`
       : '')
-    + (!live && m.console_note ? `<span class="mnote">${esc(m.console_note)}</span>` : '')
+    + (!live && cs !== 'no_index' && m.console_note ? `<span class="mnote">${esc(m.console_note)}</span>` : '')
     + `</div>`
-    + (m.console_cmd
+    + ((ok && m.console_cmd)
       ? `<div class="mlaunch"><span class="mlabel">${live ? '备用启动命令：' : '手动启动命令：'}</span>`
         + `<code>${esc(m.console_cmd)}</code>`
         + `<button class="btn btn-ghost" data-copy="${esc(m.console_cmd)}">复制命令</button>`
