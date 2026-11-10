@@ -4,6 +4,25 @@
 
 ---
 
+## [Unreleased]
+
+### 🧭 多仓方案层 E2E：父仓只读聚合视图（二期，RFC-20261108-02）
+
+* **只读聚合视图**：`atlas solution e2e status [--requirement <id>] [--json] [--snapshot]` 输出「父仓跨仓用例 + 成员本地 E2E 摘要」（`--json` 带 `kind: solution-e2e-readonly-view` / `readonly: true`）；不调执行器、不写成员 `e2e-index.md` / `cases/` / `events.jsonl`，重算结果只留在内存与 `--json` 输出。
+* **成员根重算**：成员用例的 `review_state` 用成员自己的根（`repo_provenance(member)` + `review_fingerprint(member)`）计算，禁止用父仓根判成员 current；父仓用例用父仓根 + `solution_root=True`（无 run-time `prov` ⇒ `stale`），单仓控制台的既有分支不变（无 prov ⇒ `legacy`）。
+* **verdict 合成**：`FAIL > BLOCKED > INCOMPLETE > PASS`——全部选中用例 green 且 `review_state=fresh` 才 PASS；`覆盖就绪` 域仍有零挂靠 AC ⇒ INCOMPLETE；成员 `no_local_e2e` 合法不判红，`index_invalid` / `missing` 进视图告警并计入 `blocked_by_members`。
+* **唯一写动作 `--snapshot`**：只落 `<assets_root>/e2e/reviews/aggregate/<日期>-<REQ|ALL>.json`（`reviews` 保留名 `aggregate`），文件头声明「非成员状态第二份账本」。
+
+### 🖥️ 成员控制台：父仓一键拉起与成员命名空间
+
+* **自动拉起成员控制台**：solution 根启动后按「父仓端口 + 1 + 清单序号」为每个成员拉起控制台；已有响应则复用（退出不回收），端口被其他进程占用则跳过并披露原因、不抢占，10s 未就绪如实报失败并附日志尾部；正常退出 / Ctrl-C / SIGTERM 只回收自己拉起的子进程，`--no-spawn` 回到手动模式。不新增 HTTP 路由，父仓仍不接管执行与回写。
+* **无本地索引的成员**：成员状态非 `ok`（如 `no_local_e2e`）时不拉起控制台、不渲染入口链接 / PID / 端口 / 日志路径，保留该成员行并标注「无本地 E2E 索引（<成员状态>），未启动控制台」；端口推导不变。
+* **草稿键命名空间**：控制台草稿键加成员前缀，避免多成员页签间互相覆盖；顺带修掉成员名与相对路径相同时的重复渲染。
+
+### 📋 台账
+
+* `duty-review/bugs.md` #56 状态收口为 `已出库`（装配副本判据⑧修复已随 beta.32 出库，采纳仓复验通过）。
+
 ## [v0.2.0-beta.32] - 2026-11-08
 
 ### 🧭 多仓方案层 E2E：父仓持跨仓 E2E（一期，RFC-20261108-02）
