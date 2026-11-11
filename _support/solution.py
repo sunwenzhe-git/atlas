@@ -35,6 +35,8 @@ MANIFEST_NAME = "atlas.solution.yaml"
 LOCK_NAME = "atlas.solution.lock.json"
 CONFIG_NAME = "atlas.config.yaml"
 SCHEMA_VERSION = 1
+# B 批起 v2 清单的首锁升 2（带 definition / acceptance_cutover）；v1 清单的锁仍是 1。
+LOCK_SCHEMA_VERSION = 2
 MODES = ("federated", "unified")
 ASSET_OWNERS = ("member", "solution")
 
@@ -583,6 +585,16 @@ def _git_lines(cwd: Path, *args: str, timeout: int = 15) -> list[str] | None:
     return out.splitlines() if rc == 0 else None
 
 
+def _git_bytes(cwd: Path, *args: str, timeout: int = 15) -> bytes | None:
+    """取原始字节（blob 摘要不能被文本解码改写换行）。"""
+    try:
+        p = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
+                           timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return p.stdout if p.returncode == 0 else None
+
+
 def _is_git(path: Path) -> bool:
     """成员必须是**自己的仓根**；仅位于 solution 根工作树内不算。"""
     if not path.is_dir():
@@ -864,6 +876,118 @@ def contract_states(root: Path, data: dict) -> list[dict]:
     return out
 
 
+# ------------------------------------------------------- definition（§1.1 / §5.2）
+
+def _prd_front_matter(path: Path) -> dict[str, str]:
+    """读 PRD 的 YAML front matter（只取标量；不引入 YAML 依赖）。"""
+    if not path.is_file():
+        return {}
+    m = re.match(r"^---\s*\n(.*?)\n---", path.read_text(encoding="utf-8"), re.S)
+    if not m:
+        return {}
+    out: dict[str, str] = {}
+    for raw in m.group(1).splitlines():
+        line = strip_inline_comment(raw.rstrip())
+        if not line.strip() or ":" not in line:
+            continue
+        key, val = line.split(":", 1)
+        out[key.strip()] = str(_scalar(val) if val.strip() else "").strip()
+    return out
+
+
+def _positive_int(raw: str, field: str) -> int:
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        raise SolutionError(f"{field}_invalid: 必须是整数（当前: {raw!r}）")
+    if value < 1:
+        raise SolutionError(f"{field}_invalid: 必须 ≥ 1（当前: {value}）")
+    return value
+
+
+def _definition_lock_fields(root: Path, definition: dict) -> dict:
+    """把 `definition` 落成锁字段（§1.1.2 / §1.1.6 / §1.1.7）。
+
+    `sha256` 与 `blob` 绑 **Git blob 字节**（CRLF→LF 归一），不绑工作树；
+    `commit` 是该 blob 所在的提交：PRD 尚未入库（`init` 刚写完）时为 `null`，
+    这是唯一允许 `commit == null` 的形态（§5.2 第 8 条）。
+    """
+    rel = str(definition["path"])
+    path = root / rel
+    fm = _prd_front_matter(path)
+    prd_date = fm.get("date") or ""
+    if not prd_date:
+        raise SolutionError(
+            f"prd_date_missing: {rel} 的 front matter 缺 date（YYYY-MM-DD）")
+    domain = str(definition.get("domain") or fm.get("domain") or "").strip()
+    fields = {
+        "path": rel,
+        "domain": domain,
+        "domain_code": (fm.get("domain_code") or domain).strip(),
+        "prd_version": _positive_int(fm.get("prd_version") or 1, "prd_version"),
+        "prd_schema": _positive_int(fm.get("prd_schema") or 1, "prd_schema"),
+        "prd_date": prd_date,
+    }
+    blob: str | None = None
+    commit: str | None = None
+    data: bytes | None = None
+    if _is_git(root):
+        rc, out, _ = _git(root, "rev-parse", f"HEAD:{rel}")
+        if rc == 0 and out.strip():
+            blob = out.strip()
+            data = _git_bytes(root, "cat-file", "blob", blob)
+            rc2, out2, _ = _git(root, "log", "-1", "--format=%H", "HEAD", "--", rel)
+            commit = out2.strip() if rc2 == 0 and out2.strip() else None
+    if data is None:
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            raise SolutionError(f"definition_source_missing: 无法读取 {rel}: {exc}")
+        if _is_git(root):
+            rc, out, _ = _git(root, "hash-object", "--", rel)
+            blob = out.strip() if rc == 0 and out.strip() else None
+    fields["sha256"] = hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+    fields["blob"] = blob
+    fields["commit"] = commit
+    return fields
+
+
+def _lock_history_definition_commit(root: Path) -> str | None:
+    """主判据：在锁文件的**完整历史**里找最近一次 `definition.commit != null`。
+
+    必须 `-m --full-history`（RFC §5.2 第 8 条 / 第十三轮 B-2 实测定性）：
+    不带 `--full-history` 时 `git log` 会做历史简化，merge 下看不见被合并分支里
+    写过非 null 的锁提交（实测：merge 保留 null 锁，`git log` 只给 null 提交，
+    `--full-history` 才给出分支的 deadbeef 提交），于是 `commit == null` 会误落
+    `definition_commit_pending` WARN，把 `definition_commit_unverifiable` 的 FAIL
+    蒙混过去。`-m` 让 merge 提交逐父展开，避免合并提交本身被跳过。
+
+    残余（不得声称「不受历史改写影响」）：force-push / 改写历史抹掉那条提交后，
+    主判据同样看不见；此时只剩锁里的 `acceptance_cutover != null` 作快速正向兜底，
+    因此本函数不保证能识别所有「已刷新后改回 null」的形态（RFC §8）。
+    """
+    rc, out, _ = _git(root, "log", "-m", "--full-history", "--format=%H",
+                      "HEAD", "--", LOCK_NAME)
+    if rc != 0:
+        return None
+    seen: set[str] = set()
+    for commit in out.split():
+        if commit in seen:
+            continue
+        seen.add(commit)
+        rc2, text, _ = _git(root, "show", f"{commit}:{LOCK_NAME}")
+        if rc2 != 0:
+            continue
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        definition = payload.get("definition") if isinstance(payload, dict) else None
+        if isinstance(definition, dict) and definition.get("commit"):
+            return commit
+    return None
+
+
 def lock_payload(root: Path, data: dict) -> dict:
     members: list[dict] = []
     for m in data["members"]:
@@ -880,14 +1004,26 @@ def lock_payload(root: Path, data: dict) -> dict:
             "head": s["head"],
             "atlas_baseline": s["atlas_baseline"],
         })
-    return {
-        "schema_version": SCHEMA_VERSION,
+    definition = data.get("definition")
+    definition_fields = _definition_lock_fields(root, definition) if definition else None
+    payload = {
+        "schema_version": (LOCK_SCHEMA_VERSION if data.get("version") == 2
+                           else SCHEMA_VERSION),
         "solution": data["solution"],
         "mode": data["mode"],
         "locked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "members": members,
         "contracts": contract_states(root, data),
     }
+    if data.get("version") == 2:
+        payload["definition"] = definition_fields
+        # `acceptance_cutover` 从**首次** `lock --update`（PRD 已入库）起才进锁。
+        # `init` 的首锁 `definition.commit == null`，若同时写非 null cutover，
+        # §5.2 的「快速正向」会把刚建好的仓直接判成 unverifiable FAIL（V-16 自拒）。
+        payload["acceptance_cutover"] = (
+            data.get("acceptance_cutover")
+            if definition_fields and definition_fields.get("commit") else None)
+    return payload
 
 
 def _definition_dirty(root: Path, data: dict) -> str:
@@ -1025,14 +1161,27 @@ def _yaml_value(value: str) -> str:
 
 
 def _manifest_text(name: str, members: list[dict], contracts: list[dict] | None = None,
-                   requirements: list[dict] | None = None) -> str:
+                   requirements: list[dict] | None = None,
+                   definition: dict | None = None,
+                   acceptance_cutover: str | None = None,
+                   min_atlas: str | None = None) -> str:
     lines = [
         "# atlas solution（多仓方案层；Phase 1 = federated）",
-        "version: 1",
+        f"version: {2 if definition else 1}",
         f"solution: {name}",
         "mode: federated",
-        "members:",
     ]
+    if definition:
+        lines += [
+            "definition:",
+            f"  domain: {_yaml_value(definition['domain'])}",
+            f"  path: {definition['path']}",
+        ]
+    if acceptance_cutover:
+        lines.append(f"acceptance_cutover: {acceptance_cutover}")
+    if min_atlas:
+        lines.append(f"min_atlas: {_yaml_value(min_atlas)}")
+    lines.append("members:")
     for m in members:
         lines += [
             f"  - name: {m['name']}",
@@ -1182,19 +1331,37 @@ def init_solution(root: Path, name: str, members: list[tuple],
         raise SolutionError(f"{MANIFEST_NAME} 已存在：{manifest_path(root)}")
     # RFC §5.2 第 8 条 / V-18：三级来源全缺时无法判断自己是 0.3.x 还是 0.4.0，
     # init 要写清单且不可回退 ⇒ fail-closed（exit 2），**不得默认写 v1**。
-    if not reader_version(root):
+    reader = reader_version(root)
+    if not reader:
         raise SolutionError(
             reader_version_unknown_hint(root)
             + "\n  无法判断当前工具是 0.3.x 还是 0.4.0 ⇒ init 不写任何文件（fail-closed）。"
               "\n  修复：重建 .atlas（install.py --update）或重装 Atlas 后重试。")
+    # 0.4.0 起新仓直接写 v2 + definition（v9 阻断：写 v1 会被版本门 {2} 立刻自拒，
+    # 而 0.4.0 不注册 migrate，新仓无从就地补）。
+    manifest_version = SCHEMA_VERSION if semver_lt(reader, (0, 4, 0)) else 2
     name = _validate_name(name, "solution 名称")
     entries = _member_entries(members, root)
     if not entries:
         raise SolutionError("Phase 1 至少需要一个成员仓（--member name=path）")
     # 写清单前硬拒绝：成员已被父仓跟踪（含 gitlink）时不进入 solution 模型。
     _assert_members_untracked(root, entries)
+    # atlas.config.yaml 是资产根的单一来源；已存在时不得用 CLI 默认值覆盖。
+    effective_assets = _assets_root(root) if (root / CONFIG_NAME).is_file() else assets_root
+    definition = None
+    cutover = None
+    min_atlas = None
+    if manifest_version == 2:
+        # 路径由 init 固定（`_prd_skeletons` 会写出），不接受 --definition-path（D-14）。
+        rel = f"{effective_assets}/prd/solution-prd.md"
+        definition = {"domain": _prd_domain(root / rel) or "solution", "path": rel}
+        cutover = "2027-03-31"
+        min_atlas = "0.4.0"
     validate_manifest({
-        "version": SCHEMA_VERSION,
+        "version": manifest_version,
+        "definition": definition,
+        "acceptance_cutover": cutover,
+        "min_atlas": min_atlas,
         "solution": name,
         "mode": "federated",
         "members": entries,
@@ -1203,8 +1370,6 @@ def init_solution(root: Path, name: str, members: list[tuple],
         "requirements_present": bool(requirements),
         "unknown": [],
     }, root, phase1=True)
-    # atlas.config.yaml 是资产根的单一来源；已存在时不得用 CLI 默认值覆盖。
-    effective_assets = _assets_root(root) if (root / CONFIG_NAME).is_file() else assets_root
     if install:
         _install_atlas(root, effective_assets)
     _write_config(root, effective_assets)
@@ -1214,7 +1379,10 @@ def init_solution(root: Path, name: str, members: list[tuple],
     # 重跑不会被 manifest 存在检查挡住。
     path = manifest_path(root)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(_manifest_text(name, entries, contracts, requirements), encoding="utf-8")
+    tmp.write_text(_manifest_text(name, entries, contracts, requirements,
+                                  definition=definition,
+                                  acceptance_cutover=cutover,
+                                  min_atlas=min_atlas), encoding="utf-8")
     tmp.replace(path)
     # 成员齐全且不在 detached HEAD 时立即写入首版锁：
     # init 即钉住一组可复现版本；成员尚未 clone 时暂不写，避免 head=None 的“假锁”。
@@ -1423,9 +1591,80 @@ def _lock_contract(lock: dict | None, cid: str) -> dict | None:
     return None
 
 
+def _check_definition_lock(root: Path, data: dict, lock: dict | None, add,
+                           allow_unverifiable: bool = False) -> None:
+    """定义源与 `definition.commit` 的不可回退判据（RFC §1.1.6 / §5.2 第 8 条）。
+
+    `commit == null` 只在 `init` 首锁（PRD 未入库）合法 ⇒ `definition_commit_pending`
+    WARN；一旦「已首次刷新」（锁的完整历史里出现过非 null，或锁里
+    `acceptance_cutover != null` 快速正向），当前再为 null ⇒ `definition_commit_unverifiable`
+    FAIL，不得落 WARN。
+    """
+    definition = data.get("definition")
+    if not definition:
+        return
+    rel = definition["path"]
+    add("定义源", "PASS", f"{rel}（domain={definition.get('domain')}）")
+    if lock is None:
+        return
+    locked = lock.get("definition")
+    if not isinstance(locked, dict):
+        add("定义源锁", "WARN",
+            "锁中没有 definition 字段；运行 atlas solution lock --update")
+        return
+    commit = locked.get("commit")
+    if not commit:
+        if lock.get("acceptance_cutover"):
+            add("定义源 commit", "FAIL",
+                "definition_commit_unverifiable: 锁内 acceptance_cutover 非 null，"
+                "说明已首次刷新，但当前 definition.commit == null")
+            return
+        hist = _lock_history_definition_commit(root)
+        if hist:
+            add("定义源 commit", "FAIL",
+                f"definition_commit_unverifiable: 当前 definition.commit == null，"
+                f"但锁历史 {hist[:12]} 曾写入非 null（完整历史扫描 "
+                "--full-history -m）")
+        else:
+            add("定义源 commit", "WARN",
+                "definition_commit_pending: 首次 lock --update 前允许 commit == null；"
+                "提交 PRD 后运行 atlas solution lock --update")
+        return
+    rc, _, _ = _git(root, "cat-file", "-e", f"{commit}^{{commit}}")
+    if rc != 0:
+        status = "WARN" if allow_unverifiable else "FAIL"
+        add("定义源 commit", status,
+            f"definition_commit_unverifiable: 本机缺少提交 {commit[:12]}"
+            "（浅克隆？CI 需 fetch-depth: 0）")
+        return
+    rc, blob, _ = _git(root, "rev-parse", f"{commit}:{rel}")
+    if rc != 0 or not blob.strip():
+        add("定义源 commit", "FAIL",
+            f"definition_source_mismatch: {commit[:12]}:{rel} 不存在")
+        return
+    blob = blob.strip()
+    raw = _git_bytes(root, "cat-file", "blob", f"{commit}:{rel}")
+    if raw is None:
+        add("定义源 commit", "FAIL",
+            f"definition_source_mismatch: 无法读取 {commit[:12]}:{rel}")
+        return
+    want_sha = str(locked.get("sha256") or "")
+    sha = hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
+    if (locked.get("blob") and locked["blob"] != blob) or (want_sha and want_sha != sha):
+        add("定义源 commit", "FAIL",
+            f"definition_source_mismatch: {commit[:12]}:{rel} 的 blob/sha256 与锁不一致")
+    else:
+        add("定义源 commit", "PASS", f"{rel} @ {commit[:12]}")
+    dirty = _definition_dirty(root, data)
+    if dirty:
+        add("定义源工作树", "WARN",
+            f"definition_worktree_dirty: {rel} 有未提交改动；摘要仍按 blob 复算")
+
+
 def check_solution(root: Path, strict: bool = False,
                    allow_dangling_acs: bool = False,
-                   lenient: bool = False) -> dict:
+                   lenient: bool = False,
+                   allow_unverifiable_chain: bool = False) -> dict:
     root = Path(root).resolve()
     data = load_manifest(root)
     results: list[dict] = []
@@ -1537,6 +1776,8 @@ def check_solution(root: Path, strict: bool = False,
         for lc in lock.get("contracts") or []:
             if lc.get("id") not in contract_ids:
                 add("锁", level, f"锁中契约已不在清单: {lc.get('id')}")
+    _check_definition_lock(root, data, lock, add,
+                           allow_unverifiable=allow_unverifiable_chain)
     for c in contracts_now:
         missing = [side for side in ("producer_sha256", "consumer_sha256")
                    if c[side] == "missing"]

@@ -1249,11 +1249,14 @@ def test_b0_v07_migrate_keeps_lock_bytes_and_dirty_prd_blocks_lock(tmp_path: Pat
     assert res.returncode == 2, res.stdout + res.stderr
     assert "定义源工作树不干净" in (res.stdout + res.stderr)
 
-    # 只提交清单与 PRD 后再 lock：不抛 SolutionError，锁仍是 schema_version 1（B-0）
+    # 只提交清单与 PRD 后再 lock：不抛 SolutionError；v2 清单的首锁升到 schema_version 2
+    # 并写入 definition（B 批起；B-0 期锁仍是 1）。
     commit_root(tmp_path, core.MANIFEST_NAME, "product/prd/solution-prd.md")
     res = run_cli(tmp_path, "--root", str(tmp_path), "lock", "--update")
     assert res.returncode == 0, res.stdout + res.stderr
-    assert json.loads(lock.read_text(encoding="utf-8"))["schema_version"] == 1
+    written = json.loads(lock.read_text(encoding="utf-8"))
+    assert written["schema_version"] == 2
+    assert written["definition"]["commit"]
 
 
 def test_b0_v14_init_writes_v1_then_migrate_reaches_v2(tmp_path: Path) -> None:
@@ -1471,3 +1474,167 @@ def load_module_path(path: Path, name: str):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+# --------------------------------------------------------------- B 批：definition
+
+def stub_reader_version(monkeypatch, tmp_path: Path, version: str = "0.4.0") -> Path:
+    """把**工具包根** `package.json` 指向仓外目录，模拟 0.4.0 读者（不读被检查仓）。"""
+    toolroot = tmp_path / "toolroot-reader"
+    toolroot.mkdir(exist_ok=True)
+    (toolroot / "package.json").write_text(json.dumps({"version": version}),
+                                           encoding="utf-8")
+    monkeypatch.setattr(core, "_TOOL_PACKAGE_ROOT", toolroot)
+    return toolroot
+
+
+def _lock_bytes(root: Path) -> dict:
+    return json.loads((root / core.LOCK_NAME).read_text(encoding="utf-8"))
+
+
+def _write_lock_json(root: Path, payload: dict) -> None:
+    (root / core.LOCK_NAME).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _lock_commits_with_definition_commit(root: Path, *flags: str) -> list[str]:
+    """列出锁历史里 `definition.commit` 非 null 的提交（供 full-history 对照）。"""
+    out = subprocess.run(
+        ["git", "-C", str(root), "log", *flags, "--format=%H", "HEAD",
+         "--", core.LOCK_NAME], check=True, capture_output=True, text=True).stdout
+    hits: list[str] = []
+    for sha in out.split():
+        shown = subprocess.run(
+            ["git", "-C", str(root), "show", f"{sha}:{core.LOCK_NAME}"],
+            capture_output=True, text=True)
+        if shown.returncode != 0:
+            continue
+        definition = json.loads(shown.stdout).get("definition") or {}
+        if definition.get("commit"):
+            hits.append(sha)
+    return hits
+
+
+def _definition_rows(report: dict) -> list[dict]:
+    return [c for c in report["checks"] if c["check"] == "定义源 commit"]
+
+
+def test_b_v13_v16_init_040_writes_v2_with_commit_null_then_pending_warn(
+        tmp_path: Path, monkeypatch) -> None:
+    """V-13 + V-16：0.4.0 `init` 写 v2 + definition；首锁 commit=null，check 只 WARN。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
+
+    text = (tmp_path / core.MANIFEST_NAME).read_text(encoding="utf-8")
+    assert re.search(r"^version: 2$", text, re.M)
+    assert "definition:" in text
+    assert "path: product/prd/solution-prd.md" in text
+
+    lock = _lock_bytes(tmp_path)
+    assert lock["schema_version"] == 2
+    assert lock["definition"]["path"] == "product/prd/solution-prd.md"
+    assert lock["definition"]["domain"] == "solution"
+    assert lock["definition"]["commit"] is None
+    assert lock["definition"]["sha256"]
+    assert lock["acceptance_cutover"] is None
+
+    report = core.check_solution(tmp_path)
+    rows = _definition_rows(report)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "WARN"
+    assert "definition_commit_pending" in rows[0]["detail"]
+    assert not any(c["status"] == "FAIL" for c in report["checks"])
+
+
+def test_b_first_lock_update_fills_definition_commit_and_cutover(
+        tmp_path: Path, monkeypatch) -> None:
+    """首次 `lock --update`（PRD 已入库）补齐真实 commit，并开始写 acceptance_cutover。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+    commit_root(root, core.MANIFEST_NAME, core.CONFIG_NAME, "product")
+
+    core.write_lock(root, core.load_manifest(root), require_clean=True)
+    lock = _lock_bytes(root)
+    head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                          check=True, capture_output=True, text=True).stdout.strip()
+    assert lock["definition"]["commit"] == head
+    assert lock["definition"]["blob"]
+    assert lock["acceptance_cutover"] == "2027-03-31"
+
+    report = core.check_solution(root)
+    rows = _definition_rows(report)
+    assert len(rows) == 1 and rows[0]["status"] == "PASS", rows
+
+
+def test_b_definition_commit_reverted_after_first_refresh_fails(
+        tmp_path: Path, monkeypatch) -> None:
+    """已首次刷新后把 commit 改回 null（且 cutover 也清空）⇒ FAIL，不得落 WARN。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+    commit_root(root, core.MANIFEST_NAME, core.CONFIG_NAME, "product")
+    core.write_lock(root, core.load_manifest(root), require_clean=True)
+    commit_root(root, core.LOCK_NAME)
+
+    lock = _lock_bytes(root)
+    lock["definition"]["commit"] = None
+    lock["acceptance_cutover"] = None
+    _write_lock_json(root, lock)
+    commit_root(root, core.LOCK_NAME)
+
+    rows = _definition_rows(core.check_solution(root))
+    assert len(rows) == 1
+    assert rows[0]["status"] == "FAIL"
+    assert "definition_commit_unverifiable" in rows[0]["detail"]
+
+
+def test_b_merge_keeps_null_lock_but_branch_wrote_nonnull_fails(
+        tmp_path: Path, monkeypatch) -> None:
+    """B-2 夹具：merge 保留 null 锁、被合并分支写过非 null ⇒ FAIL。
+
+    回归点：主判据若用 `git log`（不带 `--full-history`），历史简化会看不见分支
+    提交，从而误落 `definition_commit_pending` WARN。测试同时钉住两种命令的差异。
+    """
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+    commit_root(root, core.MANIFEST_NAME, core.CONFIG_NAME, "product", core.LOCK_NAME)
+    base = subprocess.run(["git", "-C", str(root), "rev-parse", "--abbrev-ref",
+                           "HEAD"], check=True, capture_output=True,
+                          text=True).stdout.strip()
+
+    git(root, "checkout", "-b", "feat")
+    core.write_lock(root, core.load_manifest(root), require_clean=True)
+    branch_commit = _lock_bytes(root)["definition"]["commit"]
+    assert branch_commit
+    commit_root(root, core.LOCK_NAME)
+    branch_lock_commit = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"], check=True,
+        capture_output=True, text=True).stdout.strip()
+
+    git(root, "checkout", base)
+    null_lock = _lock_bytes(root)
+    null_lock["definition"]["commit"] = None
+    null_lock["acceptance_cutover"] = None
+    # 让 main 侧对锁产生一次真实改动（否则 merge 直接取分支侧）；仍是 init 形态的 null。
+    null_lock["locked_at"] = "2026-11-11T00:00:00+00:00"
+    _write_lock_json(root, null_lock)
+    commit_root(root, core.LOCK_NAME)
+    git(root, "merge", "-s", "ours", "--no-ff", "feat", "-m", "merge")
+    assert _lock_bytes(root)["definition"]["commit"] is None
+
+    # 差异钉：默认历史简化看不见分支的非 null 提交，完整历史扫描能看见。
+    assert _lock_commits_with_definition_commit(root) == []
+    assert _lock_commits_with_definition_commit(
+        root, "-m", "--full-history") == [branch_lock_commit]
+
+    rows = _definition_rows(core.check_solution(root))
+    assert len(rows) == 1
+    assert rows[0]["status"] == "FAIL", rows[0]
+    assert "definition_commit_unverifiable" in rows[0]["detail"]
+    assert "definition_commit_pending" not in rows[0]["detail"]

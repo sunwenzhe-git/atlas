@@ -170,6 +170,10 @@ def build_parser(version: str | None = None) -> argparse.ArgumentParser:
     p_check.add_argument(
         "--lenient", action="store_true",
         help="开发早期放宽：成员工作区缺席记 SKIP；仓内存在封条时拒绝执行（exit 2）")
+    p_check.add_argument(
+        "--allow-unverifiable-chain", action="store_true",
+        help="窄开关：只把「提交对象本地缺失」的 definition_commit_unverifiable 降为 WARN；"
+             "不复用 --lenient")
 
     p_migrate = sub.add_parser("migrate", help="清单 v1 → v2（只补缺，不自动 lock）")
     _add_common(p_migrate)
@@ -297,7 +301,9 @@ def main(argv: list[str] | None = None) -> int:
             if not args.fix_acs:
                 data = core.check_solution(root, strict=args.strict,
                                            allow_dangling_acs=allow,
-                                           lenient=args.lenient)
+                                           lenient=args.lenient,
+                                           allow_unverifiable_chain=(
+                                               args.allow_unverifiable_chain))
                 print(json.dumps(data, ensure_ascii=False, indent=2) if args.json
                       else core.render_check(data))
                 return 1 if data["overall"] == "FAIL" else 0
@@ -323,7 +329,9 @@ def main(argv: list[str] | None = None) -> int:
             # 写成功不等于门变绿：退出码只由重跑结果决定。
             report = core.check_solution(root, strict=args.strict,
                                          allow_dangling_acs=allow,
-                                         lenient=args.lenient)
+                                         lenient=args.lenient,
+                                         allow_unverifiable_chain=(
+                                             args.allow_unverifiable_chain))
             if not args.json:
                 print(core.render_check(report))
             return 1 if report["overall"] == "FAIL" else 0
