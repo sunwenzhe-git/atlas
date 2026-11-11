@@ -67,7 +67,9 @@ atlas solution init --name <名> --member <名>=<路径> [--member ...]  # 一�
 atlas solution adopt [--name <名>] [--member <名>=<路径> ...]        # 识别已有成员资产
 atlas solution status                                               # 只读聚合
 atlas solution diff                                                 # 只读对账：成员相对锁的提交/改动
-atlas solution check [--strict]                                     # 默认 WARN；--strict = CI 门禁
+atlas solution check [--strict]                                     # 默认 WARN（AC 定义行默认 FAIL）；--strict = CI 门禁
+atlas solution check --fix-acs [--apply]                            # dry-run 列出悬空 AC；--apply 行级保字节写回后重跑 gate
+atlas solution check --allow-dangling-acs                           # 临时宽限：仅 A 类悬空降 WARN（0.3.0 移除 / 最迟 2026-12-31）
 atlas solution lock --update                                        # 人工刷新锁（拒绝 detached HEAD）
 atlas solution task create --requirement <REQ> [--dry-run|--apply]   # 父级需求 → 成员任务卡
 atlas solution task status [--requirement <REQ>]                     # 只读对账
@@ -78,7 +80,7 @@ atlas solution task status [--requirement <REQ>]                     # 只读对
 - `adopt` 不移动、不复制成员资产；自动识别直属子目录中「git 仓 + Atlas 资产」的成员。
 - `diff` 只读对账：按成员输出自锁以来的 commit / diffstat、已暂存 / 未暂存 / 工作区改动；锁中 commit 不在本地时显式提示先 fetch。
 - `check` 的 manifest schema / 路径逃逸是输入错误（exit 2）；默认模式下成员非 git、缺 Atlas 资产、被 ignore、被跟踪/gitlink、锁漂移、PRD 骨架未补齐 ⇒ WARN。
-- `check --strict` 把以下升为 `FAIL` 并返回 exit 1：锁缺失、锁未被父仓跟踪或与父仓 `HEAD` 不一致、锁↔清单 `url/path` 不一致、成员 dirty 或 dirty 无法判断、缺 URL、成员/契约版本漂移。适用于 CI；不改变默认人工检查的 WARN 语义。
+- `check --strict` 把以下升为 `FAIL` 并返回 exit 1：锁缺失、锁未被父仓跟踪或与父仓 `HEAD` 不一致、锁↔清单 `url/path` 不一致、成员 dirty 或 dirty 无法判断、缺 URL、成员/契约版本漂移；`requirements[].acs` 引用方案 PRD 中不存在的 AC 定义行**默认即 FAIL**（`--allow-dangling-acs` 只宽限「PRD 定义非空」的 A 类悬空，写死 `0.3.0` / `2026-12-31` / `@sunwenzhe`；PRD 缺失 / 路径不匹配 / 零定义共用空集 guard ⇒ FAIL，不适用宽限）。除 AC 定义行外，其余默认仍为 WARN。采纳仓不跑 `solution check --strict` 就等于没有这道门（最小 CI 样例见 §5.1）。
 - `task create` 默认 dry-run，`--apply` 才写成员 `.trellis/tasks`：固定 `--no-start`（不领取）、用 `--meta solution/requirement/member` 做幂等、写 `solution.md` 指针并 `add-context`；不写代码/资产/PRD，不自动 commit。重复/失败显式报告；`--resume`/`--update` 只处理已有任务。
 - `commit` 入口保留给 Phase 2；Phase 1 调用时显式报「未交付」。
 

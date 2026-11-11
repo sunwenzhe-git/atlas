@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -73,7 +74,59 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--json", action="store_true", help="输出 JSON")
 
 
-def build_parser() -> argparse.ArgumentParser:
+def _package_version() -> str:
+    path = PKG_ROOT / "package.json"
+    try:
+        return str(json.loads(path.read_text(encoding="utf-8"))["version"])
+    except (OSError, ValueError, KeyError):
+        return "0.0.0"
+
+
+_SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$")
+
+
+def _semver_parts(version: str):
+    m = _SEMVER.match(version.strip())
+    if m is None:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))), \
+        (m.group(4).split(".") if m.group(4) else [])
+
+
+def _pre_lt(a: list[str], b: list[str]) -> bool:
+    if not a:
+        return False
+    if not b:
+        return True
+    for x, y in zip(a, b):
+        if x == y:
+            continue
+        xn, yn = x.isdigit(), y.isdigit()
+        if xn and yn:
+            return int(x) < int(y)
+        if xn != yn:
+            return xn
+        return x < y
+    return len(a) < len(b)
+
+
+def semver_lt(a: str, b: str) -> bool:
+    """严格 semver 比较（预发布 < 同版本正式版）；不可解析时退回字符串比较。"""
+    pa, pb = _semver_parts(a), _semver_parts(b)
+    if pa is None or pb is None:
+        return a.strip() < b.strip()
+    if pa[0] != pb[0]:
+        return pa[0] < pb[0]
+    return _pre_lt(pa[1], pb[1])
+
+
+def _allow_dangling_acs_enabled(version: str) -> bool:
+    """宽限是否仍可注册：`0.3.0` 未发布才允许（`0.3.0-beta.x < 0.3.0`）。"""
+    return semver_lt(version, "0.3.0")
+
+
+def build_parser(version: str | None = None) -> argparse.ArgumentParser:
+    version = _package_version() if version is None else version
     ap = argparse.ArgumentParser(prog="atlas solution")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -108,6 +161,11 @@ def build_parser() -> argparse.ArgumentParser:
                          help="dry-run 列出可移除的悬空 AC（行级保字节，不重生成清单）")
     p_check.add_argument("--apply", action="store_true",
                          help="与 --fix-acs 同用：写回后重跑 gate 定退出码")
+    if _allow_dangling_acs_enabled(version):
+        p_check.add_argument(
+            "--allow-dangling-acs", action="store_true",
+            help="临时宽限：只把 A 类悬空 AC 降为 WARN；将于 0.3.0 移除 / "
+                 "最迟 2026-12-31；owner=@sunwenzhe")
 
     p_lock = sub.add_parser("lock", help="查看或更新契约锁")
     _add_common(p_lock)
@@ -216,10 +274,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.cmd == "check":
+            allow = getattr(args, "allow_dangling_acs", False)
             if args.apply and not args.fix_acs:
                 raise core.SolutionError("--apply 只能与 --fix-acs 同用")
             if not args.fix_acs:
-                data = core.check_solution(root, strict=args.strict)
+                data = core.check_solution(root, strict=args.strict,
+                                           allow_dangling_acs=allow)
                 print(json.dumps(data, ensure_ascii=False, indent=2) if args.json
                       else core.render_check(data))
                 return 1 if data["overall"] == "FAIL" else 0
@@ -243,7 +303,8 @@ def main(argv: list[str] | None = None) -> int:
             if not args.apply:
                 return 0
             # 写成功不等于门变绿：退出码只由重跑结果决定。
-            report = core.check_solution(root, strict=args.strict)
+            report = core.check_solution(root, strict=args.strict,
+                                         allow_dangling_acs=allow)
             if not args.json:
                 print(core.render_check(report))
             return 1 if report["overall"] == "FAIL" else 0

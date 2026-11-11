@@ -148,6 +148,17 @@ def test_cli_solution_check_dangling_ac_exits_1():
         assert "AC 定义行缺失" in res.stdout
 
 
+def test_cli_solution_check_help_lists_acs_flags():
+    """`--fix-acs` / `--allow-dangling-acs` 必须在本仓 help 可见（不是采纳仓的门）。"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        res = run_cmd(["node", str(ATLAS_BIN), "solution", "check", "--help"],
+                      cwd=Path(tmpdir))
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "--fix-acs" in res.stdout
+        assert "--allow-dangling-acs" in res.stdout
+        assert "0.3.0" in res.stdout and "2026-12-31" in res.stdout
+
+
 def test_cli_apply_prints_guidance_and_exits_2():
     res = run_cmd(["node", str(ATLAS_BIN), "apply"])
     assert res.returncode == 2

@@ -1115,7 +1115,8 @@ def _lock_contract(lock: dict | None, cid: str) -> dict | None:
     return None
 
 
-def check_solution(root: Path, strict: bool = False) -> dict:
+def check_solution(root: Path, strict: bool = False,
+                   allow_dangling_acs: bool = False) -> dict:
     root = Path(root).resolve()
     data = load_manifest(root)
     results: list[dict] = []
@@ -1136,12 +1137,21 @@ def check_solution(root: Path, strict: bool = False) -> dict:
         try:
             task_core = _load_sibling("solution_task", "_atlas_solution_task_check")
             seen: set[tuple[str, str, str]] = set()
+            downgraded = False
             for f in task_core.task_findings(root, data):
                 key = (f["code"], f["requirement"], f["ac"])
                 if key in seen:
                     continue
                 seen.add(key)
+                if allow_dangling_acs and f["code"] == "ac_missing":
+                    downgraded = True
+                    add("跨仓任务", "WARN", f["detail"] + "（宽限：--allow-dangling-acs）")
+                    continue
                 add("跨仓任务", f["level"], f["detail"])
+            if downgraded:
+                add("宽限", "WARN",
+                    "宽限开关已启用：--allow-dangling-acs 将于 0.3.0 移除；"
+                    "owner=@sunwenzhe；期限=2026-12-31")
         except Exception as exc:  # noqa: BLE001 - 对账不可用要显式出声
             add("跨仓任务", "WARN", f"对账不可用: {type(exc).__name__}: {exc}")
         for req in data.get("requirements") or []:

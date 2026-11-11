@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import argparse
 import json
 import subprocess
 import sys
@@ -841,3 +842,64 @@ def test_fix_acs_source_unavailable_refuses(tmp_path: Path) -> None:
     assert res.returncode == 1, res.stdout + res.stderr
     assert "AC 定义源不可用" in (res.stdout + res.stderr)
     assert manifest.read_bytes() == before
+
+
+# ---------------------------------------------------------------- #50 宽限与版本门（批次 3）
+
+def load_cli_module():
+    path = PKG_ROOT / "scripts" / "atlas_solution.py"
+    spec = importlib.util.spec_from_file_location("_atlas_solution_cli_test", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+cli = load_cli_module()
+
+
+def check_option_strings(version: str) -> set[str]:
+    parser = cli.build_parser(version)
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return {opt for a in action.choices["check"]._actions
+                    for opt in a.option_strings}
+    raise AssertionError("check 子命令不存在")
+
+
+def test_g_grace_only_covers_class_a(tmp_path: Path) -> None:
+    a = tmp_path / "a"
+    make_ac_solution(a, acs=("AC-DEMO-001", "AC-DEMO-999"))
+    res = run_cli(a, "--root", str(a), "check", "--allow-dangling-acs")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "0.3.0" in res.stdout and "2026-12-31" in res.stdout
+    assert "宽限" in res.stdout
+
+    b = tmp_path / "b"
+    make_ac_solution(b, prd=None)
+    c = tmp_path / "c"
+    make_ac_solution(c)
+    (c / "atlas.config.yaml").write_text(
+        "version: 1\nlayout:\n  assets_root: docs\n", encoding="utf-8")
+    d = tmp_path / "d"
+    make_ac_solution(
+        d, prd="# solution\n\n| AC ID | 场景 | 回指规则 |\n|---|---|---|\n")
+    for name, root in (("B", b), ("C", c), ("D", d)):
+        res = run_cli(root, "--root", str(root), "check", "--allow-dangling-acs")
+        assert res.returncode == 1, f"{name}: {res.stdout}{res.stderr}"
+        assert "AC 定义源不可用" in res.stdout, name
+
+
+def test_m6_grace_flag_is_version_gated(tmp_path: Path) -> None:
+    current = json.loads((PKG_ROOT / "package.json").read_text(encoding="utf-8"))["version"]
+    # 1) 基线：当前版本 < 0.3.0 ⇒ flag 必须在
+    assert cli.semver_lt(current, "0.3.0")
+    assert cli._allow_dangling_acs_enabled(current) is True
+    assert "--allow-dangling-acs" in check_option_strings(current)
+    # 2) 合成 0.3.0 ⇒ 必须 False，help/选项集合都不得含该 flag（今天就能判红）
+    assert cli._allow_dangling_acs_enabled("0.3.0") is False
+    assert "--allow-dangling-acs" not in check_option_strings("0.3.0")
+    # 3) 真实版本 ≥ 0.3.0 ⇒ 同样不得注册（发版当天自动生效）
+    if not cli.semver_lt(current, "0.3.0"):
+        assert "--allow-dangling-acs" not in check_option_strings(current)
+    # 4) 预发布：0.3.0-beta.1 在 semver 下 < 0.3.0 ⇒ 宽限仍可注册
+    assert cli._allow_dangling_acs_enabled("0.3.0-beta.1") is True

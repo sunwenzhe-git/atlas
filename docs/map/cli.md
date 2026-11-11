@@ -13,7 +13,7 @@
 
 | 文件 | 行数 | 角色 |
 |---|---|---|
-| `bin/atlas.js` | 460 | CLI 入口:命令面总表见 `printHelp`(`bin/atlas.js:18`)= init / update / upgrade / check / solution / review / eval / console / report / version,分派在同文件 `switch (command)`;平台探测拆到 `bin/platform.js`(Trellis 用 which/where、bash 只认 Git Bash、Python 按平台探测 3.10+) |
+| `bin/atlas.js` | 462 | CLI 入口:命令面总表见 `printHelp`(`bin/atlas.js:18`)= init / update / upgrade / check / solution / review / eval / console / report / version,分派在同文件 `switch (command)`;平台探测拆到 `bin/platform.js`(Trellis 用 which/where、bash 只认 Git Bash、Python 按平台探测 3.10+) |
 | `install.py` | 854 | 装配单源:白名单拷贝 + 版本戳 + manifest + 66 条 `c()` 自检 + 图谱探测;叶子脚本(layout / apply-patches / apply-wiring / pkg_digest / ablation / evidence_archive)复用不重写 |
 | `install.sh` | 58 | 薄 wrapper:头部用法说明 + `exec python3 install.py`(装配逻辑零残留,自检门守) |
 | `scripts/run_python.js` | 102 | 钩子平台中立启动器:`.trellis/config.yaml` 的 after_archive 调它;运行时解析 Python 3.10+(win32 py -3/真实 python,剔除 WindowsApps stub),转发 argv/退出码,强制 PYTHONUTF8=1 |

@@ -47,6 +47,8 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
   atlas solution init --name demo --member web=web --member api=api
   atlas solution adopt        # 自动识别成员仓并生成 federated 清单
   atlas solution check        # 只读检查清单 / 守卫 / 契约锁
+  atlas solution check --fix-acs [--apply]  # 悬空 AC 引用：dry-run 列出 / 行级保字节写回
+  atlas solution check --allow-dangling-acs # 临时宽限（仅 A 类；0.3.0 移除 / 最迟 2026-12-31）
   atlas solution lock --update
   atlas solution task create --requirement REQ-001 --apply  # 父级需求 → 成员任务卡
   atlas solution task status --requirement REQ-001
