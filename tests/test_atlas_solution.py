@@ -1394,3 +1394,37 @@ def test_b0_install_update_main_refuses_before_overwriting(tmp_path: Path,
     assert (target / ".atlas" / "VERSION").read_text(encoding="utf-8").startswith(
         "stamped-by-0.3.x\n")
     assert not (target / ".atlas" / "package.json").exists()
+
+
+def test_b0_install_assembles_package_json_for_reader_version(tmp_path: Path) -> None:
+    """复核 3：成功装配必须真落下 `.atlas/package.json`（`reader_version` 第 2 级唯一来源）。
+
+    生产里 `.atlas/VERSION` 是纯 hex 摘要 ⇒ 第 1 级恒被跳过，部署副本只能靠第 2 级；
+    这里真跑装配主流程，不做任何拷贝 mock。
+    """
+    target = tmp_path / "proj"
+    target.mkdir()
+    res = subprocess.run(
+        [sys.executable, str(PKG_ROOT / "install.py"), "--target", str(target),
+         "--no-skill", "--no-patch", "--no-wiring", "--no-trellis"],
+        capture_output=True, text=True, timeout=300)
+    assert res.returncode == 0, (res.stdout[-800:], res.stderr[-400:])
+
+    source = json.loads((PKG_ROOT / "package.json").read_text(encoding="utf-8"))
+    copied = json.loads(
+        (target / ".atlas" / "package.json").read_text(encoding="utf-8"))
+    assert copied["version"] == source["version"]
+
+    # 第 1 级是摘要形态（不可解析）⇒ 校验器应回落到第 2 级取到来包版本
+    stamp = (target / ".atlas" / "VERSION").read_text(encoding="utf-8")
+    assert not re.match(r"^v?\d+\.\d+\.\d+", stamp.strip())
+    v_index = load_module_path(PKG_ROOT / "validators" / "validate_e2e_index.py",
+                               "_atlas_validate_reader_version_probe")
+    assert v_index._reader_version(target) == source["version"]
+
+
+def load_module_path(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod

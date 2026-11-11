@@ -21,6 +21,8 @@
 
 模式：
   --update: 刷新已有项目的 .atlas/ 资产与平台 Skills 瘦桩（要求目标已初始化 .atlas/）。
+     清单守卫（v1 清单 + 来包 ≥ 0.4.0 ⇒ 拒绝刷新）在 --dry-run 下同样执行：
+     dry-run 只保证零落盘，不保证零拒绝。
   --assets-root / --adr-dir: 首次安装选择项目级资产根（默认 product/）与可选 ADR 根；
      写入项目根 atlas.config.yaml（git 跟踪）。--update 只读配置，不重新选择。
   --update 的触点守卫：已跟踪触点存在未提交改动 ⇒ 拒（--force 越过）；触点整目录
