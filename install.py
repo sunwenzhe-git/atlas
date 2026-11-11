@@ -38,6 +38,7 @@
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -189,16 +190,30 @@ def _semver_key(raw: str):
     return (int(m.group(1)), int(m.group(2)), int(m.group(3))), bool(m.group(4))
 
 
+def _manifest_parser():
+    """统一到 `_support/solution.py::parse_manifest_text`（引号 / 行尾注释口径一致）。"""
+    path = PKG / "_support" / "solution.py"
+    spec = importlib.util.spec_from_file_location("_atlas_install_solution_parser", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"无法加载 {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _manifest_schema_version(target: str) -> str | None:
+    """读清单 `version:`；无清单 ⇒ None；存在但不可解析 ⇒ `""`（按未知形态处理）。"""
     path = os.path.join(target, "atlas.solution.yaml")
     if not os.path.isfile(path):
         return None
     with open(path, encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            m = re.match(r"^version:\s*(\S+)\s*$", line)
-            if m:
-                return m.group(1)
-    return ""
+        text = fh.read()
+    try:
+        data = _manifest_parser().parse_manifest_text(text)
+    except ValueError:
+        return ""
+    raw = data.get("version")
+    return "" if raw is None else str(raw)
 
 
 def solution_update_guard(target: str) -> tuple[bool, str]:
@@ -563,6 +578,14 @@ def main() -> None:
     if os.path.isfile(os.path.join(SCRIPT_DIR, "LICENSE")):
         run(f"cp {SCRIPT_DIR}/LICENSE {atlas_dest}/LICENSE",
             action=lambda: cp_f(Path(SCRIPT_DIR, "LICENSE"), Path(atlas_dest, "LICENSE")))
+
+    # RFC-20261111-03 §5.3：`reader_version` 第二级读装配副本的 `.atlas/package.json`
+    # （工具自身版本；被检查仓的 `package.json` 不参与分级）。
+    pkg_json = os.path.join(SCRIPT_DIR, "package.json")
+    if os.path.isfile(pkg_json):
+        run(f"cp {pkg_json} {atlas_dest}/package.json",
+            action=lambda: cp_f(Path(pkg_json), Path(atlas_dest, "package.json")))
+        say("      -> .atlas/package.json（工具版本来源）")
 
     # ---------------------------------------------------------------- 2/3. skill 瘦桩与清理
 

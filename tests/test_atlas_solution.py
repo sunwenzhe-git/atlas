@@ -1051,6 +1051,15 @@ def test_b0_version_gate_accepts_1_and_2_rejects_others(tmp_path: Path) -> None:
         "version: 3\nsolution: demo\nmode: federated\nmembers: []\n", encoding="utf-8")
     with pytest.raises(core.SolutionError, match="manifest_schema_unsupported"):
         core.load_manifest(tmp_path)
+    # 0 与缺失同样不在 {1,2} 内：缺失 ⇒ 空值 ⇒ 报错，不算合法清单
+    (tmp_path / core.MANIFEST_NAME).write_text(
+        "version: 0\nsolution: demo\nmode: federated\nmembers: []\n", encoding="utf-8")
+    with pytest.raises(core.SolutionError, match="manifest_schema_unsupported"):
+        core.load_manifest(tmp_path)
+    (tmp_path / core.MANIFEST_NAME).write_text(
+        "solution: demo\nmode: federated\nmembers: []\n", encoding="utf-8")
+    with pytest.raises(core.SolutionError, match="manifest_schema_unsupported"):
+        core.load_manifest(tmp_path)
 
 
 def test_b0_migrate_fills_missing_only_and_is_idempotent(tmp_path: Path) -> None:
@@ -1129,6 +1138,53 @@ def test_b0_migrate_rejects_non_default_prd_without_writing(tmp_path: Path) -> N
     assert path.read_bytes() == before
 
 
+def test_b0_migrate_rejects_missing_definition_path(tmp_path: Path) -> None:
+    """评审重要 6：`--definition-path` 指向不存在的文件 ⇒ 拒绝，不写悬空 `definition`。"""
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
+    (tmp_path / "product" / "prd" / "solution-prd.md").unlink()
+    path = tmp_path / core.MANIFEST_NAME
+    before = path.read_bytes()
+    with pytest.raises(core.SolutionError, match="不存在"):
+        core.migrate_manifest(tmp_path, definition_path="product/prd/solution-prd.md")
+    assert path.read_bytes() == before
+    assert "definition:" not in path.read_text(encoding="utf-8")
+
+
+def test_b0_migrate_replaces_definition_null_in_place(tmp_path: Path) -> None:
+    """评审重要 7：`definition: null` 被 `migrate --to 2` 原地替换，不追加第二块。"""
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
+    path = tmp_path / core.MANIFEST_NAME
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "mode: federated\n", "mode: federated\ndefinition: null\n", 1),
+        encoding="utf-8")
+    result = core.migrate_manifest(tmp_path)
+    assert result["added"][0] == "definition"
+    text = path.read_text(encoding="utf-8")
+    assert "definition: null" not in text
+    assert text.count("definition:") == 1
+    loaded = core.load_manifest(tmp_path)
+    assert loaded["version"] == 2
+    assert loaded["definition"] == {"domain": "solution",
+                                    "path": "product/prd/solution-prd.md"}
+
+
+def test_b0_migrate_keeps_version_inline_comment(tmp_path: Path) -> None:
+    """评审次要 9：`version:` 的行尾注释在迁移时保留。"""
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
+    path = tmp_path / core.MANIFEST_NAME
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "version: 1\n", "version: 1  # B-0 迁移前\n", 1),
+        encoding="utf-8")
+    core.migrate_manifest(tmp_path)
+    assert re.search(r"^version: 2  # B-0 迁移前$",
+                     path.read_text(encoding="utf-8"), re.M)
+
+
 def test_b0_migrate_lists_candidates_when_multiple_prd(tmp_path: Path) -> None:
     """§5.2.7：多份 `*-prd.md` 且无 `--definition-path` ⇒ 拒绝并列出候选。"""
     make_repo(tmp_path / "web")
@@ -1200,6 +1256,18 @@ def test_b0_check_members_prints_active_and_archive_paths(tmp_path: Path) -> Non
     assert re.search(r"^version: 1$", manifest, re.M)
 
 
+def test_b0_check_members_quotes_paths_with_spaces(tmp_path: Path) -> None:
+    """评审次要 10：成员路径含空格时 `git add -f` 命令必须加引号（可复制即跑）。"""
+    member = make_repo(tmp_path / "web app")
+    card = member / ".trellis" / "tasks" / "T-001"
+    card.mkdir(parents=True)
+    (card / "prd.md").write_text("# card\n", encoding="utf-8")
+    core.init_solution(tmp_path, "demo", [("web", "web app", "frontend")], install=False)
+
+    cmds = core.card_tracking_commands(tmp_path, core.load_manifest(tmp_path))
+    assert cmds == ["git -C 'web app' add -f .trellis/tasks/T-001/prd.md"], cmds
+
+
 def test_b0_u09_lenient_allows_lock_only_clone_and_rejects_seal(tmp_path: Path) -> None:
     """U-09：只有锁、无成员工作区时 `--lenient` 可用；有封条 ⇒ exit 2。"""
     import shutil
@@ -1214,8 +1282,8 @@ def test_b0_u09_lenient_allows_lock_only_clone_and_rejects_seal(tmp_path: Path) 
             if "member_workspace_absent" in c["detail"]]
     assert rows and rows[0]["status"] == "SKIP"
 
-    strict = run_cli(tmp_path, "--root", str(tmp_path), "check", "--json")
-    rows = [c for c in json.loads(strict.stdout)["checks"]
+    default_run = run_cli(tmp_path, "--root", str(tmp_path), "check", "--json")
+    rows = [c for c in json.loads(default_run.stdout)["checks"]
             if "member_workspace_absent" in c["detail"]]
     assert rows and rows[0]["status"] == "WARN"
 
@@ -1237,6 +1305,10 @@ def test_b0_v06_install_update_refuses_v1_with_040_package(tmp_path: Path) -> No
         pkg = tmp_path / f"pkg-{version}"
         pkg.mkdir(exist_ok=True)
         shutil.copy(PKG_ROOT / "install.py", pkg / "install.py")
+        # `_manifest_schema_version` 统一到 `_support/solution.py::parse_manifest_text`
+        # （评审次要 8）：装配树里 `_support/` 必须就位，否则解析器加载失败。
+        if not (pkg / "_support").is_dir():
+            shutil.copytree(PKG_ROOT / "_support", pkg / "_support")
         (pkg / "package.json").write_text(json.dumps({"version": version}),
                                           encoding="utf-8")
         spec = spec_from_file_location(f"install_guard_{version.replace('.', '_')}",
@@ -1260,6 +1332,13 @@ def test_b0_v06_install_update_refuses_v1_with_040_package(tmp_path: Path) -> No
     refuse, _ = load_install("0.3.0").solution_update_guard(str(target))
     assert refuse is False
 
+    # 次要 8：引号 + 行尾注释与解析器同口径（旧正则 `^version:\s*(\S+)\s*$` 会误判）
+    (target / core.MANIFEST_NAME).write_text(
+        'version: "1"  # 迁移前\nsolution: demo\nmode: federated\nmembers: []\n',
+        encoding="utf-8")
+    refuse, _ = load_install("0.4.0").solution_update_guard(str(target))
+    assert refuse is True
+
     (target / core.MANIFEST_NAME).write_text(
         "version: 2\nsolution: demo\nmode: federated\nmembers: []\n", encoding="utf-8")
     refuse, _ = load_install("0.4.0").solution_update_guard(str(target))
@@ -1273,3 +1352,45 @@ def test_b0_v06_install_update_refuses_v1_with_040_package(tmp_path: Path) -> No
     (target / core.MANIFEST_NAME).unlink()
     refuse, _ = load_install("0.4.0").solution_update_guard(str(target))
     assert refuse is False
+
+
+def test_b0_install_update_main_refuses_before_overwriting(tmp_path: Path,
+                                                           monkeypatch, capsys) -> None:
+    """评审重要 5：`main()` 的接线——`--update` 在覆盖 `.atlas` **之前**就拒绝。
+
+    真跑一次 `install.py --update`（模块级 `main()`），断言 exit 1、迁移口令可见，
+    且 `.atlas` 未被覆写（旧版本戳原样、新落点 `.atlas/package.json` 未产生）。
+    """
+    import shutil
+
+    from importlib.util import module_from_spec, spec_from_file_location
+
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    shutil.copy(PKG_ROOT / "install.py", pkg / "install.py")
+    shutil.copytree(PKG_ROOT / "_support", pkg / "_support")
+    (pkg / "package.json").write_text(json.dumps({"version": "0.4.0"}),
+                                      encoding="utf-8")
+    spec = spec_from_file_location("install_main_wiring", pkg / "install.py")
+    mod = module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    target = tmp_path / "target"
+    (target / ".atlas").mkdir(parents=True)
+    (target / ".atlas" / "VERSION").write_text(
+        "stamped-by-0.3.x\n2026-11-10T00:00:00+08:00\nnowhere\n", encoding="utf-8")
+    (target / core.MANIFEST_NAME).write_text(
+        "version: 1\nsolution: demo\nmode: federated\nmembers:\n"
+        "  - name: web\n    path: web\n    assets: member\n", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv",
+                        ["install.py", "--update", "--target", str(target)])
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "atlas solution migrate --to 2" in out
+    # 写前拒绝：整包拷贝与 `.atlas/package.json` 落点都没发生
+    assert (target / ".atlas" / "VERSION").read_text(encoding="utf-8").startswith(
+        "stamped-by-0.3.x\n")
+    assert not (target / ".atlas" / "package.json").exists()

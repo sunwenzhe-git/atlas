@@ -24,6 +24,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -1165,7 +1166,10 @@ def _migrated_manifest_text(text: str, definition: dict | None,
             continue
         skip_children = False
         if top and ln.strip().startswith("version:"):
-            out.append("version: 2")
+            comment = ""
+            if "#" in ln:
+                comment = "  " + ln[ln.index("#"):].rstrip()
+            out.append(f"version: 2{comment}")
             continue
         if definition and top and (
             ln.strip() == "definition:" or ln.strip().startswith("definition: null")
@@ -1207,6 +1211,9 @@ def migrate_manifest(root: Path, to: int = 2,
             raise SolutionError(
                 f"B-0 只支持 {default_path}；B 批后支持任意 `-prd.md`（当前: {chosen}）；"
                 "未写入任何文件")
+        if not (root / chosen).is_file():
+            raise SolutionError(
+                f"--definition-path 指向的文件不存在: {chosen}；未写入任何文件")
         domain = _prd_domain(root / chosen) or str(data.get("solution") or "").strip()
         definition = {"domain": domain, "path": chosen}
         added.append("definition")
@@ -1248,8 +1255,8 @@ def card_tracking_commands(root: Path, data: dict) -> list[str]:
         for card in cards:
             files = [card / n for n in ("prd.md", "solution.md") if (card / n).is_file()]
             if files:
-                rels = " ".join(p.relative_to(base).as_posix() for p in files)
-                out.append(f"git -C {m['path']} add -f {rels}")
+                rels = " ".join(shlex.quote(p.relative_to(base).as_posix()) for p in files)
+                out.append(f"git -C {shlex.quote(m['path'])} add -f {rels}")
     return out
 
 
