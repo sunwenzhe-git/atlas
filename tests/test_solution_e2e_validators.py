@@ -8,6 +8,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 PKG_ROOT = Path(__file__).resolve().parents[1]
 MAIN_COLUMNS = ("用例ID", "页面", "中文标题", "类型", "关联AC", "需求",
                 "状态", "状态原因", "分片")
@@ -342,35 +344,68 @@ def test_reader_version_ignores_checked_repo_package_json(tmp_path: Path,
     assert levels(v_index.validate(tmp_path))["用例第二落点"] == "WARN"
 
 
-def test_ac_trace_table_is_not_a_case_row(tmp_path: Path) -> None:
-    """评审重要 3 反面包：AC 追溯表 / 需求表 / 任务表都不得被当成用例行。"""
-    _task_case_fixture(tmp_path)
-    extra = tmp_path / "api" / ".trellis" / "tasks" / "T-3"
-    extra.mkdir(parents=True)
-    (extra / "cases.md").write_text(
-        "# 任务验收\n\n"
-        "| AC | 场景 | 回指规则 |\n|---|---|---|\n"
-        "| AC-DEMO-001 | 下单成功 | REQ-001 |\n"
-        "| REQ-001 | 需求 | — |\n\n"
-        "| 任务ID | 标题 |\n|---|---|\n"
-        "| T-001 | 迁移清单 |\n"
-        "| P0-1 | 优先级 |\n"
-        "| D-1 | 决策 |\n",
+@pytest.mark.parametrize("header", ["编号", "ID", "序号", "用例"])
+def test_task_case_rows_under_generic_header(tmp_path: Path, header: str) -> None:
+    """复核 1：表头写 `编号` / `ID` / `序号` / `用例` 都不得漏检真用例行。
+
+    表头门（`CASE_TABLE_HEAD_RE`）已回退：RFC §2.4 只要求「首列大写前缀 ID」，
+    非用例前缀交给 `NON_CASE_PREFIX_RE` 挡。
+    """
+    make_parent(tmp_path, [req("REQ-001", "web", case_ids=["E2E-SOLUTION-001"])])
+    write_prd(tmp_path)
+    write_index(tmp_path, [main_row()])
+    write_shard(tmp_path, case_block())
+    task = tmp_path / "web" / ".trellis" / "tasks" / "T-HDR"
+    task.mkdir(parents=True)
+    (task / "cases.md").write_text(
+        f"| {header} | 场景 |\n|---|---|\n| E2E-AUTH-001 | 登录成功 |\n",
         encoding="utf-8")
-    # 只保留「无表头」的 BE-SYNC-001 现场：其余三张表都不许贡献用例行
-    ((tmp_path / "web" / ".trellis" / "tasks" / "T-9" / "cases.md")).write_text(
-        "| BE-SYNC-001 | 无表头的用例行 |\n", encoding="utf-8")
+
+    set_reader_version(tmp_path, "0.3.0")
+    warn = v_index.validate(tmp_path)
+    assert levels(warn)["用例第二落点"] == "WARN", warn
+    assert "E2E-AUTH-001" in details(warn, "用例第二落点")
+
+    set_reader_version(tmp_path, "0.4.0")
+    fail = v_index.validate(tmp_path)
+    assert levels(fail)["用例第二落点"] == "FAIL", fail
+    assert "E2E-AUTH-001" in details(fail, "用例第二落点")
+
+
+def test_ac_trace_table_is_not_a_case_row(tmp_path: Path) -> None:
+    """复核 2：追溯表放进**成员** `web/`、四类前缀都在首列 ⇒ 仍不得判成用例行。"""
+    _task_case_fixture(tmp_path)  # web/.trellis/tasks/T-9/cases.md：一条真用例行
+    trace = tmp_path / "web" / ".trellis" / "tasks" / "T-10"
+    trace.mkdir(parents=True)
+    (trace / "cases.md").write_text(
+        "# 验收追溯\n\n"
+        "| AC | 场景 | 回指规则 |\n|---|---|---|\n"
+        "| AC-DEMO-001 | 下单成功 | REQ-001 |\n\n"
+        "| 需求 | 标题 |\n|---|---|\n"
+        "| REQ-001 | 需求条目 |\n\n"
+        "| 任务 | 标题 |\n|---|---|\n"
+        "| T-001 | 任务卡 |\n\n"
+        "| 优先级 | 说明 |\n|---|---|\n"
+        "| P0-1 | 优先级 |\n"
+        "| P-1 | 优先级 |\n\n"
+        "| 决策 | 说明 |\n|---|---|\n"
+        "| D-1 | 决策记录 |\n",
+        encoding="utf-8")
     set_reader_version(tmp_path, "0.4.0")
     result = v_index.validate(tmp_path)
     assert levels(result)["用例第二落点"] == "FAIL", result
     detail = details(result, "用例第二落点")
     assert "BE-SYNC-001" in detail
-    for non_case in ("AC-DEMO-001", "REQ-001", "T-001", "P0-1", "D-1"):
-        assert non_case not in detail, f"{non_case} 被误判成用例行：{detail}"
+    assert "AC-DEMO-001" not in detail
+    assert "REQ-001" not in detail
+    assert "T-001" not in detail
+    assert "P0-1" not in detail
+    assert "P-1" not in detail
+    assert "D-1" not in detail
 
-    # 去掉那条唯一用例行后，整项回到 PASS（AC 追溯表本身不得触发 FAIL）
+    # 去掉那条唯一用例行 ⇒ PASS（追溯表本身不得触发任何判定）
     (tmp_path / "web" / ".trellis" / "tasks" / "T-9" / "cases.md").write_text(
-        "| AC-DEMO-001 | 下单成功 | REQ-001 |\n", encoding="utf-8")
+        "| AC-DEMO-001 | 仅追溯表 |\n", encoding="utf-8")
     assert levels(v_index.validate(tmp_path))["用例第二落点"] == "PASS"
 
 

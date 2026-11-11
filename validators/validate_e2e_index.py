@@ -142,14 +142,13 @@ def _version_at_least(version: str, target: tuple[int, int, int]) -> bool:
 
 
 # RFC-20261111-03 §2.4：任务目录 `cases.md` 的「用例行」可判形态——
-# 用例表的表格行（表头须是 用例ID / Case ID 一类），或 `atlas-case` 围栏标题；
-# **不看 ID 前缀**是否 `E2E-*`，但也**不能**把 AC 追溯表 / 需求表 / 任务表当用例行。
+# 表格行（首列是「大写前缀 - 编号」形态）或 `atlas-case` 围栏标题。
+# **不看 ID 前缀**是否 `E2E-*`，也不看表头写法（`编号` / `ID` / `序号` / `用例` 都算）；
+# 靠前缀排除挡掉 AC 追溯表 / 需求表 / 任务表 / 决策·优先级·缺陷编号。
 TASK_CASE_ID_RE = re.compile(r"^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+$")
 TASK_CASE_FENCE_RE = re.compile(r"^\s*(?:`{3,}|~{3,})\s*atlas-case\b")
-CASE_TABLE_HEAD_RE = re.compile(r"^(?:用例\s*ID|用例编号|用例\s*编号|Case\s*ID|Case\s*No\.?|Case)$", re.I)
 # 明确不是用例 ID 的前缀：AC 追溯表、需求表、任务卡、决策/优先级/缺陷编号。
 NON_CASE_PREFIX_RE = re.compile(r"^(?:AC|REQ|REQS?|T|D|P|P\d|DR|BUG|ISSUE)(?:-|$)")
-TABLE_SEP_RE = re.compile(r"^:?-{2,}:?$")
 
 
 def _looks_like_case_id(cell: str) -> bool:
@@ -163,8 +162,8 @@ def _cells(line: str) -> list[str]:
 def _task_case_lines(repo: Path) -> list[str]:
     """扫 `<repo>/.trellis/tasks/**/cases.md`（含 `archive/<month>/`）的用例行。
 
-    表格行只在「表头首列是 用例ID / Case ID 一类」时认（避免 AC 追溯表误判）；
-    没有表头（无分隔行）时按 ID 形态 + 前缀排除兜底；围栏标题恒认。
+    表格行按「首列 ID 形态 + 前缀排除」判（表头写 `编号` / `ID` / `序号` / `用例`
+    都不影响）；`atlas-case` 围栏标题恒认。
     """
     tasks = Path(repo) / ".trellis" / "tasks"
     if not tasks.is_dir():
@@ -175,28 +174,18 @@ def _task_case_lines(repo: Path) -> list[str]:
             text = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        lines = text.splitlines()
-        case_table: bool | None = None  # None = 尚未见到表头
-        for i, line in enumerate(lines):
+        rel = p.relative_to(Path(repo)).as_posix()
+        for i, line in enumerate(text.splitlines()):
+            if TASK_CASE_FENCE_RE.match(line):
+                found.append(f"{rel}:{i + 1}=atlas-case")
+                continue
             stripped = line.strip()
             if not stripped.startswith("|"):
-                case_table = None
-                if TASK_CASE_FENCE_RE.match(line):
-                    found.append(
-                        f"{p.relative_to(Path(repo)).as_posix()}:{i + 1}=atlas-case")
                 continue
             cells = _cells(stripped)
-            if cells and all(not c or TABLE_SEP_RE.match(c) for c in cells):
-                prev = lines[i - 1].strip() if i else ""
-                prev_cells = _cells(prev) if prev.startswith("|") else []
-                case_table = bool(prev_cells) and bool(CASE_TABLE_HEAD_RE.match(prev_cells[0]))
-                continue
             first = cells[0] if cells else ""
-            if not _looks_like_case_id(first):
-                continue
-            if case_table is False:
-                continue
-            found.append(f"{p.relative_to(Path(repo)).as_posix()}:{i + 1}={first}")
+            if _looks_like_case_id(first):
+                found.append(f"{rel}:{i + 1}={first}")
     return found
 
 
@@ -799,14 +788,16 @@ def validate(root: Path) -> Result:
     scans: list[tuple[str, Path]] = []
     skip_reason = ""
     if parent:
-        if _declares_case_ids(root):
-            try:
-                _mf = load_module("solution").load_manifest(root)
+        try:
+            _mf = load_module("solution").load_manifest(root)
+        except Exception:  # noqa: BLE001 - 清单不可读由清单门另行判红
+            _mf = None
+            skip_reason = "清单不可读（不是「未声明 case_ids」），本项未测（由清单门另行判红）"
+        if _mf is not None:
+            if any(r.get("case_ids") for r in _mf["requirements"]):
                 scans = [(m["name"], root / m["path"]) for m in _mf["members"]]
-            except Exception:  # noqa: BLE001 - 清单不可读由清单门另行判红
-                skip_reason = "清单不可读，本项未测（由清单门另行判红）"
-        else:
-            skip_reason = "清单未声明 case_ids（无跨仓 E2E 落点），本项未测"
+            else:
+                skip_reason = "清单未声明 case_ids（无跨仓 E2E 落点），本项未测"
     else:
         scans = [("", root)]
     second_bad: list[str] = []
