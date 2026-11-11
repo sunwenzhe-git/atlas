@@ -177,7 +177,7 @@ product/e2e/
 | `类型` | `smoke` \| `acceptance` \| `exception` \| `permission` |
 | `状态` | `red` \| `green` \| `blocked` \| `skipped`（E1 起）；`prototype-pass` = E0 历史终态（存量合法、不再产生，§5.4） |
 | `状态原因` | `<枚举>：<中文说明>`；枚举 = `ENV_ISSUE` \| `NOT_IMPLEMENTED` \| `SPEC_AMBIGUOUS` \| `BLOCKED_DEP` \| `DEFERRED` \| `OUT_OF_SCOPE` \| `OTHER` |
-| `关联AC` | `AC-<CODE>-NNN`（域级 PRD 的 AC ID） |
+| `关联AC` | `AC-<CODE>-NNN`（域级 PRD 的 AC ID）；多值用 `、` / `,` / `，` 分隔，逐 token 去首尾空白、逐 token 校验 |
 | `需求` | Trellis 需求 ID；空 = 项目级基线用例 |
 | `覆盖维度` | E2E 通道闭集（D153 起第 4 列明确为 E2E；后端列 `后端适用覆盖维度` 归 `validate_ac_alignment`，本门不读）：`C01`（正常流）\| `C02`（异常流）\| `C03`（边界值）\| `C04`（权限约束）\| `C05`（并发竞争）\| `C06`（失败重试）\| `C07`（审计埋点）\| `C08`（会话恢复）\| `C09`（数据一致性）\| `C10`（依赖容错）\| `C11`（操作幂等）\| `C12`（输入校验）\| `C13`（状态转换）\| `C14`（安全防护） |
 
@@ -609,7 +609,7 @@ testid:
 | `request` 断言形态 | `request <api> <json-path> <expected>`（§5.5，2026-10-23 D142）：api 必须为带点后缀；json-path 不得含空白；`(空)` 不接受；与 `initial:` / `unchanged:` 不得叠写；必须有 `step`（动作锚点）⇒ 否则 **FAIL** |
 | 零证据用例须挂结构类 AC | `expected` 全部由 `initial:` 承担的用例（零证据用例）**只能挂结构类 AC**（PRD 环 §五「结构类 AC 清单」）⇒ 否则 **FAIL**（2026-09-25 补，`3509 §B36` + `§B50`）。两项之外的情形均 PASS：① 非全 `initial:` 的用例（它有派生断言）；② 挂了结构类 AC 的用例（它显式声明被測属性只能在初始态观测） |
 | 词表 | `类型` / `状态` ∈ §5.2；`状态原因` 前缀合法且冒号后有内容 |
-| `关联AC` | 格式 `AC-<CODE>-NNN`；域级 PRD 存在时校验该 AC 可达，门控态 N/A |
+| `关联AC` | 格式 `AC-<CODE>-NNN`，一格可持多值（`、` / `,` / `，` 分隔，逐 token 整串匹配，不整格 match）；任一 token 不可达 ⇒ FAIL；域级 PRD 存在时校验该 AC 可达，门控态 N/A |
 | `manual` 走查项形态 | `product/e2e/manual.md`（可选）：旧行 `- <ID> \| <页面> \| <标题> \| <说明>` 与 D143 `atlas-manual` 块共存；ID 唯一、页面 ∈ 页面表、块步骤含 `操作 \| 观察`；块内再写 id/title ⇒ **FAIL**（id/title 只从 `## <ID> <标题>` 取） |
 
 **有意义门（B 档）**

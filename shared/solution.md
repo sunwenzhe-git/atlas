@@ -54,6 +54,7 @@
 - **多成员需求**（同一 `requirement.id` 出现 ≥2 个 `member` 行）**必须**给 `case_ids`；写 `cross_repo_e2e: none` 或两者皆无 ⇒ `solution check` FAIL。
 - **单成员需求** `case_ids` 或 `cross_repo_e2e: none` 二选一；两者皆无 ⇒ `solution check` FAIL。
 - `case_ids` 是唯一选例真相；索引的 `需求` / `关联AC` 列只做追溯与人读。
+- `关联AC` 一格可写多值（分隔符 `、` / `,` / `，`，逐 token 去首尾空白、逐 token 判 `AC-<CODE>-NNN`）；父仓 AC 挂靠统计按 token 拆分后求交（RFC-20261111-03 §1.6）。
 - 父仓资产落点与入口见 `rings/e2e/reference.md` §10.1；`atlas solution e2e init` 幂等补 `e2e-index.md` 骨架，`--migrate` 为存量用例批量补 `成员依赖:`。
 
 模板：`templates/atlas.solution.yaml`（字段样板；运行期解析以本契约为准，模板不参与判定）。
