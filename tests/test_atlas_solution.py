@@ -1235,7 +1235,11 @@ def test_b0_migrate_lists_candidates_when_multiple_prd(tmp_path: Path) -> None:
 
 
 def test_b0_v07_migrate_keeps_lock_bytes_and_dirty_prd_blocks_lock(tmp_path: Path) -> None:
-    """V-07 加强：migrate 不碰锁字节；PRD 工作树脏时 `lock --update` 非零退出。"""
+    """V-07 加强：migrate 不碰锁字节；PRD 工作树脏时 `lock --update` 非零退出。
+
+    本夹具自 B 批起证明的是「清单 v2 ⇒ 锁 schema 2」；V-10 的「0.3.x 仍写 1」
+    已由 B 的首锁语义（v1 清单 ⇒ 锁 1）取代。
+    """
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     make_repo(tmp_path / "web")
     core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
@@ -1260,7 +1264,11 @@ def test_b0_v07_migrate_keeps_lock_bytes_and_dirty_prd_blocks_lock(tmp_path: Pat
 
 
 def test_b0_v14_init_writes_v1_then_migrate_reaches_v2(tmp_path: Path) -> None:
-    """V-14：init 一律写 v1（首步断言），migrate 后才出现 v2。"""
+    """V-14：0.3.x reader（<0.4.0）的 init 写 v1，migrate 后才出现 v2。
+
+    0.4.0 reader 的 init 写 v2 由 V-13 夹具钉（`test_b_v13_v16_...`）；本夹具只证
+    0.3.x 侧的迁移前形态，不再声称「init 一律写 v1」。
+    """
     make_repo(tmp_path / "web")
     core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
     text = (tmp_path / core.MANIFEST_NAME).read_text(encoding="utf-8")

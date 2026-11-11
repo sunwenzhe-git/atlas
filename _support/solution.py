@@ -43,6 +43,10 @@ PRD_SCHEMA_VERSION = 2
 # `prd_schema: 1` 的证据列缓冲截止日：2027-06-30（含）前 WARN，2027-07-01 起 FAIL。
 EVIDENCE_COLUMNS_DEADLINE = "2027-06-30"
 EVIDENCE_COLUMNS = ("证据状态", "证据指针")
+# B 批的验收切点与 v2 最低工具版本：`init` 与 `migrate` 共用。
+# RFC 提到 `--cutover` 覆盖；**本批不提供 CLI 覆盖**，需手改清单后重跑 lock --update。
+ACCEPTANCE_CUTOVER_DEFAULT = "2027-03-31"
+MIN_ATLAS_FOR_V2 = "0.4.0"
 MODES = ("federated", "unified")
 ASSET_OWNERS = ("member", "solution")
 
@@ -1076,6 +1080,9 @@ def lock_payload(root: Path, data: dict) -> dict:
     definition = data.get("definition")
     definition_fields = _definition_lock_fields(root, definition) if definition else None
     payload = {
+        # B 批起以**清单 v2** 决定锁 schema（=2），不再看 reader_version；init 的
+        # reader_version 分支（<0.4.0 写 v1 清单）与之在 0.3.x/0.4.0 上等价：
+        # 0.3.x 只会产出 v1，0.4.0 只会产出 v2，不存在「清单 v2 却写锁 1」的新路径。
         "schema_version": (LOCK_SCHEMA_VERSION if data.get("version") == 2
                            else SCHEMA_VERSION),
         "solution": data["solution"],
@@ -1424,8 +1431,8 @@ def init_solution(root: Path, name: str, members: list[tuple],
         # 路径由 init 固定（`_prd_skeletons` 会写出），不接受 --definition-path（D-14）。
         rel = f"{effective_assets}/prd/solution-prd.md"
         definition = {"domain": _prd_domain(root / rel) or "solution", "path": rel}
-        cutover = "2027-03-31"
-        min_atlas = "0.4.0"
+        cutover = ACCEPTANCE_CUTOVER_DEFAULT
+        min_atlas = MIN_ATLAS_FOR_V2
     validate_manifest({
         "version": manifest_version,
         "definition": definition,
@@ -1576,10 +1583,10 @@ def migrate_manifest(root: Path, to: int = 2,
         _manifest_definition(definition, root)
     scalars: dict[str, str] = {}
     if not data.get("acceptance_cutover"):
-        scalars["acceptance_cutover"] = "2027-03-31"
+        scalars["acceptance_cutover"] = ACCEPTANCE_CUTOVER_DEFAULT
         added.append("acceptance_cutover")
     if not data.get("min_atlas"):
-        scalars["min_atlas"] = "0.4.0"
+        scalars["min_atlas"] = MIN_ATLAS_FOR_V2
         added.append("min_atlas")
     new_text = _migrated_manifest_text(
         text, definition if "definition" in added else None, scalars)
