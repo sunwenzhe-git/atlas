@@ -71,6 +71,97 @@ def manifest_path(root: Path) -> Path:
     return Path(root) / MANIFEST_NAME
 
 
+# ------------------------------------------------------- reader_version（§5.2.1）
+
+# 工具包根：开发树里 `_support/` 在包根下；安装副本里是 `<target>/.atlas/`。
+# **只用来定位工具自身的版本来源，绝不读被检查仓 `<root>/package.json`**（v11/重要 3）。
+_TOOL_PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+
+_SEMVER_RE = re.compile(
+    r"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$")
+
+
+def parse_semver(raw: str) -> tuple[int, int, int, str] | None:
+    """(major, minor, patch, prerelease)；不可解析 ⇒ None（含装配摘要形态）。"""
+    m = _SEMVER_RE.match((raw or "").strip())
+    if m is None:
+        return None
+    return int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4) or ""
+
+
+def semver_lt(raw: str, bound: tuple[int, int, int]) -> bool:
+    """`raw < bound`（同版本时预发布视为更小）；`raw` 不可解析 ⇒ False。"""
+    parsed = parse_semver(raw)
+    if parsed is None:
+        return False
+    base, pre = parsed[:3], parsed[3]
+    if base != bound:
+        return base < bound
+    return bool(pre)
+
+
+def resolve_reader_version(root: Path) -> tuple[str, list[dict]]:
+    """三级回落取**工具自身**版本（RFC §5.2.1 / §5.3），返回 `(version, downgrades)`。
+
+    ① `<root>/.atlas/VERSION`：装配副本 semver；旧副本是摘要形态 ⇒ 降级继续；
+    ② `<root>/.atlas/package.json`：安装副本随包写入的 `version`；
+    ③ `<工具包根>/package.json`：开发树 / 源码包。
+    **不读被检查仓 `<root>/package.json`**。三级全缺 ⇒ `version == ""`（unknown）。
+    中间级存在但不可解析 ⇒ 记一条 `downgrades[]` 且继续回落，不提前判 unknown。
+    """
+    root = Path(root)
+    atlas = root / ".atlas"
+    candidates: list[tuple[str, Path, str]] = [
+        ("VERSION", atlas / "VERSION", "text"),
+        ("package.json", atlas / "package.json", "json"),
+        ("工具包 package.json", _TOOL_PACKAGE_ROOT / "package.json", "json"),
+    ]
+    downgrades: list[dict] = []
+    seen: set[Path] = set()
+    for label, path, kind in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        if not path.is_file():
+            continue
+        try:
+            if kind == "text":
+                raw = path.read_text(encoding="utf-8").strip()
+            else:
+                raw = str(json.loads(path.read_text(encoding="utf-8"))["version"])
+        except (OSError, ValueError, KeyError, TypeError):
+            downgrades.append({
+                "code": "reader_version", "scope": "reader_version",
+                "path": str(path),
+                "detail": f"{label} 不可解析，已回落下一级",
+            })
+            continue
+        if parse_semver(raw) is None:
+            downgrades.append({
+                "code": "reader_version", "scope": "reader_version",
+                "path": str(path),
+                "detail": f"{label} 不是 semver（{raw or '空'}），已回落下一级",
+            })
+            continue
+        return raw.strip(), downgrades
+    return "", downgrades
+
+
+def reader_version(root: Path) -> str:
+    """`resolve_reader_version` 的薄封装：`""` 表示 `reader_version_unknown`。"""
+    return resolve_reader_version(root)[0]
+
+
+def reader_version_unknown_hint(root: Path) -> str:
+    """固定提示（RFC §5.3）：三个候选路径 + 修复方式。"""
+    atlas = Path(root) / ".atlas"
+    return (
+        "reader_version_unknown: 缺少 .atlas/VERSION、.atlas/package.json 与 "
+        "工具包 package.json 的 version\n"
+        f"  候选：{atlas / 'VERSION'} / {atlas / 'package.json'} / "
+        f"{_TOOL_PACKAGE_ROOT / 'package.json'}")
+
+
 def lock_path(root: Path) -> Path:
     return Path(root) / LOCK_NAME
 
@@ -1089,6 +1180,13 @@ def init_solution(root: Path, name: str, members: list[tuple],
     root = Path(root).resolve()
     if manifest_path(root).exists():
         raise SolutionError(f"{MANIFEST_NAME} 已存在：{manifest_path(root)}")
+    # RFC §5.2 第 8 条 / V-18：三级来源全缺时无法判断自己是 0.3.x 还是 0.4.0，
+    # init 要写清单且不可回退 ⇒ fail-closed（exit 2），**不得默认写 v1**。
+    if not reader_version(root):
+        raise SolutionError(
+            reader_version_unknown_hint(root)
+            + "\n  无法判断当前工具是 0.3.x 还是 0.4.0 ⇒ init 不写任何文件（fail-closed）。"
+              "\n  修复：重建 .atlas（install.py --update）或重装 Atlas 后重试。")
     name = _validate_name(name, "solution 名称")
     entries = _member_entries(members, root)
     if not entries:

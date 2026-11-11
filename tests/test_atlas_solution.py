@@ -78,6 +78,41 @@ def test_init_rejects_path_escape(tmp_path: Path) -> None:
                            install=False)
 
 
+def test_b_v18_init_fail_closed_when_reader_version_unknown(
+        tmp_path: Path, monkeypatch) -> None:
+    """RFC §5.2 第 8 条 / V-18：三级来源全缺 ⇒ init exit 2 且不写任何文件。"""
+    import shutil
+
+    toolroot = tmp_path / "toolroot"
+    toolroot.mkdir()
+    monkeypatch.setattr(core, "_TOOL_PACKAGE_ROOT", toolroot)
+    make_repo(tmp_path / "web")
+    before = sorted(p.name for p in tmp_path.iterdir())
+
+    with pytest.raises(core.SolutionError, match="reader_version_unknown"):
+        core.init_solution(tmp_path, "demo", [("web", "web", "frontend")],
+                           install=False)
+    assert sorted(p.name for p in tmp_path.iterdir()) == before
+
+    # CLI 面：真跑一份「工具包根没有 package.json」的副本，确认 exit 2 与固定提示
+    pkg = tmp_path / "tool"
+    (pkg / "scripts").mkdir(parents=True)
+    shutil.copy(PKG_ROOT / "scripts" / "atlas_solution.py",
+                pkg / "scripts" / "atlas_solution.py")
+    shutil.copytree(PKG_ROOT / "_support", pkg / "_support")
+    target = tmp_path / "proj"
+    (target / "web").mkdir(parents=True)
+    res = subprocess.run(
+        [sys.executable, str(pkg / "scripts" / "atlas_solution.py"),
+         "--root", str(target), "init", "--name", "demo", "--member", "web=web"],
+        capture_output=True, text=True)
+    assert res.returncode == 2, (res.returncode, res.stdout, res.stderr)
+    assert "reader_version_unknown" in res.stderr
+    assert not (target / core.MANIFEST_NAME).exists()
+    assert not (target / "atlas.config.yaml").exists()
+    assert not (target / "product").exists()
+
+
 def test_manifest_rejects_unified(tmp_path: Path) -> None:
     (tmp_path / "web").mkdir()
     (tmp_path / core.MANIFEST_NAME).write_text(
@@ -1396,11 +1431,13 @@ def test_b0_install_update_main_refuses_before_overwriting(tmp_path: Path,
     assert not (target / ".atlas" / "package.json").exists()
 
 
-def test_b0_install_assembles_package_json_for_reader_version(tmp_path: Path) -> None:
-    """复核 3：成功装配必须真落下 `.atlas/package.json`（`reader_version` 第 2 级唯一来源）。
+def test_b0_install_assembles_package_json_for_reader_version(
+        tmp_path: Path, monkeypatch) -> None:
+    """复核 3：成功装配必须真落下 `.atlas/package.json`（`reader_version` 第 2 级来源）。
 
-    生产里 `.atlas/VERSION` 是纯 hex 摘要 ⇒ 第 1 级恒被跳过，部署副本只能靠第 2 级；
-    这里真跑装配主流程，不做任何拷贝 mock。
+    生产里 `.atlas/VERSION` 是纯 hex 摘要 ⇒ 第 1 级恒被跳过。为排除「候选 3（工具包根
+    `package.json`）恰好同版本」造成的假绿，这里把候选 3 指向仓外 toolroot（9.9.9）：
+    取到来包版本才证明走的是候选 2。
     """
     target = tmp_path / "proj"
     target.mkdir()
@@ -1415,11 +1452,17 @@ def test_b0_install_assembles_package_json_for_reader_version(tmp_path: Path) ->
         (target / ".atlas" / "package.json").read_text(encoding="utf-8"))
     assert copied["version"] == source["version"]
 
-    # 第 1 级是摘要形态（不可解析）⇒ 校验器应回落到第 2 级取到来包版本
     stamp = (target / ".atlas" / "VERSION").read_text(encoding="utf-8")
     assert not re.match(r"^v?\d+\.\d+\.\d+", stamp.strip())
+
+    toolroot = tmp_path / "toolroot"
+    (toolroot / "validators").mkdir(parents=True)
+    (toolroot / "package.json").write_text(json.dumps({"version": "9.9.9"}),
+                                           encoding="utf-8")
     v_index = load_module_path(PKG_ROOT / "validators" / "validate_e2e_index.py",
                                "_atlas_validate_reader_version_probe")
+    monkeypatch.setattr(v_index, "__file__",
+                        str(toolroot / "validators" / "validate_e2e_index.py"))
     assert v_index._reader_version(target) == source["version"]
 
 

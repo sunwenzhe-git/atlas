@@ -346,10 +346,10 @@ def test_reader_version_ignores_checked_repo_package_json(tmp_path: Path,
 
 @pytest.mark.parametrize("header", ["编号", "ID", "序号", "用例"])
 def test_task_case_rows_under_generic_header(tmp_path: Path, header: str) -> None:
-    """复核 1：表头写 `编号` / `ID` / `序号` / `用例` 都不得漏检真用例行。
+    """复核：表头写 `编号` / `ID` / `序号` / `用例` 时，**索引内** ID 也必须被认成用例行。
 
-    表头门（`CASE_TABLE_HEAD_RE`）已回退：RFC §2.4 只要求「首列大写前缀 ID」，
-    非用例前缀交给 `NON_CASE_PREFIX_RE` 挡。
+    刻意用索引已声明的 `E2E-SOLUTION-001`：`索引外 ID` 判据恒空，红只可能来自
+    「用例行」本身（否则把表头门加回去这四条照样绿，是假钉）。
     """
     make_parent(tmp_path, [req("REQ-001", "web", case_ids=["E2E-SOLUTION-001"])])
     write_prd(tmp_path)
@@ -358,18 +358,24 @@ def test_task_case_rows_under_generic_header(tmp_path: Path, header: str) -> Non
     task = tmp_path / "web" / ".trellis" / "tasks" / "T-HDR"
     task.mkdir(parents=True)
     (task / "cases.md").write_text(
-        f"| {header} | 场景 |\n|---|---|\n| E2E-AUTH-001 | 登录成功 |\n",
+        f"| {header} | 场景 |\n|---|---|\n| E2E-SOLUTION-001 | 登录成功 |\n",
         encoding="utf-8")
 
     set_reader_version(tmp_path, "0.3.0")
     warn = v_index.validate(tmp_path)
     assert levels(warn)["用例第二落点"] == "WARN", warn
-    assert "E2E-AUTH-001" in details(warn, "用例第二落点")
+    warn_detail = details(warn, "用例第二落点")
+    assert "用例行=" in warn_detail
+    assert "E2E-SOLUTION-001" in warn_detail
+    assert "索引外 ID" not in warn_detail
 
     set_reader_version(tmp_path, "0.4.0")
     fail = v_index.validate(tmp_path)
     assert levels(fail)["用例第二落点"] == "FAIL", fail
-    assert "E2E-AUTH-001" in details(fail, "用例第二落点")
+    fail_detail = details(fail, "用例第二落点")
+    assert "用例行=" in fail_detail
+    assert "E2E-SOLUTION-001" in fail_detail
+    assert "索引外 ID" not in fail_detail
 
 
 def test_ac_trace_table_is_not_a_case_row(tmp_path: Path) -> None:
@@ -392,6 +398,10 @@ def test_ac_trace_table_is_not_a_case_row(tmp_path: Path) -> None:
         "| D-1 | 决策记录 |\n",
         encoding="utf-8")
     set_reader_version(tmp_path, "0.4.0")
+    # 扫描面钉子：T-10 确实存在且被扫到，但一行都不认；只有 T-9 那条真用例行
+    assert (trace / "cases.md").is_file()
+    assert v_index._task_case_lines(tmp_path / "web") == [
+        ".trellis/tasks/T-9/cases.md:5=BE-SYNC-001"], "扫描面或判定不符"
     result = v_index.validate(tmp_path)
     assert levels(result)["用例第二落点"] == "FAIL", result
     detail = details(result, "用例第二落点")
