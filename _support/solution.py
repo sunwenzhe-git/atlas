@@ -1136,10 +1136,10 @@ def check_solution(root: Path, strict: bool = False,
     if data.get("requirements"):
         try:
             task_core = _load_sibling("solution_task", "_atlas_solution_task_check")
-            seen: set[tuple[str, str, str]] = set()
+            seen: set[tuple[str, str, str, str]] = set()
             downgraded = False
             for f in task_core.task_findings(root, data):
-                key = (f["code"], f["requirement"], f["ac"])
+                key = (f["code"], f["requirement"], f["member"], f["ac"])
                 if key in seen:
                     continue
                 seen.add(key)

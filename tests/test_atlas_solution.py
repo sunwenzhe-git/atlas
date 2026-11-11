@@ -695,6 +695,41 @@ def check_cli(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return run_cli(tmp_path, "--root", str(tmp_path), "check", *args)
 
 
+def test_b1_same_requirement_id_across_members_keeps_both_findings(tmp_path: Path) -> None:
+    """B1 + M10 真钉：去重键必须含 `member`；摘掉整块去重也要红。
+
+    同一 id 分属 web / api（无 E2E 选择器），两行引用同一个未定义 AC。正确实现下
+    `check_solution` 恰出 **2 条** FAIL（web、api 各一条）：
+    * 键退回 `(code, requirement, ac)` ⇒ api 那条被吞，只剩 1 条；
+    * 摘掉整块 `seen` ⇒ 两条 requirement 行各把 2 条 finding 全拉一次 = 4 条。
+    两者都与这里的 `== 2` 不符，故本条同时是「去重消失即红」的夹具。
+    """
+    req = (
+        "  - id: REQ-001\n"
+        "    acs: AC-DEMO-001,AC-DEMO-999\n"
+        "    member: web\n"
+        "    task_slug: req-001\n"
+        "    scope: 实现 demo\n"
+        "  - id: REQ-001\n"
+        "    acs: AC-DEMO-001,AC-DEMO-999\n"
+        "    member: api\n"
+        "    task_slug: req-001-api\n"
+        "    scope: 实现 demo\n"
+    )
+    build_raw_solution(tmp_path, req, members=("web", "api"))
+    report = core.check_solution(tmp_path)
+    rows = [c for c in report["checks"] if "AC 定义行缺失" in c["detail"]
+            and "AC-DEMO-999" in c["detail"]]
+    assert len(rows) == 2, rows
+    assert all(r["status"] == "FAIL" for r in rows)
+    assert any("REQ-001/web" in r["detail"] for r in rows)
+    assert any("REQ-001/api" in r["detail"] for r in rows)
+    warnings = [w for w in task_core.task_status(
+        tmp_path, core.load_manifest(tmp_path))["warnings"]
+        if "AC 定义行缺失" in w and "AC-DEMO-999" in w]
+    assert {w.split(":")[0] for w in warnings} == {"REQ-001/web", "REQ-001/api"}
+
+
 def test_e1a_duplicate_acs_key_refuses_without_writing(tmp_path: Path) -> None:
     req = (
         "  - id: REQ-001\n"
@@ -753,6 +788,25 @@ def test_f_fix_acs_preserves_other_bytes_and_comment(tmp_path: Path) -> None:
     assert after.index(b"scope:") < after.index(b"acs:")
 
 
+def test_f2_fix_acs_preserves_crlf_line_endings(tmp_path: Path) -> None:
+    """F 的 CRLF 变体：行尾保字节必须连 `\\r\\n` 一起保留，不得混入裸 LF。"""
+    manifest = build_raw_solution(tmp_path, REQ_RAW)
+    manifest.write_bytes(manifest.read_bytes().replace(b"\n", b"\r\n"))
+    before = manifest.read_bytes()
+    assert before.count(b"\r\n") == 15
+    res = check_cli(tmp_path, "--fix-acs", "--apply")
+    assert res.returncode == 0, res.stdout + res.stderr
+    after = manifest.read_bytes()
+    assert after.count(b"\r\n") == 15
+    assert b"\n" not in after.replace(b"\r\n", b"")  # 无裸 LF
+    old_lines = before.split(b"\r\n")
+    new_lines = after.split(b"\r\n")
+    changed = [i for i, (a, b) in enumerate(zip(old_lines, new_lines)) if a != b]
+    assert len(changed) == 1, changed
+    assert new_lines[changed[0]] == "    acs: AC-DEMO-001  # 说明".encode()
+    assert b"AC-DEMO-999" not in after
+
+
 def test_h_ideographic_comma_separator(tmp_path: Path) -> None:
     req = REQ_RAW.replace("AC-DEMO-001,AC-DEMO-999", "AC-DEMO-001、AC-DEMO-999")
     manifest = build_raw_solution(tmp_path, req)
@@ -792,17 +846,34 @@ def test_i_last_token_refuses_and_keeps_bytes(tmp_path: Path) -> None:
 
 
 def test_j_write_success_but_gate_still_red_exits_1(tmp_path: Path) -> None:
+    """J：写成功 ≠ 门变绿，退出码只由重跑结果决定（M7 的咬点）。
+
+    夹具与旧版的区别：REQ-002 带一个**同样无定义**的 AC（`AC-DEMO-777`）并显式
+    `cross_repo_e2e: none` —— 旧版缺该键时 exit 1 来自 E2E「二选一」报错，与 AC 无关。
+    现在两条需求的悬空 AC 在同一轮被移除（stdout 留 `[REMOVED] REQ-002/AC-DEMO-777`），
+    写成功成立；`--strict` 下重跑仍因基线（根非 git / 缺契约锁）FAIL ⇒ exit 1。
+    注：`fix_acs` 一次性移除全部悬空 AC，结构上不存在「写成功但仍有悬空 AC 残留」，
+    故 J 只能钉「写成功 + 重跑定退出码」这一层。
+    """
     req = REQ_RAW + (
         "  - id: REQ-002\n"
-        "    acs: AC-DEMO-001\n"
+        "    acs: AC-DEMO-001,AC-DEMO-777\n"
         "    member: web\n"
         "    task_slug: req-002\n"
         "    scope: 另一条需求\n"
+        "    cross_repo_e2e: none\n"
     )
     manifest = build_raw_solution(tmp_path, req)
-    res = check_cli(tmp_path, "--fix-acs", "--apply")
+    res = check_cli(tmp_path, "--fix-acs", "--apply", "--strict")
     assert res.returncode == 1, res.stdout + res.stderr
-    assert "AC-DEMO-999" not in manifest.read_text(encoding="utf-8")
+    assert "AC-DEMO-777" in res.stdout
+    assert "[REMOVED] REQ-002/AC-DEMO-777" in res.stdout
+    text = manifest.read_text(encoding="utf-8")
+    assert "AC-DEMO-999" not in text
+    assert "AC-DEMO-777" not in text
+    # 退出码不是 E2E 选择器构造错误带来的：两条需求都显式 N/A 且 PASS
+    assert "父仓 E2E 选择器: REQ-002: N/A" in res.stdout
+    assert "二选一" not in res.stdout + res.stderr
 
 
 def test_r7_flow_and_block_lists_exit_2(tmp_path: Path) -> None:
