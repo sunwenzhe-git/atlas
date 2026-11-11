@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+### 🚦 验收资产契约 B-0（`RFC-20261111-03`）
+
+* **清单 v2 可读可写**：`parse_manifest_text` 支持 `definition:` 一层嵌套（`domain` / `path`）与 `acceptance_cutover` / `min_atlas` 标量；`definition: null` 归一为 `None`，不再落进 `unknown` 被静默跳过；未知顶层键与未知 `definition` 子键一律报错（`manifest_field_unknown` / `definition_field_unknown`）。
+* **版本门 `{1, 2}`**：0.3.x 同时接受 v1 / v2 清单；0.4.0 只接受 v2 的分支随 B 批上线。`init` 一律写 v1，v2 只由 `migrate` 产生。
+* **`atlas solution migrate --to 2`**：只补缺（`definition` / `acceptance_cutover` / `min_atlas`），已有字段一律不动，**不自动 `lock`**；落盘前按 B-0 白名单校验 `definition.path`（只接受 `<assets_root>/prd/solution-prd.md`），非默认名 ⇒ 拒绝且不写任何文件。`--check-members` 只读打印逐成员卡片的 `git add -f` 命令（active 与 archive 的实际路径）。
+* **`install --update` 拦截**：仓内 v1 清单 + 来包 ≥ 0.4.0 ⇒ 拒绝刷新 `.atlas` 并打印迁移命令，避免覆盖后新工具对 v1 硬拒、迁移命令也跑不起来。
+* **#54 判据放宽**：任务目录 `cases.md`（含 `archive/<month>/` 与成员任务目录）只要出现用例行即报 `task_dir_case_duplicate`，不看 ID 前缀是否 `E2E-*`；0.3.x WARN、0.4.0 起 FAIL。
+* **`--lenient`**：只放宽「成员工作区缺席」（记 `SKIP`）；仓内存在封条即拒绝执行（exit 2）。只有锁、没有封条时可用。
+* **`--allow-dangling-acs` 退役点改为 0.4.0**（谓词 `semver_lt(version, "0.4.0")`）；`0.3.x` 仍注册该开关。
+
 ### 🚦 方案层 AC 门禁收紧（#50，`RFC-20261111-01`）
 
 * **AC 定义行默认 FAIL**：`requirements[].acs` 引用 `solution-prd.md` 中不存在的定义行时，`atlas solution check` 默认报 FAIL、exit 1，不再依赖 `--strict`。

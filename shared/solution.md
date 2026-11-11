@@ -70,7 +70,10 @@ atlas solution status                                               # 只读聚�
 atlas solution diff                                                 # 只读对账：成员相对锁的提交/改动
 atlas solution check [--strict]                                     # 默认 WARN（AC 定义行默认 FAIL）；--strict = CI 门禁
 atlas solution check --fix-acs [--apply]                            # dry-run 列出悬空 AC；--apply 行级保字节写回后重跑 gate
-atlas solution check --allow-dangling-acs                           # 临时宽限：仅 A 类悬空降 WARN（0.3.0 移除 / 最迟 2026-12-31）
+atlas solution check --lenient                                      # 开发早期放宽：成员工作区缺席记 SKIP（仓内有封条即拒绝执行）
+atlas solution check --allow-dangling-acs                           # 临时宽限：仅 A 类悬空降 WARN（0.4.0 移除 / 最迟 2026-12-31）
+atlas solution migrate --to 2 [--definition-path <路径>]              # 清单 v1 → v2：只补缺，不自动 lock
+atlas solution migrate --check-members                              # 只读：逐成员打印卡片 git add -f（active 与 archive）
 atlas solution lock --update                                        # 人工刷新锁（拒绝 detached HEAD）
 atlas solution task create --requirement <REQ> [--dry-run|--apply]   # 父级需求 → 成员任务卡
 atlas solution task status [--requirement <REQ>]                     # 只读对账
@@ -81,7 +84,9 @@ atlas solution task status [--requirement <REQ>]                     # 只读对
 - `adopt` 不移动、不复制成员资产；自动识别直属子目录中「git 仓 + Atlas 资产」的成员。
 - `diff` 只读对账：按成员输出自锁以来的 commit / diffstat、已暂存 / 未暂存 / 工作区改动；锁中 commit 不在本地时显式提示先 fetch。
 - `check` 的 manifest schema / 路径逃逸是输入错误（exit 2）；默认模式下成员非 git、缺 Atlas 资产、被 ignore、被跟踪/gitlink、锁漂移、PRD 骨架未补齐 ⇒ WARN。
-- `check --strict` 把以下升为 `FAIL` 并返回 exit 1：锁缺失、锁未被父仓跟踪或与父仓 `HEAD` 不一致、锁↔清单 `url/path` 不一致、成员 dirty 或 dirty 无法判断、缺 URL、成员/契约版本漂移；`requirements[].acs` 引用方案 PRD 中不存在的 AC 定义行**默认即 FAIL**（`--allow-dangling-acs` 只宽限「PRD 定义非空」的 A 类悬空，写死 `0.3.0` / `2026-12-31` / `@sunwenzhe`；PRD 缺失 / 路径不匹配 / 零定义共用空集 guard ⇒ FAIL，不适用宽限）。除 AC 定义行外，其余默认仍为 WARN。采纳仓不跑 `solution check --strict` 就等于没有这道门（最小 CI 样例见 §5.1）。
+- `check --strict` 把以下升为 `FAIL` 并返回 exit 1：锁缺失、锁未被父仓跟踪或与父仓 `HEAD` 不一致、锁↔清单 `url/path` 不一致、成员 dirty 或 dirty 无法判断、缺 URL、成员/契约版本漂移；`requirements[].acs` 引用方案 PRD 中不存在的 AC 定义行**默认即 FAIL**（`--allow-dangling-acs` 只宽限「PRD 定义非空」的 A 类悬空，写死 `0.4.0` / `2026-12-31` / `@sunwenzhe`；PRD 缺失 / 路径不匹配 / 零定义共用空集 guard ⇒ FAIL，不适用宽限）。除 AC 定义行外，其余默认仍为 WARN。采纳仓不跑 `solution check --strict` 就等于没有这道门（最小 CI 样例见 §5.1）。
+- `--lenient` 只放宽「成员工作区缺席」一项（记 `SKIP`，`member_workspace_absent`）；仓内存在任一封条（`<assets_root>/reviews/apply/**/*.seal.json`）即**拒绝执行**（exit 2，首行 `[FAIL] --lenient 仅限无封条`）。只有锁、没有封条时（fresh clone）允许执行。
+- `migrate --to 2` 只补缺（`definition` / `acceptance_cutover` / `min_atlas`），已有字段一律不动，**不自动 `lock`**；B-0 的 `definition.path` 白名单只接受 `<assets_root>/prd/solution-prd.md`，非默认名 ⇒ 拒绝且不写任何文件。`--check-members` 只读打印逐成员卡片的 `git add -f` 命令（含 archive 实际路径）。
 - `task create` 默认 dry-run，`--apply` 才写成员 `.trellis/tasks`：固定 `--no-start`（不领取）、用 `--meta solution/requirement/member` 做幂等、写 `solution.md` 指针并 `add-context`；不写代码/资产/PRD，不自动 commit。重复/失败显式报告；`--resume`/`--update` 只处理已有任务。
 - `commit` 入口保留给 Phase 2；Phase 1 调用时显式报「未交付」。
 

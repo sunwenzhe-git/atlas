@@ -156,7 +156,7 @@ def test_cli_solution_check_help_lists_acs_flags():
         assert res.returncode == 0, res.stdout + res.stderr
         assert "--fix-acs" in res.stdout
         assert "--allow-dangling-acs" in res.stdout
-        assert "0.3.0" in res.stdout and "2026-12-31" in res.stdout
+        assert "0.4.0" in res.stdout and "2026-12-31" in res.stdout
 
 
 def test_cli_apply_prints_guidance_and_exits_2():
