@@ -102,12 +102,18 @@ def _ac_unreachable(cell: str, source) -> bool:
 
 
 def _reader_version(root: Path) -> str:
-    """reader 版本（RFC §5.3 三级回落，B-0 只有前两级）：`.atlas/VERSION` → `package.json`。
+    """工具自身版本（RFC §5.3 / v11 重要 3）：`reader_version` 不得由被检查仓决定。
 
-    返回可解析的 semver 字符串；三级都拿不到 ⇒ `""`（调用方按「未知」处理）。
+    候选固定三条（全部是**工具自身**来源，被检查仓 `<root>/package.json` 不参与）：
+    1. `<root>/.atlas/VERSION` —— 装配副本的版本戳；旧副本只有摘要形态 ⇒ 跳过；
+    2. `<root>/.atlas/package.json` —— 装配副本自带的本包 `package.json`；
+    3. `<工具包根>/package.json` —— 开发树（`validators/` 在包根下）与安装副本的兜底。
+    中间级不可解析只继续回落，不提前判 unknown；三级全缺 ⇒ 返回 `""`，调用方记
+    `reader_version_unknown` 并一律按 WARN 分级。第三级固定为工具包根 `package.json`
+    （RFC v12 明确不再新增 `_support/_version.py`）。
     """
     candidates: list[Path] = [Path(root) / ".atlas" / "VERSION",
-                              Path(root) / "package.json",
+                              Path(root) / ".atlas" / "package.json",
                               Path(__file__).resolve().parents[1] / "package.json"]
     for path in candidates:
         try:
@@ -136,13 +142,30 @@ def _version_at_least(version: str, target: tuple[int, int, int]) -> bool:
 
 
 # RFC-20261111-03 §2.4：任务目录 `cases.md` 的「用例行」可判形态——
-# 表格行首列为大写前缀 ID，或 `atlas-case` 围栏标题；**不看 ID 前缀**是否 `E2E-*`。
+# 用例表的表格行（表头须是 用例ID / Case ID 一类），或 `atlas-case` 围栏标题；
+# **不看 ID 前缀**是否 `E2E-*`，但也**不能**把 AC 追溯表 / 需求表 / 任务表当用例行。
 TASK_CASE_ID_RE = re.compile(r"^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+$")
 TASK_CASE_FENCE_RE = re.compile(r"^\s*(?:`{3,}|~{3,})\s*atlas-case\b")
+CASE_TABLE_HEAD_RE = re.compile(r"^(?:用例\s*ID|用例编号|用例\s*编号|Case\s*ID|Case\s*No\.?|Case)$", re.I)
+# 明确不是用例 ID 的前缀：AC 追溯表、需求表、任务卡、决策/优先级/缺陷编号。
+NON_CASE_PREFIX_RE = re.compile(r"^(?:AC|REQ|REQS?|T|D|P|P\d|DR|BUG|ISSUE)(?:-|$)")
+TABLE_SEP_RE = re.compile(r"^:?-{2,}:?$")
+
+
+def _looks_like_case_id(cell: str) -> bool:
+    return bool(TASK_CASE_ID_RE.fullmatch(cell)) and not NON_CASE_PREFIX_RE.match(cell)
+
+
+def _cells(line: str) -> list[str]:
+    return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
 def _task_case_lines(repo: Path) -> list[str]:
-    """扫 `<repo>/.trellis/tasks/**/cases.md`（含 `archive/<month>/`）的用例行。"""
+    """扫 `<repo>/.trellis/tasks/**/cases.md`（含 `archive/<month>/`）的用例行。
+
+    表格行只在「表头首列是 用例ID / Case ID 一类」时认（避免 AC 追溯表误判）；
+    没有表头（无分隔行）时按 ID 形态 + 前缀排除兜底；围栏标题恒认。
+    """
     tasks = Path(repo) / ".trellis" / "tasks"
     if not tasks.is_dir():
         return []
@@ -152,17 +175,28 @@ def _task_case_lines(repo: Path) -> list[str]:
             text = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for no, line in enumerate(text.splitlines(), 1):
+        lines = text.splitlines()
+        case_table: bool | None = None  # None = 尚未见到表头
+        for i, line in enumerate(lines):
             stripped = line.strip()
-            token = ""
-            if TASK_CASE_FENCE_RE.match(line):
-                token = "atlas-case"
-            elif stripped.startswith("|"):
-                first = stripped.strip("|").split("|")[0].strip()
-                if TASK_CASE_ID_RE.fullmatch(first):
-                    token = first
-            if token:
-                found.append(f"{p.relative_to(Path(repo)).as_posix()}:{no}={token}")
+            if not stripped.startswith("|"):
+                case_table = None
+                if TASK_CASE_FENCE_RE.match(line):
+                    found.append(
+                        f"{p.relative_to(Path(repo)).as_posix()}:{i + 1}=atlas-case")
+                continue
+            cells = _cells(stripped)
+            if cells and all(not c or TABLE_SEP_RE.match(c) for c in cells):
+                prev = lines[i - 1].strip() if i else ""
+                prev_cells = _cells(prev) if prev.startswith("|") else []
+                case_table = bool(prev_cells) and bool(CASE_TABLE_HEAD_RE.match(prev_cells[0]))
+                continue
+            first = cells[0] if cells else ""
+            if not _looks_like_case_id(first):
+                continue
+            if case_table is False:
+                continue
+            found.append(f"{p.relative_to(Path(repo)).as_posix()}:{i + 1}={first}")
     return found
 
 
@@ -758,17 +792,21 @@ def validate(root: Path) -> Result:
     # 任务目录 `.trellis/tasks/**/cases.md`（含 `archive/<month>/` 与成员任务目录）**只要有
     # 用例行**即报 `task_dir_case_duplicate`，不看 ID 前缀是否 `E2E-*`（`BE-SYNC-*` /
     # `HC-RECORD-*` / `TW-PUSH-*` 同属「用例先行」的第二落点）。版本分级：0.3.x WARN、
-    # 0.4.0 起 FAIL。父仓模式只在清单声明了 `case_ids` 时扫（成员目录由 `members[].path`
+    # 0.4.0 起 FAIL；父仓未声明 `case_ids` / 清单不可读 ⇒ 本项 N/A 并在 detail 写明原因
+    # （不是静默跳过）。父仓模式只在清单声明了 `case_ids` 时扫（成员目录由 `members[].path`
     # 定位）；单仓模式扫本仓任务目录。三个 `not_ready` 机制（生成器退出码 3 / 索引 N/A
     # 门控 / impact_report 跳过）各自独立存在，本项不合并、不改写它们。
     scans: list[tuple[str, Path]] = []
+    skip_reason = ""
     if parent:
         if _declares_case_ids(root):
             try:
                 _mf = load_module("solution").load_manifest(root)
                 scans = [(m["name"], root / m["path"]) for m in _mf["members"]]
             except Exception:  # noqa: BLE001 - 清单不可读由清单门另行判红
-                scans = []
+                skip_reason = "清单不可读，本项未测（由清单门另行判红）"
+        else:
+            skip_reason = "清单未声明 case_ids（无跨仓 E2E 落点），本项未测"
     else:
         scans = [("", root)]
     second_bad: list[str] = []
@@ -782,13 +820,20 @@ def validate(root: Path) -> Result:
             parts.append(f"索引外 ID={_format_list(stray_ids)}")
         if parts:
             second_bad.append(f"{scope + ':' if scope else ''}" + "；".join(parts))
-    if second_bad:
-        second_level = ("FAIL" if _version_at_least(_reader_version(root), (0, 4, 0))
-                        else "WARN")
+    version = _reader_version(root)
+    unknown_note = ("；reader_version_unknown：`.atlas/VERSION` / `.atlas/package.json` / "
+                    "工具包 package.json 三级来源全缺，按 0.3.x 口径分级"
+                    if not version else "")
+    if skip_reason:
+        res.add("用例第二落点", "N/A", skip_reason + unknown_note)
+    elif second_bad:
+        second_level = "FAIL" if _version_at_least(version, (0, 4, 0)) else "WARN"
         res.add("用例第二落点", second_level,
-                f"task_dir_case_duplicate: 任务目录 cases.md 出现用例行={_format_list(second_bad)}"
+                "task_dir_case_duplicate: 任务目录 cases.md 出现用例行："
+                + "；".join(second_bad)
                 + _fix(root, "把用例迁入 <assets>/e2e/cases/ 并在索引主表登记；"
-                             "任务目录 cases.md 不是合法落点"))
+                             "任务目录 cases.md 不是合法落点")
+                + unknown_note)
     else:
         res.add("用例第二落点", "PASS", "")
 

@@ -297,6 +297,103 @@ def test_parent_second_landing_passes_when_task_dir_ids_are_in_index(tmp_path: P
     assert levels(v_index.validate(tmp_path))["用例第二落点"] == "PASS"
 
 
+def _task_case_fixture(tmp_path: Path) -> None:
+    """父仓 + 一张索引外用例行的成员任务目录（#54 必红的最小现场）。"""
+    make_parent(tmp_path, [req("REQ-001", "web", case_ids=["E2E-SOLUTION-001"])])
+    write_prd(tmp_path)
+    write_index(tmp_path, [main_row()])
+    write_shard(tmp_path, case_block())
+    task_dir = tmp_path / "web" / ".trellis" / "tasks" / "T-9"
+    task_dir.mkdir(parents=True)
+    (task_dir / "cases.md").write_text(
+        "# 任务用例\n\n| 用例ID | 场景 |\n|---|---|\n| BE-SYNC-001 | 同步重试成功 |\n",
+        encoding="utf-8")
+
+
+def test_reader_version_ignores_checked_repo_package_json(tmp_path: Path,
+                                                         monkeypatch) -> None:
+    """评审阻断 1：`reader_version` 只认工具自身来源，被检查仓 `package.json` 不参与分级。
+
+    现场刻意让「被检查仓版本 ≠ 工具版本」：被检查仓写 `0.4.0`、工具包写 `0.3.0`
+    ⇒ #54 仍判 WARN；判据跟着**工具**走，不跟着被检查仓走。
+    """
+    _task_case_fixture(tmp_path)
+    tool = tmp_path / "toolroot"
+    (tool / "validators").mkdir(parents=True)
+    (tool / "package.json").write_text('{"version": "0.3.0"}', encoding="utf-8")
+    monkeypatch.setattr(v_index, "__file__",
+                        str(tool / "validators" / "validate_e2e_index.py"))
+    (tmp_path / "package.json").write_text('{"version": "0.4.0"}', encoding="utf-8")
+    assert not (tmp_path / ".atlas").exists()
+
+    warn = v_index.validate(tmp_path)
+    assert levels(warn)["用例第二落点"] == "WARN", warn
+    assert "BE-SYNC-001" in details(warn, "用例第二落点")
+
+    # 第二级是装配副本自带的 `.atlas/package.json`（工具自身），0.4.0 ⇒ 升 FAIL
+    (tmp_path / ".atlas").mkdir()
+    (tmp_path / ".atlas" / "package.json").write_text(
+        '{"version": "0.4.0"}', encoding="utf-8")
+    fail = v_index.validate(tmp_path)
+    assert levels(fail)["用例第二落点"] == "FAIL", fail
+
+    # 第一级 `.atlas/VERSION` 优先于第二级
+    (tmp_path / ".atlas" / "VERSION").write_text("0.3.0\n", encoding="utf-8")
+    assert levels(v_index.validate(tmp_path))["用例第二落点"] == "WARN"
+
+
+def test_ac_trace_table_is_not_a_case_row(tmp_path: Path) -> None:
+    """评审重要 3 反面包：AC 追溯表 / 需求表 / 任务表都不得被当成用例行。"""
+    _task_case_fixture(tmp_path)
+    extra = tmp_path / "api" / ".trellis" / "tasks" / "T-3"
+    extra.mkdir(parents=True)
+    (extra / "cases.md").write_text(
+        "# 任务验收\n\n"
+        "| AC | 场景 | 回指规则 |\n|---|---|---|\n"
+        "| AC-DEMO-001 | 下单成功 | REQ-001 |\n"
+        "| REQ-001 | 需求 | — |\n\n"
+        "| 任务ID | 标题 |\n|---|---|\n"
+        "| T-001 | 迁移清单 |\n"
+        "| P0-1 | 优先级 |\n"
+        "| D-1 | 决策 |\n",
+        encoding="utf-8")
+    # 只保留「无表头」的 BE-SYNC-001 现场：其余三张表都不许贡献用例行
+    ((tmp_path / "web" / ".trellis" / "tasks" / "T-9" / "cases.md")).write_text(
+        "| BE-SYNC-001 | 无表头的用例行 |\n", encoding="utf-8")
+    set_reader_version(tmp_path, "0.4.0")
+    result = v_index.validate(tmp_path)
+    assert levels(result)["用例第二落点"] == "FAIL", result
+    detail = details(result, "用例第二落点")
+    assert "BE-SYNC-001" in detail
+    for non_case in ("AC-DEMO-001", "REQ-001", "T-001", "P0-1", "D-1"):
+        assert non_case not in detail, f"{non_case} 被误判成用例行：{detail}"
+
+    # 去掉那条唯一用例行后，整项回到 PASS（AC 追溯表本身不得触发 FAIL）
+    (tmp_path / "web" / ".trellis" / "tasks" / "T-9" / "cases.md").write_text(
+        "| AC-DEMO-001 | 下单成功 | REQ-001 |\n", encoding="utf-8")
+    assert levels(v_index.validate(tmp_path))["用例第二落点"] == "PASS"
+
+
+def test_reader_version_unknown_reports_fixed_hint(tmp_path: Path, monkeypatch) -> None:
+    """评审重要 4：三级全缺 ⇒ 按 0.3.x 判 WARN，并在 detail 里留固定提示。"""
+    _task_case_fixture(tmp_path)
+    monkeypatch.setattr(v_index, "_reader_version", lambda root: "")
+    result = v_index.validate(tmp_path)
+    assert levels(result)["用例第二落点"] == "WARN", result
+    assert "reader_version_unknown" in details(result, "用例第二落点")
+
+
+def test_parent_without_case_ids_marks_second_landing_na(tmp_path: Path) -> None:
+    """评审次要 11：父仓清单未声明 `case_ids` ⇒ N/A 且带原因，不静默跳过。"""
+    make_parent(tmp_path, [])
+    write_prd(tmp_path)
+    write_index(tmp_path, [main_row()])
+    write_shard(tmp_path, case_block())
+    result = v_index.validate(tmp_path)
+    assert levels(result)["用例第二落点"] == "N/A", result
+    assert "未声明 case_ids" in details(result, "用例第二落点")
+
+
 # ---------------------------------------------------------------- testid N/A
 
 def test_testids_parent_mode_is_na(tmp_path: Path) -> None:
