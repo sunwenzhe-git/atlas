@@ -3785,6 +3785,160 @@ def test_index_ac_reverse_coverage_pass_when_all_covered() -> None:
         assert row["level"] == "PASS", row
 
 
+def test_index_multi_value_ac_split_into_reverse_coverage_and_dimensions() -> None:
+    """RFC-20261111-03 §1.6：`关联AC` 一格多值（`AC-HOME-001、AC-HOME-002`）必须逐 token 消费。
+
+    覆盖点：`关联AC 格式`（逐 token 整串匹配）、`关联AC 可达`、`AC 反向覆盖` 覆盖集、
+    `AC × 覆盖维度` 的覆盖集与 AC→页。变异证明：把 `split_acs` 换回整格字符串 ⇒
+    反向覆盖变 WARN、维度门 detail 从「2 条」掉到「0 条」。
+    """
+    prd = (
+        "---\ndomain: demo\n---\n\n"
+        "## 五、验收标准\n\n"
+        "| AC ID | 场景 | 回指规则 | 适用覆盖维度 |\n"
+        "|---|---|---|---|\n"
+        "| `AC-HOME-001` | 首页展示正常 | DEMO-R-001 | C01 |\n"
+        "| `AC-HOME-002` | 首页可保存 | DEMO-R-002 | C01 |\n"
+    )
+    index = _with_page_table("已实现").replace(
+        "| AC-HOME-001 |", "| AC-HOME-001、AC-HOME-002 |", 1)
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD.strip()[:-3] + "覆盖维度:\n  - C01\n```\n")
+        mk_index(root, index)
+        mk_prd_raw(root, FM_GLOBAL + PRD_GLOBAL, prd)
+        row = {c["check"]: c for c in ve.validate(root).checks}
+        assert row["关联AC 格式"]["level"] == "PASS", row["关联AC 格式"]
+        assert row["关联AC 可达"]["level"] == "PASS", row["关联AC 可达"]
+        assert row["AC 反向覆盖"]["level"] == "PASS", row["AC 反向覆盖"]
+        assert row["AC × 覆盖维度"]["level"] == "PASS", row["AC × 覆盖维度"]
+        assert "2 条" in row["AC × 覆盖维度"]["detail"], row["AC × 覆盖维度"]
+
+
+def test_index_multi_value_ac_m03_second_ac_dimension_gap_not_silently_skipped() -> None:
+    """M-03（RFC-20261111-03 §1.6 关键回归）：页 ready、第一 AC 已覆盖、**第二 AC 唯一缺维**。
+
+    旧实现把整格 `AC-HOME-001、AC-HOME-002` 当作一个 AC ⇒ 两条 AC 都不在覆盖集，
+    `:915-916` 的 `acid not in covered_ac_set` 直接 continue ⇒ 静默 PASS（假绿）。
+    逐 token 后第二个 AC 必须被点名。变异证明：摘掉多值拆分 ⇒ 本用例退回 PASS。
+    """
+    prd = (
+        "---\ndomain: demo\n---\n\n"
+        "## 五、验收标准\n\n"
+        "| AC ID | 场景 | 回指规则 | 适用覆盖维度 |\n"
+        "|---|---|---|---|\n"
+        "| `AC-HOME-001` | 首页展示正常 | DEMO-R-001 | C01 |\n"
+        "| `AC-HOME-002` | 首页可保存 | DEMO-R-002 | C01,C02 |\n"
+    )
+    index = _with_page_table("已实现").replace(
+        "| AC-HOME-001 |", "| AC-HOME-001、AC-HOME-002 |", 1)
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD.strip()[:-3] + "覆盖维度:\n  - C01\n```\n")
+        mk_index(root, index)
+        mk_prd_raw(root, FM_GLOBAL + PRD_GLOBAL, prd)
+        row = next(c for c in ve.validate(root).checks if c["check"] == "AC × 覆盖维度")
+        assert row["level"] != "PASS", row
+        assert "AC-HOME-002缺C02" in row["detail"], row
+
+
+def test_index_multi_value_separators_and_illegal_token() -> None:
+    """RFC-20261111-03 §1.6 分隔符归一：`、` / `,` / `，` + 首尾空白都能拆开；
+    非法 token 混在多值里必须整格判红（不得被过滤后「整格放过」）。"""
+    good_cells = (
+        "AC-HOME-001、AC-HOME-999",
+        "AC-HOME-001,AC-HOME-999",
+        "AC-HOME-001，AC-HOME-999",
+        " AC-HOME-001 , AC-HOME-999 ",
+        "AC-HOME-001、 AC-HOME-999\t",
+    )
+    for cell in good_cells:
+        index = INDEX_GOOD.replace("| AC-HOME-001 |", f"| {cell} |", 1)
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            mk_prototype(root)
+            mk_cases(root)
+            mk_index(root, index)
+            mk_prd(root)
+            row = {c["check"]: c for c in ve.validate(root).checks}
+            assert row["关联AC 格式"]["level"] == "PASS", (cell, row["关联AC 格式"])
+
+    bad_index = INDEX_GOOD.replace("| AC-HOME-001 |", "| AC-HOME-001、AC_HOME-999 |", 1)
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root)
+        mk_index(root, bad_index)
+        mk_prd(root)
+        row = {c["check"]: c for c in ve.validate(root).checks}
+        assert row["关联AC 格式"]["level"] == "FAIL", row["关联AC 格式"]
+        assert "E2E-HOME-001" in row["关联AC 格式"]["detail"], row["关联AC 格式"]
+
+
+def test_index_multi_value_zero_evidence_any_structural_token_passes() -> None:
+    """`:959` 已拍板口径：零证据用例的多值 AC **至少一个** token 属结构类即 PASS。
+
+    夹具刻意选「结构类 001 + 非结构类 999」——按「全部 token 必须结构类」会误判 FAIL，
+    因此本用例同时钉住「any 而非 all」。反向：单值非结构类仍须 FAIL（没放宽）。
+    """
+    zero_case = """
+## E2E-HOME-001 首页加载并可进入空态
+
+```atlas-case
+id: E2E-HOME-001
+intent: 证明首页结构区在初始态即可观测
+pages:
+  - home
+precondition:
+  - 已打开首页
+step:
+  - goto /
+expected:
+  - initial: visible home-title
+testid:
+  - home-title
+```
+"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, zero_case)
+        mk_index(root, INDEX_GOOD.replace(
+            "| AC-HOME-001 |", "| AC-HOME-001、AC-HOME-999 |", 1))
+        mk_prd(root)
+        row = next(c for c in ve.validate(root).checks
+                   if c["check"] == "零证据用例须挂结构类 AC")
+        assert row["level"] == "PASS", row
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, zero_case)
+        mk_index(root, INDEX_GOOD.replace("| AC-HOME-001 |", "| AC-HOME-999 |", 1))
+        mk_prd(root)
+        row = next(c for c in ve.validate(root).checks
+                   if c["check"] == "零证据用例须挂结构类 AC")
+        assert row["level"] == "FAIL", row
+
+
+def test_index_second_landing_fails_for_case_id_only_in_task_dir() -> None:
+    """#54 / RFC-20261111-03 §2.4：单仓同样扫任务目录 `cases.md`，索引外用例 ID ⇒ FAIL。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root)
+        mk_index(root)
+        mk_prd(root)
+        d = root / ".trellis" / "tasks" / "T-1"
+        d.mkdir(parents=True)
+        (d / "cases.md").write_text("用例 E2E-HOME-042 只写在任务目录。\n", encoding="utf-8")
+        row = next(c for c in ve.validate(root).checks if c["check"] == "用例第二落点")
+        assert row["level"] == "FAIL", row
+        assert "E2E-HOME-042" in row["detail"], row
+
+
 def test_index_ac_reverse_coverage_skips_unimplemented_domain() -> None:
     """同一缺口，页面表 `实现中` ⇒ 该域不参与（用例尚未长出，不是缺口）⇒ 不 WARN。
 

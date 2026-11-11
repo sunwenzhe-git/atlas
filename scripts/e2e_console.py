@@ -92,6 +92,8 @@ from _support.solution import load_manifest  # noqa: E402
 
 # 用例 ID 文法体单源（正文归 rings/e2e/reference.md §5.3）；锚点在使用处自留。
 case_id = load_module("case_id")
+# `关联AC` 多值拆分单源（RFC-20261111-03 §1.6）：页面只展示拆开后的 token，不回显原始分隔串。
+ac_coverage = load_module("ac_coverage")
 
 # node 运行器单源内核（二进制解析 / **可解析性判据** / 全局兜底修复；issue #24）：
 # `atlas_check` 真跑门与本月控制台共用同一实现 —— 此前两处各存一份拷贝。
@@ -736,12 +738,15 @@ def snapshot(root: Path) -> dict:
     for r in rows:
         cid = r[idx["用例ID"]]
         blk = blocks.get(cid, {})
+        acs = ac_coverage.split_acs(r[idx["关联AC"]])
         cases.append({
             "id": cid,
             "page": r[idx["页面"]],
             "title": r[idx["中文标题"]],
             "type": r[idx["类型"]],
-            "ac": r[idx["关联AC"]],
+            # 主 AC + 全量 token 列表（多值时前端逐个渲染，不显示原始逗号串）
+            "ac": acs[0] if acs else "",
+            "acs": acs,
             "need": r[idx["需求"]],
             "status": r[idx["状态"]],
             "reason": r[idx["状态原因"]],

@@ -8,8 +8,9 @@ D130 的维度 token 口径从 `validate_e2e_index.py` 原样抽出（2026-10-26
   * 疑似写法 `C99` 由 `looks` 出声。
 
 消费方：
-  * `validate_e2e_index.py`：`parse_dims_cell`（纯抽取，行为逐字节一致）；
-  * `validate_ac_alignment.py`：`parse_dims_cell`（后端列）+ `parse_dim_token` / `parse_dims_list`（结构化 dims）。
+  * `validate_e2e_index.py`：`parse_dims_cell`（纯抽取，行为逐字节一致）+ `split_acs`（`关联AC` 多值拆分）；
+  * `validate_ac_alignment.py`：`parse_dims_cell`（后端列）+ `parse_dim_token` / `parse_dims_list`（结构化 dims）；
+  * `solution_e2e.py` / `e2e_console.py`：`split_acs`（父仓 AC 挂靠统计 / 控制台展示）。
 
 **不负责** PRD 表定位 / E2E 索引解析；`iter_md_tables` 只是通用 Markdown 表切分，
 供后端列解析复用，避免第四份表解析器口径漂移（parity 钉见 `tests/test_shared_kernel.py`）。
@@ -29,6 +30,23 @@ _DIM_LOOKS_RE = re.compile(r"[Cc]\d{1,2}")
 _DIM_EXACT_RE = re.compile(rf"^{_DIM_TOKEN}$")
 # 备注/错位列表头扫描用：排除 AC ID 里的 `AC-C01-...`（防把 AC 编号当维度声明）。
 _DIM_CLAIM_RE = re.compile(r"(?<!AC-)(?<![0-9A-Za-z])[Cc](\d{1,2})(?![0-9])")
+
+# `关联AC` 单元格多值口径（RFC-20261111-03 §1.6）：一格可写单值或分隔列表，
+# 分隔符 `、` / `,` / `，`；逐 token 去首尾空白。token 合法性仍须整串匹配本正则。
+AC_REF_RE = re.compile(r"^AC-[A-Z0-9]+-\d{3}$")
+_AC_REF_DELIMS = re.compile(r"[、,，]")
+
+
+def split_acs(raw) -> list[str]:
+    """`关联AC` 单元格 → AC token 列表（空单元格 ⇒ `[]`）。
+
+    只做拆分与 trim，**不判合法性** —— 调用方对每个 token 做 `AC_REF_RE.fullmatch`，
+    这样「AC-1、AC-2」的第二个 token 才会被单独看见（RFC-20261111-03 §1.6）。
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    return [t.strip() for t in _AC_REF_DELIMS.split(text)]
 
 
 def parse_dims_cell(raw) -> tuple[set[str], bool]:

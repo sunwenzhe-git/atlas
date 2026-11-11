@@ -317,6 +317,30 @@ def test_snapshot_carries_mock_lines_for_badge() -> None:
         assert case["mock"] == ["GET /api/v1/users -> fixtures/users/empty.json"], case["mock"]
 
 
+def test_snapshot_splits_multi_value_ac_for_display() -> None:
+    """RFC-20261111-03 §1.6（控制台消费点）：多值 `关联AC` 拆成 token 列表，页面不回显原始分隔串。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_project(Path(tmp))
+        v = load("validate_e2e_index", "validators/validate_e2e_index.py")
+        cols = list(v.MAIN_COLUMNS)
+        (root / "product" / "e2e" / "e2e-index.md").write_text(
+            "# E2E 索引\n\n| " + " | ".join(cols) + " |\n| "
+            + " | ".join(["---"] * len(cols)) + " |\n"
+            "| E2E-USERS-001 | users | 空态缺省页 | acceptance | AC-U-001、AC-U-002 | | red | | "
+            "[cases/users.md#e2e-users-001](cases/users.md#e2e-users-001) |\n", encoding="utf-8")
+        (root / "product" / "e2e" / "cases").mkdir(parents=True, exist_ok=True)
+        (root / "product" / "e2e" / "cases" / "users.md").write_text(
+            "# users 页面用例\n\n## E2E-USERS-001 空态缺省页\n\n```atlas-case\n"
+            "id: E2E-USERS-001\nintent: 列表为空时渲染缺省占位\npages:\n  - users\n"
+            "step:\n  - goto /users\nexpected:\n  - visible users-empty-placeholder\n"
+            "testid:\n  - users-empty-placeholder\n```\n", encoding="utf-8")
+        snap = cons.snapshot(root)
+        case = next(c for c in snap["cases"] if c["id"] == "E2E-USERS-001")
+        assert case["ac"] == "AC-U-001", case
+        assert case["acs"] == ["AC-U-001", "AC-U-002"], case
+
+
 def test_node_ids_extracts_ts_lines_and_skips_blocked() -> None:
     """契约 §10.1（2026-10-12 迁移批）：node_ids() 解析 .spec.ts 中的行号，
     作为 Playwright 原生单用例过滤标记（file:line）；且 test.skip（blocked 用例）

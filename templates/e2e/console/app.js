@@ -319,7 +319,9 @@ function rowHTML(c) {
         ${isStale ? `<span class="tag stale" title="代码或脚本已变动（${esc(revState.reason || '')}）">STALE 需重审</span>` : ''}
         ${isLegacy ? `<span class="tag" style="background:#555;color:#ddd" title="旧账本快照无提交指纹">LEGACY</span>` : ''}
         ${(revState.warning) ? `<span class="tag dirty" title="${esc(revState.warning)}">DIRTY</span>` : ''}
-        <span class="tag">${esc(c.ac)}</span>
+        ${(c.acs && c.acs.length > 1)
+          ? c.acs.map((a) => `<span class="tag">${esc(a)}</span>`).join('')
+          : `<span class="tag">${esc(c.ac)}</span>`}
         ${c.need ? `<span class="tag">需求 ${esc(c.need)}</span>` : ''}
         ${S.draft[c.id] ? '<span class="tag dirty">未提交</span>' : ''}
         ${(isManual && !(c.steps && c.steps.length)) ? '' : `<button class="btn btn-ghost" data-detail="${c.id}">${S.open.has('d:' + c.id) ? '收起' : '展开'}</button>`}

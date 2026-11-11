@@ -202,6 +202,64 @@ def test_parent_reverse_view_requires_empty_cells(tmp_path: Path) -> None:
     assert levels(result)["反向视图一致"] == "FAIL"
 
 
+def test_parent_multi_value_ac_counts_each_token(tmp_path: Path) -> None:
+    """RFC-20261111-03 §1.6：父仓 `关联AC` 多值逐 token 可达，父仓挂靠统计同源拆分。"""
+    make_parent(tmp_path, [req("REQ-001", "web", case_ids=["E2E-SOLUTION-001"])])
+    (tmp_path / "product" / "prd" / "solution-prd.md").write_text(
+        "---\ndomain: \"solution\"\n---\n\n# solution\n\n"
+        "| AC ID | 描述 |\n|---|---|\n"
+        "| AC-SOLUTION-001 | 跨仓下单 |\n| AC-SOLUTION-002 | 跨仓退款 |\n",
+        encoding="utf-8")
+    write_index(tmp_path, [main_row(ac="AC-SOLUTION-001、AC-SOLUTION-002")])
+    write_shard(tmp_path, case_block())
+    result = v_index.validate(tmp_path)
+    assert levels(result)["关联AC 格式"] == "PASS"
+    assert levels(result)["关联AC 可达"] == "PASS"
+    cov = e2e._ac_coverage(tmp_path, {
+        "present": True, "ok": True,
+        "rows": [{"关联AC": "AC-SOLUTION-001、AC-SOLUTION-002"}],
+    })
+    assert cov["attached"] == 2, cov
+    assert cov["zero_attached"] == [], cov
+
+
+def test_parent_multi_value_ac_illegal_token_fails(tmp_path: Path) -> None:
+    make_parent(tmp_path, [req("REQ-001", "web", case_ids=["E2E-SOLUTION-001"])])
+    write_prd(tmp_path)
+    write_index(tmp_path, [main_row(ac="AC-SOLUTION-001、AC-SOLUTION-1")])
+    write_shard(tmp_path, case_block())
+    assert levels(v_index.validate(tmp_path))["关联AC 格式"] == "FAIL"
+
+
+# ---------------------------------------------------------------- 用例第二落点（#54）
+
+def test_parent_second_landing_fails_for_task_dir_case_outside_index(tmp_path: Path) -> None:
+    """RFC-20261111-03 §2.4：成员 `.trellis/tasks/**/cases.md` 出现索引外用例 ID ⇒ FAIL。"""
+    make_parent(tmp_path, [req("REQ-001", "web", case_ids=["E2E-SOLUTION-001"])])
+    write_prd(tmp_path)
+    write_index(tmp_path, [main_row()])
+    write_shard(tmp_path, case_block())
+    task_dir = tmp_path / "web" / ".trellis" / "tasks" / "T-1"
+    task_dir.mkdir(parents=True)
+    (task_dir / "cases.md").write_text(
+        "# 任务用例\n\n用例 E2E-SOLUTION-777 写在任务目录里。\n", encoding="utf-8")
+    result = v_index.validate(tmp_path)
+    assert levels(result)["用例第二落点"] == "FAIL", result
+    assert "E2E-SOLUTION-777" in details(result, "用例第二落点")
+
+
+def test_parent_second_landing_passes_when_task_dir_ids_are_in_index(tmp_path: Path) -> None:
+    make_parent(tmp_path, [req("REQ-001", "web", case_ids=["E2E-SOLUTION-001"])])
+    write_prd(tmp_path)
+    write_index(tmp_path, [main_row()])
+    write_shard(tmp_path, case_block())
+    task_dir = tmp_path / "api" / ".trellis" / "tasks" / "T-2"
+    task_dir.mkdir(parents=True)
+    (task_dir / "cases.md").write_text(
+        "已迁入索引：E2E-SOLUTION-001。\n", encoding="utf-8")
+    assert levels(v_index.validate(tmp_path))["用例第二落点"] == "PASS"
+
+
 # ---------------------------------------------------------------- testid N/A
 
 def test_testids_parent_mode_is_na(tmp_path: Path) -> None:

@@ -357,7 +357,9 @@ def _ac_coverage(root: Path | None, index: dict) -> dict:
         return dict(_AC_COVERAGE_EMPTY)
     defs = {m.group(1) for m in
             re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|", prd_text, re.M)}
-    attached = {r.get("关联AC", "").strip() for r in index["rows"]} & defs
+    # RFC-20261111-03 §1.6：`关联AC` 一格可持多值，按 token 拆开后再与定义集求交。
+    attached = {ac for r in index["rows"]
+                for ac in load_module("ac_coverage").split_acs(r.get("关联AC"))} & defs
     front = prd_text.split("---")[1] if prd_text.startswith("---") else ""
     hit = re.search(r"^domain:\s*\"?([^\s\"]+)", front, re.M)
     ready = _domain_ready(index_text, hit.group(1) if hit else "solution")

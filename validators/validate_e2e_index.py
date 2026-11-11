@@ -89,6 +89,32 @@ def _declares_case_ids(root: Path) -> bool:
         return False
 
 
+def _ac_cell_ok(cell: str) -> bool:
+    """`关联AC` 单元格合法 = 非空且**每个** token 整串匹配 AC 文法（逐 token，不整格 match）。"""
+    tokens = split_acs(cell)
+    return bool(tokens) and all(AC_RE.fullmatch(t) for t in tokens)
+
+
+def _ac_unreachable(cell: str, source) -> bool:
+    """单元格内**任一** token 不可达即判不可达（`source` = AC 定义集或 PRD 全文）。"""
+    tokens = split_acs(cell)
+    return not tokens or any(t not in source for t in tokens)
+
+
+def _task_case_ids(repo: Path) -> set[str]:
+    """扫 `<repo>/.trellis/tasks/**/cases.md` 中出现的合法用例 ID（RFC-20261111-03 §2.4）。"""
+    tasks = Path(repo) / ".trellis" / "tasks"
+    if not tasks.is_dir():
+        return set()
+    found: set[str] = set()
+    for p in sorted(tasks.rglob("cases.md")):
+        try:
+            found |= set(CASE_ID_SCAN_RE.findall(p.read_text(encoding="utf-8")))
+        except OSError:
+            continue
+    return found
+
+
 # 保名兼容（本文件内与外部按名引用）
 case_block = load_module("case_block")
 parse_block = case_block.parse_block
@@ -113,7 +139,13 @@ STATES = {"red", "prototype-pass", "green", "blocked", "skipped"}
 REASON_PREFIX = {"ENV_ISSUE", "NOT_IMPLEMENTED", "SPEC_AMBIGUOUS", "BLOCKED_DEP", "DEFERRED", "OUT_OF_SCOPE", "OTHER"}
 
 ID_RE = re.compile(rf"^{case_id.GRAMMAR}$")
-AC_RE = re.compile(r"^AC-[A-Z0-9]+-\d{3}$")
+# `关联AC` 单值文法本体归 `_support/ac_coverage.py`（RFC-20261111-03 §1.6 多值口径同源），
+# 本文件只保留旧名 `AC_RE` 供 PRD 表 / 索引格逐 token 使用。
+AC_RE = ac_coverage.AC_REF_RE
+split_acs = ac_coverage.split_acs
+# RFC-20261111-03 §2.4：任务目录 `cases.md` 里的合法用例 ID。用显式边界而非 `\b`——
+# `\b` 对 CJK 邻接失效（「用例E2E-HOME-001」会漏），显式边界又不会把 `...-0010` 的前缀误认成 ID。
+CASE_ID_SCAN_RE = re.compile(rf"(?<![0-9A-Za-z-]){case_id.GRAMMAR}(?![0-9A-Za-z-])")
 # D130 / Batch B（RFC-20261103-08）：E2E 维度列按**表头名**定位；唯一合法表头写死在这里，
 # 表头不符 ⇒ 该表按「未声明」跳过（不按第 4 格位置吸收）。
 E2E_DIM_HEADER = "适用覆盖维度"
@@ -657,6 +689,31 @@ def validate(root: Path) -> Result:
     res.add("分片链接可达", "PASS" if not link_bad else "FAIL", f"{_format_list(link_bad)}")
     res.add("索引↔分片标题一致", "PASS" if not title_bad else "FAIL", f"{_format_list(title_bad)}")
 
+    # 用例第二落点（#54 / RFC-20261111-03 §2.4）：合法落点只有 `<assets>/e2e/cases/*.md` 与索引主表。
+    # 任务目录 `.trellis/tasks/**/cases.md` 中出现的合法用例 ID 若不在本索引主表 ⇒ FAIL。
+    # 父仓模式只在清单声明了 `case_ids` 时扫（成员目录由 `members[].path` 定位）；单仓模式扫本仓
+    # 任务目录。三个 `not_ready` 机制（生成器退出码 3 / 索引 N/A 门控 / impact_report 跳过）
+    # 各自独立存在，本项不合并、不改写它们。
+    scans: list[tuple[str, Path]] = []
+    if parent:
+        if _declares_case_ids(root):
+            try:
+                _mf = load_module("solution").load_manifest(root)
+                scans = [(m["name"], root / m["path"]) for m in _mf["members"]]
+            except Exception:  # noqa: BLE001 - 清单不可读由清单门另行判红
+                scans = []
+    else:
+        scans = [("", root)]
+    second_bad: list[str] = []
+    for scope, repo in scans:
+        stray = sorted(_task_case_ids(repo) - set(ids))
+        if stray:
+            second_bad.append(f"{scope + ':' if scope else ''}{stray}")
+    res.add("用例第二落点", "PASS" if not second_bad else "FAIL",
+            f"任务目录 cases.md 的用例 ID 不在索引={_format_list(second_bad)}"
+            + (_fix(root, "把用例迁入 <assets>/e2e/cases/ 并在索引主表登记；"
+                          "任务目录 cases.md 不是合法落点") if second_bad else ""))
+
     # pages 合法性（E1：页清单唯一来源 = 索引页面表 §3.2；无页面表时退化为分片文件名）
     idx_text = text
     page_rows = [ln for ln in idx_text.splitlines()
@@ -767,8 +824,8 @@ def validate(root: Path) -> Result:
                 vocab_bad.append(f"{g['用例ID']}:状态原因={g['状态原因']}")
     res.add("词表", "PASS" if not vocab_bad else "FAIL", f"{vocab_bad[:8]}")
 
-    # 关联AC
-    ac_bad = [g["用例ID"] for g in grid if not AC_RE.match(g["关联AC"])]
+    # 关联AC（RFC-20261111-03 §1.6：一格可持多值，逐 token 整串匹配，不整格 match）
+    ac_bad = [g["用例ID"] for g in grid if not _ac_cell_ok(g["关联AC"])]
     res.add("关联AC 格式", "PASS" if not ac_bad else "FAIL", f"{ac_bad[:8]}")
     prd_files = sorted(lay.prd_dir.glob("*-prd.md")) if lay.prd_dir.is_dir() else []
     if not prd_files:
@@ -782,10 +839,10 @@ def validate(root: Path) -> Result:
                 seg = pf.read_text(encoding="utf-8")
                 defs |= {m.group(1) for m in
                          re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|", seg, re.M)}
-            unreachable = [g["用例ID"] for g in grid if g["关联AC"] not in defs]
+            unreachable = [g["用例ID"] for g in grid if _ac_unreachable(g["关联AC"], defs)]
         else:
             corpus = "".join(p.read_text(encoding="utf-8") for p in prd_files)
-            unreachable = [g["用例ID"] for g in grid if g["关联AC"] not in corpus]
+            unreachable = [g["用例ID"] for g in grid if _ac_unreachable(g["关联AC"], corpus)]
         res.add("关联AC 可达", "PASS" if not unreachable else "FAIL", f"不可达={unreachable[:8]}")
 
     # AC 反向覆盖（追溯门，契约 §8.2；2026-10-04 补，`3509 §B186-2`）——追溯链末段
@@ -844,7 +901,7 @@ def validate(root: Path) -> Result:
     if not dom_acs or not dom_pages:
         res.add("AC 反向覆盖", "N/A", "域级 PRD 无 `domain:` 声明，或索引无页面表")
     else:
-        covered_ac = {g["关联AC"] for g in grid}
+        covered_ac = {ac for g in grid for ac in split_acs(g["关联AC"])}
         gaps: list[str] = []
         exempted: list[str] = []
         for dom in sorted(dom_acs):
@@ -888,23 +945,28 @@ def validate(root: Path) -> Result:
         if not page_ready.get(g["页面"], False):
             continue
         cid = g["用例ID"]
-        acid = g["关联AC"]
         blk = blocks.get(cid, {})
+        dims: set[str] = set()
         for d_str in (blk.get("覆盖维度") or []):
             found, looks = parse_dims_cell(d_str)
             if not found and looks:
                 bad_case_dims.append(f"{cid}:{d_str}")
-            covered_ac_dims.setdefault(acid, set()).update(found)
+            dims |= found
+        # 多值 AC（RFC-20261111-03 §1.6）：该行声明的维度对**每个 token** 都算挂靠，
+        # 否则第二个 AC 在下方 `:915` 的 `acid not in covered_ac_set` 处被静默 continue。
+        for acid in split_acs(g["关联AC"]):
+            covered_ac_dims.setdefault(acid, set()).update(dims)
 
     if not declared_ac_dims:
         res.add("AC × 覆盖维度", "N/A",
                 "域级 PRD 验收标准表未声明「适用覆盖维度」列（按需启用）" + dim_header_note)
     else:
         dim_gaps: list[str] = []
-        covered_ac_set = {g["关联AC"] for g in grid}
+        covered_ac_set = {ac for g in grid for ac in split_acs(g["关联AC"])}
         ac_pages: dict[str, set[str]] = {}
         for g in grid:
-            ac_pages.setdefault(g["关联AC"], set()).add(g["页面"])
+            for acid in split_acs(g["关联AC"]):
+                ac_pages.setdefault(acid, set()).add(g["页面"])
         for dom in sorted(dom_acs):
             pages = dom_pages.get(dom, set())
             if not has_coverage_column and (
@@ -956,7 +1018,9 @@ def validate(root: Path) -> Result:
             and all(_step_anchor(e) is None and e.lstrip().startswith(EXEMPT_PREFIX)
                     for e in blocks[g["用例ID"]]["expected"])
         ]
-        zero_bad = [f"{g['用例ID']}({g['关联AC']})" for g in zero_evidence if g["关联AC"] not in struct_acs]
+        # 多值口径（RFC-20261111-03 §1.6）：**至少一个** token 属于结构类即可，不要求全部。
+        zero_bad = [f"{g['用例ID']}({g['关联AC']})" for g in zero_evidence
+                    if not any(t in struct_acs for t in split_acs(g["关联AC"]))]
         res.add("零证据用例须挂结构类 AC", "PASS" if not zero_bad else "FAIL",
                 f"全 initial: 但 AC 非结构类={zero_bad[:8]}")
 
