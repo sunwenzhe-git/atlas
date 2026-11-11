@@ -54,8 +54,8 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 ### 1. CLI 与装配
 
-- `bin/atlas.js`(462 行):命令面 = `init / update / upgrade / check / solution / review / eval / console / report / version`。`init` 先探测 Trellis(POSIX `which` / Windows `where`;`.trellis/` 缺失时自动 `trellis init`)再调装配器;平台探测拆在 `bin/platform.js`(bash 只认 Git Bash 不回落 WSL 中继壳;Python 按平台探测 `py -3`/`python`/`python3` 并校验 3.10+)。
-- `install.py`(919 行):装配单源(`install.sh` 58 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ tests/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`,落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 66 条 `c()` 自检声明。
+- `bin/atlas.js`(463 行):命令面 = `init / update / upgrade / check / solution / review / eval / console / report / version`。`init` 先探测 Trellis(POSIX `which` / Windows `where`;`.trellis/` 缺失时自动 `trellis init`)再调装配器;平台探测拆在 `bin/platform.js`(bash 只认 Git Bash 不回落 WSL 中继壳;Python 按平台探测 `py -3`/`python`/`python3` 并校验 3.10+)。
+- `install.py`(942 行):装配单源(`install.sh` 58 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ tests/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`,落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 66 条 `c()` 自检声明。
 - `patches/`(4 族):`workflow-plan-apply`(apply 挂进 Trellis 工作流)、`project-wiring`(AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.adapter-out/` / pi 扩展五触点)、`workflow-root-cause`、`workflow-skill-routing`。锚点式版本化补丁,可重放。
 - 对账:`scripts/pkg_digest.py`(摘要算法单点)+ `scripts/backflow.py`(副本⇔源包三态回灌,SOURCE_ONLY 拒绝护栏)。
 

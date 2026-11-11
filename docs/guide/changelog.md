@@ -21,7 +21,7 @@
 * **AC 定义行默认 FAIL**：`requirements[].acs` 引用 `solution-prd.md` 中不存在的定义行时，`atlas solution check` 默认报 FAIL、exit 1，不再依赖 `--strict`。
 * **定义源不可用单出口**：PRD 缺失 / `assets_root` 路径不匹配 / 零定义共用空集 guard，报「AC 定义源不可用」，不把全部 AC 误判悬空；`check` 与 `task status` 走同一 helper。
 * **`--fix-acs`**：只按行移除悬空 token（保留其它字节、键序与行尾注释）；同 id 块 / `acs:` 行无法唯一定位、删空某条 requirement 时拒绝且不半写；`--apply` 写回后重跑 gate 定退出码。
-* **临时宽限**：`--allow-dangling-acs` 仅放行 A 类悬空，写死 `0.3.0` 移除 / 最迟 `2026-12-31` / owner `@sunwenzhe`；`0.3.0` 起该选项不再注册。
+* **临时宽限**：`--allow-dangling-acs` 仅放行 A 类悬空，写死 `0.4.0` 移除 / 最迟 `2026-12-31` / owner `@sunwenzhe`；`0.4.0` 起该选项不再注册。
 
 ### 🚦 维度门升 FAIL + 休眠态改 N/A（2026-11-11）
 
