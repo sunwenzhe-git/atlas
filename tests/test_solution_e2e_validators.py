@@ -233,12 +233,19 @@ def test_parent_multi_value_ac_illegal_token_fails(tmp_path: Path) -> None:
 
 # ---------------------------------------------------------------- 用例第二落点（#54）
 
+def set_reader_version(root: Path, version: str) -> None:
+    """RFC §5.3：`reader_version` 读 `<root>/.atlas/VERSION`（B-0 的 semver 注入点）。"""
+    (root / ".atlas").mkdir(exist_ok=True)
+    (root / ".atlas" / "VERSION").write_text(version + "\n", encoding="utf-8")
+
+
 def test_parent_second_landing_fails_for_task_dir_case_outside_index(tmp_path: Path) -> None:
     """RFC-20261111-03 §2.4：成员 `.trellis/tasks/**/cases.md` 出现索引外用例 ID ⇒ FAIL。"""
     make_parent(tmp_path, [req("REQ-001", "web", case_ids=["E2E-SOLUTION-001"])])
     write_prd(tmp_path)
     write_index(tmp_path, [main_row()])
     write_shard(tmp_path, case_block())
+    set_reader_version(tmp_path, "0.4.0")
     task_dir = tmp_path / "web" / ".trellis" / "tasks" / "T-1"
     task_dir.mkdir(parents=True)
     (task_dir / "cases.md").write_text(
@@ -246,6 +253,36 @@ def test_parent_second_landing_fails_for_task_dir_case_outside_index(tmp_path: P
     result = v_index.validate(tmp_path)
     assert levels(result)["用例第二落点"] == "FAIL", result
     assert "E2E-SOLUTION-777" in details(result, "用例第二落点")
+
+
+def test_m06_any_case_row_is_second_landing_regardless_of_id_prefix(tmp_path: Path) -> None:
+    """M-06：不看 ID 是否 `E2E-*`；0.3.x WARN、0.4.0 起 FAIL；含 archive 任务目录。"""
+    make_parent(tmp_path, [req("REQ-001", "web", case_ids=["E2E-SOLUTION-001"])])
+    write_prd(tmp_path)
+    write_index(tmp_path, [main_row()])
+    write_shard(tmp_path, case_block())
+    active = tmp_path / "web" / ".trellis" / "tasks" / "T-9"
+    active.mkdir(parents=True)
+    (active / "cases.md").write_text(
+        "# 任务用例\n\n| 用例ID | 场景 |\n|---|---|\n| BE-SYNC-001 | 同步重试成功 |\n",
+        encoding="utf-8")
+    archived = tmp_path / "web" / ".trellis" / "tasks" / "archive" / "2026-10" / "T-8"
+    archived.mkdir(parents=True)
+    (archived / "cases.md").write_text(
+        "# 归档用例\n\n| HC-RECORD-001 | 记录回放 |\n|---|---|\n", encoding="utf-8")
+
+    set_reader_version(tmp_path, "0.3.0")
+    warn = v_index.validate(tmp_path)
+    assert levels(warn)["用例第二落点"] == "WARN", warn
+    assert "BE-SYNC-001" in details(warn, "用例第二落点")
+
+    set_reader_version(tmp_path, "0.4.0")
+    fail = v_index.validate(tmp_path)
+    assert levels(fail)["用例第二落点"] == "FAIL", fail
+    detail = details(fail, "用例第二落点")
+    assert "task_dir_case_duplicate" in detail
+    assert ".trellis/tasks/T-9/cases.md" in detail
+    assert ".trellis/tasks/archive/2026-10/T-8/cases.md" in detail
 
 
 def test_parent_second_landing_passes_when_task_dir_ids_are_in_index(tmp_path: Path) -> None:

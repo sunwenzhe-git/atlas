@@ -3958,6 +3958,8 @@ def test_index_second_landing_fails_for_case_id_only_in_task_dir() -> None:
         mk_cases(root)
         mk_index(root)
         mk_prd(root)
+        (root / ".atlas").mkdir()
+        (root / ".atlas" / "VERSION").write_text("0.4.0\n", encoding="utf-8")
         d = root / ".trellis" / "tasks" / "T-1"
         d.mkdir(parents=True)
         (d / "cases.md").write_text("用例 E2E-HOME-042 只写在任务目录。\n", encoding="utf-8")
