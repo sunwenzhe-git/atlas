@@ -1135,8 +1135,13 @@ def check_solution(root: Path, strict: bool = False) -> dict:
     if data.get("requirements"):
         try:
             task_core = _load_sibling("solution_task", "_atlas_solution_task_check")
-            for warning in task_core.check_requirements(root, data):
-                add("跨仓任务", "WARN", warning)
+            seen: set[tuple[str, str, str]] = set()
+            for f in task_core.task_findings(root, data):
+                key = (f["code"], f["requirement"], f["ac"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                add("跨仓任务", f["level"], f["detail"])
         except Exception as exc:  # noqa: BLE001 - 对账不可用要显式出声
             add("跨仓任务", "WARN", f"对账不可用: {type(exc).__name__}: {exc}")
         for req in data.get("requirements") or []:

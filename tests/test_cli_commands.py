@@ -115,6 +115,39 @@ def test_cli_update_dry_run_on_initialized_project():
         assert "dummy-digest" in res.stdout
 
 
+def test_cli_solution_check_dangling_ac_exits_1():
+    """#50：悬空 AC 默认即 FAIL、exit 1（本仓 CI 唯一可见点，不是采纳仓的门）。"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        member = root / "web"
+        member.mkdir()
+        env = {"GIT_AUTHOR_NAME": "a", "GIT_AUTHOR_EMAIL": "a@b",
+               "GIT_COMMITTER_NAME": "a", "GIT_COMMITTER_EMAIL": "a@b"}
+        subprocess.run(["git", "init", "-q"], cwd=member, check=True, env={**os.environ, **env})
+        (member / "app.txt").write_text("app\n", encoding="utf-8")
+        subprocess.run(["git", "add", "app.txt"], cwd=member, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=member, check=True,
+                       env={**os.environ, **env})
+        (root / "atlas.solution.yaml").write_text(
+            "version: 1\nsolution: demo\nmode: federated\nmembers:\n"
+            "  - name: web\n    path: web\n    assets: member\n"
+            "contracts: []\nrequirements:\n"
+            "  - id: REQ-001\n    acs: AC-DEMO-999\n    member: web\n"
+            "    task_slug: req-001\n    scope: 实现 demo\n"
+            "    cross_repo_e2e: none\n",
+            encoding="utf-8",
+        )
+        prd = root / "product" / "prd" / "solution-prd.md"
+        prd.parent.mkdir(parents=True)
+        prd.write_text(
+            "# solution\n\n| AC ID | 场景 | 回指规则 |\n|---|---|---|\n"
+            "| AC-DEMO-001 | Given | DEMO-R-001 |\n", encoding="utf-8")
+        res = run_cmd(["node", str(ATLAS_BIN), "solution", "check"], cwd=root)
+        assert res.returncode == 1, res.stdout + res.stderr
+        assert "AC-DEMO-999" in res.stdout
+        assert "AC 定义行缺失" in res.stdout
+
+
 def test_cli_apply_prints_guidance_and_exits_2():
     res = run_cmd(["node", str(ATLAS_BIN), "apply"])
     assert res.returncode == 2

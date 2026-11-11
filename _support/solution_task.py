@@ -144,8 +144,12 @@ def _ensure_context(member: Path, task_dir: Path, rel: str) -> None:
                             f"{(c.stderr or c.stdout)[-300:]}")
 
 
+def _ac_prd(root: Path, assets_root: str) -> Path:
+    return Path(root) / assets_root / "prd" / "solution-prd.md"
+
+
 def _ac_defs(root: Path, assets_root: str) -> set[str]:
-    prd = Path(root) / assets_root / "prd" / "solution-prd.md"
+    prd = _ac_prd(root, assets_root)
     if not prd.is_file():
         return set()
     defs: set[str] = set()
@@ -154,6 +158,82 @@ def _ac_defs(root: Path, assets_root: str) -> set[str]:
         if m:
             defs.add(m.group(1))
     return defs
+
+
+def _finding(code: str, level: str, detail: str, requirement: str = "",
+             member: str = "", ac: str = "") -> dict:
+    return {"code": code, "level": level, "detail": detail,
+            "requirement": requirement, "member": member, "ac": ac}
+
+
+def ac_source_status(root: Path, data: dict, assets_root: str | None = None) -> dict:
+    """AC 定义源 ⇔ requirements[].acs 的共用判据（`task_status` 与 `check_solution` 同源）。
+
+    运行期只有一个空集 guard：`defs` 为空时无法区分「PRD 缺失 / 路径不匹配 /
+    零定义 / 写法不是表格」，因此四者共用一个 `ac_source_unavailable` 出口，
+    绝不把全部 AC 判悬空。
+    """
+    root = Path(root).resolve()
+    assets_root = assets_root if assets_root is not None else _assets_root(root)
+    prd = _ac_prd(root, assets_root)
+    defs = _ac_defs(root, assets_root)
+    refs = [(req, ac) for req in data.get("requirements") or []
+            for ac in req.get("acs") or []]
+    if not refs:
+        return {"state": "ok", "prd": str(prd), "findings": []}
+    if not defs:
+        return {"state": "source_unavailable", "prd": str(prd), "findings": [
+            _finding("ac_source_unavailable", "FAIL",
+                     f"AC 定义源不可用：{prd} 缺失、零定义或路径不匹配；"
+                     "拒绝按悬空处理，请先修 PRD 或 assets_root"),
+        ]}
+    findings = [
+        _finding("ac_missing", "FAIL",
+                 f"{req['id']}/{req['member']}: AC 定义行缺失 {ac}（PRD={prd}）",
+                 req["id"], req["member"], ac)
+        for req, ac in refs if ac not in defs
+    ]
+    return {"state": "dangling" if findings else "ok",
+            "prd": str(prd), "findings": findings}
+
+
+def task_findings(root: Path, data: dict, requirement: str | None = None) -> list[dict]:
+    """跨仓任务对账的唯一产出（结构化）；两个入口只做渲染。"""
+    root = Path(root).resolve()
+    by_name = {m["name"]: m for m in data["members"]}
+    reqs = data.get("requirements") or []
+    findings: list[dict] = []
+    if requirement:
+        reqs = [r for r in reqs if r["id"] == requirement]
+        if not reqs:
+            findings.append(_finding(
+                "requirement_missing", "WARN", f"requirement 不存在: {requirement}"))
+    source = ac_source_status(root, data)
+    by_req: dict[str, list[dict]] = {}
+    for f in source["findings"]:
+        by_req.setdefault(f["requirement"], []).append(f)
+    for req in reqs:
+        member = (root / by_name[req["member"]]["path"]).resolve()
+        found = find_task(member, data["solution"], req["id"], req["member"]) \
+            if member.is_dir() else None
+        pointer_ok = bool(found and (found[0] / "solution.md").is_file())
+        context_ok = bool(found and _context_ok(found[0]))
+        if not found:
+            findings.append(_finding(
+                "task_missing", "WARN", f"{req['id']}/{req['member']}: 成员任务缺失",
+                req["id"], req["member"]))
+        elif not pointer_ok:
+            findings.append(_finding(
+                "pointer_missing", "WARN", f"{req['id']}/{req['member']}: solution.md 缺失",
+                req["id"], req["member"]))
+        elif not context_ok:
+            findings.append(_finding(
+                "context_missing", "WARN",
+                f"{req['id']}/{req['member']}: implement/check context 指针缺失",
+                req["id"], req["member"]))
+        findings.extend(by_req.get(req["id"], []))
+    findings.extend(by_req.get("", []))
+    return findings
 
 
 def _pointer(root: Path, member: Path, data: dict, req: dict, assets_root: str) -> str:
@@ -321,35 +401,26 @@ def create_tasks(root: Path, data: dict, requirement: str,
 def task_status(root: Path, data: dict, requirement: str | None = None) -> dict:
     root = Path(root).resolve()
     assets_root = _assets_root(root)
+    source = ac_source_status(root, data, assets_root)
     defs = _ac_defs(root, assets_root)
     by_name = {m["name"]: m for m in data["members"]}
     reqs = data.get("requirements") or []
-    warnings: list[str] = []
     if requirement:
         reqs = [r for r in reqs if r["id"] == requirement]
-        if not reqs:
-            warnings.append(f"requirement 不存在: {requirement}")
     rows = []
     for req in reqs:
         member = (root / by_name[req["member"]]["path"]).resolve()
         found = find_task(member, data["solution"], req["id"], req["member"]) \
             if member.is_dir() else None
-        ac_missing = [ac for ac in req["acs"] if ac not in defs]
+        ac_missing = [] if source["state"] == "source_unavailable" else \
+            [ac for ac in req["acs"] if ac not in defs]
         pointer_ok = bool(found and (found[0] / "solution.md").is_file())
         context_ok = bool(found and _context_ok(found[0]))
-        row = {"requirement": req["id"], "member": req["member"],
-               "task": str(found[0]) if found else None,
-               "acs": req["acs"], "ac_missing": ac_missing,
-               "pointer": pointer_ok, "context": context_ok}
-        rows.append(row)
-        if not found:
-            warnings.append(f"{req['id']}/{req['member']}: 成员任务缺失")
-        elif not pointer_ok:
-            warnings.append(f"{req['id']}/{req['member']}: solution.md 缺失")
-        elif not context_ok:
-            warnings.append(f"{req['id']}/{req['member']}: implement/check context 指针缺失")
-        if ac_missing:
-            warnings.append(f"{req['id']}: AC 定义行缺失 {ac_missing}")
+        rows.append({"requirement": req["id"], "member": req["member"],
+                     "task": str(found[0]) if found else None,
+                     "acs": req["acs"], "ac_missing": ac_missing,
+                     "pointer": pointer_ok, "context": context_ok})
+    warnings = [f["detail"] for f in task_findings(root, data, requirement)]
     return {"requirements": rows, "warnings": warnings, "ok": not warnings}
 
 

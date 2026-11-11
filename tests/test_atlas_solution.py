@@ -467,3 +467,192 @@ def test_manifest_rejects_contracts_bogus(tmp_path: Path) -> None:
     )
     with pytest.raises(core.SolutionError, match="contracts"):
         core.load_manifest(tmp_path)
+
+
+# ---------------------------------------------------------------- #50 悬空 AC 门禁（批次 1）
+
+def load_task_core():
+    path = PKG_ROOT / "_support" / "solution_task.py"
+    spec = importlib.util.spec_from_file_location("_atlas_solution_task_test", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+task_core = load_task_core()
+
+PRD_AC = (
+    "# solution\n\n| AC ID | 场景 | 回指规则 |\n|---|---|---|\n"
+    "| AC-DEMO-001 | Given / When / Then | DEMO-R-001 |\n"
+)
+
+AC_REQ = {"id": "REQ-001", "acs": ["AC-DEMO-001"], "member": "web",
+          "task_slug": "req-001", "scope": "实现 demo", "cross_repo_e2e": "none"}
+
+
+def make_ac_solution(tmp_path: Path, acs=("AC-DEMO-001",), prd: str | None = PRD_AC) -> dict:
+    """最小合法夹具：单成员、清单合法、E2E 选择器已显式 none。
+
+    坏输入只会被 #50 的 AC 判据接住，不会先被锁 / URL / 选择器拦下。
+    """
+    make_repo(tmp_path / "web")
+    core.init_solution(
+        tmp_path, "demo", [("web", "web", "frontend")], install=False,
+        requirements=[dict(AC_REQ, acs=list(acs))],
+    )
+    prd_path = tmp_path / "product" / "prd" / "solution-prd.md"
+    if prd is None:
+        prd_path.unlink()
+    else:
+        prd_path.write_text(prd, encoding="utf-8")
+    return core.load_manifest(tmp_path)
+
+
+def ac_fails(report: dict) -> list[dict]:
+    return [c for c in report["checks"]
+            if c["check"] == "跨仓任务" and c["status"] == "FAIL"]
+
+
+def test_a_dangling_ac_fails_by_default_and_exit_1(tmp_path: Path) -> None:
+    make_ac_solution(tmp_path, acs=("AC-DEMO-001", "AC-DEMO-999"))
+    report = core.check_solution(tmp_path)
+    assert report["overall"] == "FAIL"
+    fails = ac_fails(report)
+    assert any("AC-DEMO-999" in c["detail"] and "AC 定义行缺失" in c["detail"]
+               for c in fails)
+    assert not any("AC 定义源不可用" in c["detail"] for c in fails)
+    res = run_cli(tmp_path, "--root", str(tmp_path), "check")
+    assert res.returncode == 1, res.stdout + res.stderr
+
+
+def test_b_missing_prd_is_source_unavailable_not_dangling(tmp_path: Path) -> None:
+    make_ac_solution(tmp_path, prd=None)
+    report = core.check_solution(tmp_path)
+    assert report["overall"] == "FAIL"
+    detail = "\n".join(c["detail"] for c in ac_fails(report))
+    assert "AC 定义源不可用" in detail
+    assert "AC 定义行缺失" not in detail
+    assert "product/prd/solution-prd.md" in detail
+
+
+def test_c_assets_root_mismatch_is_source_unavailable(tmp_path: Path) -> None:
+    make_ac_solution(tmp_path)
+    (tmp_path / "atlas.config.yaml").write_text(
+        "version: 1\nlayout:\n  assets_root: docs\n", encoding="utf-8")
+    report = core.check_solution(tmp_path)
+    assert report["overall"] == "FAIL"
+    detail = "\n".join(c["detail"] for c in ac_fails(report))
+    assert "AC 定义源不可用" in detail
+    assert "AC 定义行缺失" not in detail
+    assert "docs/prd/solution-prd.md" in detail
+
+
+def test_d_zero_ac_definitions_is_source_unavailable(tmp_path: Path) -> None:
+    make_ac_solution(
+        tmp_path,
+        prd="# solution\n\n| AC ID | 场景 | 回指规则 |\n|---|---|---|\n")
+    report = core.check_solution(tmp_path)
+    assert report["overall"] == "FAIL"
+    detail = "\n".join(c["detail"] for c in ac_fails(report))
+    assert "AC 定义源不可用" in detail
+    assert "AC 定义行缺失" not in detail
+
+
+def test_k_check_and_task_status_share_one_guard(tmp_path: Path) -> None:
+    data = make_ac_solution(tmp_path, prd=None)
+    report = core.check_solution(tmp_path)
+    status = task_core.task_status(tmp_path, data)
+    assert any("AC 定义源不可用" in c["detail"] for c in ac_fails(report))
+    assert any("AC 定义源不可用" in w for w in status["warnings"])
+    assert not any("AC 定义行缺失" in w for w in status["warnings"])
+
+
+def test_r1_backticked_and_padded_ac_rows_pass(tmp_path: Path) -> None:
+    prd = ("# solution\n\n| AC ID | 场景 | 回指规则 |\n|---|---|---|\n"
+           "|  `AC-DEMO-001`  | Given | DEMO-R-001 |\n")
+    make_ac_solution(tmp_path, prd=prd)
+    report = core.check_solution(tmp_path)
+    assert not ac_fails(report)
+    assert run_cli(tmp_path, "--root", str(tmp_path), "check").returncode == 0
+
+
+def seed_member_task(member: Path, requirement: str = "REQ-001") -> None:
+    """造一张与清单对齐的成员任务卡，让 R2 的 PASS 不被既有 task_missing WARN 拉低。"""
+    task = member / ".trellis" / "tasks" / "11-11-req-001"
+    task.mkdir(parents=True)
+    (task / "task.json").write_text(json.dumps({"meta": {
+        "solution": "demo", "requirement": requirement, "member": member.name,
+    }}), encoding="utf-8")
+    (task / "solution.md").write_text("# 跨仓任务指针\n", encoding="utf-8")
+    for kind in ("implement", "check"):
+        (task / f"{kind}.jsonl").write_text(
+            json.dumps({"file": f"{task.name}/solution.md", "reason": "指针"}) + "\n",
+            encoding="utf-8")
+
+
+def test_r2_defined_acs_pass_default_and_strict(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    member = make_repo(tmp_path / "web")
+    (member / "atlas.config.yaml").write_text(
+        "version: 1\nlayout:\n  assets_root: product\n", encoding="utf-8")
+    seed_member_task(member)
+    git(member, "add", "-A")
+    git(member, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "cfg")
+    core.init_solution(
+        tmp_path, "demo",
+        [("web", "web", "frontend", "https://example.com/web.git")],
+        install=False, requirements=[AC_REQ],
+    )
+    (tmp_path / ".atlas").mkdir()
+    (tmp_path / "product" / "prd" / "solution-prd.md").write_text(
+        PRD_AC, encoding="utf-8")
+    e2e_kernel.init(tmp_path)
+    core.write_lock(tmp_path, core.load_manifest(tmp_path))
+    commit_root(tmp_path, core.MANIFEST_NAME, core.LOCK_NAME)
+    assert core.check_solution(tmp_path)["overall"] == "PASS"
+    strict = core.check_solution(tmp_path, strict=True)
+    assert strict["overall"] == "PASS", strict["checks"]
+    assert run_cli(tmp_path, "--root", str(tmp_path), "check", "--strict").returncode == 0
+
+
+def test_r3_missing_task_stays_warn(tmp_path: Path) -> None:
+    make_ac_solution(tmp_path)
+    report = core.check_solution(tmp_path)
+    assert not ac_fails(report)
+    assert report["overall"] != "FAIL"
+    assert any(c["check"] == "跨仓任务" and c["status"] == "WARN"
+               and "成员任务缺失" in c["detail"] for c in report["checks"])
+
+
+def test_r4_skeleton_without_requirements_does_not_trigger(tmp_path: Path) -> None:
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")],
+                       install=False)
+    report = core.check_solution(tmp_path)
+    assert not ac_fails(report)
+    assert any(c["check"] == "solution-prd.md" and c["status"] == "WARN"
+               for c in report["checks"])
+
+
+def test_r5_task_status_warnings_stay_string_list(tmp_path: Path) -> None:
+    data = make_ac_solution(tmp_path, acs=("AC-DEMO-001", "AC-DEMO-999"))
+    status = task_core.task_status(tmp_path, data)
+    assert all(isinstance(w, str) for w in status["warnings"])
+    assert len([w for w in status["warnings"] if "AC-DEMO-999" in w]) == 1
+    assert len([w for w in status["warnings"] if "AC-DEMO-001" in w]) == 0
+
+
+def test_r6_same_finding_appears_once_per_ac(tmp_path: Path) -> None:
+    data = make_ac_solution(
+        tmp_path, acs=("AC-DEMO-001", "AC-DEMO-998", "AC-DEMO-999"))
+    report = core.check_solution(tmp_path)
+    for ac in ("AC-DEMO-998", "AC-DEMO-999"):
+        rows = [c for c in report["checks"] if "AC 定义行缺失" in c["detail"]
+                and ac in c["detail"]]
+        assert len(rows) == 1, rows
+        assert rows[0]["status"] == "FAIL"
+    assert not [c for c in report["checks"]
+                if c["status"] == "WARN" and "AC 定义行缺失" in c["detail"]]
+    warnings = [w for w in task_core.task_status(tmp_path, data)["warnings"]
+                if "AC 定义行缺失" in w]
+    assert len(warnings) == 2
