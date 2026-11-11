@@ -1642,3 +1642,102 @@ def test_b_merge_keeps_null_lock_but_branch_wrote_nonnull_fails(
     assert rows[0]["status"] == "FAIL", rows[0]
     assert "definition_commit_unverifiable" in rows[0]["detail"]
     assert "definition_commit_pending" not in rows[0]["detail"]
+
+
+def _strip_definition(text: str) -> str:
+    return re.sub(r"^definition:\n(?:  .*\n)+", "", text, flags=re.M)
+
+
+def _definition_findings(report: dict) -> list[dict]:
+    return [c for c in report["checks"] if c["check"] == "定义源"]
+
+
+def test_b_definition_missing_with_lock2_fails(tmp_path: Path, monkeypatch) -> None:
+    """RFC §5.2 第 5 条：v2 清单 + 锁 schema 2，definition 缺失 / null ⇒ FAIL。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+
+    manifest = root / core.MANIFEST_NAME
+    stripped = _strip_definition(manifest.read_text(encoding="utf-8"))
+    assert "definition:" not in stripped
+    manifest.write_text(stripped, encoding="utf-8")
+    nulled = stripped.replace("min_atlas: 0.4.0",
+                              "definition: null\nmin_atlas: 0.4.0")
+    lock = _lock_bytes(root)
+    assert lock["schema_version"] == 2
+
+    for text in (stripped, nulled):
+        manifest.write_text(text, encoding="utf-8")
+        rows = _definition_findings(core.check_solution(root))
+        assert len(rows) == 1, rows
+        assert rows[0]["status"] == "FAIL"
+        assert "definition_unbound" in rows[0]["detail"]
+
+
+def test_b_definition_missing_with_lock1_is_not_judged(
+        tmp_path: Path, monkeypatch) -> None:
+    """B-0 兼容：v2 清单 + 锁 schema 1 是合法中间态，不判 `definition_unbound`。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+
+    manifest = root / core.MANIFEST_NAME
+    manifest.write_text(_strip_definition(manifest.read_text(encoding="utf-8")),
+                        encoding="utf-8")
+    lock = _lock_bytes(root)
+    lock["schema_version"] = 1
+    lock["definition"] = None
+    _write_lock_json(root, lock)
+
+    report = core.check_solution(root)
+    assert not any("definition_unbound" in c["detail"] for c in report["checks"])
+
+
+def _refreshed_root(tmp_path: Path, monkeypatch) -> Path:
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+    commit_root(root, core.MANIFEST_NAME, core.CONFIG_NAME, "product")
+    core.write_lock(root, core.load_manifest(root), require_clean=True)
+    commit_root(root, core.LOCK_NAME)
+    assert _lock_bytes(root)["acceptance_cutover"] == "2027-03-31"
+    return root
+
+
+def _cutover_rows(report: dict) -> list[dict]:
+    return [c for c in report["checks"] if c["check"] == "验收切点"]
+
+
+def test_b_acceptance_cutover_manifest_pushed_fails(
+        tmp_path: Path, monkeypatch) -> None:
+    """刷新后手改清单把 cutover 往后推、锁没跟上 ⇒ FAIL。"""
+    root = _refreshed_root(tmp_path, monkeypatch)
+    manifest = root / core.MANIFEST_NAME
+    text = manifest.read_text(encoding="utf-8")
+    manifest.write_text(text.replace("acceptance_cutover: 2027-03-31",
+                                     "acceptance_cutover: 2027-12-31"),
+                        encoding="utf-8")
+
+    rows = _cutover_rows(core.check_solution(root))
+    assert len(rows) == 1, rows
+    assert rows[0]["status"] == "FAIL"
+    assert "acceptance_cutover_mismatch" in rows[0]["detail"]
+    assert "2027-12-31" in rows[0]["detail"]
+
+
+def test_b_acceptance_cutover_lock_only_changed_fails(
+        tmp_path: Path, monkeypatch) -> None:
+    """只改锁、不勾清单 ⇒ 同样 FAIL（反向也判）。"""
+    root = _refreshed_root(tmp_path, monkeypatch)
+    lock = _lock_bytes(root)
+    lock["acceptance_cutover"] = "2027-01-01"
+    _write_lock_json(root, lock)
+
+    rows = _cutover_rows(core.check_solution(root))
+    assert len(rows) == 1, rows
+    assert rows[0]["status"] == "FAIL"
+    assert "acceptance_cutover_mismatch" in rows[0]["detail"]

@@ -1683,6 +1683,28 @@ def _lock_contract(lock: dict | None, cid: str) -> dict | None:
     return None
 
 
+def _check_acceptance_cutover(data: dict, lock: dict | None, add) -> None:
+    """清单 / 锁的 `acceptance_cutover` 一致性（RFC §5.1 重要 5）。
+
+    只在「已首次刷新」（锁 `definition.commit != null`）后判：`init` 首锁刻意不写
+    cutover（写了会被 §5.2 的快速正向误判成已刷新），此时清单有值、锁无值是合法态。
+    刷新后任一侧有值且两侧不等 ⇒ `acceptance_cutover_mismatch` FAIL。
+    """
+    if lock is None or data.get("version") != 2:
+        return
+    locked_def = lock.get("definition")
+    if not (isinstance(locked_def, dict) and locked_def.get("commit")):
+        return
+    manifest_value = data.get("acceptance_cutover")
+    lock_value = lock.get("acceptance_cutover")
+    if manifest_value != lock_value:
+        add("验收切点", "FAIL",
+            f"acceptance_cutover_mismatch: 清单 {manifest_value!r} 与锁 {lock_value!r} "
+            "不一致；手改清单后需重跑 lock --update 并提交锁")
+    elif manifest_value:
+        add("验收切点", "PASS", f"acceptance_cutover={manifest_value}（清单与锁一致）")
+
+
 def _check_definition_lock(root: Path, data: dict, lock: dict | None, add,
                            allow_unverifiable: bool = False) -> None:
     """定义源与 `definition.commit` 的不可回退判据（RFC §1.1.6 / §5.2 第 8 条）。
@@ -1691,9 +1713,17 @@ def _check_definition_lock(root: Path, data: dict, lock: dict | None, add,
     WARN；一旦「已首次刷新」（锁的完整历史里出现过非 null，或锁里
     `acceptance_cutover != null` 快速正向），当前再为 null ⇒ `definition_commit_unverifiable`
     FAIL，不得落 WARN。
+
+    `definition_unbound`（RFC §5.2 第 5 条）：**锁 schema 2 + 清单 v2** 时 `definition`
+    缺失 / 为 null ⇒ FAIL；v2 清单 + 锁 1 是 B-0 的合法中间态，不判。
     """
     definition = data.get("definition")
     if not definition:
+        if (lock is not None and data.get("version") == 2
+                and lock.get("schema_version") == LOCK_SCHEMA_VERSION):
+            add("定义源", "FAIL",
+                "definition_unbound: 清单 v2 且锁 schema_version=2，但 definition 缺失"
+                "或为 null；用 0.3.x 跑 migrate --to 2 补齐 definition，再 lock --update")
         return
     rel = definition["path"]
     add("定义源", "PASS", f"{rel}（domain={definition.get('domain')}）")
@@ -1870,6 +1900,7 @@ def check_solution(root: Path, strict: bool = False,
                 add("锁", level, f"锁中契约已不在清单: {lc.get('id')}")
     _check_definition_lock(root, data, lock, add,
                            allow_unverifiable=allow_unverifiable_chain)
+    _check_acceptance_cutover(data, lock, add)
     # 定义源 PRD 的 prd_schema 档位与证据列（§1.5）：2 立即 FAIL，1 缓冲到 2027-06-30。
     if data.get("definition"):
         rel = data["definition"]["path"]
