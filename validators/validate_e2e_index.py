@@ -935,7 +935,7 @@ def validate(root: Path) -> Result:
     # 表切分仍走同一 `_support`，逐表处理；表头不符的表按未声明跳过。
     declared_ac_dims = collect_e2e_declared_dims(prd_files)
     # RFC-20261105-01（b1）：诊断与 `declared_ac_dims` **无关**——一张好表不得压掉同文件坏表的
-    # 诊断，故本量在三个出口（PASS / WARN / N/A）之外独立计算、共用同一 `note` 拼接。
+    # 诊断，故本量在四个出口（PASS / FAIL / N/A）之外独立计算、共用同一 `note` 拼接。
     dim_header_note = format_unaccepted_dim_note(collect_unaccepted_dim_tables(prd_files))
 
     covered_ac_dims: dict[str, set[str]] = {}
@@ -967,6 +967,7 @@ def validate(root: Path) -> Result:
         for g in grid:
             for acid in split_acs(g["关联AC"]):
                 ac_pages.setdefault(acid, set()).add(g["页面"])
+        ready_acs: list[str] = []
         for dom in sorted(dom_acs):
             pages = dom_pages.get(dom, set())
             if not has_coverage_column and (
@@ -978,6 +979,7 @@ def validate(root: Path) -> Result:
                     continue
                 if not any(page_ready.get(p, False) for p in ac_pages.get(acid, set())):
                     continue
+                ready_acs.append(acid)
                 applicable = declared_ac_dims[acid]
                 actual = covered_ac_dims.get(acid, set())
                 missing = applicable - actual
@@ -988,13 +990,36 @@ def validate(root: Path) -> Result:
             detail_parts.append(f"维度缺口={dim_gaps[:6]}")
         if bad_case_dims:
             detail_parts.append(f"未知维度={bad_case_dims[:4]}")
-        total_declared = len([
+        # 可评测集（2026-11-11 升 FAIL）：声明了适用维度 + 被用例挂靠 + 落在覆盖就绪页。
+        # 等级取最严：有缺口 / 未知维度 ⇒ FAIL（此前 WARN，零成本实测后升档）。
+        declared_acs = [
             ac for dom in dom_acs for ac in dom_acs[dom]
             if ac in declared_ac_dims and ac in covered_ac_set
-            and any(page_ready.get(p, False) for p in ac_pages.get(ac, set()))
-        ])
-        status = "WARN" if (dim_gaps or bad_case_dims) else "PASS"
-        detail = "；".join(detail_parts) if detail_parts else f"{total_declared} 条覆盖就绪 AC 声明维度全量覆盖"
+        ]
+        if dim_gaps or bad_case_dims:
+            status = "FAIL"
+            detail = "；".join(detail_parts)
+        elif not ready_acs:
+            # 休眠态不得读成已覆盖（此前输出「0 条…全量覆盖」= 假绿）。
+            status = "N/A"
+            if declared_acs:
+                # 未就绪面 = 相关域的页面 ∪ AC 挂靠页（域级跳过 / 页级跳过都算「页未就绪」）。
+                scope_pages = {p for ac in declared_acs for p in ac_pages.get(ac, set())}
+                for dom, acs in dom_acs.items():
+                    if any(ac in declared_acs for ac in acs):
+                        scope_pages |= dom_pages.get(dom, set())
+                not_ready = sorted(p for p in scope_pages if not page_ready.get(p, False))
+                reason = "页未就绪，本项未测"
+                if not_ready:
+                    reason += f"（涉及页：{'、'.join(not_ready)}）"
+                else:
+                    reason = "无覆盖就绪页归属，本项未测"
+            else:
+                reason = "无「已声明适用覆盖维度且被用例挂靠」的 AC，本项未测"
+            detail = "；".join(detail_parts + [reason])
+        else:
+            status = "PASS"
+            detail = "；".join(detail_parts + [f"{len(ready_acs)} 条覆盖就绪 AC 声明维度全量覆盖"])
         res.add("AC × 覆盖维度", status, detail + dim_header_note)
 
     # 零证据用例须挂结构类 AC（契约 §8.2；2026-09-25 补，`3509 §B36` + `§B50`）：
@@ -1018,11 +1043,18 @@ def validate(root: Path) -> Result:
             and all(_step_anchor(e) is None and e.lstrip().startswith(EXEMPT_PREFIX)
                     for e in blocks[g["用例ID"]]["expected"])
         ]
-        # 多值口径（RFC-20261111-03 §1.6）：**至少一个** token 属于结构类即可，不要求全部。
-        zero_bad = [f"{g['用例ID']}({g['关联AC']})" for g in zero_evidence
-                    if not any(t in struct_acs for t in split_acs(g["关联AC"]))]
-        res.add("零证据用例须挂结构类 AC", "PASS" if not zero_bad else "FAIL",
-                f"全 initial: 但 AC 非结构类={zero_bad[:8]}")
+        if not zero_evidence:
+            # 空集合不是「全量覆盖」：没有对象时本项未测，不得输出 PASS。
+            res.add("零证据用例须挂结构类 AC", "N/A", "零证据用例 0 条，本项未测")
+        elif not struct_acs:
+            res.add("零证据用例须挂结构类 AC", "N/A",
+                    f"PRD 无「结构类 AC 清单」段，本项未测（零证据用例 {len(zero_evidence)} 条）")
+        else:
+            # 多值口径（RFC-20261111-03 §1.6）：**至少一个** token 属于结构类即可，不要求全部。
+            zero_bad = [f"{g['用例ID']}({g['关联AC']})" for g in zero_evidence
+                        if not any(t in struct_acs for t in split_acs(g["关联AC"]))]
+            res.add("零证据用例须挂结构类 AC", "PASS" if not zero_bad else "FAIL",
+                    f"全 initial: 但 AC 非结构类={zero_bad[:8]}")
 
     # ---- 有意义门 ----
     empty_exp, black_exp, n_assert, intent_bad, intent_short = [], [], [], [], []

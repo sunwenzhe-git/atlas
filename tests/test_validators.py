@@ -1420,7 +1420,7 @@ def test_e2e_index_pass() -> None:
 def test_e2e_index_coverage_dimensions_pass_and_warn() -> None:
     """D130：AC 覆盖维度（C01-C14）缺口校验：
     ① 未在 PRD 声明 4 列时为 N/A；
-    ② 声明适用维度但用例分片未全量覆盖时为 WARN；
+    ② 声明适用维度但用例分片未全量覆盖时为 FAIL（2026-11-11 由 WARN 升档）；
     ③ 用例全量覆盖时为 PASS。
     """
     INDEX_WITH_PAGE = INDEX_GOOD + "\n## 页面\n\n| 页面 | 路由 | 所属域 | 状态 |\n|---|---|---|---|\n| home | / | home | 已实现 |\n"
@@ -1446,12 +1446,12 @@ def test_e2e_index_coverage_dimensions_pass_and_warn() -> None:
             "| `AC-HOME-001` | 首页展示正常 | HOME-R-001 | C01-C02 |\n",
             encoding="utf-8"
         )
-        # 用例只声明 C01（中文邻接写法「C01正常流」须命中——`\b` 对 CJK 不成立）⇒ 缺 C02 ⇒ WARN
+        # 用例只声明 C01（中文邻接写法「C01正常流」须命中——`\b` 对 CJK 不成立）⇒ 缺 C02 ⇒ FAIL
         case_with_c01 = CASE_GOOD.strip()[:-3] + "覆盖维度:\n  - C01正常流\n```\n"
         mk_cases(root, case_with_c01)
         res_warn = ve.validate(root)
         check_warn = next((c for c in res_warn.checks if c["check"] == "AC × 覆盖维度"), None)
-        assert check_warn is not None and check_warn["level"] == "WARN", check_warn
+        assert check_warn is not None and check_warn["level"] == "FAIL", check_warn
         assert "AC-HOME-001缺C02" in check_warn["detail"], check_warn
 
         # 用例同时覆盖 C01 与 C02 => PASS
@@ -1461,12 +1461,12 @@ def test_e2e_index_coverage_dimensions_pass_and_warn() -> None:
         check_pass = next((c for c in res_pass.checks if c["check"] == "AC × 覆盖维度"), None)
         assert check_pass is not None and check_pass["level"] == "PASS", check_pass
 
-        # 词表外的疑似维度写法（C15）⇒ WARN 点名，不静默吸收
+        # 词表外的疑似维度写法（C15）⇒ FAIL 点名，不静默吸收
         case_bad_dim = CASE_GOOD.strip()[:-3] + "覆盖维度:\n  - C01\n  - C02\n  - C15\n```\n"
         mk_cases(root, case_bad_dim)
         res_bad = ve.validate(root)
         check_bad = next((c for c in res_bad.checks if c["check"] == "AC × 覆盖维度"), None)
-        assert check_bad is not None and check_bad["level"] == "WARN", check_bad
+        assert check_bad is not None and check_bad["level"] == "FAIL", check_bad
         assert "未知维度" in check_bad["detail"], check_bad
 
 
@@ -1538,7 +1538,7 @@ def test_e2e_dim_header_located_by_name() -> None:
         for case in golden["e2e_dim_header_cases"]:
             check = check_for(prd(case["header"], "C01-C02"))
             if case["accepted"]:
-                assert check["level"] == "WARN", (case, check)
+                assert check["level"] == "FAIL", (case, check)
                 assert "AC-HOME-001缺C02" in check["detail"], (case, check)
             else:
                 assert check["level"] == "N/A", (case, check)
@@ -1552,7 +1552,7 @@ def test_e2e_dim_header_located_by_name() -> None:
             "| `AC-HOME-001` | 首页展示正常 | HOME-R-001 | C01-C02 |\n"
         )
         check = check_for(mixed)
-        assert check["level"] == "WARN" and "AC-HOME-001缺C02" in check["detail"], check
+        assert check["level"] == "FAIL" and "AC-HOME-001缺C02" in check["detail"], check
         assert "C03" not in check["detail"] and "C04" not in check["detail"], check
 
         mk_cases(root, CASE_GOOD.strip()[:-3] + "覆盖维度:\n  - C01\n  - C02\n```\n")
@@ -1612,7 +1612,7 @@ def test_e2e_dim_header_requires_canonical_first_three_columns() -> None:
         for case in golden["e2e_canonical_header_cases"]:
             check = check_for(prd(table(case["columns"], "C01-C02")))
             if case["accepted"]:
-                assert check["level"] == "WARN", (case, check)
+                assert check["level"] == "FAIL", (case, check)
                 assert "AC-HOME-001缺C02" in check["detail"], (case, check)
             else:
                 assert check["level"] == "N/A", (case, check)
@@ -1623,7 +1623,7 @@ def test_e2e_dim_header_requires_canonical_first_three_columns() -> None:
             table(["AC ID", "场景", "回指规则", "适用覆盖维度"], "C01-C02"),
         )
         check = check_for(mixed)
-        assert check["level"] == "WARN" and "AC-HOME-001缺C02" in check["detail"], check
+        assert check["level"] == "FAIL" and "AC-HOME-001缺C02" in check["detail"], check
         assert "C03" not in check["detail"] and "C04" not in check["detail"], check
 
 
@@ -1752,9 +1752,9 @@ def test_e2e_dim_header_unaccepted_table_is_diagnosed() -> None:
         ), check
         assert re.search(r"AC-[A-Z0-9]+-\d+", check["detail"]) is None, check
 
-        # #8 同 AC 坏表 + 好表缺 C02 ⇒ WARN；基础缺口文案含 AC ID，H-1 只对诊断段断言
+        # #8 同 AC 坏表 + 好表缺 C02 ⇒ FAIL；基础缺口文案含 AC ID，H-1 只对诊断段断言
         check, suspects = run(prd(good("C01-C02"), bad("C03-C04")))
-        assert check["level"] == "WARN" and "AC-HOME-001缺C02" in check["detail"], check
+        assert check["level"] == "FAIL" and "AC-HOME-001缺C02" in check["detail"], check
         assert suspects == [{"file": "home-prd.md", "col": 4,
                              "header": "覆盖维度", "reason": "misspelled_header"}], suspects
         assert re.search(r"AC-[A-Z0-9]+-\d+", check["detail"].split("未采信表=", 1)[1]) is None, check
@@ -1843,7 +1843,7 @@ def test_e2e_dim_header_accepted_has_no_diagnostic() -> None:
                         if "AC × 覆盖维度" in line)
 
         cases = [
-            # #1：合法表有维度、用例只覆盖 C01 ⇒ WARN（缺 C02）
+            # #1：合法表有维度、用例只覆盖 C01 ⇒ FAIL（缺 C02；2026-11-11 由 WARN 升档）
             (prd(table(["AC ID", "场景", "回指规则", "适用覆盖维度"],
                        [AC, "首页展示正常", "HOME-R-001", "C01-C02"])),),
             # #1b：合法表、第 4 格空 ⇒ N/A（合法"无声明"，不是被丢弃）
@@ -1859,7 +1859,7 @@ def test_e2e_dim_header_accepted_has_no_diagnostic() -> None:
         want_detail = ["维度缺口=['AC-HOME-001缺C02']", NA_BASE, PASS_BASE, PASS_BASE]
 
         for (text, *maybe_level), detail_want in zip(cases, want_detail):
-            level = maybe_level[0] if maybe_level else "WARN"
+            level = maybe_level[0] if maybe_level else "FAIL"
             check, suspects = run(text)
             # 断言 A（M190 的直接杀伤面）：合法表不得进 suspects
             assert suspects == [], (text, suspects)
@@ -2561,8 +2561,35 @@ def test_e2e_index_zero_evidence_requires_struct_ac() -> None:
 
     unlisted = _levels_full(all_initial, listing="| `AC-HOME-999` | 另一条 AC |")
     assert unlisted["零证据用例须挂结构类 AC"] == "FAIL", unlisted
-    # 否定对照：非全 `initial:` 的普通用例不受本项约束（即使清单里没有它的 AC）
-    assert _levels_full(CASE_GOOD, listing="| `AC-HOME-999` | 另一条 AC |")["零证据用例须挂结构类 AC"] == "PASS"
+    # 否定对照：非全 `initial:` 的普通用例不产生零证据用例 ⇒ 本项无对象、未测（N/A，不是空集合 PASS）
+    assert _levels_full(CASE_GOOD, listing="| `AC-HOME-999` | 另一条 AC |")["零证据用例须挂结构类 AC"] == "N/A"
+
+
+def test_e2e_index_zero_evidence_without_struct_list_reports_na() -> None:
+    """2026-11-11：无对象 / 无结构类清单时本项未测（N/A），不得报空集合 PASS。"""
+    all_initial = CASE_GOOD.replace(
+        "- text home-title 首页        # 页面标题文案为「首页」",
+        "- initial: text home-title 首页   # 默认渲染态：本用例不产生状态差异")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, all_initial)
+        mk_index(root)
+        mk_prd_raw(
+            root, FM_GLOBAL + PRD_GLOBAL,
+            FM_DOMAIN + "# 演示域 PRD\n\n## 五、验收标准\n\n"
+            "| AC ID | 场景 | 回指规则 |\n|---|---|---|\n"
+            "| `AC-HOME-001` | 见用例 | `DEMO-R-001` |\n")
+        row = next(c for c in ve.validate(root).checks
+                   if c["check"] == "零证据用例须挂结构类 AC")
+        assert row["level"] == "N/A", row
+        assert "结构类 AC 清单" in row["detail"] and "未测" in row["detail"], row
+
+        mk_cases(root, CASE_GOOD)  # 零证据用例 0 条 ⇒ 同样未测，不报空集合 PASS
+        row = next(c for c in ve.validate(root).checks
+                   if c["check"] == "零证据用例须挂结构类 AC")
+        assert row["level"] == "N/A", row
+        assert "0 条" in row["detail"] and "未测" in row["detail"], row
 
 
 def test_prd_struct_ac_list_must_reference_existing_ac() -> None:
@@ -3840,7 +3867,7 @@ def test_index_multi_value_ac_m03_second_ac_dimension_gap_not_silently_skipped()
         mk_index(root, index)
         mk_prd_raw(root, FM_GLOBAL + PRD_GLOBAL, prd)
         row = next(c for c in ve.validate(root).checks if c["check"] == "AC × 覆盖维度")
-        assert row["level"] != "PASS", row
+        assert row["level"] == "FAIL", row
         assert "AC-HOME-002缺C02" in row["detail"], row
 
 
@@ -4048,7 +4075,7 @@ def test_page_table_coverage_ready_vocab_fails() -> None:
 
 
 def test_coverage_dimensions_run_for_coverage_ready_implementing_page() -> None:
-    """issue #49：`实现中` + `覆盖就绪: 是` 的页，AC×覆盖维度门照常对账（缺维度 WARN / 覆盖 PASS）。"""
+    """issue #49：`实现中` + `覆盖就绪: 是` 的页，AC×覆盖维度门照常对账（缺维度 FAIL / 覆盖 PASS）。"""
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         mk_prototype(root)
@@ -4066,7 +4093,7 @@ def test_coverage_dimensions_run_for_coverage_ready_implementing_page() -> None:
         mk_cases(root)
         res_warn = ve.validate(root)
         check_warn = next((c for c in res_warn.checks if c["check"] == "AC × 覆盖维度"), None)
-        assert check_warn is not None and check_warn["level"] == "WARN", check_warn
+        assert check_warn is not None and check_warn["level"] == "FAIL", check_warn
         assert "AC-HOME-001缺C01" in check_warn["detail"], check_warn
 
         case_with_c01 = CASE_GOOD.strip()[:-3] + "覆盖维度:\n  - C01\n```\n"
@@ -4080,7 +4107,7 @@ def _mk_dimension_prd(root: Path) -> None:
     prd_dir = root / "product" / "prd"
     prd_dir.mkdir(parents=True, exist_ok=True)
     (prd_dir / "home-prd.md").write_text(
-        "---\ndomain: home\n---\n\n"
+        "---\ndomain: demo\n---\n\n"
         "## 五、验收标准\n\n"
         "| AC ID | 场景 | 回指规则 | 适用覆盖维度 |\n"
         "|---|---|---|---|\n"
@@ -4089,8 +4116,25 @@ def _mk_dimension_prd(root: Path) -> None:
     )
 
 
+def test_e2e_dimension_check_page_not_ready_reports_na_not_fake_pass() -> None:
+    """页未就绪（page_ready=False）导致整段不跑 ⇒ N/A「页未就绪，本项未测」，不得报「0 条…全量覆盖」。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_index(root, _with_page_table_cov("已实现", "否"))
+        _mk_dimension_prd(root)
+        mk_cases(root)
+        check = next(c for c in ve.validate(root).checks if c["check"] == "AC × 覆盖维度")
+        assert check["level"] == "N/A", check
+        assert "页未就绪，本项未测" in check["detail"], check
+        assert "home" in check["detail"] and "全量覆盖" not in check["detail"], check
+
+
 def test_e2e_dimension_check_preserves_legacy_mixed_domain_skip() -> None:
-    """issue #49：没有第 5 列的旧 4 列表，混合状态域仍按旧行为整域跳过（存量不变）。"""
+    """issue #49：没有第 5 列的旧 4 列表，混合状态域仍按旧行为整域跳过（存量不变）。
+
+    跳过 = 本项未测：输出 N/A + 「页未就绪，本项未测」，不得再报空集合 PASS（2026-11-11）。
+    """
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         mk_prototype(root)
@@ -4099,11 +4143,13 @@ def test_e2e_dimension_check_preserves_legacy_mixed_domain_skip() -> None:
         mk_cases(root)
         res = ve.validate(root)
         check = next((c for c in res.checks if c["check"] == "AC × 覆盖维度"), None)
-        assert check is not None and check["level"] == "PASS", check
+        assert check is not None and check["level"] == "N/A", check
+        assert "页未就绪，本项未测" in check["detail"], check
+        assert "全量覆盖" not in check["detail"], check  # 休眠态不得读成已覆盖
 
 
 def test_e2e_dimension_check_uses_page_ready_in_mixed_domain() -> None:
-    """issue #49：出现第 5 列后，混合域按页级 ready 判——home 就绪即对账（缺维度 WARN）。"""
+    """issue #49：出现第 5 列后，混合域按页级 ready 判——home 就绪即对账（缺维度 FAIL）。"""
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         mk_prototype(root)
@@ -4112,7 +4158,7 @@ def test_e2e_dimension_check_uses_page_ready_in_mixed_domain() -> None:
         mk_cases(root)
         res = ve.validate(root)
         check = next((c for c in res.checks if c["check"] == "AC × 覆盖维度"), None)
-        assert check is not None and check["level"] == "WARN", check
+        assert check is not None and check["level"] == "FAIL", check
         assert "AC-HOME-001缺C01" in check["detail"], check
 
 
@@ -4126,7 +4172,7 @@ def test_e2e_dimension_check_page_level_when_coverage_column_all_dash() -> None:
         mk_cases(root)
         res = ve.validate(root)
         check = next((c for c in res.checks if c["check"] == "AC × 覆盖维度"), None)
-        assert check is not None and check["level"] == "WARN", check
+        assert check is not None and check["level"] == "FAIL", check
 
 
 def test_coverage_ready_second_page_table_is_detected() -> None:
