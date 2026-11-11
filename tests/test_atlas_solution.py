@@ -696,12 +696,12 @@ def check_cli(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_b1_same_requirement_id_across_members_keeps_both_findings(tmp_path: Path) -> None:
-    """B1 + M10 真钉：去重键必须含 `member`；摘掉整块去重也要红。
+    """B1 + 去重真钉：去重键必须含 `member`，`task_findings` 也必须按 `(id, member)` 分组。
 
     同一 id 分属 web / api（无 E2E 选择器），两行引用同一个未定义 AC。正确实现下
-    `check_solution` 恰出 **2 条** FAIL（web、api 各一条）：
-    * 键退回 `(code, requirement, ac)` ⇒ api 那条被吞，只剩 1 条；
-    * 摘掉整块 `seen` ⇒ 两条 requirement 行各把 2 条 finding 全拉一次 = 4 条。
+    `check_solution` 与 `task_status` **都恰出 2 条**（web、api 各一条）：
+    * 键退回 `(code, requirement, ac)` ⇒ api 那条被 check_solution 吞掉，只剩 1 条；
+    * `task_findings` 退回按 requirement 聚合（每行拉该 id 全量 finding）⇒ 2 条变 4 条。
     两者都与这里的 `== 2` 不符，故本条同时是「去重消失即红」的夹具。
     """
     req = (
@@ -727,7 +727,9 @@ def test_b1_same_requirement_id_across_members_keeps_both_findings(tmp_path: Pat
     warnings = [w for w in task_core.task_status(
         tmp_path, core.load_manifest(tmp_path))["warnings"]
         if "AC 定义行缺失" in w and "AC-DEMO-999" in w]
-    assert {w.split(":")[0] for w in warnings} == {"REQ-001/web", "REQ-001/api"}
+    assert len(warnings) == 2, warnings  # 不得靠 set/前缀把重复掩盖掉
+    assert any("REQ-001/web" in w for w in warnings)
+    assert any("REQ-001/api" in w for w in warnings)
 
 
 def test_e1a_duplicate_acs_key_refuses_without_writing(tmp_path: Path) -> None:

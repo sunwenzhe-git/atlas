@@ -209,9 +209,9 @@ def task_findings(root: Path, data: dict, requirement: str | None = None) -> lis
             findings.append(_finding(
                 "requirement_missing", "WARN", f"requirement 不存在: {requirement}"))
     source = ac_source_status(root, data)
-    by_req: dict[str, list[dict]] = {}
+    by_key: dict[tuple[str, str], list[dict]] = {}
     for f in source["findings"]:
-        by_req.setdefault(f["requirement"], []).append(f)
+        by_key.setdefault((f["requirement"], f["member"]), []).append(f)
     for req in reqs:
         member = (root / by_name[req["member"]]["path"]).resolve()
         found = find_task(member, data["solution"], req["id"], req["member"]) \
@@ -231,8 +231,8 @@ def task_findings(root: Path, data: dict, requirement: str | None = None) -> lis
                 "context_missing", "WARN",
                 f"{req['id']}/{req['member']}: implement/check context 指针缺失",
                 req["id"], req["member"]))
-        findings.extend(by_req.get(req["id"], []))
-    findings.extend(by_req.get("", []))
+        findings.extend(by_key.get((req["id"], req["member"]), []))
+    findings.extend(by_key.get(("", ""), []))
     return findings
 
 
