@@ -27,7 +27,7 @@ import re
 import shlex
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit, urlunsplit
 
@@ -37,6 +37,12 @@ CONFIG_NAME = "atlas.config.yaml"
 SCHEMA_VERSION = 1
 # B 批起 v2 清单的首锁升 2（带 definition / acceptance_cutover）；v1 清单的锁仍是 1。
 LOCK_SCHEMA_VERSION = 2
+# PRD front matter 的结构档位（RFC §1.5 / §5.2 第 10 条）：2 起立即要求 Assumptions
+# 证据两列；1 只享受截止日前的 WARN 缓冲。
+PRD_SCHEMA_VERSION = 2
+# `prd_schema: 1` 的证据列缓冲截止日：2027-06-30（含）前 WARN，2027-07-01 起 FAIL。
+EVIDENCE_COLUMNS_DEADLINE = "2027-06-30"
+EVIDENCE_COLUMNS = ("证据状态", "证据指针")
 MODES = ("federated", "unified")
 ASSET_OWNERS = ("member", "solution")
 
@@ -878,11 +884,9 @@ def contract_states(root: Path, data: dict) -> list[dict]:
 
 # ------------------------------------------------------- definition（§1.1 / §5.2）
 
-def _prd_front_matter(path: Path) -> dict[str, str]:
-    """读 PRD 的 YAML front matter（只取标量；不引入 YAML 依赖）。"""
-    if not path.is_file():
-        return {}
-    m = re.match(r"^---\s*\n(.*?)\n---", path.read_text(encoding="utf-8"), re.S)
+def _front_matter_of(text: str) -> dict[str, str]:
+    """解析文本里的 YAML front matter（只取标量；不引入 YAML 依赖）。"""
+    m = re.match(r"^---\s*\n(.*?)\n---", text, re.S)
     if not m:
         return {}
     out: dict[str, str] = {}
@@ -895,6 +899,13 @@ def _prd_front_matter(path: Path) -> dict[str, str]:
     return out
 
 
+def _prd_front_matter(path: Path) -> dict[str, str]:
+    """读 PRD 的 YAML front matter（只取标量；不引入 YAML 依赖）。"""
+    if not path.is_file():
+        return {}
+    return _front_matter_of(path.read_text(encoding="utf-8"))
+
+
 def _positive_int(raw: str, field: str) -> int:
     try:
         value = int(str(raw).strip())
@@ -903,6 +914,64 @@ def _positive_int(raw: str, field: str) -> int:
     if value < 1:
         raise SolutionError(f"{field}_invalid: 必须 ≥ 1（当前: {value}）")
     return value
+
+
+def _assumption_table_header(text: str) -> list[str] | None:
+    """取 `## … Assumptions …` 节内第一张表的表头单元格；无节 / 无表 ⇒ None。"""
+    lines = text.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if re.match(r"^#{2,3}\s.*Assumptions", line):
+            start = i + 1
+            break
+    if start is None:
+        return None
+    for line in lines[start:]:
+        if re.match(r"^#{1,3}\s", line):
+            return None
+        s = line.strip()
+        if s.startswith("|") and s.endswith("|"):
+            return [c.strip() for c in s.strip("|").split("|")]
+    return None
+
+
+def prd_schema_findings(text: str, rel: str, today: date | None = None
+                        ) -> list[tuple[str, str]]:
+    """`prd_schema` 与 Assumptions 证据列的谓词（RFC §1.5 / E-03 / E-08）。
+
+    - `prd_schema: 2`（及以上）：**立即**要求 `证据状态` / `证据指针` 两列，缺列 ⇒ FAIL，
+      不享受缓冲；
+    - `prd_schema: 1`（或未写，按 1）：缺列在 `2027-06-30`（含）前 WARN
+      `evidence_deadline_approaching`，`2027-07-01` 起 FAIL；
+    - 无 Assumptions 表（既有惯例写「无」或开户最小集整节缺席）：没有证据行可挂，
+      不判缺列（C-05/E-05 的「旧四列」只针对存在表头的表）；
+    - 高于工具支持档位 ⇒ FAIL `prd_schema_unsupported`。
+    """
+    fm = _front_matter_of(text)
+    try:
+        schema = _positive_int(fm.get("prd_schema") or 1, "prd_schema")
+    except SolutionError as exc:
+        return [("FAIL", f"{exc}（{rel}）")]
+    if schema > PRD_SCHEMA_VERSION:
+        return [("FAIL", f"prd_schema_unsupported: {rel} 的 prd_schema={schema} "
+                         f"高于工具支持的 {PRD_SCHEMA_VERSION}")]
+    header = _assumption_table_header(text)
+    if header is None:
+        return [("PASS", f"{rel} 未声明 Assumptions 表（无证据行，跳过证据列判据）")]
+    missing = [c for c in EVIDENCE_COLUMNS if c not in header]
+    if not missing:
+        return [("PASS", f"{rel} 的 Assumptions 表含 {' / '.join(EVIDENCE_COLUMNS)}")]
+    columns = " / ".join(missing)
+    if schema >= 2:
+        return [("FAIL", f"evidence_columns_missing: {rel} 的 prd_schema={schema} "
+                         f"立即要求证据两列，缺 {columns}（无缓冲）")]
+    day = date.today() if today is None else today
+    deadline = date.fromisoformat(EVIDENCE_COLUMNS_DEADLINE)
+    if day <= deadline:
+        return [("WARN", f"evidence_deadline_approaching: {rel} 缺 {columns}；"
+                         f"{EVIDENCE_COLUMNS_DEADLINE}（含）前只 WARN，次日 2027-07-01 起 FAIL")]
+    return [("FAIL", f"evidence_columns_missing: {rel} 缺 {columns}；"
+                     f"prd_schema: 1 的缓冲已于 {EVIDENCE_COLUMNS_DEADLINE} 到期")]
 
 
 def _definition_lock_fields(root: Path, definition: dict) -> dict:
@@ -1456,6 +1525,24 @@ def _migrated_manifest_text(text: str, definition: dict | None,
     return "\n".join(out) + ("\n" if text.endswith("\n") else "")
 
 
+def _patch_prd_front_matter(path: Path, additions: dict[str, str]) -> list[str]:
+    """PRD front matter 只补缺（migrate 用）：已有键一律不动，无 front matter 不造。"""
+    if not path.is_file() or not additions:
+        return []
+    text = path.read_text(encoding="utf-8")
+    m = re.match(r"^---\s*\n(.*?)\n---", text, re.S)
+    if m is None:
+        return []
+    fm = _front_matter_of(text)
+    todo = {k: v for k, v in additions.items() if not fm.get(k)}
+    if not todo:
+        return []
+    block = "\n".join(f"{k}: {v}" for k, v in todo.items())
+    path.write_text(text[:m.end(1)] + "\n" + block + text[m.end(1):],
+                    encoding="utf-8")
+    return list(todo)
+
+
 def migrate_manifest(root: Path, to: int = 2,
                      definition_path: str | None = None) -> dict:
     """B-0：清单 v1→v2（只补缺，不覆盖已有字段，不自动 lock）。"""
@@ -1501,8 +1588,13 @@ def migrate_manifest(root: Path, to: int = 2,
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(new_text, encoding="utf-8")
         tmp.replace(path)
+    # PRD front matter 同步补 prd_version / prd_schema（§5.2 第 6/10 条）：
+    # 已有值一律不动；这是 migrate 的第二类「补缺」，与清单分开统计。
+    prd_added = _patch_prd_front_matter(
+        root / definition["path"],
+        {"prd_version": "1", "prd_schema": "1"}) if definition else []
     return {"manifest": str(path), "from": version, "to": 2,
-            "added": added, "changed": changed}
+            "added": added + prd_added, "changed": changed or bool(prd_added)}
 
 
 def card_tracking_commands(root: Path, data: dict) -> list[str]:
@@ -1778,6 +1870,14 @@ def check_solution(root: Path, strict: bool = False,
                 add("锁", level, f"锁中契约已不在清单: {lc.get('id')}")
     _check_definition_lock(root, data, lock, add,
                            allow_unverifiable=allow_unverifiable_chain)
+    # 定义源 PRD 的 prd_schema 档位与证据列（§1.5）：2 立即 FAIL，1 缓冲到 2027-06-30。
+    if data.get("definition"):
+        rel = data["definition"]["path"]
+        prd_file = root / rel
+        if prd_file.is_file():
+            for status, detail in prd_schema_findings(
+                    prd_file.read_text(encoding="utf-8"), rel):
+                add("PRD 证据列", status, detail)
     for c in contracts_now:
         missing = [side for side in ("producer_sha256", "consumer_sha256")
                    if c[side] == "missing"]

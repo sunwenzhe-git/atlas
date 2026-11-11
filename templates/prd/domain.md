@@ -4,6 +4,10 @@ domain: "[必填：domain-slug，如 dubbing-config]"
 domain_name: "[必填：中文名]"
 domain_code: "[必填：ID 前缀，如 DUBBING-CONFIG，用于 FN-/R-/AC- 编号]"
 version: 0.1.0
+# prd_version 是整数身份（递增），不是文档 semver；prd_schema 是结构档位。
+# B 批模板写 1（无证据列）；D 批加 Assumptions 证据列时升 2。
+prd_version: 1
+prd_schema: 1
 date: "[必填：YYYY-MM-DD]"
 status: draft
 depends_on: []

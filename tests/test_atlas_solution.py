@@ -1154,7 +1154,7 @@ def test_b0_migrate_heals_v2_without_definition(tmp_path: Path) -> None:
     (tmp_path / "product" / "prd" / "solution-prd.md").write_text(
         "---\ndomain: solution\n---\n\n# solution\n", encoding="utf-8")
     result = core.migrate_manifest(tmp_path)
-    assert result["added"] == ["definition"]
+    assert result["added"] == ["definition", "prd_version", "prd_schema"]
     assert result["changed"] is True
     loaded = core.load_manifest(tmp_path)
     assert loaded["version"] == 2 and loaded["definition"]["domain"] == "solution"
@@ -1521,7 +1521,11 @@ def _definition_rows(report: dict) -> list[dict]:
 
 def test_b_v13_v16_init_040_writes_v2_with_commit_null_then_pending_warn(
         tmp_path: Path, monkeypatch) -> None:
-    """V-13 + V-16：0.4.0 `init` 写 v2 + definition；首锁 commit=null，check 只 WARN。"""
+    """V-13 + V-16：0.4.0 `init` 写 v2 + definition；首锁 commit=null，check 只 WARN。
+
+    另：模板 `prd_schema: 1` 且 Assumptions 表尚无证据列 ⇒ 按 §1.5 只报
+    `evidence_deadline_approaching` WARN（不是 FAIL），与 V-16 的放行口径一致。
+    """
     stub_reader_version(monkeypatch, tmp_path)
     make_repo(tmp_path / "web")
     core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
