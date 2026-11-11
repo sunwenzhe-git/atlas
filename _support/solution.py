@@ -177,12 +177,15 @@ def _validate_url(raw, field: str) -> str | None:
 def parse_manifest_text(text: str) -> dict:
     """解析 `atlas.solution.yaml` 的受限 YAML 子集。
 
-    支持：顶层标量；`members:` / `contracts:` / `requirements:` 的 `- key: value`
+    支持：顶层标量；`definition:` 一层嵌套（`domain` / `path`，`definition: null`
+    归一为 None）；`members:` / `contracts:` / `requirements:` 的 `- key: value`
     列表（`requirements` 逐行解析 `id / acs / member / task_slug / assignee / scope /
-    case_ids / cross_repo_e2e`）。不支持嵌套列表 / 多行标量。
+    case_ids / cross_repo_e2e`）。不支持嵌套列表 / 多行标量。未知顶层键与未知
+    `definition` 子键均报错，不静默丢弃。
     """
     data: dict = {"members": [], "contracts": [], "requirements": [],
-                  "requirements_present": False, "unknown": []}
+                  "requirements_present": False, "unknown": [],
+                  "definition": None, "acceptance_cutover": None, "min_atlas": None}
     section = None
     cur: dict | None = None
     for raw in text.splitlines():
@@ -195,18 +198,29 @@ def parse_manifest_text(text: str) -> dict:
             if s.endswith(":"):
                 section = s[:-1].strip()
                 cur = None
-                if section == "requirements":
+                if section == "definition":
+                    data["definition"] = {}
+                elif section == "requirements":
                     data["requirements_present"] = True
                 elif section not in ("members", "contracts", "requirements"):
-                    data["unknown"].append(section)
-                    section = "__unknown__"
+                    raise SolutionError(
+                        f"manifest_field_unknown: 清单未知顶层键: {section}")
                 continue
             if ":" not in s:
                 raise SolutionError(f"无法解析清单行: {raw!r}")
             key, val = s.split(":", 1)
             key, val = key.strip(), _scalar(val)
-            if key in ("version", "solution", "mode"):
+            if key in ("version", "solution", "mode", "acceptance_cutover", "min_atlas"):
                 data[key] = val
+            elif key == "definition":
+                if val is not None:
+                    raise SolutionError(
+                        "definition 必须是映射（definition:<换行>  domain/path）或 null")
+                data["definition"] = None
+            elif key == "members":
+                if val not in (None, "[]"):
+                    raise SolutionError("members 必须是列表（空值写 members: []）")
+                data["members"] = []
             elif key == "contracts":
                 if val not in (None, "[]"):
                     raise SolutionError("contracts 必须是列表（空值写 contracts: []）")
@@ -216,11 +230,19 @@ def parse_manifest_text(text: str) -> dict:
                 if val not in (None, "[]"):
                     raise SolutionError("requirements 必须是列表（空值写 requirements: []）")
             else:
-                data["unknown"].append(key)
+                raise SolutionError(f"manifest_field_unknown: 清单未知顶层键: {key}")
             section = None
             cur = None
             continue
-        if section == "__unknown__":
+        if section == "definition":
+            if ":" not in s:
+                raise SolutionError(f"无法解析 definition 行: {raw!r}")
+            key, val = s.split(":", 1)
+            key = key.strip()
+            if key not in ("domain", "path"):
+                raise SolutionError(
+                    f"definition_field_unknown: definition 未知子键: {key}")
+            data["definition"][key] = _scalar(val)
             continue
         if section in ("members", "contracts", "requirements"):
             if s.startswith("- "):
@@ -263,9 +285,35 @@ def load_manifest(root: Path) -> dict:
     return validate_manifest(data, Path(root))
 
 
+def _manifest_version(raw) -> int:
+    """B-0：0.3.x 同时接受 v1 / v2；0.4.0 只接受 v2 的分支属后续批次。"""
+    value = str(raw or "").strip()
+    if value not in ("1", "2"):
+        raise SolutionError(
+            f"manifest_schema_unsupported: 清单 version 必须为 1 或 2（当前: {value or '缺失'}）")
+    return int(value)
+
+
+def _manifest_definition(raw, root: Path) -> dict | None:
+    """`definition` 归一：null ⇒ None；否则只收 domain / path，path 限 B-0 白名单。"""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise SolutionError("definition 必须是映射或 null")
+    domain = str(raw.get("domain") or "").strip()
+    path = str(raw.get("path") or "").strip()
+    if not domain or not path:
+        raise SolutionError("definition.domain / definition.path 都不能为空")
+    expected = f"{_assets_root(Path(root))}/prd/solution-prd.md"
+    if path != expected:
+        raise SolutionError(
+            f"definition_path_unsupported: B-0 只接受 {expected}（当前: {path}）；"
+            "B 批后支持任意 `-prd.md`")
+    return {"domain": domain, "path": path}
+
+
 def validate_manifest(data: dict, root: Path, phase1: bool = True) -> dict:
-    if str(data.get("version", "")).strip() != str(SCHEMA_VERSION):
-        raise SolutionError(f"清单 version 必须为 {SCHEMA_VERSION}")
+    version = _manifest_version(data.get("version"))
     name = _validate_name(data.get("solution"), "solution 名称")
     mode = str(data.get("mode", "")).strip()
     if mode not in MODES:
@@ -411,7 +459,12 @@ def validate_manifest(data: dict, root: Path, phase1: bool = True) -> dict:
             raise SolutionError(f"requirement {rid} 同时出现 case_ids 与 cross_repo_e2e")
 
     return {
-        "version": SCHEMA_VERSION,
+        "version": version,
+        "definition": _manifest_definition(data.get("definition"), root),
+        "acceptance_cutover": (str(data.get("acceptance_cutover")).strip()
+                               if data.get("acceptance_cutover") else None),
+        "min_atlas": (str(data.get("min_atlas")).strip()
+                      if data.get("min_atlas") else None),
         "solution": name.strip(),
         "mode": mode,
         "members": members,
@@ -745,7 +798,30 @@ def lock_payload(root: Path, data: dict) -> dict:
     }
 
 
-def write_lock(root: Path, data: dict) -> Path:
+def _definition_dirty(root: Path, data: dict) -> str:
+    """定义源工作树是否脏（RFC §1.1.6：`git status --porcelain <path>` 非空即脏）。
+
+    只作用于 `lock --update`（`require_clean=True`），不作用于 `init` / `migrate`。
+    非 git 仓 / 无 definition 时不可判，按干净处理（不新增阻塞）。
+    """
+    definition = data.get("definition") or {}
+    rel = str(definition.get("path") or "")
+    if not rel:
+        return ""
+    rc, out, _ = _git(root, "status", "--porcelain", "--", rel)
+    if rc != 0:
+        return ""
+    return out.strip()
+
+
+def write_lock(root: Path, data: dict, require_clean: bool = False) -> Path:
+    if require_clean:
+        dirty = _definition_dirty(root, data)
+        if dirty:
+            first = dirty.splitlines()[0]
+            raise SolutionError(
+                f"定义源工作树不干净（{first}）；先提交 {data['definition']['path']} "
+                "再执行 atlas solution lock --update")
     payload = lock_payload(root, data)
     path = lock_path(root)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -1050,6 +1126,133 @@ def init_solution(root: Path, name: str, members: list[tuple],
     return path
 
 
+def _single_prd_path(root: Path, assets_root: str) -> str:
+    prd_dir = Path(root) / assets_root / "prd"
+    cands = sorted(p.name for p in prd_dir.glob("*-prd.md")) if prd_dir.is_dir() else []
+    if not cands:
+        raise SolutionError(f"未找到域级 PRD（{assets_root}/prd/*-prd.md）；无法补 definition")
+    if len(cands) > 1:
+        raise SolutionError("发现多个域级 PRD，无法确定唯一源：" + "、".join(cands))
+    return f"{assets_root}/prd/{cands[0]}"
+
+
+def _prd_domain(path: Path) -> str:
+    path = Path(path)
+    if not path.is_file():
+        return ""
+    m = re.match(r"^---\s*\n(.*?)\n---", path.read_text(encoding="utf-8"), re.S)
+    if not m:
+        return ""
+    hit = re.search(r"^domain:\s*(.+?)\s*$", m.group(1), re.M)
+    return str(_scalar(hit.group(1)) or "").strip() if hit else ""
+
+
+def _migrated_manifest_text(text: str, definition: dict | None,
+                            scalars: dict[str, str]) -> str:
+    """行级补缺：只在缺字段时插入，已有内容逐行保留（不改注释 / 顺序）。"""
+    block: list[str] = []
+    if definition:
+        block += ["definition:",
+                  f"  domain: {_yaml_value(definition['domain'])}",
+                  f"  path: {definition['path']}"]
+    block += [f"{k}: {v}" for k, v in scalars.items()]
+    out: list[str] = []
+    inserted_at_definition = False
+    skip_children = False
+    for ln in text.splitlines():
+        top = bool(ln) and not ln.startswith((" ", "\t"))
+        if skip_children and not top:
+            continue
+        skip_children = False
+        if top and ln.strip().startswith("version:"):
+            out.append("version: 2")
+            continue
+        if definition and top and (
+            ln.strip() == "definition:" or ln.strip().startswith("definition: null")
+        ):
+            out.extend(block)
+            inserted_at_definition = True
+            skip_children = True
+            continue
+        out.append(ln)
+    if block and not inserted_at_definition:
+        idx = next((i for i, ln in enumerate(out)
+                    if ln.strip().startswith("mode:")
+                    and not ln.startswith((" ", "\t"))), None)
+        if idx is None:
+            out.extend(block)
+        else:
+            out[idx + 1:idx + 1] = block
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
+
+def migrate_manifest(root: Path, to: int = 2,
+                     definition_path: str | None = None) -> dict:
+    """B-0：清单 v1→v2（只补缺，不覆盖已有字段，不自动 lock）。"""
+    root = Path(root).resolve()
+    if to != 2:
+        raise SolutionError("B-0 只支持 --to 2")
+    path = manifest_path(root)
+    if not path.is_file():
+        raise SolutionError(f"缺少 {MANIFEST_NAME}；先执行 atlas solution init/adopt")
+    text = path.read_text(encoding="utf-8")
+    data = parse_manifest_text(text)
+    version = _manifest_version(data.get("version"))
+    default_path = f"{_assets_root(root)}/prd/solution-prd.md"
+    definition = data.get("definition") or None
+    added: list[str] = []
+    if definition is None:
+        chosen = (definition_path or "").strip() or _single_prd_path(root, _assets_root(root))
+        if chosen != default_path:
+            raise SolutionError(
+                f"B-0 只支持 {default_path}；B 批后支持任意 `-prd.md`（当前: {chosen}）；"
+                "未写入任何文件")
+        domain = _prd_domain(root / chosen) or str(data.get("solution") or "").strip()
+        definition = {"domain": domain, "path": chosen}
+        added.append("definition")
+    else:
+        if definition_path and definition_path.strip() != (definition.get("path") or ""):
+            raise SolutionError("清单已有 definition.path；migrate 只补缺，不覆盖已有字段")
+        _manifest_definition(definition, root)
+    scalars: dict[str, str] = {}
+    if not data.get("acceptance_cutover"):
+        scalars["acceptance_cutover"] = "2027-03-31"
+        added.append("acceptance_cutover")
+    if not data.get("min_atlas"):
+        scalars["min_atlas"] = "0.4.0"
+        added.append("min_atlas")
+    new_text = _migrated_manifest_text(
+        text, definition if "definition" in added else None, scalars)
+    changed = new_text != text
+    if changed:
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(new_text, encoding="utf-8")
+        tmp.replace(path)
+    return {"manifest": str(path), "from": version, "to": 2,
+            "added": added, "changed": changed}
+
+
+def card_tracking_commands(root: Path, data: dict) -> list[str]:
+    """`migrate --check-members`：逐成员按实际路径打印卡片 git add -f 命令。"""
+    root = Path(root).resolve()
+    out: list[str] = []
+    for m in data["members"]:
+        base = root / m["path"]
+        tasks = base / ".trellis" / "tasks"
+        cards: list[Path] = []
+        if tasks.is_dir():
+            cards += sorted(p for p in tasks.iterdir() if p.is_dir() and p.name != "archive")
+            archive = tasks / "archive"
+            if archive.is_dir():
+                cards += sorted(p for p in archive.glob("*/*") if p.is_dir())
+        for card in cards:
+            files = [card / n for n in ("prd.md", "solution.md") if (card / n).is_file()]
+            if files:
+                rels = " ".join(p.relative_to(base).as_posix() for p in files)
+                out.append(f"git -C {m['path']} add -f {rels}")
+    return out
+
+
 def detect_members(root: Path) -> list[tuple[str, str, str]]:
     out: list[tuple[str, str, str]] = []
     for child in sorted(Path(root).iterdir()):
@@ -1116,7 +1319,8 @@ def _lock_contract(lock: dict | None, cid: str) -> dict | None:
 
 
 def check_solution(root: Path, strict: bool = False,
-                   allow_dangling_acs: bool = False) -> dict:
+                   allow_dangling_acs: bool = False,
+                   lenient: bool = False) -> dict:
     root = Path(root).resolve()
     data = load_manifest(root)
     results: list[dict] = []
@@ -1150,7 +1354,7 @@ def check_solution(root: Path, strict: bool = False,
                 add("跨仓任务", f["level"], f["detail"])
             if downgraded:
                 add("宽限", "WARN",
-                    "宽限开关已启用：--allow-dangling-acs 将于 0.3.0 移除；"
+                    "宽限开关已启用：--allow-dangling-acs 将于 0.4.0 移除；"
                     "owner=@sunwenzhe；期限=2026-12-31")
         except Exception as exc:  # noqa: BLE001 - 对账不可用要显式出声
             add("跨仓任务", "WARN", f"对账不可用: {type(exc).__name__}: {exc}")
@@ -1239,7 +1443,11 @@ def check_solution(root: Path, strict: bool = False,
         s = member_state(root, m)
         prefix = f"成员 {s['name']}"
         if not s["exists"]:
-            add(prefix, level, f"路径不存在: {s['path']}")
+            if lenient:
+                add(prefix, "SKIP",
+                    f"member_workspace_absent: 路径不存在 {s['path']}（--lenient 跳过）")
+            else:
+                add(prefix, level, f"member_workspace_absent: 路径不存在: {s['path']}")
             continue
         if s["escaped"]:
             add(prefix, level, "成员路径 resolve 后逃逸出 solution 根（symlink？）")
@@ -1506,6 +1714,18 @@ def diff_solution(root: Path) -> dict:
             entry["worktree"] = worktree or []
         members.append(entry)
     return {"solution": data["solution"], "mode": data["mode"], "members": members}
+
+
+def has_apply_seal(root: Path) -> bool:
+    """仓内是否存在封条（`<assets_root>/reviews/apply/**/*.seal.json`，RFC §3.3）。
+
+    有封条 ⇒ 必须严格态；`--lenient` 只允许在尚无封条时使用（只有锁不拒绝，Q-6）。
+    """
+    root = Path(root)
+    base = root / _assets_root(root) / "reviews" / "apply"
+    if not base.is_dir():
+        return False
+    return any(base.rglob("*.seal.json"))
 
 
 def _assets_root(root: Path) -> str:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -944,7 +945,7 @@ def test_g_grace_only_covers_class_a(tmp_path: Path) -> None:
     make_ac_solution(a, acs=("AC-DEMO-001", "AC-DEMO-999"))
     res = run_cli(a, "--root", str(a), "check", "--allow-dangling-acs")
     assert res.returncode == 0, res.stdout + res.stderr
-    assert "0.3.0" in res.stdout and "2026-12-31" in res.stdout
+    assert "0.4.0" in res.stdout and "2026-12-31" in res.stdout
     assert "宽限" in res.stdout
 
     b = tmp_path / "b"
@@ -964,15 +965,311 @@ def test_g_grace_only_covers_class_a(tmp_path: Path) -> None:
 
 def test_m6_grace_flag_is_version_gated(tmp_path: Path) -> None:
     current = json.loads((PKG_ROOT / "package.json").read_text(encoding="utf-8"))["version"]
-    # 1) 基线：当前版本 < 0.3.0 ⇒ flag 必须在
-    assert cli.semver_lt(current, "0.3.0")
+    # 1) 基线：当前版本 < 0.4.0 ⇒ flag 必须在
+    assert cli.semver_lt(current, "0.4.0")
     assert cli._allow_dangling_acs_enabled(current) is True
     assert "--allow-dangling-acs" in check_option_strings(current)
-    # 2) 合成 0.3.0 ⇒ 必须 False，help/选项集合都不得含该 flag（今天就能判红）
-    assert cli._allow_dangling_acs_enabled("0.3.0") is False
-    assert "--allow-dangling-acs" not in check_option_strings("0.3.0")
-    # 3) 真实版本 ≥ 0.3.0 ⇒ 同样不得注册（发版当天自动生效）
-    if not cli.semver_lt(current, "0.3.0"):
+    # 2) 0.3.x（RFC-20261111-03 §2.6 的退役点推迟到 0.4.0）⇒ 仍注册
+    assert cli._allow_dangling_acs_enabled("0.3.0") is True
+    assert "--allow-dangling-acs" in check_option_strings("0.3.0")
+    assert cli._allow_dangling_acs_enabled("0.3.9") is True
+    # 3) 合成 0.4.0 ⇒ 必须 False，help/选项集合都不得含该 flag
+    assert cli._allow_dangling_acs_enabled("0.4.0") is False
+    assert "--allow-dangling-acs" not in check_option_strings("0.4.0")
+    # 4) 真实版本 ≥ 0.4.0 ⇒ 同样不得注册（发版当天自动生效）
+    if not cli.semver_lt(current, "0.4.0"):
         assert "--allow-dangling-acs" not in check_option_strings(current)
-    # 4) 预发布：0.3.0-beta.1 在 semver 下 < 0.3.0 ⇒ 宽限仍可注册
-    assert cli._allow_dangling_acs_enabled("0.3.0-beta.1") is True
+    # 5) 预发布：0.4.0-beta.1 在 semver 下 < 0.4.0 ⇒ 宽限仍可注册
+    assert cli._allow_dangling_acs_enabled("0.4.0-beta.1") is True
+
+
+# ---------------------------------------------------------------- B-0（RFC-20261111-03）
+
+V2_MANIFEST = """\
+version: 2
+solution: demo
+mode: federated
+definition:
+  domain: solution
+  path: product/prd/solution-prd.md
+acceptance_cutover: 2027-03-31
+min_atlas: 0.4.0
+
+members:
+  - name: web
+    path: web
+    assets: member
+    kind: frontend
+"""
+
+
+def test_b0_v2_manifest_roundtrip_keeps_definition_and_scalars(tmp_path: Path) -> None:
+    """D-32：v2 新键进结构，不落 unknown；load_manifest 版本为 2。"""
+    data = core.parse_manifest_text(V2_MANIFEST)
+    assert data["unknown"] == []
+    assert data["definition"] == {"domain": "solution",
+                                  "path": "product/prd/solution-prd.md"}
+    assert data["acceptance_cutover"] == "2027-03-31"
+    assert data["min_atlas"] == "0.4.0"
+
+    (tmp_path / "web").mkdir()
+    (tmp_path / core.MANIFEST_NAME).write_text(V2_MANIFEST, encoding="utf-8")
+    loaded = core.load_manifest(tmp_path)
+    assert loaded["version"] == 2
+    assert loaded["definition"]["path"] == "product/prd/solution-prd.md"
+
+
+def test_b0_definition_null_normalizes_to_none_not_unknown() -> None:
+    """D-33：`definition: null` 经 `_scalar` ⇒ None，不进 unknown。"""
+    data = core.parse_manifest_text(
+        "version: 2\nsolution: demo\nmode: federated\ndefinition: null\nmembers: []\n")
+    assert data["definition"] is None
+    assert data["unknown"] == []
+
+
+def test_b0_unknown_manifest_keys_raise_instead_of_silently_dropped() -> None:
+    """D-32 反面包：未知顶层键 / 未知 definition 子键都不许静默丢弃。"""
+    with pytest.raises(core.SolutionError, match="manifest_field_unknown"):
+        core.parse_manifest_text(
+            "version: 2\nsolution: demo\nmode: federated\nbogus: 1\nmembers: []\n")
+    with pytest.raises(core.SolutionError, match="definition_field_unknown"):
+        core.parse_manifest_text(
+            "version: 2\nsolution: demo\nmode: federated\n"
+            "definition:\n  domain: demo\n  bogus: x\n")
+
+
+def test_b0_version_gate_accepts_1_and_2_rejects_others(tmp_path: Path) -> None:
+    """§5.3：0.3.x 同时接受 v1 / v2；其他值 `manifest_schema_unsupported`。"""
+    (tmp_path / "web").mkdir()
+    for version in (1, 2):
+        (tmp_path / core.MANIFEST_NAME).write_text(
+            f"version: {version}\nsolution: demo\nmode: federated\nmembers:\n"
+            "  - name: web\n    path: web\n    assets: member\n",
+            encoding="utf-8")
+        assert core.load_manifest(tmp_path)["version"] == version
+    (tmp_path / core.MANIFEST_NAME).write_text(
+        "version: 3\nsolution: demo\nmode: federated\nmembers: []\n", encoding="utf-8")
+    with pytest.raises(core.SolutionError, match="manifest_schema_unsupported"):
+        core.load_manifest(tmp_path)
+
+
+def test_b0_migrate_fills_missing_only_and_is_idempotent(tmp_path: Path) -> None:
+    """V-15 / B-0 migrate：只补缺；二次执行零 diff。"""
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
+    path = tmp_path / core.MANIFEST_NAME
+    before = path.read_text(encoding="utf-8")
+    assert "version: 1" in before
+    assert "definition:" not in before
+
+    result = core.migrate_manifest(tmp_path)
+    assert result["from"] == 1 and result["to"] == 2
+    assert result["added"] == ["definition", "acceptance_cutover", "min_atlas"]
+    after = path.read_text(encoding="utf-8")
+    assert re.search(r"^version: 2$", after, re.M)
+    assert "domain: solution" in after
+    assert "path: product/prd/solution-prd.md" in after
+    assert "acceptance_cutover: 2027-03-31" in after
+    assert "min_atlas: 0.4.0" in after
+    # 已有行逐行保留：members 段与注释都不动
+    assert "  - name: web" in after and "    kind: frontend" in after
+
+    again = core.migrate_manifest(tmp_path)
+    assert again["changed"] is False and again["added"] == []
+    assert path.read_text(encoding="utf-8") == after
+
+
+def test_b0_migrate_never_overwrites_existing_values(tmp_path: Path) -> None:
+    """§5.2.7：只补缺，不改已有（含已填的 acceptance_cutover / definition）。"""
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
+    path = tmp_path / core.MANIFEST_NAME
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "mode: federated\n",
+            "mode: federated\nacceptance_cutover: 2099-01-01\n"
+            "definition:\n  domain: custom\n  path: product/prd/solution-prd.md\n"),
+        encoding="utf-8")
+    result = core.migrate_manifest(tmp_path)
+    assert result["added"] == ["min_atlas"]
+    text = path.read_text(encoding="utf-8")
+    assert "acceptance_cutover: 2099-01-01" in text
+    assert "domain: custom" in text
+    assert "min_atlas: 0.4.0" in text
+
+
+def test_b0_migrate_heals_v2_without_definition(tmp_path: Path) -> None:
+    """V-15：v2 清单缺 definition 时 migrate 自愈，且不动已有标量。"""
+    (tmp_path / "web").mkdir()
+    (tmp_path / core.MANIFEST_NAME).write_text(
+        "version: 2\nsolution: demo\nmode: federated\n"
+        "acceptance_cutover: 2027-03-31\nmin_atlas: 0.4.0\n"
+        "members:\n  - name: web\n    path: web\n    assets: member\n",
+        encoding="utf-8")
+    (tmp_path / "product" / "prd").mkdir(parents=True)
+    (tmp_path / "product" / "prd" / "solution-prd.md").write_text(
+        "---\ndomain: solution\n---\n\n# solution\n", encoding="utf-8")
+    result = core.migrate_manifest(tmp_path)
+    assert result["added"] == ["definition"]
+    assert result["changed"] is True
+    loaded = core.load_manifest(tmp_path)
+    assert loaded["version"] == 2 and loaded["definition"]["domain"] == "solution"
+
+
+def test_b0_migrate_rejects_non_default_prd_without_writing(tmp_path: Path) -> None:
+    """V-12：非默认 `-prd.md` ⇒ 拒绝、提示 B 批，且不写任何文件。"""
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
+    prd_dir = tmp_path / "product" / "prd"
+    (prd_dir / "solution-prd.md").rename(prd_dir / "demo-prd.md")
+    path = tmp_path / core.MANIFEST_NAME
+    before = path.read_bytes()
+    with pytest.raises(core.SolutionError, match="B 批后支持任意"):
+        core.migrate_manifest(tmp_path)
+    assert path.read_bytes() == before
+
+
+def test_b0_migrate_lists_candidates_when_multiple_prd(tmp_path: Path) -> None:
+    """§5.2.7：多份 `*-prd.md` 且无 `--definition-path` ⇒ 拒绝并列出候选。"""
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
+    prd_dir = tmp_path / "product" / "prd"
+    (prd_dir / "other-prd.md").write_text("---\ndomain: other\n---\n", encoding="utf-8")
+    path = tmp_path / core.MANIFEST_NAME
+    before = path.read_bytes()
+    with pytest.raises(core.SolutionError, match="多个域级 PRD") as exc:
+        core.migrate_manifest(tmp_path)
+    assert "other-prd.md" in str(exc.value) and "solution-prd.md" in str(exc.value)
+    assert path.read_bytes() == before
+
+
+def test_b0_v07_migrate_keeps_lock_bytes_and_dirty_prd_blocks_lock(tmp_path: Path) -> None:
+    """V-07 加强：migrate 不碰锁字节；PRD 工作树脏时 `lock --update` 非零退出。"""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
+    lock = tmp_path / core.LOCK_NAME
+    assert lock.is_file()
+    before = lock.read_bytes()
+    core.migrate_manifest(tmp_path)
+    assert lock.read_bytes() == before
+
+    res = run_cli(tmp_path, "--root", str(tmp_path), "lock", "--update")
+    assert res.returncode == 2, res.stdout + res.stderr
+    assert "定义源工作树不干净" in (res.stdout + res.stderr)
+
+    # 只提交清单与 PRD 后再 lock：不抛 SolutionError，锁仍是 schema_version 1（B-0）
+    commit_root(tmp_path, core.MANIFEST_NAME, "product/prd/solution-prd.md")
+    res = run_cli(tmp_path, "--root", str(tmp_path), "lock", "--update")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert json.loads(lock.read_text(encoding="utf-8"))["schema_version"] == 1
+
+
+def test_b0_v14_init_writes_v1_then_migrate_reaches_v2(tmp_path: Path) -> None:
+    """V-14：init 一律写 v1（首步断言），migrate 后才出现 v2。"""
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
+    text = (tmp_path / core.MANIFEST_NAME).read_text(encoding="utf-8")
+    assert re.search(r"^version: 1$", text, re.M)
+    assert "definition:" not in text
+    lock = json.loads((tmp_path / core.LOCK_NAME).read_text(encoding="utf-8"))
+    assert lock["schema_version"] == 1
+
+    core.migrate_manifest(tmp_path)
+    assert core.load_manifest(tmp_path)["version"] == 2
+
+
+def test_b0_check_members_prints_active_and_archive_paths(tmp_path: Path) -> None:
+    """I3：`migrate --check-members` 打印解析后的实际路径，active 与 archive 各一条。"""
+    member = make_repo(tmp_path / "web")
+    for rel in (".trellis/tasks/T-001/prd.md", ".trellis/tasks/T-001/solution.md",
+                ".trellis/tasks/archive/2026-10/T-000/prd.md"):
+        target = member / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# card\n", encoding="utf-8")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
+
+    res = run_cli(tmp_path, "--root", str(tmp_path), "migrate", "--check-members")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "git -C web add -f .trellis/tasks/T-001/prd.md .trellis/tasks/T-001/solution.md" \
+        in res.stdout
+    assert ".trellis/tasks/archive/2026-10/T-000/prd.md" in res.stdout
+    assert "git -C web add -f .trellis/tasks/archive/2026-10/T-000/prd.md" in res.stdout
+    # 只读：不写清单
+    manifest = (tmp_path / core.MANIFEST_NAME).read_text(encoding="utf-8")
+    assert re.search(r"^version: 1$", manifest, re.M)
+
+
+def test_b0_u09_lenient_allows_lock_only_clone_and_rejects_seal(tmp_path: Path) -> None:
+    """U-09：只有锁、无成员工作区时 `--lenient` 可用；有封条 ⇒ exit 2。"""
+    import shutil
+
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
+    shutil.rmtree(tmp_path / "web")
+
+    res = run_cli(tmp_path, "--root", str(tmp_path), "check", "--lenient", "--json")
+    assert res.returncode == 0, res.stdout + res.stderr
+    rows = [c for c in json.loads(res.stdout)["checks"]
+            if "member_workspace_absent" in c["detail"]]
+    assert rows and rows[0]["status"] == "SKIP"
+
+    strict = run_cli(tmp_path, "--root", str(tmp_path), "check", "--json")
+    rows = [c for c in json.loads(strict.stdout)["checks"]
+            if "member_workspace_absent" in c["detail"]]
+    assert rows and rows[0]["status"] == "WARN"
+
+    seal_dir = tmp_path / "product" / "reviews" / "apply" / "2026-11"
+    seal_dir.mkdir(parents=True)
+    (seal_dir / "K-001.seal.json").write_text("{}\n", encoding="utf-8")
+    res = run_cli(tmp_path, "--root", str(tmp_path), "check", "--lenient")
+    assert res.returncode == 2
+    assert res.stderr.splitlines()[0] == "[FAIL] --lenient 仅限无封条"
+
+
+def test_b0_v06_install_update_refuses_v1_with_040_package(tmp_path: Path) -> None:
+    """V-06：仓内 v1 + 来包 ≥0.4.0 ⇒ `install --update` 拒绝刷新并打印迁移命令。"""
+    import shutil
+
+    from importlib.util import module_from_spec, spec_from_file_location
+
+    def load_install(version: str):
+        pkg = tmp_path / f"pkg-{version}"
+        pkg.mkdir(exist_ok=True)
+        shutil.copy(PKG_ROOT / "install.py", pkg / "install.py")
+        (pkg / "package.json").write_text(json.dumps({"version": version}),
+                                          encoding="utf-8")
+        spec = spec_from_file_location(f"install_guard_{version.replace('.', '_')}",
+                                       pkg / "install.py")
+        mod = module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    target = tmp_path / "target"
+    (target / "product").mkdir(parents=True)
+    (target / core.MANIFEST_NAME).write_text(
+        "version: 1\nsolution: demo\nmode: federated\nmembers: []\n", encoding="utf-8")
+
+    refuse, reason = load_install("0.4.0").solution_update_guard(str(target))
+    assert refuse is True
+    assert "atlas solution migrate --to 2" in reason
+
+    refuse, _ = load_install("0.4.0-beta.1").solution_update_guard(str(target))
+    assert refuse is False, "预发布 0.4.0-beta.1 在 semver 下 < 0.4.0，不拦"
+
+    refuse, _ = load_install("0.3.0").solution_update_guard(str(target))
+    assert refuse is False
+
+    (target / core.MANIFEST_NAME).write_text(
+        "version: 2\nsolution: demo\nmode: federated\nmembers: []\n", encoding="utf-8")
+    refuse, _ = load_install("0.4.0").solution_update_guard(str(target))
+    assert refuse is False
+
+    (target / core.MANIFEST_NAME).write_text(
+        "version: 9\nsolution: demo\nmode: federated\nmembers: []\n", encoding="utf-8")
+    refuse, reason = load_install("0.4.0").solution_update_guard(str(target))
+    assert refuse is True and "无法识别" in reason
+
+    (target / core.MANIFEST_NAME).unlink()
+    refuse, _ = load_install("0.4.0").solution_update_guard(str(target))
+    assert refuse is False

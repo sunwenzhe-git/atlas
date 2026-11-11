@@ -38,6 +38,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -179,6 +180,63 @@ def layout_validate_visible() -> None:
     run_py([str(PKG / "_support" / "layout.py"), "--root", TARGET, "--validate"])
 
 
+def _semver_key(raw: str):
+    """(major, minor, patch), 是否预发布；不可解析 ⇒ None。"""
+    m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$",
+                 (raw or "").strip())
+    if m is None:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))), bool(m.group(4))
+
+
+def _manifest_schema_version(target: str) -> str | None:
+    path = os.path.join(target, "atlas.solution.yaml")
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            m = re.match(r"^version:\s*(\S+)\s*$", line)
+            if m:
+                return m.group(1)
+    return ""
+
+
+def solution_update_guard(target: str) -> tuple[bool, str]:
+    """RFC-20261111-03 §5.2.7：仓内 v1 清单 + 来包 ≥ 0.4.0 ⇒ 拒绝刷新 `.atlas`。
+
+    0.4.0 加载期对 v1 清单硬拒（`manifest_schema_unsupported`，exit 2）；若先覆盖
+    `.atlas`，仓里就只剩拒绝执行的新工具，`migrate` 也跑不起来。v2 放行；清单
+    `version` 无法识别时同样拒绝（无从判断是否需要先迁移）。
+    """
+    version = _manifest_schema_version(target)
+    if version is None:
+        return False, ""
+    if version not in ("1", "2"):
+        return True, (
+            f"错误：无法识别 {target}/atlas.solution.yaml 的 version={version or '(缺失)'!r}；\n"
+            "      无条件刷新 .atlas 后可能无法加载清单。请先人工确认清单形态。")
+    if version == "2":
+        return False, ""
+    try:
+        with open(os.path.join(str(PKG), "package.json"), encoding="utf-8") as fh:
+            _pkg_version = str(json.load(fh)["version"])
+    except (OSError, ValueError, KeyError):
+        return False, ""
+    key = _semver_key(_pkg_version)
+    if key is None:
+        return False, ""
+    base, prerelease = key
+    at_least_040 = base > (0, 4, 0) or (base == (0, 4, 0) and not prerelease)
+    if not at_least_040:
+        return False, ""
+    return True, (
+        f"错误：仓内 {target}/atlas.solution.yaml 仍是 v1，而来包是 {_pkg_version}（≥ 0.4.0）。\n"
+        "      0.4.0 加载期会对 v1 清单 exit 2（manifest_schema_unsupported）；\n"
+        "      刷新会先覆盖 .atlas，迁移命令随即也跑不起来。\n"
+        "      请先用 0.3.x 执行：atlas solution migrate --to 2\n"
+        "      然后提交清单 → atlas solution lock --update → 提交锁 → 再加 --update 重跑。")
+
+
 def apply_patch_pkg(pkg_dir: Path) -> None:
     name = pkg_dir.name
     if DRY_RUN:
@@ -284,6 +342,13 @@ def main() -> None:
         say(f"错误：目标项目尚未装配 atlas（{TARGET}/.atlas 不存在），无法执行 update。")
         say("      如需首次装配，请执行: atlas init")
         die(1)
+
+    # RFC-20261111-03 §5.2.7：v1 清单 + 来包 ≥0.4.0 时拒绝刷新（先迁移再升级）。
+    if IS_UPDATE:
+        refuse, reason = solution_update_guard(TARGET)
+        if refuse:
+            say(reason)
+            die(1)
 
     if NO_TRELLIS:
         say("提示：--no-trellis：跳过 Trellis 初始化与 .trellis 骨架。")

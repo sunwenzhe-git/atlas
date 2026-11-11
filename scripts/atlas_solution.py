@@ -6,7 +6,8 @@
   atlas solution adopt [--name <名>] [--member <名>=<路径> ...]
   atlas solution status [--json]
   atlas solution diff [--json]
-  atlas solution check [--strict] [--json]
+  atlas solution check [--strict] [--lenient] [--json]
+  atlas solution migrate --to 2 [--definition-path <路径>] [--check-members]
   atlas solution lock --update [--json]
 
 Phase 1 只做只读整合；unified / 成员代码提交（commit）在 Phase 2。
@@ -121,8 +122,8 @@ def semver_lt(a: str, b: str) -> bool:
 
 
 def _allow_dangling_acs_enabled(version: str) -> bool:
-    """宽限是否仍可注册：`0.3.0` 未发布才允许（`0.3.0-beta.x < 0.3.0`）。"""
-    return semver_lt(version, "0.3.0")
+    """宽限是否仍可注册：`0.4.0` 未发布才允许（`0.4.0-beta.x < 0.4.0`）。"""
+    return semver_lt(version, "0.4.0")
 
 
 def build_parser(version: str | None = None) -> argparse.ArgumentParser:
@@ -164,8 +165,20 @@ def build_parser(version: str | None = None) -> argparse.ArgumentParser:
     if _allow_dangling_acs_enabled(version):
         p_check.add_argument(
             "--allow-dangling-acs", action="store_true",
-            help="临时宽限：只把 A 类悬空 AC 降为 WARN；将于 0.3.0 移除 / "
+            help="临时宽限：只把 A 类悬空 AC 降为 WARN；将于 0.4.0 移除 / "
                  "最迟 2026-12-31；owner=@sunwenzhe")
+    p_check.add_argument(
+        "--lenient", action="store_true",
+        help="开发早期放宽：成员工作区缺席记 SKIP；仓内存在封条时拒绝执行（exit 2）")
+
+    p_migrate = sub.add_parser("migrate", help="清单 v1 → v2（只补缺，不自动 lock）")
+    _add_common(p_migrate)
+    p_migrate.add_argument("--to", type=int, choices=[2], default=None,
+                           help="目标清单 schema 版本（B-0 只支持 2）")
+    p_migrate.add_argument("--definition-path", default=None,
+                           help="定义源路径（B-0 只接受 <assets_root>/prd/solution-prd.md）")
+    p_migrate.add_argument("--check-members", action="store_true",
+                           help="只读：逐成员打印卡片 git add -f 命令（active 与 archive）")
 
     p_lock = sub.add_parser("lock", help="查看或更新契约锁")
     _add_common(p_lock)
@@ -277,9 +290,14 @@ def main(argv: list[str] | None = None) -> int:
             allow = getattr(args, "allow_dangling_acs", False)
             if args.apply and not args.fix_acs:
                 raise core.SolutionError("--apply 只能与 --fix-acs 同用")
+            if args.lenient and core.has_apply_seal(root):
+                # RFC §3.3：有封条必须严格态；拒绝执行靠工具，不靠夹具红。
+                print("[FAIL] --lenient 仅限无封条", file=sys.stderr)
+                return 2
             if not args.fix_acs:
                 data = core.check_solution(root, strict=args.strict,
-                                           allow_dangling_acs=allow)
+                                           allow_dangling_acs=allow,
+                                           lenient=args.lenient)
                 print(json.dumps(data, ensure_ascii=False, indent=2) if args.json
                       else core.render_check(data))
                 return 1 if data["overall"] == "FAIL" else 0
@@ -304,10 +322,39 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             # 写成功不等于门变绿：退出码只由重跑结果决定。
             report = core.check_solution(root, strict=args.strict,
-                                         allow_dangling_acs=allow)
+                                         allow_dangling_acs=allow,
+                                         lenient=args.lenient)
             if not args.json:
                 print(core.render_check(report))
             return 1 if report["overall"] == "FAIL" else 0
+
+        if args.cmd == "migrate":
+            data = core.load_manifest(root)
+            if args.check_members:
+                commands = core.card_tracking_commands(root, data)
+                if args.json:
+                    print(json.dumps({"commands": commands}, ensure_ascii=False, indent=2))
+                elif commands:
+                    print("[CHECK-MEMBERS] 逐成员卡片跟踪命令（只读，不执行）：")
+                    for cmd in commands:
+                        print(f"  {cmd}")
+                else:
+                    print("[CHECK-MEMBERS] 未发现需要跟踪的任务卡")
+                if not args.to:
+                    return 0
+            if not args.to:
+                raise core.SolutionError("migrate 需要 --to 2（或只用 --check-members）")
+            result = core.migrate_manifest(root, to=args.to,
+                                           definition_path=args.definition_path)
+            if args.json:
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            elif not result["changed"]:
+                print(f"[SKIP] {core.MANIFEST_NAME} 已是 v{result['to']}，无缺失字段")
+            else:
+                print(f"[OK] {core.MANIFEST_NAME} v{result['from']} → v{result['to']}；"
+                      f"补: {'、'.join(result['added']) or '无'}")
+                print("     下一步：提交清单 → atlas solution lock --update → 提交锁")
+            return 0
 
         if args.cmd == "lock":
             if not args.update:
@@ -324,7 +371,7 @@ def main(argv: list[str] | None = None) -> int:
                       else f"[OK] {core.LOCK_NAME} 已存在（{lock.get('locked_at')}）")
                 return 0
             data = core.load_manifest(root)
-            path = core.write_lock(root, data)
+            path = core.write_lock(root, data, require_clean=True)
             print(json.dumps({"lock": str(path)}, ensure_ascii=False, indent=2)
                   if args.json else f"[OK] 契约锁已更新: {path}")
             return 0
