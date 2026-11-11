@@ -1287,6 +1287,171 @@ def check_solution(root: Path, strict: bool = False) -> dict:
             "overall": overall, "checks": results, "e2e": e2e_audit}
 
 
+class FixRefused(ValueError):
+    """`--fix-acs` 守卫拒绝 / 写回不安全（CLI exit 1，不是清单 schema 错误）。"""
+
+
+_ACS_LINE = re.compile(r"^(?P<prefix>\s*acs:)(?P<value>.*)$")
+_ACS_SEP = re.compile(r"([,、，])")
+
+
+def _split_acs_core(core: str) -> tuple[list[str], list[str]]:
+    parts = _ACS_SEP.split(core)
+    tokens = parts[0::2]
+    seps = parts[1::2] + [""]
+    return tokens, seps
+
+
+def _acs_token_set(core: str) -> set[str]:
+    return {tok.strip() for tok in _split_acs_core(core)[0] if tok.strip()}
+
+
+def _rebuild_acs_core(core: str, drop: set[str]) -> str:
+    tokens, seps = _split_acs_core(core)
+    kept = [i for i, tok in enumerate(tokens)
+            if tok.strip() and tok.strip() not in drop]
+    out: list[str] = []
+    for n, i in enumerate(kept):
+        out.append(tokens[i])
+        if n < len(kept) - 1:
+            out.append(seps[i])
+    return "".join(out)
+
+
+def _acs_blocks(lines: list[str]) -> list[dict]:
+    """按 `requirements:` 段扫描 `  - id:` 块；只取定位所需信息，不做 YAML 解析。"""
+    blocks: list[dict] = []
+    in_req = False
+    block: dict | None = None
+    for idx, raw in enumerate(lines):
+        noeol = raw.rstrip("\r\n")
+        if re.match(r"^requirements:\s*$", noeol):
+            in_req, block = True, None
+            continue
+        if not in_req:
+            continue
+        if re.match(r"^\S", noeol):
+            in_req, block = False, None
+            continue
+        m = re.match(r"^  - id:\s*([^#\s]+)\s*$", noeol)
+        if m:
+            block = {"id": m.group(1), "acs": [], "member": None}
+            blocks.append(block)
+            continue
+        if block is None:
+            continue
+        if noeol.startswith("    acs:") and _ACS_LINE.match(noeol):
+            block["acs"].append(idx)
+        mm = re.match(r"^    member:\s*(\S+)\s*$", noeol)
+        if mm:
+            block["member"] = mm.group(1)
+    return blocks
+
+
+def _locate_acs_line(block: dict, req: dict, lines: list[str]) -> tuple[int, str, str]:
+    """返回 (行号, 去掉前导空白的 core, 前导空白)；无法唯一定位即拒绝。"""
+    if len(block["acs"]) != 1:
+        raise FixRefused(
+            f"requirement={req['id']}：原始文本中 `acs:` 行出现 {len(block['acs'])} 次，"
+            "无法唯一定位；不修复、不半写。请手工改成单行 `acs:`")
+    idx = block["acs"][0]
+    body = strip_inline_comment(lines[idx].rstrip("\r\n"))
+    m = _ACS_LINE.match(body)
+    if m is None:
+        raise FixRefused(f"requirement={req['id']}：`acs:` 行无法解析（第 {idx + 1} 行）")
+    core = m.group("value")
+    lead = core[:len(core) - len(core.lstrip())]
+    core = core[len(lead):]
+    tokens = [t.strip() for t in _split_acs_core(core)[0] if t.strip()]
+    if tokens != req["acs"]:
+        raise FixRefused(
+            f"requirement={req['id']}：`acs:` 行与清单解析结果对不上"
+            f"（行内 {tokens} ≠ 清单 {req['acs']}）；不猜，请人工核对")
+    return idx, core, lead
+
+
+def fix_acs(root: Path, data: dict, apply: bool = False) -> dict:
+    """行级保字节移除悬空 AC（#50）；不重生成清单，不碰其它行。
+
+    守卫顺序：定义源不可用 ⇒ 目标行无法唯一定位 ⇒ 删空某条 requirement。
+    定义源判据与 `check_solution` 同源（`solution_task.ac_source_status`）。
+    """
+    root = Path(root).resolve()
+    task_core = _load_sibling("solution_task", "_atlas_solution_task_fix")
+    assets_root = _assets_root(root)
+    reqs = data.get("requirements") or []
+    if not reqs:
+        return {"apply": apply, "removals": []}
+    source = task_core.ac_source_status(root, data, assets_root)
+    if source["state"] == "source_unavailable":
+        raise FixRefused(source["findings"][0]["detail"])
+    defs = task_core._ac_defs(root, assets_root)
+
+    path = manifest_path(root)
+    lines = path.read_bytes().decode("utf-8").splitlines(keepends=True)
+    blocks = _acs_blocks(lines)
+    by_id: dict[str, list[dict]] = {}
+    for req in reqs:
+        by_id.setdefault(req["id"], []).append(req)
+
+    edits: list[tuple[int, str]] = []
+    removals: list[dict] = []
+    for rid, rows in by_id.items():
+        matched = [b for b in blocks if b["id"] == rid]
+        if len(matched) != 1:
+            raise FixRefused(
+                f"requirement={rid}：清单原始文本中同 id 块出现 {len(matched)} 次，"
+                "无法唯一定位 `acs:` 行；不修复、不半写")
+        req, block = rows[0], matched[0]
+        if block["member"] not in (None, req["member"]):
+            raise FixRefused(
+                f"requirement={rid}：`- id:` 块 member={block['member']!r} 与清单 "
+                f"{req['member']!r} 不一致；不猜，请人工核对")
+        idx, core, lead = _locate_acs_line(block, req, lines)
+        drop = {ac for ac in req["acs"] if ac not in defs}
+        if not drop:
+            continue
+        if not (_acs_token_set(core) - drop):
+            raise FixRefused(
+                f"requirement={rid} 唯一 AC 已悬空；拒绝清空。"
+                "请补 PRD 定义行，或手工删除整条 requirement（工具不代删）")
+        raw = lines[idx]
+        eol = raw[len(raw.rstrip("\r\n")):]
+        body = strip_inline_comment(raw.rstrip("\r\n"))
+        comment = raw.rstrip("\r\n")[len(body):]
+        prefix = _ACS_LINE.match(body).group("prefix")
+        edits.append((idx, prefix + lead + _rebuild_acs_core(core, drop) + comment + eol))
+        for ac in sorted(drop):
+            removals.append({"requirement": rid, "member": req["member"],
+                             "ac": ac, "line": idx + 1})
+
+    result = {"apply": apply, "removals": removals}
+    if not apply or not edits:
+        return result
+
+    new_lines = list(lines)
+    for idx, new in edits:
+        new_lines[idx] = new
+    changed = {idx for idx, _ in edits}
+    original = path.read_bytes()
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as fh:
+            fh.write("".join(new_lines))
+        tmp.replace(path)
+        written = path.read_bytes().decode("utf-8").splitlines(keepends=True)
+        if len(written) != len(lines) or any(
+                a != b for i, (a, b) in enumerate(zip(lines, written))
+                if i not in changed):
+            raise FixRefused("写回后逐字节比对失败，已回滚（非目标行发生变化）")
+    except Exception:
+        path.write_bytes(original)
+        raise
+    finally:
+        tmp.unlink(missing_ok=True)
+    return result
+
+
 def diff_solution(root: Path) -> dict:
     """只读对账：每个成员相对锁的提交、diffstat 与工作区改动。"""
     root = Path(root).resolve()

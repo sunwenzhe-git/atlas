@@ -656,3 +656,188 @@ def test_r6_same_finding_appears_once_per_ac(tmp_path: Path) -> None:
     warnings = [w for w in task_core.task_status(tmp_path, data)["warnings"]
                 if "AC 定义行缺失" in w]
     assert len(warnings) == 2
+
+
+# ---------------------------------------------------------------- #50 --fix-acs（批次 2）
+
+def build_raw_solution(tmp_path: Path, req_text: str, members=("web",),
+                       prd: str | None = PRD_AC) -> Path:
+    for name in members:
+        make_repo(tmp_path / name)
+    text = (
+        "version: 1\nsolution: demo\nmode: federated\nmembers:\n"
+        + "".join(f"  - name: {n}\n    path: {n}\n    assets: member\n" for n in members)
+        + "contracts: []\nrequirements:\n" + req_text
+    )
+    manifest = tmp_path / core.MANIFEST_NAME
+    manifest.write_text(text, encoding="utf-8")
+    prd_path = tmp_path / "product" / "prd" / "solution-prd.md"
+    prd_path.parent.mkdir(parents=True, exist_ok=True)
+    if prd is None:
+        prd_path.unlink(missing_ok=True)
+    else:
+        prd_path.write_text(prd, encoding="utf-8")
+    return manifest
+
+
+REQ_RAW = (
+    "  - id: REQ-001\n"
+    "    scope: 实现 demo   # 自定义键序\n"
+    "    acs: AC-DEMO-001,AC-DEMO-999  # 说明\n"
+    "    member: web\n"
+    "    task_slug: req-001\n"
+    "    cross_repo_e2e: none\n"
+)
+
+
+def check_cli(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return run_cli(tmp_path, "--root", str(tmp_path), "check", *args)
+
+
+def test_e1a_duplicate_acs_key_refuses_without_writing(tmp_path: Path) -> None:
+    req = (
+        "  - id: REQ-001\n"
+        "    acs: AC-DEMO-001,AC-DEMO-999\n"
+        "    acs: AC-DEMO-001,AC-DEMO-999\n"
+        "    member: web\n"
+        "    task_slug: req-001\n"
+        "    scope: 实现 demo\n"
+        "    cross_repo_e2e: none\n"
+    )
+    manifest = build_raw_solution(tmp_path, req)
+    before = manifest.read_bytes()
+    res = check_cli(tmp_path, "--fix-acs", "--apply")
+    assert res.returncode == 1, res.stdout + res.stderr
+    assert "无法唯一定位" in (res.stdout + res.stderr)
+    assert manifest.read_bytes() == before
+
+
+def test_e1b_same_id_on_two_members_refuses_without_writing(tmp_path: Path) -> None:
+    req = (
+        "  - id: REQ-001\n"
+        "    acs: AC-DEMO-001,AC-DEMO-999\n"
+        "    member: web\n"
+        "    task_slug: req-001\n"
+        "    scope: 实现 demo\n"
+        "    cross_repo_e2e: none\n"
+        "  - id: REQ-001\n"
+        "    acs: AC-DEMO-001,AC-DEMO-999\n"
+        "    member: api\n"
+        "    task_slug: req-001-api\n"
+        "    scope: 实现 demo\n"
+    )
+    manifest = build_raw_solution(tmp_path, req, members=("web", "api"))
+    before = manifest.read_bytes()
+    res = check_cli(tmp_path, "--fix-acs", "--apply")
+    assert res.returncode == 1, res.stdout + res.stderr
+    assert "无法唯一定位" in (res.stdout + res.stderr)
+    assert manifest.read_bytes() == before
+
+
+def test_f_fix_acs_preserves_other_bytes_and_comment(tmp_path: Path) -> None:
+    manifest = build_raw_solution(tmp_path, REQ_RAW)
+    before = manifest.read_bytes()
+    res = check_cli(tmp_path, "--fix-acs", "--apply")
+    assert res.returncode == 0, res.stdout + res.stderr
+    after = manifest.read_bytes()
+    old_lines = before.splitlines()
+    new_lines = after.splitlines()
+    changed = [i for i, (a, b) in enumerate(zip(old_lines, new_lines)) if a != b]
+    assert len(changed) == 1, changed
+    assert "    acs: AC-DEMO-001  # 说明".encode() == new_lines[changed[0]]
+    assert after.endswith(b"\n")
+    assert "# 说明".encode() in after  # 行尾注释保留
+    assert b"AC-DEMO-999" not in after
+    # 自定义键序不被重排：scope 仍在 acs 前
+    assert after.index(b"scope:") < after.index(b"acs:")
+
+
+def test_h_ideographic_comma_separator(tmp_path: Path) -> None:
+    req = REQ_RAW.replace("AC-DEMO-001,AC-DEMO-999", "AC-DEMO-001、AC-DEMO-999")
+    manifest = build_raw_solution(tmp_path, req)
+    res = check_cli(tmp_path, "--fix-acs", "--apply")
+    assert res.returncode == 0, res.stdout + res.stderr
+    text = manifest.read_text(encoding="utf-8")
+    assert "acs: AC-DEMO-001  # 说明" in text
+    assert "AC-DEMO-999" not in text
+
+
+def test_h2_fullwidth_comma_separator(tmp_path: Path) -> None:
+    req = REQ_RAW.replace("AC-DEMO-001,AC-DEMO-999", "AC-DEMO-001，AC-DEMO-999")
+    manifest = build_raw_solution(tmp_path, req)
+    res = check_cli(tmp_path, "--fix-acs", "--apply")
+    assert res.returncode == 0, res.stdout + res.stderr
+    text = manifest.read_text(encoding="utf-8")
+    assert "acs: AC-DEMO-001  # 说明" in text
+    assert "AC-DEMO-999" not in text
+
+
+def test_i_last_token_refuses_and_keeps_bytes(tmp_path: Path) -> None:
+    req = (
+        "  - id: REQ-001\n"
+        "    acs: AC-DEMO-999  # 说明\n"
+        "    member: web\n"
+        "    task_slug: req-001\n"
+        "    scope: 实现 demo\n"
+        "    cross_repo_e2e: none\n"
+    )
+    manifest = build_raw_solution(tmp_path, req)
+    before = manifest.read_bytes()
+    res = check_cli(tmp_path, "--fix-acs", "--apply")
+    assert res.returncode == 1, res.stdout + res.stderr
+    assert "拒绝清空" in (res.stdout + res.stderr)
+    assert "手工删除整条 requirement" in (res.stdout + res.stderr)
+    assert manifest.read_bytes() == before
+
+
+def test_j_write_success_but_gate_still_red_exits_1(tmp_path: Path) -> None:
+    req = REQ_RAW + (
+        "  - id: REQ-002\n"
+        "    acs: AC-DEMO-001\n"
+        "    member: web\n"
+        "    task_slug: req-002\n"
+        "    scope: 另一条需求\n"
+    )
+    manifest = build_raw_solution(tmp_path, req)
+    res = check_cli(tmp_path, "--fix-acs", "--apply")
+    assert res.returncode == 1, res.stdout + res.stderr
+    assert "AC-DEMO-999" not in manifest.read_text(encoding="utf-8")
+
+
+def test_r7_flow_and_block_lists_exit_2(tmp_path: Path) -> None:
+    flow = REQ_RAW.replace("AC-DEMO-001,AC-DEMO-999",
+                           "[AC-DEMO-001, AC-DEMO-999]")
+    build_raw_solution(tmp_path, flow)
+    res = check_cli(tmp_path, "--fix-acs", "--apply")
+    assert res.returncode == 2, res.stdout + res.stderr
+
+    other = tmp_path / "block"
+    build_raw_solution(other, (
+        "  - id: REQ-001\n"
+        "    acs:\n"
+        "      - AC-DEMO-001\n"
+        "      - AC-DEMO-999\n"
+        "    member: web\n"
+        "    task_slug: req-001\n"
+        "    scope: 实现 demo\n"
+    ))
+    res = check_cli(other, "--fix-acs", "--apply")
+    assert res.returncode == 2, res.stdout + res.stderr
+
+
+def test_fix_acs_dry_run_writes_nothing(tmp_path: Path) -> None:
+    manifest = build_raw_solution(tmp_path, REQ_RAW)
+    before = manifest.read_bytes()
+    res = check_cli(tmp_path, "--fix-acs")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "[DRY-RUN] REQ-001/AC-DEMO-999 @ line" in res.stdout
+    assert manifest.read_bytes() == before
+
+
+def test_fix_acs_source_unavailable_refuses(tmp_path: Path) -> None:
+    manifest = build_raw_solution(tmp_path, REQ_RAW, prd=None)
+    before = manifest.read_bytes()
+    res = check_cli(tmp_path, "--fix-acs", "--apply")
+    assert res.returncode == 1, res.stdout + res.stderr
+    assert "AC 定义源不可用" in (res.stdout + res.stderr)
+    assert manifest.read_bytes() == before

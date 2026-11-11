@@ -104,6 +104,10 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(p_check)
     p_check.add_argument("--strict", action="store_true",
                          help="锁缺失/未跟踪/漂移/dirty/缺 URL 判 FAIL，并返回非零")
+    p_check.add_argument("--fix-acs", action="store_true",
+                         help="dry-run 列出可移除的悬空 AC（行级保字节，不重生成清单）")
+    p_check.add_argument("--apply", action="store_true",
+                         help="与 --fix-acs 同用：写回后重跑 gate 定退出码")
 
     p_lock = sub.add_parser("lock", help="查看或更新契约锁")
     _add_common(p_lock)
@@ -212,10 +216,37 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.cmd == "check":
-            data = core.check_solution(root, strict=args.strict)
-            print(json.dumps(data, ensure_ascii=False, indent=2) if args.json
-                  else core.render_check(data))
-            return 1 if data["overall"] == "FAIL" else 0
+            if args.apply and not args.fix_acs:
+                raise core.SolutionError("--apply 只能与 --fix-acs 同用")
+            if not args.fix_acs:
+                data = core.check_solution(root, strict=args.strict)
+                print(json.dumps(data, ensure_ascii=False, indent=2) if args.json
+                      else core.render_check(data))
+                return 1 if data["overall"] == "FAIL" else 0
+            try:
+                plan = core.fix_acs(root, core.load_manifest(root), apply=args.apply)
+            except core.FixRefused as exc:
+                print(f"[FAIL] {exc}", file=sys.stderr)
+                return 1
+            if args.json:
+                print(json.dumps(plan, ensure_ascii=False, indent=2))
+            elif not args.apply:
+                for item in plan["removals"]:
+                    print(f"[DRY-RUN] {item['requirement']}/{item['ac']}"
+                          f" @ line {item['line']}")
+                if not plan["removals"]:
+                    print("[OK] 无悬空 AC，无需修复")
+            else:
+                for item in plan["removals"]:
+                    print(f"[REMOVED] {item['requirement']}/{item['ac']}"
+                          f" @ line {item['line']}")
+            if not args.apply:
+                return 0
+            # 写成功不等于门变绿：退出码只由重跑结果决定。
+            report = core.check_solution(root, strict=args.strict)
+            if not args.json:
+                print(core.render_check(report))
+            return 1 if report["overall"] == "FAIL" else 0
 
         if args.cmd == "lock":
             if not args.update:
