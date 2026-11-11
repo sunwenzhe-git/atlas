@@ -29,7 +29,11 @@
 
 | 字段 | 必需 | 语义 |
 |---|---|---|
-| `version` | 是 | 固定 `1` |
+| `version` | 是 | `1`（存量）或 `2`（定义源契约）；`definition` / `acceptance_cutover` / `min_atlas` 仅 v2 |
+| `definition.domain` | v2 | 定义源 PRD 的域；与 PRD front matter `domain` 同源 |
+| `definition.path` | v2 | 定义源 PRD 相对路径，必须指向一份 `*-prd.md` |
+| `acceptance_cutover` | 否 | v2 的验收切点 `YYYY-MM-DD`；`init` 写默认 `2027-03-31`，人可改（本批无 `--cutover` CLI，手改后重跑 `lock --update`） |
+| `min_atlas` | 否 | v2 的最低 Atlas 版本；`init` / `migrate` 写 `0.4.0` |
 | `solution` | 是 | 方案名 |
 | `mode` | 是 | Phase 1 仅 `federated`；`unified` 显式拒绝 |
 | `members[].name` | 是 | 成员标识，solution 内唯一 |
@@ -72,6 +76,7 @@ atlas solution check [--strict]                                     # 默认 WAR
 atlas solution check --fix-acs [--apply]                            # dry-run 列出悬空 AC；--apply 行级保字节写回后重跑 gate
 atlas solution check --lenient                                      # 开发早期放宽：成员工作区缺席记 SKIP（仓内有封条即拒绝执行）
 atlas solution check --allow-dangling-acs                           # 临时宽限：仅 A 类悬空降 WARN（0.4.0 移除 / 最迟 2026-12-31）
+atlas solution check --allow-unverifiable-chain                     # 窄开关：只把「提交对象本地缺失」的 definition_commit_unverifiable 降 WARN
 atlas solution migrate --to 2 [--definition-path <路径>]              # 清单 v1 → v2：只补缺，不自动 lock
 atlas solution migrate --check-members                              # 只读：逐成员打印卡片 git add -f（active 与 archive）
 atlas solution lock --update                                        # 人工刷新锁（拒绝 detached HEAD）
@@ -86,7 +91,7 @@ atlas solution task status [--requirement <REQ>]                     # 只读对
 - `check` 的 manifest schema / 路径逃逸是输入错误（exit 2）；默认模式下成员非 git、缺 Atlas 资产、被 ignore、被跟踪/gitlink、锁漂移、PRD 骨架未补齐 ⇒ WARN。
 - `check --strict` 把以下升为 `FAIL` 并返回 exit 1：锁缺失、锁未被父仓跟踪或与父仓 `HEAD` 不一致、锁↔清单 `url/path` 不一致、成员 dirty 或 dirty 无法判断、缺 URL、成员/契约版本漂移；`requirements[].acs` 引用方案 PRD 中不存在的 AC 定义行**默认即 FAIL**（`--allow-dangling-acs` 只宽限「PRD 定义非空」的 A 类悬空，写死 `0.4.0` / `2026-12-31` / `@sunwenzhe`；PRD 缺失 / 路径不匹配 / 零定义共用空集 guard ⇒ FAIL，不适用宽限）。除 AC 定义行外，其余默认仍为 WARN。采纳仓不跑 `solution check --strict` 就等于没有这道门（最小 CI 样例见 §5.1）。
 - `--lenient` 只放宽「成员工作区缺席」一项（记 `SKIP`，`member_workspace_absent`）；仓内存在任一封条（`<assets_root>/reviews/apply/**/*.seal.json`）即**拒绝执行**（exit 2，首行 `[FAIL] --lenient 仅限无封条`）。只有锁、没有封条时（fresh clone）允许执行。
-- `migrate --to 2` 只补缺（`definition` / `acceptance_cutover` / `min_atlas`），已有字段一律不动，**不自动 `lock`**；B-0 的 `definition.path` 白名单只接受 `<assets_root>/prd/solution-prd.md`，非默认名 ⇒ 拒绝且不写任何文件。`--check-members` 只读打印逐成员卡片的 `git add -f` 命令（含 archive 实际路径）。
+- `migrate --to 2` 只补缺（`definition` / `acceptance_cutover` / `min_atlas`，以及 PRD front matter 的 `prd_version` / `prd_schema`），已有字段一律不动，**不自动 `lock`**；B-0 的 `definition.path` 白名单只接受 `<assets_root>/prd/solution-prd.md`，非默认名 ⇒ 拒绝且不写任何文件。`--check-members` 只读打印逐成员卡片的 `git add -f` 命令（含 archive 实际路径）。
 - `task create` 默认 dry-run，`--apply` 才写成员 `.trellis/tasks`：固定 `--no-start`（不领取）、用 `--meta solution/requirement/member` 做幂等、写 `solution.md` 指针并 `add-context`；不写代码/资产/PRD，不自动 commit。重复/失败显式报告；`--resume`/`--update` 只处理已有任务。
 - `commit` 入口保留给 Phase 2；Phase 1 调用时显式报「未交付」。
 
@@ -104,6 +109,8 @@ atlas solution task status [--requirement <REQ>]                     # 只读对
 
 - `prd.md` 是产品级需求源；`solution-prd.md` 是跨仓域级 PRD，必须按 `templates/prd/domain.md` 完整形态落盘：`domain: solution`、`domain_code: SOLUTION`、`AC-SOLUTION-NNN`（三位）、FN/R/AC、§五三列 AC 表、结构类 AC 清单；`prd.md` §五列出 `solution`，README 追溯行 7 列且计数一致。
 - Phase 1 的 `solution check` 只提示「骨架未补齐」；完整形态由既有 PRD 校验器在用户补齐后验证。
+- PRD front matter 增整数 `prd_version`（身份，递增）与 `prd_schema`（结构档位）；`init` / `migrate` 写 `prd_version: 1`、`prd_schema: 1`，已有值一律不动。
+- `prd_schema: 2` 起 Assumptions 表**立即**要求 `证据状态` / `证据指针` 两列，缺列 ⇒ `evidence_columns_missing` FAIL；`prd_schema: 1` 享缓冲：`2027-06-30`（含）前只报 `evidence_deadline_approaching` WARN，`2027-07-01` 起 FAIL。无 Assumptions 表（写「无」或开户最小集整节缺席）不判缺列。D 批加证据列时把模板升到 2。
 
 ## 5. 跨仓契约锁
 
@@ -115,6 +122,12 @@ atlas solution task status [--requirement <REQ>]                     # 只读对
 - 成员内部改动不改变 solution 根 `git status`；Phase 2 的 baseline/freshness 必须把成员 HEAD + dirty 纳入。
 - URL 安全：只接受 `http/https/ssh/git/file` 或 `user@host:path`；http(s) userinfo、任意形式的密码、token/签名查询参数一律拒绝写入清单与锁（避免凭据落盘）。
 - 父仓只存清单、锁与父级 PRD/骨架；成员代码与成员 Atlas 资产留在成员仓，不迁移（`unified` 属 Phase 2，`import`/`export` 属 Phase 3）。
+- `--allow-unverifiable-chain` 是**窄开关**：只把「锁里声明的 `definition.commit` 提交对象在本地缺失」这一类 `definition_commit_unverifiable` 降为 WARN；不降「已首次刷新后又被改回 null」，也不复用 `--lenient`。
+- 锁版本：v1 清单写 `schema_version: 1`；v2 清单首次 `lock --update` 写 `2`（`LOCK_SCHEMA_VERSION`，以清单 v2 为准，与 `init` 的 `reader_version` 分支在 0.3.x/0.4.0 上等价）。
+- **定义源锁**（v2）：锁 `definition` 记录 `domain / path / prd_version / prd_schema / prd_date / sha256 / blob / commit`；`sha256` 按 CRLF 归一后计算，`blob` 为 `git hash-object` 结果。
+- **`definition.commit` 首刷语义**：`init` 首锁 `commit: null` 合法，`check` 只报 `definition_commit_pending` WARN；`lock --update` 在定义源已入库后写入真实 commit。此后 `commit` 再为 null ⇒ `definition_commit_unverifiable` FAIL，不得落 WARN。判据扫**锁文件的完整历史**（`git log -m --full-history --format=%H HEAD -- atlas.solution.lock.json`），必须同时带 `--full-history` 与 `-m`，否则 merge 会漏掉历史非 null 提交。残余：force-push 抹掉那条提交后主判据也看不见，只剩 `acceptance_cutover != null` 能兜。
+- **`definition_unbound`**：清单 v2 + 锁 `schema_version: 2` 而 `definition` 缺失或为 `null` ⇒ FAIL；v2 清单 + 锁 1 是 B-0 的合法中间态，不判。修复只能在 0.3.x 跑 `migrate --to 2` 补齐。
+- **`acceptance_cutover` 一致性**：`init` 首锁刻意不写 cutover（避免「快速正向」把刚建的仓判成已刷新）；首次 `lock --update` 起清单与锁都写。已刷新后任一侧有值且两侧不等 ⇒ `acceptance_cutover_mismatch` FAIL（该码为本批补的命名）。
 - 风险：成员目录是 untracked。在 solution 根执行 `git clean -ffdx` 会删除整个成员工作区及未提交改动；不要把它当作安全清理命令。
 - 路径安全：`members[].path` 逃逸根目录直接输入错误；成员 symlink 指向根外时，契约文件哈希返回 `missing`，**不读取根外文件**。
 

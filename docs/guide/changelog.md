@@ -9,12 +9,22 @@
 ### 🚦 验收资产契约 B-0（`RFC-20261111-03`）
 
 * **清单 v2 可读可写**：`parse_manifest_text` 支持 `definition:` 一层嵌套（`domain` / `path`）与 `acceptance_cutover` / `min_atlas` 标量；`definition: null` 归一为 `None`，不再落进 `unknown` 被静默跳过；未知顶层键与未知 `definition` 子键一律报错（`manifest_field_unknown` / `definition_field_unknown`）。
-* **版本门 `{1, 2}`**：0.3.x 同时接受 v1 / v2 清单；0.4.0 只接受 v2 的分支随 B 批上线。`init` 一律写 v1，v2 只由 `migrate` 产生。
-* **`atlas solution migrate --to 2`**：只补缺（`definition` / `acceptance_cutover` / `min_atlas`），已有字段一律不动，**不自动 `lock`**；落盘前按 B-0 白名单校验 `definition.path`（只接受 `<assets_root>/prd/solution-prd.md`），非默认名 ⇒ 拒绝且不写任何文件。`--check-members` 只读打印逐成员卡片的 `git add -f` 命令（active 与 archive 的实际路径）。
+* **版本门 `{1, 2}`**：0.3.x 同时接受 v1 / v2 清单；`0.4.0` 只接受 v2 的版本门按 `reader_version` 注入，随 B 批后续提交落地。`init` 按 `reader_version` 分支：`< 0.4.0` 写 v1，`0.4.0` 写 v2 + `definition`；v1 仓的 v2 只由 `migrate` 产生。
+* **`atlas solution migrate --to 2`**：只补缺（`definition` / `acceptance_cutover` / `min_atlas`，以及 PRD front matter 的 `prd_version` / `prd_schema`），已有字段一律不动，**不自动 `lock`**；落盘前按 B-0 白名单校验 `definition.path`（只接受 `<assets_root>/prd/solution-prd.md`），非默认名 ⇒ 拒绝且不写任何文件。`--check-members` 只读打印逐成员卡片的 `git add -f` 命令（active 与 archive 的实际路径）。
 * **`install --update` 拦截**：仓内 v1 清单 + 来包 ≥ 0.4.0 ⇒ 拒绝刷新 `.atlas` 并打印迁移命令，避免覆盖后新工具对 v1 硬拒、迁移命令也跑不起来。
 * **#54 判据放宽**：任务目录 `cases.md`（含 `archive/<month>/` 与成员任务目录）只要出现用例行即报 `task_dir_case_duplicate`，不看 ID 前缀是否 `E2E-*`；0.3.x WARN、0.4.0 起 FAIL。
 * **`--lenient`**：只放宽「成员工作区缺席」（记 `SKIP`）；仓内存在封条即拒绝执行（exit 2）。只有锁、没有封条时可用。
 * **`--allow-dangling-acs` 退役点改为 0.4.0**（谓词 `semver_lt(version, "0.4.0")`）；`0.3.x` 仍注册该开关。
+
+### 🚦 验收资产契约 B 批（`RFC-20261111-03` definition 门 / PRD 档位）
+
+* **`definition.commit` 首刷标记**：0.4.0 `init` 写 v2 + `definition`（`path/domain/prd_version/prd_schema/prd_date/sha256/blob/commit`）；首锁 `commit: null` 只报 `definition_commit_pending` WARN，首次 `lock --update` 后写真实 commit，此后回退为 null ⇒ `definition_commit_unverifiable` FAIL。
+* **完整历史主判据**：首刷判定扫锁文件的 `git log -m --full-history --format=%H HEAD -- atlas.solution.lock.json`；必须同时带 `--full-history` 与 `-m`，否则 merge 会漏掉历史非 null 提交。残余：force-push 抹掉提交后只剩 `acceptance_cutover != null` 兜底。
+* **`--allow-unverifiable-chain`**：窄开关，只把「提交对象本地缺失」这一类 `definition_commit_unverifiable` 降 WARN；不复用 `--lenient`，不降「已刷新后回退为 null」。
+* **`definition_unbound`**：清单 v2 + 锁 `schema_version: 2` 而 `definition` 缺失 / 为 null ⇒ FAIL；v2 清单 + 锁 1 的 B-0 中间态不判。
+* **`acceptance_cutover` 一致性**：首次刷新后清单与锁任一侧有值且不等 ⇒ `acceptance_cutover_mismatch` FAIL（该码为本批补的命名）；`init` 首锁刻意不写 cutover。
+* **PRD 档位**：模板与 `init` / `migrate` 写 `prd_version: 1` / `prd_schema: 1`；`prd_schema: 2` 立即要求 Assumptions「证据状态 / 证据指针」两列（缺 ⇒ `evidence_columns_missing` FAIL），`1` 缓冲到 `2027-06-30`（含前 WARN，`2027-07-01` 起 FAIL）。
+* **具名常量**：`ACCEPTANCE_CUTOVER_DEFAULT = 2027-03-31`、`MIN_ATLAS_FOR_V2 = 0.4.0`，`init` 与 `migrate` 共用；本批不提供 `--cutover` CLI，需手改清单后重跑 `lock --update`。
 
 ### 🚦 方案层 AC 门禁收紧（#50，`RFC-20261111-01`）
 
