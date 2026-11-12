@@ -1,7 +1,7 @@
 # RFC-20261111-03：验收资产契约（#51 / #52 / #53 / #54 / #55 / #59）
 
 - 日期：2026-11-11
-- 状态：**v40 冻结基线（第三十九轮收尾修订；行数 `2357`；基线提交 `411c971`；2026-11-11）**
+- 状态：**v45（终局冻结修订；行数 `2518`；基线提交 `411c971`；2026-11-12）**
 - 冻结约定：**自 v39 起，只有 C 批（封条写侧、续签链、`seal reanchor`、E2E 封条、记录绑定）与 B 批的实现反馈可改本文件**；规则层新增争议一律进 C 批；**B-0 期间不再改本文档**。
 - 基线：`411c971`（A 批已提交；`9cdb1a1` 为 A 批前基线，`package.json` = `0.2.0-beta.33`）
 - 覆盖：GitHub `sunwenzhe-git/atlas` 六个同域 issue
@@ -38,6 +38,10 @@
 > **v37 一句话**：**给 §6 B-0 补一道「完成判据」验收门**——① 五项全绿才算完成（两码同批 + V-20⑥/V-23d；三个纯函数与三个测试文件并登记 `shared/gates.md`；⓪ 层三码；报告 schema v2 出口；既有 B-0 夹具），任一项缺失不得宣告完成；② `internal_error` 作用域写死**仅限 `check` 命令**（其余命令未知异常仍 `[ERROR]` + return 1，无 JSON）；③ 报告 schema v2 补**落地判据**（`schema_version: 2` + 五数组 + 排序键）并定为 **B-0 交付**；④ B-0 文件表逐行标「已落地 / 待实现」，指向实测行号。
 
 > **v38 一句话**：**把完成判据的封闭域补严、把 schema v2 的「五」定义统一**——① 判据第 5 项改为「**文件表所有『待实现』行归零**」（含 `install.py`、P-4 五处、`validate_e2e_index.py` 未落地子项），`install.py` 按实测改为**已落地**（`install.py:222-253`），不再当欠账；② **五数组 = `errors` / `warnings` / `info` / `skipped` / `downgrades`**，排序 `(code, path)`、`downgrades` 按 `(code, scope, path)`，**`not_run[]` 是固定枚举字符串、不参与排序**；③ 去掉「未单列状态一律待实现」的兜底，逐项标状态：`validate_e2e_index.py` 的 `archive` 扫描已落地、其余子项待实现；P-4 的 WARN 项改为 `:2229-2230` 已落地（旧 `:1153` 已过期）。
+
+> **v41 一句话**：**按 v40 冻结约定开 C 批口径修订，补六处规则层空白 + 两处实况校正**——① crosswalk 解析器独立成 `_support/ac_crosswalk.py`（解析 / findings 两类公开入口，D 批交付，C 不 import）；② **卡门只判 `⊆ requirements[].acs`，crosswalk 像整体归 D**；③ 封条 `prd-domain` / `ac-crosswalk` 在 C 批**只按文件存在性做字节绑定、缺席不拒签**；④ 锁内 `requirements_digest` / `waiver_baseline_digest` 补「首次 = 键不存在」、同一序列化器 + golden vector、已写入不得静默改写；⑤ §五-b 契约 AC 最小 schema（六列、`AC-CONTRACT-\d{3}`、`关联AC` 回指 §五）；⑥ 任务卡 Confirmed 证据状态（`verified/assumed/unverified` + 指针，C 批成员侧执行）；并校正 `templates/prd/domain.md` 已是 `prd_schema: 2`、#51 孤儿 AC 明确「只对显式映射对账」。
+
+> **v42 一句话**：**按独立评审收口 v41 的 4 阻断 / 8 重要 / 7 次要**——① 摘要首次判据改为「键不存在**或 `null`**」并写死 `manifest_digest_removed` / `manifest_rollback`（换锁、回滚、升级三路径分开判）；② `crosswalk_findings` 补 `MemberPrdReader` 入参、枚举 `CrosswalkParseError.code`、重复键归 findings；③ `AC-CONTRACT-*` **纳入 `requirements[].acs` 值域**（方案 (a)，E-04 可达）；④ C 批成员 PRD 路径用 `members[].path` + `prd/*-prd.md` glob 全绑，D 批补 `seal_upstream_unbound` 追溯窗；⑤ `waiver_baseline_drift` 移入 C；⑥ Confirmed 降级须 `REVIEW-ID`；⑦ K-17…K-19 改用 K-20…K-22，区间扩到 C-10 / K-22 / E-12；⑧ 文件表、§1.5 编号、历史锚点与 §9 孤儿项一并校正。
 
 ## 0. 返工对照
 
@@ -85,6 +89,9 @@
 | I12 | §4.2 | reason→字段对应表 + 多类同改判定 |
 
 ### 0.4 第四轮返工对照
+
+> **历史表**：本表记录第四轮当时的口径，**以正文为准**；其中「成员 AC 必须是 crosswalk 像」「卡门判 crosswalk 像」已被 v41/v42 改为「卡门只判 `⊆ requirements[].acs`，crosswalk 像归 D」。
+
 
 | 编号 | 第四轮结论 | v5 改法 | 详见 | 反面包 |
 |---|---|---|---|---|
@@ -691,7 +698,7 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 | B-1（阻断） | L1871 的 B-0 夹具期望码在 v1 基座上不可达：**v31 当时的判断是「B-0 锁是 `schema_version: 1`、不含两个根」（§1.1.3 ① / §5.1 / V-10）——该判断已被 v32/B-2 更正为「清单 v2 ⇒ 锁 `schema_version: 2`」，本节保留为历史陈述**；评审实测有效版本 `(1,[])(1,[])(2,['product2'])`、`UH = {'product2'} ⊆ 当前 hist` ⇒ ⓪-3 / ⓪-4 全绿、`check` PASS、无任何码 | 夹具**拆两段**：B-0 只留「c1 → c2 → c3 删除提交被跳过、`versions` 恰两版、不报 `exemption_start_history_broken`」；「删锁 → 改根 → 重建锁 ⇒ 只报 `assets_root_history_rewritten`」**搬到 §6 C 的 S-48①**，并写死**基座必须是 v2 锁且历史版本带旧根**（`schema_version: 2`、`assets_root_history` 含旧根）——否则 `UH` 只剩重建后的根，⓪-3 无判据。落点：**§6 B-0 夹具（L1889）**、**§6 C S-48（L1902）** |
 | B-2（阻断） | T-32③a/③b 四步在 C 批不可执行：0.4.0 不注册 `migrate`（步骤① argparse 未知命令、exit 2）；`migrate` 写清单与 PRD front matter ⇒ 工作树必脏，而 `lock --update` 要求定义源干净；四步在 ① 与 ③ 之间没有提交。v30 的「方案②」（v1 清单首次迁移）不成立 | **退回方案①**：基座改回「**已迁移仓**」（清单 v2、`acceptance_cutover = 2027-03-31` 已提交）+ **无封条**；**二进制版本写死**——① 走 **0.3.x**（唯一注册 `migrate` 的版本）、②–④ 走 **0.4.0**、全程不碰 `migrate --to`；① `migrate --cutover 2027-01-31` 是**覆盖语义**、只改清单、不动 PRD front matter ⇒ 定义源仍干净、**步骤间无需提交**，③ `lock --update` 可过；**立规则**：§5.2 的「只补缺、不改已有」加限定「**显式 `--cutover` 覆盖、不受其约束**」。S-1 前置改成「已迁移 + 无封条」。落点：**§5.2 迁移命令（L1783、L1784）**、**§7 T-32（L2022）**、§6 C 夹具行（L1902） |
 | I-1（重要） | L1465 自相矛盾（`lock_missing` 定义为「HEAD / index 均无、`git log` 返空」，却又写「⓪-1 与 ⓪-2 仍执行（历史仍在 `git log` 里）」）；L1460「本项仍执行——历史里有坏版本照样 `lock_history_unparsable`」在拆分后不可达 | 删掉两处「历史仍在」措辞，改成拆分后的因果：**从未跟踪 ⇒ 三探针全空 ⇒ 没有锁历史 ⇒ ⓪-1 无版本可解析、⓪-2 无 v1 版本可判，两项按判序执行但恒通过**；「仍执行」只表示判序位置，不暗示历史里可能有坏版本。落点：**§3.2 ⓪-1（L1478）**、**§3.2 `lock_missing` 口径（L1483）** |
-| I-2（重要） | 哨兵与第 0 步的先后未写死 + 浅仓 fail-open：`--depth 1` 且删除提交在浅边界外时 `is-shallow=true`、三探针全空 ⇒ 落 `lock_missing`、跳过根断言 | 写死「**在第 0 步之后、⓪-0 之前**」；补**浅仓复核**：调用路径跳过第 0 步（`lock --update` 预检、单测直接调判定函数）时先 `git rev-parse --is-shallow-repository`，为 `true` ⇒ `chain_unverifiable` hard FAIL（`detail.kind = "shallow"`），只有非浅仓才允许 `lock_missing`。落点：**§3.2 ⓪-0 哨兵（L1477）** |
+| I-2（重要） | 哨兵与第 0 步的先后未写死 + 浅仓 fail-open：`--depth 1` 且删除提交在浅边界外时 `is-shallow=true`、三探针全空 ⇒ 落 `lock_missing`、跳过根断言 | 写死「**在第 0 步之后、⓪-0 之前**」；补**浅仓复核**：调用路径跳过第 0 步（`lock --update` 预检、单测直接调判定函数）时先 `git rev-parse --is-shallow-repository`，为 `true` ⇒ `chain_unverifiable` hard FAIL（`detail.kind = "shallow"`），只有非浅仓才允许 `lock_missing`。落点：**§3.2 ⓪-0 哨兵** |
 | I-3（重要） | 「清单 v2 ⇒ 锁写 `schema_version: 2`」不是规则，只是 L968 / L1758 的批次事实；T-32③a 在 v1 锁 + 无封条仓上建键会立刻撞 ⓪-2 `lock_v1_with_seals` | §5.1 立**写侧规则**：`manifest.schema_version == 2` ⇒ 本次 `lock --update` 写出的锁 `schema_version` **必须为 2**，并与 `layout_assets_root` / `assets_root_history[]` 同一次写入；**不得产出 v1 锁**（否则建键即撞 ⓪-2），B-0 的 `migrate` 不写锁故不受影响。落点：**§5.1 锁版本（L986）**、T-32③a 第③步（L2022） |
 | S-1（次要） | 「删掉整份锁 ⇒ `lock_tracked_but_deleted`」会被读成「任何删除提交都报」；「删 → 重建」形态下 HEAD 有锁，哨兵前置不成立 | 两处加限定「**仅当 HEAD 无锁**」；写明「**删 → 重建**不报本码，由 ⓪-3 的 `assets_root_history_rewritten` 承载（只对 v2 旧根历史可达）」。落点：**§3.2 链规则（L1521）**、**§5.2 码表（L1835）** |
 | S-2（次要） | 哨兵短路未进报告形状枚举（只写 ⓪-0 / ⓪-1）；`not_run[]` 未按六段口径规定 | 报告完整性枚举补哨兵；写死「**哨兵短路 ⇒ `not_run[]` 六段全进**、`errors[]` 只含该码」；码表行同步「`not_run[]` 六段全进」。落点：**§3.2 报告完整性（L1597）**、**§5.2 码表（L1835）** |
@@ -748,7 +755,7 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 | 重要 5 | `migrate --anchor-review` 显式给了 review 仍 rc=0 静默丢弃 | 正文单列：显式 review **必须落盘或 exit 2**，不许 rc=0 静默；并入 V-23b | §7 V-23（L2196）、§5.2 第 8 条（L1861） |
 | 次要 1 | L1951「`lock_payload` 只写 `members` / `contracts`」陈旧 | 改成与代码一致的字段列表：`schema_version` / `solution` / `mode` / `locked_at` / `members` / `contracts`（+ `definition`、`acceptance_cutover`、根字段），注明**无** `seal_anchors` / `acceptance_cutover_review` | §6 C（L1972） |
 | 次要 2 | 五步硬编码 `product/`，与 `init --assets-root` 取值失配 | ③ 的 add 改成整仓 `git add -A`，并注明 `product/` 只是 `--assets-root` 的默认值；非默认根同样被 `-A` 覆盖 | §7 T-32 ③（L2098） |
-| 次要 3 | `init --anchor-review` 在 cutover 早于默认时无提示（晚于默认才必填，早于默认给了也无用） | **v34 曾写「不写该键 + 打印 `ignored`」；该写法已被 v35/口径裁定撤销**：显式给了就落盘，不设 `ignored` 第三态（见 §0.34） | §7 V-20⑦（L2193）、§5.2 第 8 条（L1861） |
+| 次要 3 | `init --anchor-review` 在 cutover 早于默认时无提示（晚于默认才必填，早于默认给了也无用） | **v34 曾写「不写该键 + 打印 `ignored`」；该写法已被 v35/口径裁定撤销**：显式给了就落盘，不设 `ignored` 第三态（见 §0.34） | §7 V-20⑦、§5.2 第 8 条（L1861） |
 | 次要 4 | 「任何 exit 2 出口均不产 JSON」只在 `manifest_*` 一处解释 | 写成**通则**（覆盖用法错误、`manifest_schema_unsupported`、`reader_version_unknown` 等构造前出口；`internal_error` 为唯一例外），码表行改为引用通则、不逐条解释 | §5.2 第 13 条（L1883）、码表 `manifest_schema_unsupported`（L1886） |
 
 **v34 自查**：① 全文不再把「今天真能跑」当结论（该短语只作为被否定的引语出现）；T-32③a/③b 明写「产品路径 / 测试路径」两态，测试路径的 `.atlas/VERSION=0.4.0` 只作夹具前置；② `acceptance_cutover_review` 三处写侧在 B-0 文件表可逐行核对，V-23a/b/c 覆盖 round-trip、`migrate --anchor-review` 落盘、锁同值；③ `path_at` 的浅仓 / symlink / tree 三态各有断言，`None` 只表示 `absent`；④ 单源有可执行测试并进 `shared/gates.md`；⑤ ③ 的提交集合与干净口径可复验；⑥ ④ 的 `seal_anchors` 已标 C 批、PASS 不等于 `due` 已评测；⑦ exit 2 通则一处写清。评审点名**不要动**的 B-0 侧（exit 统一、V-10 新期望、`build_lock_versions` 形态与夹具、哨兵 / 互斥夹具、S-48① 搬 C 理由）与「删后原样重建 ⇒ `Ok`」等已闭合项本轮未改。**仍不宣称通过。**
@@ -757,14 +764,14 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 
 | 编号 | 第三十四轮结论（实测） | v35 改法 | 落点（节号 / 行号） |
 |---|---|---|---|
-| 口径裁定 | 三处互斥：L1798「不晚于默认不写（或写 `null`）」、L1861「不写但打印 `ignored`」、L2193⑦「PASS、不写 + ignored」；代码实际**落盘**（`init --cutover 2027-01-31 --anchor-review REVIEW-…` ⇒ rc=0，清单与首锁都有该键、stdout 无 `ignored`） | 定为「**显式给了就落盘，不设 `ignored` 第三态**」；删掉「或写 `null`」「ignored」两处；理由写进正文一句（与已落地写侧一致、与「显式给了必须落盘或报错」一致、不影响 `acceptance_cutover_unreviewed` 只对晚于默认触发） | §1.1.3（L1816）、§5.2 第 8 条（L1879）、§7 V-20⑦（L2212）、§0.33 次要 3 行（L744） |
-| 重要 1 | review 形态校验无落点、无出口、无错误码；`init --anchor-review 坏值` 今天 rc=0 | **写侧**（`init` / `migrate`）坏值 ⇒ 用法错误、exit 2、不写文件；**读侧**坏值 ⇒ 新增 FAIL 码 `acceptance_cutover_review_malformed`、进 `errors[]`、exit 1（不用 exit 2）；码表加行，补 V-23d | §5.2 第 8 条（L1879）、码表（L1910）、§6 B-0 文件表（L1974）、§7 V-23d（L2215） |
-| 重要 2 | V-23 缺两条已实现分支：① `migrate` 已有 review 且新值不同 ⇒ 拒覆盖；② v1 路径显式 `--anchor-review` ⇒ 抛错拒绝 | V-23 补 **e**（已有 review 不同 ⇒ exit 2、不覆盖，与 `--cutover` 同口径）与 **f**（`reader_version < 0.4.0` 下显式 `--anchor-review` ⇒ exit 2、不写文件）；§5.2 第 8 条补「v1 下 `--anchor-review` 同样拒绝」 | §5.2 第 8 条（L1879）、§7 V-23e/f（L2215） |
+| 口径裁定 | 三处互斥：L1798「不晚于默认不写（或写 `null`）」、L1861「不写但打印 `ignored`」、L2193⑦「PASS、不写 + ignored」；代码实际**落盘**（`init --cutover 2027-01-31 --anchor-review REVIEW-…` ⇒ rc=0，清单与首锁都有该键、stdout 无 `ignored`） | 定为「**显式给了就落盘，不设 `ignored` 第三态**」；删掉「或写 `null`」「ignored」两处；理由写进正文一句（与已落地写侧一致、与「显式给了必须落盘或报错」一致、不影响 `acceptance_cutover_unreviewed` 只对晚于默认触发） | §1.1.3（L1816）、§5.2 第 8 条、§7 V-20⑦、§0.33 次要 3 行（L744） |
+| 重要 1 | review 形态校验无落点、无出口、无错误码；`init --anchor-review 坏值` 今天 rc=0 | **写侧**（`init` / `migrate`）坏值 ⇒ 用法错误、exit 2、不写文件；**读侧**坏值 ⇒ 新增 FAIL 码 `acceptance_cutover_review_malformed`、进 `errors[]`、exit 1（不用 exit 2）；码表加行，补 V-23d | §5.2 第 8 条、§5.2 码表、§6 B-0 文件表（L1974）、§7 V-23 |
+| 重要 2 | V-23 缺两条已实现分支：① `migrate` 已有 review 且新值不同 ⇒ 拒覆盖；② v1 路径显式 `--anchor-review` ⇒ 抛错拒绝 | V-23 补 **e**（已有 review 不同 ⇒ exit 2、不覆盖，与 `--cutover` 同口径）与 **f**（`reader_version < 0.4.0` 下显式 `--anchor-review` ⇒ exit 2、不写文件）；§5.2 第 8 条补「v1 下 `--anchor-review` 同样拒绝」 | §5.2 第 8 条、§7 V-23e/f（L2215） |
 | 重要 3 | T-32 的「⇒ PASS」错：五步跑完 `check` rc=0 但 **`overall = WARN`**（E2E 未初始化 / 模板骨架 / 成员无资产） | 三条端点改为「**exit 0 + `errors[]` 为空 + stdout 命中『验收切点：清单与锁一致』**」，并明写「本端点不断言 `overall == PASS`」；④ 恢复同样按此形态 | §7 T-32（L2117） |
 | 重要 4 | T-31 落点错：`scripts/atlas_check.py` 只是聚合巡检器；真正入口 `scripts/atlas_solution.py` 当前是 `[ERROR] …` → `return 1`、不出 JSON | 落点改 `scripts/atlas_solution.py` / `_support/solution.py`；行为仍按原文（exit 2 + 合法 JSON + `not_run[]` 六项），并标注「**规则已定、实现待 B/O 批补齐**」，不写成今天已生效（**v36/次要 4 更正：该实现现已落地，见 §0.35**） | §7 T-31（L2116） |
 | 重要 5 | L1972「`lock_payload` … 没有 `seal_anchors` / `acceptance_cutover_review`」与刚落地代码及 L1955 矛盾；L2236「`cat-file -t` 失败即 `continue`」与 §1.1.3 ⑦ 三态相反 | L1972 改为「没有 `seal_anchors`（C 批才建）；`acceptance_cutover_review` 在 review 非空时写」；L2236 改为引用 ⑦ 的三态判序（`-e` 判对象可读 ⇒ `chain_unverifiable`；`-t` 判形态；`absent` / `non_blob` 分列） | §6 C（L1991）、§8（L2255） |
 | 次要 1 | L1905「exit 2 只有两种…码表里不得再出现第二个 `2`」与码表 `manifest_schema_unsupported` 的 `2` 字面冲突 | 改口径：exit 2 两类 = **用法错误（含 `manifest_*` 等构造前出口）** 与 `internal_error`；`manifest_schema_unsupported` 归入用法错误，不是第三类 | §5.2 第 13 条（L1924） |
-| 次要 2 | 码表 `lock_history_unparsable` 只写「对象在、字节坏」，`non_blob` 算外延扩大 | 该行补「`non_blob`（tree / symlink / gitlink）属本码外延，不是『没有该路径』、不得当 `absent` 跳过」 | 码表（L1906） |
+| 次要 2 | 码表 `lock_history_unparsable` 只写「对象在、字节坏」，`non_blob` 算外延扩大 | 该行补「`non_blob`（tree / symlink / gitlink）属本码外延，不是『没有该路径』、不得当 `absent` 跳过」 | §5.2 码表 |
 | 次要 3 | §8 残余风险的「`cat-file -t` 失败即跳过」与 ⑦ 三态不一致 | 与重要 5 同处修改：引用 ⑦ 三态，不留旧写法 | §8（L2255） |
 
 **v35 自查**：① 全文不再有「ignored」第三态与「不写 / 或写 `null`」分支，三处口径一致为「显式给了就落盘」；② review 坏值的写侧 / 读侧出口分开（exit 2 vs `errors[]`/exit 1），码表与 V-23d 对齐；③ V-23 覆盖 a–f 六条，含 `migrate` 拒覆盖与 v1 拒绝；④ T-32 三条端点与 ④ 恢复都不断言 `overall == PASS`；⑤ T-31 落点改准并标「实现待补」；⑥ `lock_payload` 字段与 §8 三态两处陈旧句已改；⑦ exit 2 两类口径与 `non_blob` 外延已写清。评审点名**不要动**的 review 三写侧、`path_at` 三态映射、五步形式与干净口径、`manifest_*` 无 JSON、十二项回退本轮未改。**仍不宣称通过。**
@@ -822,9 +829,89 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 | 1 | L187 的「B-0 文件表加入…」落点清单仍写 `_support/solution.py:1153`，读起来像现行指令 | 改为 `_support/solution.py:2229-2230`（注明原 `:1153` 已过期），与 §6 P-4 行一致；此后 `1153` 只留在历史摘要与缺陷记录里，不再有权威落点引用 | §0.5 落点清单（L187） |
 | 2 | L2038「分级文案 `:816`」不精确：`:821` 才是 `second_level = "FAIL" if _version_at_least(...) else "WARN"` 的判定行，`:816` 是 `reader_version_unknown` 提示 | 改为「分级判定 `:821`」并注明 `:816` 的含义；证据区间仍为 `:782-823` | §6 B-0 文件表（L2038） |
 
-**v40 自查**：① L187 已无权威性 `:1153` 引用；② L2038 的分级判定行号改为 `:821`、`reader_version_unknown` 提示保留 `:816` 说明；③ 其余内容（含 v39 冻结约定与全部判据）未动，版本号 / 行数按实测更新，冻结基线不变（`411c971`）。
+**v40 自查**：① §0.5 落点清单已无权威性 `:1153` 引用；② §6 B-0 文件表的分级判定行号改为 `:821`、`reader_version_unknown` 提示保留 `:816` 说明；③ 其余内容（含 v39 冻结约定与全部判据）未动，版本号 / 行数按实测更新，冻结基线不变（`411c971`）。
 
-## 1. 域模型（v40）
+### 0.40 C 批口径修订（v41）
+
+| # | 缺口 | v41 改法 | 落点（节号 / 行号） |
+|---|---|---|---|
+| 1 | crosswalk 解析器归属未定，易被塞进 2600+ 行的 `_support/solution.py` | 独立模块 `_support/ac_crosswalk.py`；公开面 `parse_crosswalk`（纯函数）与 `crosswalk_findings`（产 C-01…C-08），路径 helper `resolve_crosswalk_path` 供封条 role 用；调用方 = `check_solution` / `validate_ac_alignment`（D）与封条 upstream（仅路径）；**D 批交付，C 不 import** | §2.1、§6 D（L2128） |
+| 2 | §1.3.2「成员 AC 也必须是 crosswalk 像」与 §1.3「只对源 PRD 已定义 AC 判」自相矛盾，C 夹具只列了集合判据 | 裁定 **C 批卡门只判 `⊆ requirements[].acs`**，crosswalk 像 / 孤儿 AC 整体归 D；改正两处口径并在 §6 C 夹具写明边界 | §1.3.2、§1.3 判据、§6 C（L2114） |
+| 3 | 封条 `prd-domain` / `ac-crosswalk` 何时开始绑未定，且「有成员 AC / 有映射时是」会让 C 依赖未落地的解析器 | **C 批只按文件存在性做字节绑定、不做语义校验；文件不存在 ⇒ role 缺席、不拒签**；与「有映射时是」的关系写清（那两句归 D） | §2.5 |
+| 4 | 锁内 `requirements_digest` / `waiver_baseline_digest` 没写首次判定、不可变与 canonical 口径 | 首次判据 = **锁里尚无该键**（**已被 v42 取代**：改为「键不存在或 `null`」+ 三路径 + `manifest_digest_removed` / `manifest_rollback`）；同一序列化器 + golden vector（`waiver` 向量 `f1da37a3…`）；已写入后只复算比对、**不得静默改写**；`waiver_baseline_drift` 判据仍归 D（**v42 移入 C**） | §1.1 8-b（L1207） |
+| 5 | §五-b 字段契约 AC 无表头 / 列 / 编号 / 异常码 / 与 §五 的关系，E-04 无可执行形态 | 最小 schema：表头含 `契约AC`；六列 `契约AC / 字段 / 类型 / 必填 / 异常码 / 关联AC`；编号 `AC-CONTRACT-\d{3}`；`关联AC` 回指 §五 方案 AC；E-04 ⇒ `contract_ac_undefined`，缺表 ⇒ `contract_ac_table_missing`，悬空 ⇒ `contract_ac_orphan` | §1.5 第 7 条（L1381）、码表（L2033） |
+| 6 | 任务卡 Confirmed 口径没有证据状态（#53 原文要求），只设计了 PRD Assumptions | 卡内 `Confirmed` / `确认口径` 表：`确认项 / 口径 / 证据状态 / 证据指针`；枚举 `verified/assumed/unverified`；C 批成员 `validate_task_card` 执行，父仓 N/A；新增 `confirmed_columns_missing` / `confirmed_evidence_missing` / `confirmed_unverified` | §1.5 第 8 条（L1387）、K-20…K-22 |
+| 7 | §1.5 说「B 批写 1、D 批升 2」，与实况 `prd_schema: 2` 不符 | 改为实况：模板已 `prd_schema: 2` 且证据两列已落地（B 批）；D 批不再升版本 | §1.5 第 5 条、§1.1 第 7 条 |
+| 8 | #51 双向对账只在 crosswalk 显式行内判，未列进的成员 AC 无判据 | 明确 **C-03 只对显式映射对账**；孤儿成员 AC 不判（理由：需解析成员 PRD，依赖 D 模块）；D 批可选 `crosswalk_orphan_member_ac` WARN，是否升 FAIL 留 §9 | §2.1、C-10 |
+
+**v41 自查**：① `_support/ac_crosswalk.py` 的归属、公开面、调用方、批次四件齐备；② 卡门两处口径一致，§6 C 夹具写明「crosswalk 像 / 孤儿不判」；③ 两个 upstream role 的 C 批语义与「有映射时是」的关系写清，C 不依赖解析器；④ 两个 digest 的首次判据、序列化器、golden vector、不可改写四件齐备；⑤ §五-b 六列 / 编号 / `关联AC` / 三个新码（含 `contract_ac_table_missing`）落齐；⑥ Confirmed 的字段、枚举、判据、执行点四处齐备，并配 K-20…K-22；⑦ 模板实况与 §1.5 一致；⑧ 孤儿 AC 的「不判」写明了理由与 D 批可选项。**不宣称评审通过。**
+
+### 0.41 v41 独立评审返工对照（v42）
+
+| # | 评审项 | 处置 | 改法 | 落点 |
+|---|---|---|---|---|
+| 阻断 1 | 首次判据与锁 schema 矛盾（`null` 恒存在） | 接受 | 判据改为「键不存在**或值为 `null`**」；`waiver_baseline_digest` 首锁写 `null`、不省略；**`requirements_digest` 只改「首次」判据，首锁写实际值、不写 `null`** | §1.1 8-b |
+| 阻断 2 | 「键不存在即首次」可被删键绕过 | 接受 | 三路径分开：升级走首次、换锁（历史有非 null）⇒ `manifest_digest_removed`、回滚（`prd_version` 递减 / digest 回旧值）⇒ `manifest_rollback`；读侧键缺失行为写死 | §1.1 8-b、§5.2 码表 |
+| 阻断 3 | `crosswalk_findings` 签名产不出 C-01…C-08 | 接受 | 补 `reader: MemberPrdReader`（`paths` / `exists` / `front_matter` / `ac_ids`）；`CrosswalkParseError.code` 闭集五项；**重复键归 findings（C-05）**，parse 不抛；文件缺失由调用方判 `crosswalk_unresolvable` | §2.1 |
+| 阻断 4 | 契约 AC 引用面与卡门右集互斥，E-04 不可达 | 接受（方案 a） | `AC-CONTRACT-*` **纳入 `requirements[].acs` 合法值域**；列出三处允许引用面，禁止进成员 AC 位置；`shared/solution.md:48` 随 D 同步 | §1.5 第 7 条 |
+| 重要 1 | C 批仍有成员 PRD 路径依赖 | 接受 | `prd-domain` 用 `members[].path` + `prd/*-prd.md` **glob 全绑**（只列路径）；`resolve_crosswalk_path` 不产成员列表 | §2.5 |
+| 重要 2 | 「缺席不拒签」致 D 批追溯翻红 | 接受 | `upstream[]` 只落已绑定 role；D 批推导期望 role，缺项 ⇒ `seal_upstream_unbound` WARN，至 **D 批首版 + 90d** FAIL；出口 = 续签补绑（v43 已修正 `min` 反向） | §2.5、码表 |
+| 重要 3 | `waiver_baseline_drift` 留 D，C 读侧无码 | 接受 | **移入 C**（纯摘要比对、不依赖 crosswalk），C 读侧差异直接 FAIL | §1.1 8-b、码表 |
+| 重要 4 | Confirmed 可重贴标签降级 | 接受 | 降级 / `assumed↔unverified` 互转须 `REVIEW-ID`，否则 `confirmed_downgrade_unreviewed` FAIL；定义 `assumed`=有默认值来源、`unverified`=无来源 | §1.5 第 8 条 |
+| 重要 5 | K-17 是退役编号被复用 | 接受 | 新三条改用 **K-20…K-22**；码表 `confirmed_evidence_missing` 的引用由 `K-17` 改为 **K-21** | §7、§5.2 码表 |
+| 重要 6 | 反包区间未扩、C-09/C-10 假绿 | 接受 | 区间改 `C-01…C-11` / `K-01…K-22` / `E-01…E-12`；C-09 改成「映射到错误方案 AC」；C-10 改成「默认配置断言**不产生**该码」 | §1.3/§1.5/§2.1 判据、§7 |
+| 重要 7 | §6 D 文件行与正文相反、缺契约 AC 夹具 | 接受 | 文件行删「由 1 升 2」；D 夹具补契约 AC 正例 + 五类反例（缺表头 / 未定义 / 悬空 / 重复 / 编号错） | §6 D |
+| 重要 8 | §1.3 成员侧枚举未同步 Confirmed | 接受 | 枚举加 Confirmed 证据状态；「不判证据列」限定为「不判 **PRD** 的证据列」 | §1.3 |
+| 次要 1 | 历史行号大面积漂移 | 接受 | 把评审点名的 5 处改节锚（`§5.2 第 8 条`、`§5.2 码表`、`§7 V-20⑦`、`§7 V-23`、`§8 数组 C`）+ v40 自查两处；**正文仍有历史行号（历史记录，不作权威锚）**；双前缀 `§7 §7` 已删 | §0.35 / §0.39 / §0.40 |
+| 次要 2 | §1.5 条目编号乱序（5,7,8,6） | 接受 | 把「6. 严格态」移回第 5 条之后，顺序 1…8 | §1.5 |
+| 次要 3 | 「两个新码」实为三个；缺 `contract_ac_table_missing` | 接受（已落） | v41 一句话、§1.5 第 7 条、§0.40 均已含 `contract_ac_table_missing`；v41 自查改「三个新码」 | §1.5 第 7 条、v41 一句话、§0.40 |
+| 次要 4 | 「C 批」被用来指 crosswalk 反包族 | 接受 | 改为「**crosswalk 检查族（D 批）**」 | §2.1 孤儿段、C-10 |
+| 次要 5 | `shared/solution.md:44` 错位 | 接受 | 改 `:48`（`requirements[].acs` 规则所在行） | §2.1 |
+| 次要 6 | `confirmed_parent_only` 未进 N/A 表 | 接受 | 新增 **E-12**：父仓判 Confirmed 证据状态 ⇒ N/A `confirmed_parent_only` | §7 E-12 |
+| 次要 7 | §0.4 旧口径无历史声明 | 接受 | §0.4 标题下加「历史表，以正文为准」声明，点名两处已被 v41/v42 取代 | §0.4 |
+| 横切 | 孤儿成员 AC 决定挂在 §9 但 §9 没有 | 接受 | §9 新增第 2 条开放问题：`crosswalk_orphan_member_ac` 是否升 FAIL，三选项，未定前默认 (a) 可选 WARN | §9 |
+
+**v42 自查**：① 摘要两键的「缺失 / `null` / 历史」三态与三路径（升级 / 换锁 / 回滚）逐条有码；② findings 签名含 `MemberPrdReader`，四类失败形态各只有一个归属；③ 契约 AC 的引用面与卡门右集一致（`requirements[].acs` 已含它），E-04 可达；④ C 路径推导不依赖解析器，D 追溯窗有码与截止；⑤ `waiver_baseline_drift` 在 C；⑥ Confirmed 降级有门；⑦ 区间 / 编号 / 文件行 / §9 全部对齐。**不宣称评审通过。**
+
+### 0.42 v42 复核返工对照（v43）
+
+| # | 评审项 | 处置 | 改法 | 落点 |
+|---|---|---|---|---|
+| 阻断 1 | `manifest_rollback` 误伤合法回退、无出口 | 接受 | 删「digest 回到历史旧值」一支；只留 `prd_version` 递减；内容回滚不判 | §1.1 8-b |
+| 阻断 2 | `min(cutover, D+90d)` 反向、D 上线无源 | 接受 | 改 `D 批首版 + 90d`，钉常量 `SEAL_UPSTREAM_BIND_FROM`；正文与码表统一；`frozen` 豁免 | §2.5、码表 |
+| 阻断 3 | 契约 AC 无隔离、禁令无码 | 接受 | 排除 C-01/C-04/`ac_missing`/方案 AC 校验；`方案AC` 列仅 `AC-SOLUTION-*`；新增 `contract_ac_in_member_slot`；L1471 改「方案 AC + 契约 AC」；补 D 夹具 | §1.5 第 7 条、§2.1、码表、§6 D |
+| 阻断 4 | `crosswalk_unresolvable` 未进码表、C-11 悬空 | 接受 | 码表补两码；C-11 定义 `member_domain_mismatch`；写清抑制关系 | §5.2 码表、§7 C-11 |
+| 重要 1 | waiver 首锁 `null` 与「首次算值」互斥 | 接受 | 唯一写入点 = 首次观察到非空集合的 `lock --update`；`null`/`[]` 语义分开 | §1.1 8-b |
+| 重要 2 | 三摘要码无判序、批次不一、无 `field` | 接受 | `manifest_rollback` 优先并抑制另两码；`detail.field`；批次写明 B-0 / C | §1.1 8-b、码表 |
+| 重要 3 | `waiver_baseline_drift` 只移码未移夹具 | 接受 | 夹具移 C；C 文件表加 `ac-crosswalk-waivers.md`；缺失 ⇒ `[]` | §6 C |
+| 重要 4 | 5 新码零反包、E-12 越界 | 接受 | 补 D-41…D-45；E 区间 `E-01…E-12`；E-12 移到 E-11 后 | §7 |
+| 重要 5 | 降级判据需要历史但成员侧不读 | 接受 | 改可实现形态：当前 `unverified`/`assumed` 行必须带 `confirmed_review:` | §1.5 第 8 条 |
+| 重要 6 | Reader 产不出 C-06/C-07；`member_unknown` 非纯函数 | 接受 | findings 增 `waivers` 入参；parse 闭集改 `member_field_empty`，`member_unknown` 归 findings | §2.1 |
+| 重要 7 | §0.41 三处 overclaim / 一处低报 | 接受 | K-17→K-21、§1.3→K-22、删 `§7 §7`、v41 一句话恢复原文、§0.40 标「已被 v42 取代」、次要 3 改「接受（已落）」 | §0.40 / §0.41 |
+| 次要 1 | §9 编号 1,2,2,3 | 接受 | 顺延为 1/2/3/4 | §9 |
+| 次要 2 | E-12 插在 E-06 与 E-07 之间 | 接受 | 移到 E-11 之后 | §7 |
+| 次要 3 | `manifest_digest_removed` 缺 `field` | 接受 | `detail.field` + `detail.prd_version` | §1.1 8-b、码表 |
+| 次要 4 | 「`requirements_digest` 同治」歧义 | 接受 | 写明：只改「首次」判据，首锁写实际值、**不写 `null`** | §0.41 |
+| 次要 5 | `frozen` 缺豁免 / 出口 | 接受 | `state=frozen` 豁免 `seal_upstream_unbound`；出口 = 解冻补绑或续签 | §2.5、码表 |
+
+**v43 自查**：① 回滚码只按版本递减，无永久红；② 追溯窗口正向（D+90d）、有常量与 frozen 例外；③ 契约 AC 的排除清单、禁令码、`方案AC` 值域三件齐；④ 两个新码进码表、C-11 有码且抑制关系写清；⑤ waiver 基线唯一写入点、`null`/`[]` 区分；⑥ 三码判序与 `detail`；⑦ 夹具迁移与五条新反包；⑧ §0.41 的 overclaim 逐条回收。**不宣称评审通过。**
+
+### 0.43 冻结前 8 条清单（v44）
+
+| # | 清单项 | 处置 | 改法 | 落点 |
+|---|---|---|---|---|
+| 1 | `frozen` 豁免无真出口 | 接受，选 **(c)** | frozen 封条缺绑定 ⇒ **永久 WARN**（不阻断、不可 `--strict` 升级），每次进 `warnings[]` 并打印 `seal_upstream_unbound(frozen=N)`；不新增 `unfreeze`；补常量发版门（== D 首 tag UTC 日期）与 D-48 | §2.5、§6 C 文件表、码表、D-48 |
+| 2 | C 区间两处未同步 | 接受 | §1.2 与 §2.1 的 `C-01…C-10` 均改 `C-01…C-11` | §1.2、§2.1 |
+| 3 | 抑制清单漏 C-09、与 D-45 矛盾 | 接受 | 统一为 **抑制 C-01…C-11**；`crosswalk_unresolvable` = 缺失/不可读，坏行另归 `crosswalk_parse_error`；C-01 注释同步 | 码表、D-45、C-01 |
+| 4 | K 引用指错 | 接受 | `confirmed_evidence_missing` 的引用改回 **K-20** | 码表 |
+| 5 | `contract_ac_in_member_slot` 零反包 | 接受 | D 夹具补两例（`成员AC = AC-CONTRACT-001`；成员 PRD AC 表出现契约 AC）；新增 D-46 | §6 D、D-46 |
+| 6 | Confirmed 收窄 | 接受 | `verified` 无指针 ⇒ FAIL；`assumed` 只要默认值来源指针；**只有 `unverified`** 要 `confirmed_review:`（`REVIEW-\d{8}-\d{2}`），带 review 时不再报 `confirmed_unverified`（互斥） | §1.5 第 8 条 |
+| 7 | C 夹具 waivers 断言反了 | 接受 | 拆两态：基线 `null` + 缺文件 ⇒ 不判；基线非 null + 缺文件 ⇒ `waiver_baseline_drift` FAIL | §6 C |
+| 8 | `CrosswalkParseError.code` 无报告出口 | 接受 | 新增 `crosswalk_parse_error`（1 / `errors[]`、不可降级、D 批），`detail.kind` 取五值；配 D-47 | 码表、§2.1、D-47 |
+
+**v44 自查**：① frozen 不再永久红也无入口，改为可见的永久 WARN，且有常量发版门；② 两处 C 区间与 C-11 一致；③ 抑制清单与 D-45 统一、两码互斥；④ K-20 指向正确；⑤ 禁令码有 D-46 与夹具两例；⑥ Confirmed 不再逼 `assumed` 上评审、无双报、有格式；⑦ waivers 两态拆开；⑧ 解析失败有独立码与 `detail.kind`。仅清这 8 条，其余未动。**不宣称评审通过。**
+
+## 1. 域模型（v45）
 
 ### 1.1 定义源：显式、受约束、可复算、需求摘要
 
@@ -1169,7 +1256,7 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
    | `prd_schema` | front matter `prd_schema` | 整数；使用新列 / 契约表要求 2；缺失按 1 |
    | `version` | front matter `version`（`0.1.0`） | 文档 semver，**不参与身份、不映射**（决策 3） |
 
-   `templates/prd/domain.md` 增 `prd_version: 1` 与 `prd_schema: 1`（D 批加新列时升 2），字段改动随 B 批（R1）。
+   `templates/prd/domain.md` 已含 `prd_version` 与 **`prd_schema: 2`**（v41 实况校正：证据两列已随 B 批落地），字段改动随 B 批（R1）；**D 批不再升 `prd_schema`**。
 
 8. **`requirements_digest` canonical form（I1）**：
 
@@ -1186,6 +1273,17 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
      - canonical 字节：`[{"acs":["AC-AUTH-012","AC-SOLUTION-001"],"case_ids":["E2E-AUTH-001"],"cross_repo_e2e":null,"id":"REQ-001","member":"backend"}]`
      - 期望：`45ef0f9a94ee9f118f5254caf69fdb4b14667483b8f7023cfb90ffe3386afdd1`
    - 实现若与此向量不一致 ⇒ 夹具红，不允许「换个序列化器」蒙混。
+
+8-b. **锁内摘要字段的首次判定与不可变（B-0 写/读；`waiver_baseline_drift` 归 C；v43 补判序）**：
+
+   - **`requirements_digest`**：**首次判据 = 键不存在或值为 `null`**（`lock.get("requirements_digest") is None`）；首锁 / 首次 `lock --update` 时按第 8 条的 canonical 序列化写入。已写入后每次只**复算比对**，不静默改写；不等 ⇒ `manifest_drift`（第 9 条）。**同一序列化器 + 同一 golden vector**：第 8 条的向量即本字段的向量，不允许另写一套。
+   - **`waiver_baseline_digest`**：**首次判据 = 键不存在或值为 `null`**；首锁写 `null`（示例即 `null`，不省略该键），**`null → 值` 的唯一合法写入点 = 首次观察到非空可豁免集合的那次 `lock --update`**（v43/重要 1：不提前用空集占位，否则 D 批首次建豁免表就被判 drift；`null` = 尚未建立基线，`[]` = 已建立且为空集）；写入值 = 当时集合按同一序列化器（JSON 字符串数组、NFC、码位升序、`json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)`、sha256 小写十六进制）算出的摘要。**golden vector**：输入 `["REQ-001","REQ-002"]` → 期望 `f1da37a34aac137ff962018a1d6295ca20057c682576bad646e06ac950dde527`。
+   - **不可变与三路径（v42/阻断 2）**——语义：键已存在且重算值变化 ⇒ **不得静默改写**。
+     - **老锁升级**（v1→v2，锁历史**从未**含非 null 值）⇒ 走首次分支：写 `requirements_digest` 当前值；`waiver_baseline_digest` 写当前基线或 `null`。
+     - **换锁**（当前锁缺该键 / 值为 `null`，但**锁历史任一版本含非 null 值**）⇒ **`manifest_digest_removed` FAIL**——删键不能重定基线。
+     - **回滚**（**仅**当前 `definition.prd_version` < 锁历史最大 `prd_version`）⇒ **`manifest_rollback` FAIL**。**内容回滚不另判**（v43/阻断 1：digest 命中历史旧值可能合规改回旧版，再改回又命中另一个旧值 ⇒ 永久红无出口）；读侧不再用 digest 判回滚。
+     - **C 批读侧**：`waiver_baseline_digest` 与当前可豁免集合重算值不等 ⇒ **`waiver_baseline_drift` FAIL**（v42/重要 3：本码**移入 C**，纯摘要比对、不依赖 crosswalk）；`requirements_digest` 不等 ⇒ `manifest_drift`。
+     - **判序与互斥（v43/重要 2）**：`manifest_rollback` **优先**；命中后抑制 `manifest_digest_removed` 与 `waiver_baseline_drift`，同一运行只报一个。三码的 `detail.field ∈ {requirements_digest, waiver_baseline_digest}`；`manifest_rollback` 另带 `detail.prd_version = {current, max}`。批次：`manifest_*` 归 **B-0**（锁读侧），`waiver_baseline_drift` 归 **C**。
 
 9. **单调身份（可见性，不是防伪）**：
 
@@ -1235,7 +1333,7 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 
 **为什么原方案不成立**：v2 的 crosswalk 只有 `(方案AC, 成员, 成员AC)`，成员多域时无法定位定义行。
 
-**判据**：C-01…C-08。
+**判据**：C-01…C-11。
 
 ### 1.3 成员 AC 落点与卡投影（B1/B2/R4/I5/I6）
 
@@ -1252,7 +1350,7 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
    - 只有「行首（允许缩进）`atlas-acceptance:`」才算。
    - **跳过 fenced code block（``` / ~~~）与 HTML 注释块（I5）**：围栏内或注释内的行不计。
    - `task create` 生成的 `title = [AC-...] req` 与 `description = 跨仓任务 ...`（`_support/solution_task.py:377-378`）不匹配该前缀，空壳卡不会天生通过。
-   - **AC 集合判据（重要 4/8）**：行内 AC 集合必须 **⊆ 该 `(id, member)` 的 `requirements[].acs`**。其中「crosswalk 像存在」只在**定义源 PRD 里已定义**的 AC 上判；源 PRD 未定义的 AC 归 `ac_missing` 单点判，卡门不再红第二次（否则 `--allow-dangling-acs` 降一次、卡门又红一次）。成员 AC 也必须是 crosswalk 像，不能拿方案 AC 冒充成员 AC。
+   - **AC 集合判据（重要 4/8）**：行内 AC 集合必须 **⊆ 该 `(id, member)` 的 `requirements[].acs`**。**卡门只判这一条**（v41 裁定）：C 批不看「crosswalk 像」、不做孤儿扫描；crosswalk 解析器尚未落地（§2.1），C 不 import `_support/ac_crosswalk.py`。「crosswalk 像存在」与「源 PRD 未定义的 AC 归 `ac_missing`」都是 **D 批 `validate_ac_alignment` / `check_solution` 的判据**，C 批卡门不重复红（否则 `--allow-dangling-acs` 降一次、卡门又红一次）；用方案 AC 冒充成员 AC 的区分同样归 D 批。
    - **`none` 的边界（重要 5）**：仅当该 `(id, member)` 的 `requirements[].acs` 为空时才可用；需求有 AC 却写 `none` ⇒ FAIL，必须走需求级豁免行（§2.1 的 `ac-crosswalk-waivers.md`，带 owner/due/review）。
    - **`card_untracked` 是 C 批硬前置（Q-4/决策 3）**：不做 `signed_at` 分层，不设宽限。迁移工具是 B-0 的 `migrate --check-members`（只读，逐成员打印 `git add -f` 命令）；前置未完成 ⇒ C 批不上线（§6）。到达 C 批后，成员仓未跟踪卡一律 FAIL，与封条何时签发无关。
 3. **封条绑定声明式投影，不绑整卡字节**：
@@ -1278,8 +1376,8 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
    - 成员仓不再有 `<assets_root>/reviews/apply/`，删除 v3 的成员封条设计。
 5. **成员侧只做卡投影校验**：
 
-   - `validate_task_card`（成员 `atlas check`）读 `.trellis/tasks/<ID>/prd.md`，解析 `atlas-acceptance:`，与父仓写入的 `solution.md` 指针 `acs:` 集合比较；只判语法、`none` 三字段、AC 集合 ⊆ `requirements[].acs`。
-   - 成员侧**不读**父仓 PRD、crosswalk、封条；不判证据列、不判 e2e 选择器。
+   - `validate_task_card`（成员 `atlas check`）读 `.trellis/tasks/<ID>/prd.md`，解析 `atlas-acceptance:`，与父仓写入的 `solution.md` 指针 `acs:` 集合比较；只判语法、`none` 三字段、AC 集合 ⊆ `requirements[].acs`、**任务卡 Confirmed 证据状态（§1.5 第 8 条，v42/重要 8）**。
+   - 成员侧**不读**父仓 PRD、crosswalk、封条；**不判 PRD 的证据列**（Confirmed 的证据状态要判，见上）、不判 e2e 选择器。
    - 成员仓单独跑 `atlas check`：卡投影项照判；父仓项记 N/A（显式原因，见 §2.4）。
 6. **父仓定位成员卡（P4/重要 2）**：`members[].path` + 既有 `find_task`（`task.json` 的 `meta.solution/requirement/member`）。
 
@@ -1305,14 +1403,14 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 **判据**
 
 - 活跃任务无 `atlas-acceptance:` 行 ⇒ FAIL（0.4.0；0.3.0 WARN）。
-- 行内 AC 集合 ⊄ 该 `(id, member)` 的 `requirements[].acs` ⇒ FAIL；「crosswalk 像」只对源 PRD 已定义 AC 判。
+- 行内 AC 集合 ⊄ 该 `(id, member)` 的 `requirements[].acs` ⇒ FAIL。**「crosswalk 像」不在本判据内**（整体归 D 批，见 §1.3.2 与 §2.1）：C 批只有这一条集合判据。
 - 需求有 AC 却写 `none` ⇒ FAIL（`none` 只对空 AC 需求合法）。
 - `none` 缺 `reason/owner/due`，或 due 过期 ⇒ FAIL。
 - 投影 sha 变化但 reason 不是 `card-acceptance-change` ⇒ FAIL。
 - 围栏块 / HTML 注释内的行被计数 ⇒ 夹具红。
 - 成员仓未跟踪卡（C 批起）⇒ `card_untracked` FAIL，无 `signed_at` 宽限；有封条但卡在 active 与 archive 都缺失 ⇒ `card_absent` FAIL。
 
-**反面包**：K-01…K-16。
+**反面包**：K-01…K-22。
 
 ### 1.4 记录权威：md 是人证，seal 是绑定证（B8/决策 2）
 
@@ -1354,12 +1452,25 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
    - 引用强制（crosswalk 落地版本）⇒ N/A，原因 `evidence_columns_parent_only`；
    - 硬期限（`2027-06-30` 含前 WARN、`2027-07-01` 起 FAIL）⇒ 照判，因为期限对所有 `prd_schema: 1` 存量域生效。
 4. `verified` 无指针 ⇒ FAIL；`unverified` ⇒ WARN。
-5. 字段契约仍是独立 §五-b 表，不是证据状态。`prd_schema: 2` 是使用新列的开关。**窗口承认（次要）**：B 批把模板写到 `prd_schema: 1`，D 批才升 2；B→D 之间用新列必须手写 `2` 并接受 D 批前无门。
+5. 字段契约仍是独立 §五-b 表，不是证据状态。`prd_schema: 2` 是使用新列的开关。**实况校正（v41）**：`templates/prd/domain.md` **已是 `prd_schema: 2`**，证据两列（`证据状态` / `证据指针`）已在该模板中（B 批已落地）；D 批只补 §五-b 契约表与父仓半边，**不再把 `prd_schema` 由 1 升 2**；旧稿「B 写 1、D 升 2」作废。
 6. **严格态是判据（决策 2/决策 3）**：`solution check` 默认严格态；`--lenient` **仅在仓内存在封条时**拒绝执行（exit 2），只有锁、没有封条时（例如 fresh clone 拿到父仓跟踪的锁但成员工作区为空）允许执行。工具行为替代「CI 命令行扫描」这一不可移植的办法。
+7. **§五-b 字段契约 AC 的最小 schema（v41，E-04 的可执行形态）**：
+   - **表头**：表头行必须含 `契约AC`；找不到该表 ⇒ `contract_ac_table_missing` FAIL（`prd_schema: 2` 且该域被引用时）。
+   - **列**（固定六列，顺序即下表）：`| 契约AC | 字段 | 类型 | 必填 | 异常码 | 关联AC |`。`必填` 取 `是/否`；`异常码` 逗号分隔、形如 `ERR-[A-Z0-9_]+`，无则写 `-`。
+   - **AC 编号形态**：`AC-CONTRACT-<3 位数字>`（`^AC-CONTRACT-\d{3}$`），独立命名空间，不得复用 `AC-SOLUTION-*` 或成员 AC 编号。
+   - **与 §五 AC 表的关系**：`关联AC` 必须回指同 PRD §五 AC 表里已存在的方案 AC（`AC-SOLUTION-*`）；§五-b 不另立验收项，只把字段级契约挂到验收项上。
+   - **引用面（v42/阻断 4，选方案 (a)）**：`AC-CONTRACT-*` **纳入 `requirements[].acs` 的合法值域**（与 `AC-SOLUTION-*` 并列），因此卡门右集不变、卡内写契约 AC 不撞 K-15。允许出现在：① 被引用域的 `requirements[].acs`；② 任务卡 `atlas-acceptance:`；③ 封条 `card.projection.acceptance_acs`。**不得**出现在成员 AC 位置（`成员AC` / 成员 PRD 的 AC 表）⇒ `contract_ac_in_member_slot` FAIL。**排除清单（v43/阻断 3）**：`AC-CONTRACT-*` **不进** C-01（不要求 crosswalk 行）、C-04、`ac_missing`、方案 AC 定义校验；只由 §五-b 自身与 `contract_ac_*` 判。**crosswalk 的 `方案AC` 列值域只允许 `AC-SOLUTION-*`**，写 `AC-CONTRACT-*` ⇒ `crosswalk` 解析期 `ac_format`（D 批）。`shared/solution.md:48` 的值域说明随 D 批同步。
+   - **E-04 判据**：上述三处引用 `AC-CONTRACT-*`，而 §五-b 表无该行 ⇒ `contract_ac_undefined` FAIL；§五-b 的 `关联AC` 不在 §五 ⇒ `contract_ac_orphan` FAIL。**执行点**：父仓 `check_solution`（D 批，与 `_support/ac_crosswalk.py` 同批；C 批不实现）。
+8. **任务卡 Confirmed 口径的证据状态（v41，#53 原文要求）**：
+   - **位置**：任务卡（`.trellis/tasks/<ID>/prd.md`，含 archive）里 `Confirmed` / `确认口径` 小节下的表；表头必须含 `确认项` 与 `证据状态`。
+   - **字段与枚举**：`确认项 | 口径 | 证据状态 | 证据指针`；`证据状态 ∈ {verified, assumed, unverified}`；`证据指针` 形如 `系统@版本#定位`。
+   - **判据（v44/重要 6 收窄）**：`verified` 无指针 ⇒ `confirmed_evidence_missing` FAIL；`assumed` 只要求 `证据指针` 指向默认值来源（缺失 ⇒ 同 `confirmed_evidence_missing`），**不要求** `confirmed_review:`；`unverified` 天然无证据，只由降级保护判（见下）；缺表或缺列 ⇒ `prd_schema: 2` 下 `confirmed_columns_missing` FAIL（`prd_schema: 1` 存量只 WARN 至 2027-06-30）。
+   - **降级保护（v42/重要 4；v43/重要 5；v44/重要 6 收窄）**：成员 check **不读 Git 历史**。**只有 `unverified` 行必须带 `confirmed_review:`**（格式 `REVIEW-\d{8}-\d{2}`，与 §3.2 的 REVIEW-ID 同构），缺失 ⇒ `confirmed_downgrade_unreviewed` FAIL；**带 `confirmed_review:` 时不再报 `confirmed_unverified`**（互斥，避免双报）；`assumed` / `verified` 不要求。`assumed` = 有默认值来源；`unverified` = 无来源——机器差异是「是否必须带指针」，**不是**可以无理由重贴标签。
+   - **执行点**：成员 `validate_task_card`（C 批，卡在成员仓库）；父仓只验封条 `card.projection`、不读正文，故父仓 N/A `confirmed_parent_only`。**不进封条**，与 Assumptions 的证据状态互不替代。
 
 **为什么原方案不成立**：v2 两行都写「可选」；v3 的 E-02 没有执行点，父仓不跑，成员也不跑；v4 的 N/A 把未来新域也一起豁免了。v5 把执行点分到父仓（引用）与成员（期限），并按 `prd_schema` 分层。
 
-**判据**：E-01…E-09。
+**判据**：E-01…E-12。
 
 ### 1.6 多值接口：完整消费点（B10/I9）
 
@@ -1396,11 +1507,24 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 
 **现状证据**
 
-- `requirements[].acs` 只绑方案 AC：`shared/solution.md:44`；已知键无 `member_acs`：`_support/solution.py:239-240`。
+- `requirements[].acs` 绑**方案 AC 与契约 AC**（`AC-SOLUTION-*` ∪ `AC-CONTRACT-*`，v43/阻断 3）：`shared/solution.md:48`（随 D 同步）；已知键无 `member_acs`：`_support/solution.py:239-240`。
 - `check_solution` 只做定义 / 任务 / 指针：`_support/solution.py:1136-1160`。
 - `atlas-apply.md` 七小节没有 AC 段：`apply/reference.md:264-270`。
 
 **决策**：crosswalk 六列（§1.2），键 `(方案AC, 成员, 成员PRD, 成员AC)`。
+
+**解析器归属（v41）**：
+
+- **独立模块 `_support/ac_crosswalk.py`**，不塞进 `_support/solution.py`（后者已 2600+ 行）。
+- **公开面两类入口**：
+  1. 解析入口 `parse_crosswalk(text) -> CrosswalkTable`：**纯函数**，零 Git / 零文件系统；坏行 ⇒ `CrosswalkParseError(code, line)`。
+  2. findings 入口 `crosswalk_findings(table, manifest, reader: MemberPrdReader) -> list[Finding]`：`reader` 提供 `paths(member) -> list[Path]`、`exists(path)`、`front_matter(path) -> {domain, prd_schema}`、`ac_ids(path) -> set[str]`，另有 `waivers: list[WaiverRow]`（来自 `ac-crosswalk-waivers.md`；文件缺失 ⇒ `[]`）——C-06/C-07 由它供数（v43/重要 6）。产 C-01…C-11 所需的 `(code, row)`，**不打印、不 exit**。
+     - **四类失败形态归属（v42/阻断 3）**：① crosswalk 文件缺失 ⇒ 调用方（`check_solution`）在 parse 前判 `crosswalk_unresolvable`（C-01）；② 表头 / 列数 / AC 形态 / 路径形态 / 成员名错 ⇒ `parse_crosswalk` 抛 `CrosswalkParseError`，`code` 闭集 = `header_missing | column_count | ac_format | prd_path | member_field_empty`（**纯词法**；`member_unknown` 需 manifest，移出 parse，归 findings C-11）；③ **唯一键重复归 findings（C-05）**，parse 不抛（同一行为只一个归属）；④ 成员 PRD 缺失 / 多 PRD 无法定位 / 成员 AC 不存在 / `domain` 不符 ⇒ findings 用 `reader` 判（C-02 / C-03 / C-11）。
+  - 路径 helper `resolve_crosswalk_path(root) -> Path` 供封条 upstream 的 `ac-crosswalk` role 用；**只解析路径，不解析内容**。
+- **调用方**：父仓 `check_solution`（D 批，parse + findings）；`validate_ac_alignment`（D 批，findings）；封条 upstream 解析只调 `resolve_crosswalk_path`（C 批，见 §2.5）。**C 批不 import 本模块**。
+- **批次**：D 批交付；文件表加 `_support/ac_crosswalk.py` 与 `tests/test_ac_crosswalk.py`。
+
+**孤儿成员 AC（v41 裁定，C-03 边界）**：C-03 只判「crosswalk 显式行列出的成员 AC 是否存在于成员 PRD」，**未列进 crosswalk 的成员 AC 不判**。理由：成员 PRD 的 AC 集合是成员仓自有资产，父仓无法区分「应映射却漏了」与「成员内部 AC」；要判必须解析成员 PRD，依赖本模块（D 批）。因此 #51 的「双向对账」在 **crosswalk 检查族（D 批）**降级为**单向（仅显式映射对）**；D 批提供可选 `crosswalk_orphan_member_ac` **WARN**（默认不 FAIL），是否升为 FAIL 留在 §9。
 
 **迁移（I11/I4）**：不整方案一刀切。
 
@@ -1411,19 +1535,19 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
   - 摘要变化 ⇒ `waiver_baseline_drift` FAIL。
 - 新需求在 `0.4.0` 后必须直接有映射。
 
-**判据**：C-01…C-08；任一成员滞后只红对应需求。
+**判据**：C-01…C-11；任一成员滞后只红对应需求。
 
 ### 2.2 #52 需求卡空壳可通过资产更新并进入实现
 
 按 §1.3：专用 `atlas-acceptance:` 行 + 投影绑定 + 父仓封条。两条根因（生成内容带 token、整卡摘要必输）分别由 B1/B2 处理；围栏块漏计由 I5 处理。
 
-**判据**：K-01…K-16。
+**判据**：K-01…K-22。
 
 ### 2.3 #53 确认口径缺证据状态且 AC 无法承载字段契约
 
-按 §1.5：证据状态挂 Assumptions；字段契约走 §五-b 独立表；`prd_schema: 2` 开关；0.4.0 父仓强制被引用域，2027-06-30 含前 WARN、2027-07-01 起成员侧强制全部存量域（R7/I10）。
+按 §1.5：证据状态挂 Assumptions；**任务卡 Confirmed 口径的证据状态按 §1.5 第 8 条（C 批成员侧）**；字段契约走 §五-b 独立表（最小 schema 见 §1.5 第 7 条）；`prd_schema: 2` 开关；0.4.0 父仓强制被引用域，2027-06-30 含前 WARN、2027-07-01 起成员侧强制全部存量域（R7/I10）。
 
-**判据**：E-01…E-09。
+**判据**：E-01…E-12。
 
 ### 2.4 #54 验收资产缺失与用例先行失效
 
@@ -1457,8 +1581,8 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 |---|---|---|
 | `manifest` | `atlas.solution.yaml` | 是 |
 | `prd-global` | `definition.path` | 是 |
-| `prd-domain` | crosswalk 的 `成员PRD`（经 `members[].path` 定位） | 有成员 AC 时是 |
-| `ac-crosswalk` | `<assets_root>/prd/ac-crosswalk.md` | 有映射时是 |
+| `prd-domain` | crosswalk 的 `成员PRD`（经 `members[].path` 定位） | **C 批：对应成员 PRD 文件存在 ⇒ 是；不存在 ⇒ 缺席、不拒签**；「有成员 AC 时是」的语义判断归 D |
+| `ac-crosswalk` | `<assets_root>/prd/ac-crosswalk.md` | **C 批：文件存在 ⇒ 是；不存在 ⇒ 缺席、不拒签**；「有映射时是」归 D |
 | `e2e-index` | `<assets_root>/e2e/e2e-index.md` | 有 `case_ids` 时是 |
 | `e2e-case` | 每个被引用的 `cases/<file>.md` | 有 `case_ids` 时是 |
 | `stack-profile` | `<assets_root>/stack-profile.yaml` | 存在即绑定 |
@@ -1466,7 +1590,11 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 - `structure-facts` 不作为 upstream role：它在 `.trellis/spec/structure/`，未跟踪 `.trellis` 的仓无法被 Git 绑定。
 - role → path 由同一个 helper 解析，供 `seal` 与 `validate_apply_record` 共用；不允许封条里写任意路径。
 - `version` 可写不判；绑定字节。不绑 `atlas-apply.md`。
-- 成员 PRD 缺席：**签发时** `prd-domain` 不可解析 ⇒ 拒绝签发；**校验时**成员工作区缺席 ⇒ `upstream_unresolvable` 默认 FAIL（与 §3.3 的 `member_workspace_absent` 同口径），不静默跳过、不当 PASS。
+- **C 批边界（v41）**：`prd-domain` 与 `ac-crosswalk` 只做**文件存在性 + 字节绑定**，不做语义校验（不解析 crosswalk、不比对成员 AC）；文件不存在 ⇒ 该 role **缺席**，**不拒签**。
+- **C 批成员 PRD 路径推导（v42/重要 1）**：`prd-domain` 用 `members[].path` + `<assets_root>/prd/*-prd.md` **glob 全绑**（只列路径、不读内容），**不需要 crosswalk 表**；`resolve_crosswalk_path` 只给 `ac-crosswalk` 文件路径，不产成员 PRD 列表。这是路径推导，不是解析，倒挂确实解除。
+- **D 批首次 check 的追溯处理（v42/重要 2）**：`upstream[]` **只含已绑定 role**，缺席不落盘（不写 `absent` 项）。D 批上线后按清单推导期望 role（`prd-domain` / `ac-crosswalk`）与封条 `upstream[]` 比对：缺项 ⇒ `seal_upstream_unbound` **WARN**；至 **D 批首版 + 90d**（模块常量 `SEAL_UPSTREAM_BIND_FROM`，随 D 批写入 `_support/solution.py`，仿 `PRD_SCHEMA_2_FROM`；**不用 `acceptance_cutover`**，否则默认 `2027-03-31` 早于 D 上线时窗口已过期、上线当天全 FAIL）仍缺 ⇒ **FAIL**。**`state = frozen` 的封条只降级为永久 WARN**（v44/阻断 1，选方案 (c)）：不阻断、不随 `--strict` 升级；理由：frozen 不可改写，全文无 `unfreeze` 命令，续签重写字节会被 `seal_frozen_modified` 判红 ⇒ 不能要求补绑。**可见性**：每次 `check` 必进 `warnings[]`，摘要行打印 `seal_upstream_unbound(frozen=N)`，并按 §3.2 计入 `warnings[]` 排序；解冻入口不在本 RFC 新增（留给 C 批之后的实现反馈）。
+- **常量发版门（v44/阻断 1）**：`SEAL_UPSTREAM_BIND_FROM` 必须等于 **D 批首个 tag 的 UTC 日期**（`git for-each-ref --format='%(creatordate:short)' refs/tags/<first-D-tag>`），由与 D-40 同构的夹具断言；写晚 ⇒ 窗口永不到期，判 FAIL。与上表「有成员 AC 时是 / 有映射时是」的关系：那两句是 **D 批**的语义判据；C 批退化为存在性，故 C 不依赖 `_support/ac_crosswalk.py`，倒挂解除。
+- 成员 PRD 缺席：**签发时（C 批）** `prd-domain` 计为缺席、**不拒签**，封条照签；**D 批起**（crosswalk 落地后）若该成员有映射行而 PRD 缺席 ⇒ 拒绝签发。**校验时**成员工作区缺席 ⇒ `upstream_unresolvable` 默认 FAIL（与 §3.3 的 `member_workspace_absent` 同口径），不静默跳过、不当 PASS。
 
 **判据**：U-01…U-08。
 
@@ -1983,6 +2111,21 @@ D  = L 中状态字母含 D 的「提交数」
     | `lock_tracked_but_deleted` | **v30/S-2**：锁文件不在工作树，但 Git 记录里曾有 / 仍有该路径——`git cat-file -e HEAD:atlas.solution.lock.json` 成功（HEAD 有、工作树被 `rm`）、`git ls-files --error-unmatch -- atlas.solution.lock.json` 成功（index 仍有）、或 `git log -m --full-history --format=%H HEAD -- atlas.solution.lock.json` 非空（已提交删除）。与 `lock_missing`（三者全空、从未有锁，B-0 尚未产锁的正常态，只跳过 ⓪-0 与两条根断言）**互斥**；本码 **FAIL、`exit 1`、`errors[]` 只含该码、短路**，`message` 写明「已跟踪的锁被删除（篡改信号）」；`path` = `atlas.solution.lock.json`；**不发 INFO `lock_history_empty`**。**限定（v31/S-1）**：只在**工作树无锁且 HEAD 无该路径**（已提交删除 / 工作树 `rm`）时触发；「删 → 重建」重建后 HEAD 有锁 ⇒ 前置不成立、本码不触发，由 ⓪-3 `assets_root_history_rewritten` 报。**短路报告（v31/S-2）**：`not_run[]` **六段全进**、`errors[]` 只含本码、`warnings[]` / `skipped[]` 照常输出 | §3.2 ⓪-0/⓪-1、报告 schema `not_run[]`、§5.2 | 1 / `errors[]` | 否 |
     | `lock_history_empty` | **INFO 级（v28/I-2；v29/B-2 补互斥；v30/S-2 拆 `lock_tracked_but_deleted`）**：`git log -m --full-history HEAD -- atlas.solution.lock.json` 返空（锁**未跟踪** / 尚未提交），`check_history_prefix` 收到 `versions == []` 并返回 `Ok`；**只作可见性提示，不进 `errors[]` / `warnings[]`、不改 exit code、不计 FAIL**；`path` = `atlas.solution.lock.json`。**触发前提是锁文件存在**：文件不存在 ⇒ `lock_missing`（从未跟踪，只跳过 ⓪-0 与两条根断言）/ `lock_tracked_but_deleted`（已跟踪被删，短路），**均不发本码**；也**不覆盖**「文件存在但不可解析」（`lock_unparsable`）与「历史版本不可解析」（`lock_history_unparsable`） | §1.1.3 ⑦ 数组 C、§3.2 报告 schema `info[]`、§6 B-0 夹具、§8 | 0 / `info[]` | 否（INFO 不是错误） |
     | `internal_error` | 三类自有异常（`LockParseError` / `LockHistoryUnparsable` / `ChainUnverifiable`）与 `SolutionError` **之外**的未知异常；`message` = 异常类型 + 首行、`path: null`。**不得吞 `SolutionError`、不得吞用法错误**（v22/I-4，处理顺序见 §3.2 报告 schema）；`not_run[]` 按已跑游标填剩余段（v22/次要 3） | §3.2 报告 schema | 2 / `errors[]` | 否 |
+    | `contract_ac_table_missing` | **D 批**：`prd_schema: 2` 且该域被引用，但 PRD 里找不到含 `契约AC` 表头的 §五-b 表（v41） | §1.5 第 7 条 | 1 / `errors[]` | 否 |
+    | `contract_ac_undefined` | **D 批（E-04）**：任务卡 / 封条投影 / `requirements[].acs` 引用 `AC-CONTRACT-*`，但 §五-b 表无该行（v41） | §1.5 第 7 条、E-04 | 1 / `errors[]` | 否 |
+    | `contract_ac_orphan` | **D 批**：§五-b 行的 `关联AC` 不在同 PRD §五 AC 表（v41） | §1.5 第 7 条 | 1 / `errors[]` | 否 |
+    | `contract_ac_in_member_slot` | **D 批（v43/阻断 3）**：`AC-CONTRACT-*` 出现在 `成员AC` / 成员 PRD 的 AC 表（契约 AC 不得占成员 AC 位置） | §1.5 第 7 条 | 1 / `errors[]` | 否 |
+    | `crosswalk_unresolvable` | **D 批（v43/阻断 4）**：`<assets_root>/prd/ac-crosswalk.md` 缺失 / 不可读；**抑制 C-01…C-11**（含 C-09；只报本码），不可降级 | §2.1 | 1 / `errors[]` | 否 |
+    | `crosswalk_parse_error` | **D 批（v44/重要 8；v45 补抑制）**：crosswalk 能读但坏行；`detail.kind ∈ {header_missing, column_count, ac_format, prd_path, member_field_empty}`；**抑制 `C-01…C-11`（含 C-09；只报本码）**；不可降级；与 `crosswalk_unresolvable`（缺失/不可读）互斥 | §2.1 | 1 / `errors[]` | 否 |
+    | `member_domain_mismatch` | **D 批（v43/阻断 4 / C-11）**：成员 PRD front matter `domain` 与 crosswalk `成员` 不符 | §2.1、C-11 | 1 / `errors[]` | 否 |
+    | `confirmed_columns_missing` | **C 批**：任务卡 `Confirmed` / `确认口径` 小节缺表或缺 `确认项` / `证据状态` 列；`prd_schema: 2` 立即 FAIL，`1` 存量 WARN 至 2027-06-30（v41） | §1.5 第 8 条 | 1 / `errors[]` | 否 |
+    | `confirmed_evidence_missing` | **C 批**：`证据状态 = verified` 但 `证据指针` 为空；或 `assumed` 无默认值来源指针（v41） | §1.5 第 8 条、K-20 | 1 / `errors[]` | 否 |
+    | `confirmed_unverified` | **C 批**：`证据状态 = unverified`，**WARN**（exit 0、`warnings[]`），不阻断；**该行已带 `confirmed_review:` 时不报**（与 `confirmed_downgrade_unreviewed` 互斥，v44） | §1.5 第 8 条、K-21 | 0 / `warnings[]` | 否 |
+    | `manifest_digest_removed` | **B-0（v42；v43 补 `detail`）**：锁历史曾含非 null 摘要键，当前锁缺该键或为 `null`（删键绕过）；`detail.field ∈ {requirements_digest, waiver_baseline_digest}`；**被 `manifest_rollback` 抑制** | §1.1 8-b | 1 / `errors[]` | 否 |
+    | `manifest_rollback` | **B-0（v42；v43 收窄）**：**仅**当前 `definition.prd_version` < 锁历史最大 `prd_version`（内容回滚不判）；`detail.prd_version = {current, max}`；**优先并抑制** `manifest_digest_removed` / `waiver_baseline_drift` | §1.1 8-b | 1 / `errors[]` | 否 |
+    | `waiver_baseline_drift` | **C 批（v42/重要 3）**：`waiver_baseline_digest` 与当前可豁免集合重算值不等（纯摘要比对、不依赖 crosswalk；基线 `null` 时不判）；`detail.field = waiver_baseline_digest` | §1.1 8-b | 1 / `errors[]` | 否 |
+    | `seal_upstream_unbound` | **D 批（v42/重要 2）**：按清单推导的 `prd-domain` / `ac-crosswalk` role 未出现在封条 `upstream[]`；**D 批首版 + 90d**（常量 `SEAL_UPSTREAM_BIND_FROM`）前 WARN、到期 FAIL；`state=frozen` **永久 WARN**（不阻断、不可 `--strict` 升级） | §2.5 | 非 frozen：期内 0 / `warnings[]`、到期 1 / `errors[]`；frozen：恒 0 / `warnings[]`（不阻断、不可 `--strict` 升级） | 否 |
+    | `confirmed_downgrade_unreviewed` | **C 批（v42/重要 4；v44 收窄）**：**仅 `unverified` 行**缺 `confirmed_review:`（`REVIEW-\d{8}-\d{2}`）⇒ FAIL；`assumed` 不要求（只要求默认值来源指针） | §1.5 第 8 条 | 1 / `errors[]` | 否 |
     - **`signed_at_not_canonical` 的写侧单源与校验范围（v21/I-3；v22/I-2 改范围）**：写侧封条装配只允许 `datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")`，**禁止 `isoformat()`**；续签**重写** `signed_at`（新封条自己的签署时刻），**只有换路径（`moved_from`）沿用旧值时逐字节复制**。**校验范围改为「链上每枚封条 blob」**：读侧沿 `previous_seal_commit` 从 HEAD 逐级取 blob（含 `L[0]` 那枚），对每枚封条的 `signed_at` 逐字节判形态——**不是「当前锁 `L` 的全量封条」**（`L` 是封条**提交**序列，不是锁里的字段；中间续签若要改必须重写历史，`previous_seal_commit` / `blob@L[0]` 会先红，见 §7 T-29）。**不设 grandfathering**：C 批尚未上线、HEAD 里不存在任何已入库的 `*.seal.json`，规则生效即 fail-closed。
     - **`review_reused`**：同一个 `REVIEW-ID` 被用于两个不同决策（改根 + 改 cutover），判定见 §5.1「review 是自述」。
     - 以上码全部补进报告 `errors[]` / `warnings[]` 的 `code` 取值集（§3.2 机读 schema），并与已有码同规则：`path` 指向封条或清单文件，`message` 一行可读。
@@ -2057,8 +2200,8 @@ D  = L 中状态字母含 D 的「提交数」
 ### 批次 C：记录绑定 + 卡投影 + E2E 封条 + 续签链（#52/#54/#55）
 
 - **前置迁移（P4/Q-4，C 批硬前置）**：成员仓跟踪 `.trellis/tasks/*/prd.md` 与 `.trellis/tasks/*/solution.md`（含 archive 目录的既有卡），用 B-0 的 `migrate --check-members` 逐成员产出 `git add -f` 命令；CI 加 `fetch-depth: 0`（§5.2.11）。前置未完成 ⇒ C 批不上线；没有 `signed_at` 宽限。
-- 文件：`validators/validate_apply_record.py`（新）、`validators/validate_task_card.py`（新）、`scripts/atlas_check.py`、`scripts/atlas_apply_seal.py`（新；**封条签发与续签的唯一写入口**，产出 `signed_at` 与 `renewal_seq` / `previous_*`）、`scripts/atlas_solution.py`（preflight / `task acceptance --backfill` / **`seal freeze --seal <path> --at <sha>`（v14/I-1：`frozen` 的唯一写入口，只写锁的 `state`/`frozen_at`，不碰封条字节）** / **`seal reanchor --review <REVIEW-ID> --from-a <sha>`（v23/I-4 补进本表：`exemption_start_history[]` 的**唯一**写入口——它重写 `L[0]`、同步重指 `exemption_started_at`、并向 `exemption_start_history` append 一项 `{from, to, commit: R 的父提交}`；不写则 `exemption_start_history_broken`）** / **`lock --update --assets-root <new> --anchor-review <ID>`（v15/D-1：改根唯一出口，append `assets_root_history`）** / 默认 strict / `--lenient` 只看封条）、`apply/reference.md`、`shared/layout.md`、`docs/map/apply.md`、`tests/test_apply_record.py`、`tests/test_task_card.py`。
-- 夹具：title/description 带 AC 的空壳卡（B1）；围栏块藏 `atlas-acceptance:`（I5）；Notes 修改不 stale；验收行改 + 无误 reason；`card-acceptance-change`；AC 不在该需求 `acs` 内；有 AC 写 `none`；成员仓未跟踪卡 ⇒ `card_untracked` FAIL（K-13，无宽限）；有封条但卡在 active 与 archive 都缺失（K-14）；归档卡在 `tasks/archive/<month>/` 命中 ⇒ 不误红、不判新鲜度；分片块改 / 索引状态回写 / `关联AC` 改（link-change）；case+link 同改；`previous_cases` 错；`gap.due=1970-01-01`；`case_ids` 双真相不等；孤儿封条（active + archive 都无）；legacy 白名单（新任务有/无 review）；backfill 续签链；原地改写（`seq` 回 1 + `previous_*` null，S-17）；删封条重建（`seal_history_reset`）；普通 `--no-ff` merge 不打断链（S-21）；冲突解决 merge 手写新字节 ⇒ `seal_merge_conflict`，取一侧 + 独立续签提交且 `previous_seal_commit = 提交前 L[-1]` ⇒ PASS（S-22/I1）；add/add 冲突按**提交数**判 `seal_history_ambiguous`（S-19）；reanchor 后**立刻** `check` PASS（S-18）；**reanchor → 再续签 → 篡改 `previous_seal_commit` ⇒ `renewal_chain_broken`（S-23/B1）**；**伪造 reanchor 且改载荷 ⇒ `reanchor_payload_mismatch`（S-24/B1-v9）**；**伪造 reanchor、载荷不变、`from_a` 随机 ⇒ `reanchor_anchor_mismatch`（S-25/B1-v9）**；**reanchor → 后置 `lock --update` 独立提交 → `check` PASS（S-26/v10/B-1）**；**合法 reanchor → 下一次续签删掉 `reanchor` ⇒ `reanchor_record_missing`（S-27/v10/B-2）**；**非边界续签把 `from_a` 换成随机 sha ⇒ `reanchor_record_mismatch`（S-28/v10/B-2）**；**浅克隆执行 `seal reanchor` ⇒ 非零退出（S-29/v11/阻断 2）；`--filter=blob:none` 的 partial clone 同理（S-29b/v12/阻断 2）**；**多纪元回滚 `reanchor` ⇒ `reanchor_record_mismatch`（review 外部锚，S-30/v11/重要 1）**；**换封条路径：新路径 PASS、旧路径删 `reanchor` 必须红（S-31/S-31b/v12/阻断 1）**；**两枚封条各自 `lock --update` 互不搬锚，两路径各自续签都 PASS（S-32）**；**换路径后旧路径做多纪元回滚仍红（S-33）**；**`seal_anchors` 缺键 / 多键 ⇒ `seal_anchor_path_unmapped` / `seal_anchor_path_orphaned`（S-34、T-20/T-21）**；**换路径但 `moved_from` 指向已删/链不 PASS/sha 不符的旧路径 ⇒ `seal_path_history_lost`（S-35、T-22）**；**改名时删旧键 + 删旧文件 + 不写 `moved_from` ⇒ 必红（S-36，首报 `seal_anchor_path_unmapped`；v13/R12-1）**；**多封条不给 `--seal` ⇒ exit 2 并列候选（S-37）**；**合法 `frozen` PASS + 冻结后改写/删除 ⇒ `seal_frozen_modified`（S-38、T-24）**；**`retired` 路径被写 ⇒ `seal_path_retired_write`（T-23）**；**state 与 HEAD 不符 ⇒ `seal_anchor_path_state_mismatch`（T-25）**；`seal_anchors[S]` 缺失/过期 ⇒ `reanchor_anchor_missing` / `seal_anchor_stale`（**先判 stale，成立即抑制 mismatch**）；`N == 1` 的 reanchor（`base_n: 0`）⇒ `reanchor_invalid`，不 `IndexError`（v10/I-2）；删+重建型 filter-branch（`D>0`）⇒ `seal_history_reset`，reanchor 不适用（重要 4）；shallow 先判 `--is-shallow-repository`（S-20）；**`merge -s ours` 后删键删文件必红（S-39/v14/B-1）、merge 内新增封条能建键（S-40/v14/B-1）、`docs/examples/` 样例不入 `U`（S-41/v14/I-4）、换路径 + 改载荷 + 无 `reasons`/`previous_cases` ⇒ `seal_move_payload_mismatch`（S-42/T-26/v14/I-2）**；**改根 + 删旧键必红（S-43）、合法改根走 `--assets-root` 后旧键不 orphaned 且已 reanchor 的路径仍 PASS（S-44）、首签 rebase 受控重指后 `epoch_origin_history` 两条（S-45，前置：建键即 `[epoch_origin]`）、`renewal_seq == 2` 的 rebase 必红（S-46）、`frozen` 键手改 `frozen_at` ⇒ `seal_frozen_modified` / 不动 ⇒ PASS（S-47a）、`retired` 键 `lock --update` 后 `moved_to`/`state` 原样（S-47b）、单提交整段重写 `assets_root_history` + 删封条删键 + 挪树改 config ⇒ `assets_root_history_rewritten`（S-48；**基座前置（v31/B-1；v32/B-2 更正）：必须是 `schema_version: 2`、历史版本带旧根、且重建后 **HEAD 仍有锁**——B-0 的 c3 形态 HEAD 无锁，会先撞哨兵 `lock_tracked_but_deleted` 短路、根断言走不到（§6 B-0 已改纯函数），故该形态只归本条**）、三段/一段路径 ⇒ `seal_path_unsupported`（T-27）、`exemption_started_at` 与 `L[0]` 封条 `signed_at` 不逐字节相等 / 换路径未沿 `moved_from` 递归继承链首值 ⇒ `exemption_start_conflict` FAIL（T-28；`%cI` 越界只 WARN/INFO）；非规范形态（**锁内 `exemption_started_at` 字面值**）⇒ `exemption_start_signed_at_not_canonical` FAIL（**`L[0]` 等任何封条 blob 的形态归 T-29 的 `signed_at_not_canonical`**，v24/B-1）；`exemption_start_history[]` 断裂（删中间项 / 改 `from` / 末项 `to` 与 `L[0]` 不等 / 只改 `exemption_started_at` 不 append）⇒ `exemption_start_history_broken` FAIL（**S-55 三变体**，v22/I-6）、**提交 A 把 `assets_root_history` 写坏（坏 JSON / `[]` / `{root: null}` / `[{}]` / 元素缺 `.root`）→ 提交 B 改根 + 删封条 + 删键 + 锁写干净 ⇒ **CLI 面**断言 `check --json` 的 `errors[].code == lock_history_unparsable`、stdout 是合法 JSON、`exit 1`（`historical_roots()` 抛 `LockHistoryUnparsable` 只作单元测试细节，v19/重要 2；S-49 五变体，v18/阻断 1）**、**锁文件非 JSON / 顶层不是对象 / `schema_version: 1.0` 或 `true` / `members: {}` / **`members` 或 `contracts` 缺失（当前锁必填，v19/次要 1）** / `assets_root_history: []` ⇒ `lock_unparsable` FAIL 且 ⓪-0 即短路（`errors[]` 只有该码、不进第 1 步，v19/重要 1），不得落 `lock_missing` 的「跳过」（S-50，v18/阻断 2）**、**S-51（正）：资产根 `产品 根`（中文 + 空格）经 `install.py --assets-root` 合法装入 ⇒ `check` PASS、`assets_root_history_rewritten` 不报（根字符集单源，v19/阻断 1）；对照 `ROOT_RE` 只是写侧建议，不得据此判红**、**S-52（负）：历史锁根 `../product` / `/product` / `.atlas/product` ⇒ `lock_history_unparsable`；当前锁同形态 ⇒ `lock_unparsable`（v21/I-2：⓪-0 吸收当前锁全部结构性与词法性错误）；首尾空白在解析层拒、写侧拒空白（**写侧「不 trim」与 `_root_by_index_ok` 分层 / `lexical=True` 零 FS 已在 B-0 清单验，此处不重复**，v27/I-3；v23/次要 6：当前 `layout.py` 因 `raw = value.strip()` 在先仍会 ACCEPT）**、**S-53：orphan 分支或已删分支上的锁版本含旧根 ⇒ 不进 `UH`、不参与 ⓪-3（只信 HEAD 可达历史，v19/次要 3）**、**V-20 → 已移入 B-0 夹具（v21/I-4，此处不再重复）**、**V-21（v20/阻断 2 两变体）：① 清单 `definition.commit` 指向本地不存在对象 ⇒ WARN + `downgrades[]`（`scope: definition_source`、`flag: --allow-unverifiable-chain`）、`exit 0`；不带开关 ⇒ `definition_commit_unverifiable` FAIL；② 封条 `epoch_origin` 指向本地不存在对象 ⇒ 带开关也 FAIL（`previous_seal_commit` / `anchor_review` 同）；读取层：历史提交对象本地缺失 ⇒ `chain_unverifiable`（**`<c>` 来自 `git log`，⓪-1 不可达**）；该提交没有锁路径 ⇒ `continue`、不报码；对象与路径都在但 `git show` 失败 ⇒ `lock_history_unparsable`；`git log` 非零 ⇒ `chain_unverifiable`（不是 `lock_history_unparsable`）（v19/阻断 3、重要 5）**、**S-51 三变体（v20/阻断 1；v21/B-1 补普通文件、I-2 改报码；v22/I-1 补构造条件）：`assets_root_history` 至少两个元素，被破坏的根必须位于 `hist[:-1]`（三个变体分别破坏第 0 个元素），**末元素必须是更新后的当前根且真实存在、是目录**；① 该历史根对应目录已删除 ⇒ 仍 PASS；② 该历史根被换成指向仓外的 symlink ⇒ 仍 PASS；③ 该历史根被换成**普通文件** ⇒ 仍 PASS**（历史根只做词法校验，不因今天的工作树判红）、**S-53 注（v20/次要 1）：merge 带入的祖先仍算 HEAD 可达**、**S-54-C（v20/重要 2；v21/I-4 拆半）：同一个 `REVIEW-ID` 先用于 `lock --update --assets-root` 改根、再用于 `--cutover` ⇒ `review_reused` FAIL；同决策链内复用不算。B-0 只验形态判定（S-54-B0），本夹具验「换根动作后」的复用**、**T-29（v20/重要 4；v22/I-2 补读侧）：写侧只产 `...Z`——封条签发 / 续签后 `signed_at` 匹配 `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$`；**读侧校验点是链上每枚封条 blob 的 `signed_at`**（从 HEAD 沿 `previous_seal_commit` 逐级取，含 `L[0]`），两态夹具：`N == 1` amend 唯一封条（覆盖 `L[0]`）、`N > 1` **amend 最新续签提交**（v25/次要 3：不是字面 `HEAD`）；中间续签**不可构造**（改它必先破 `previous_seal_commit` ⇒ `renewal_chain_broken`），不设该变体；出现 `+00:00` 或小数秒 ⇒ `signed_at_not_canonical` FAIL**、**T-30（v23/I-1/I-2；v24/B-2 补⑤；v25/I-3/I-4 补⑥、删「重排」，六变体）：① 单提交把 `exemption_start_origin` 改成任意别的规范时间（其余不动）⇒ `exemption_start_origin_rewritten` FAIL；② 单提交把 `first_seen_origin` 重置成「今天」⇒ `first_seen_origin_rewritten` FAIL；③ 单提交把 `exemption_start_history[]` **删一项 / 改一项** ⇒ `exemption_start_history_broken` FAIL（版本前缀单调；**「重排」已删**，≥2 条不可端到端构造，前缀单调由 T-33 纯函数单测覆盖）；④ 回填夹具：**老锁必须是 `schema_version: 2` + 封条**（v1 会先撞 ⓪-2），缺 `exemption_start_origin` / `exemption_start_history` / `first_seen_origin`，`lock --update` 后补 `origin = 原 started_at`、`history = []`、`first_seen_origin = 当前 first_seen_at`，其余逐字节不变、`check` PASS，有值时一字不改；⑤ ④之后再单提交改 `first_seen_origin` ⇒ `first_seen_origin_rewritten` FAIL，同构改 `exemption_start_origin` 同理（存量锚非死码）；⑥ 首签封条 `first_seen_at` 写未来值、锁键照抄 ⇒ `first_seen_origin > L[0].signed_at` ⇒ `first_seen_origin_rewritten` FAIL（`detail.kind = after_signed_at`，初值防护；**构造：建键时一次写成、不事后 amend 载荷**，v26/S-11：首签无前一版封条、`first_seen_at` 不在 digest 覆盖内，无需重签；事后 amend 会改 `L[0]` SHA、使 `epoch_origin` 失配）**、**T-32（v24/I-3；v25/I-2；v26/B-1 端点对齐 V-20）：① `--amend` 改已签封条 `due` 到闭区间外（含 `2027-06-30` 超限）⇒ `exemption_due_out_of_range` FAIL（不得新开提交，否则 `renewal_seq != N` 抢码）；② `origin > due` ⇒ 同码；③ 三条端点 PASS、各钉 `min` 一支，且均满足 `first_seen_origin ≤ L[0].signed_at`——③a 早于默认的 `cutover` 支：`acceptance_cutover = 2027-01-31`（早于默认 `2027-03-31`，§5.1 允许收紧、无需 `--anchor-review`；**五步序列见 §7 T-32，v33/B-1 补 PRD 提交步与首锁 `null`**）：**前置 = 全新空仓 + 已提交的 `product/prd/solution-prd.md` + 无封条**（PRD 由 `init` 生成骨架、第③步提交；「已迁移仓」删除），`init --name demo --member <m>=<path> --cutover 2027-01-31`（清单一次写 v2；**首锁的 `acceptance_cutover` 为 `null`**——`lock_payload` 只在 `definition.commit` 非空时写值） → 首签载荷一次写死 `signed_at = first_seen_at = first_seen_origin = 2026-11-05T00:00:00Z`、`due = 2027-01-31`（不经 `now`、**不 amend**） → **提交 PRD、清单与配置**（`git add -A`，含 `.gitignore` 与成员仓初始提交；PRD 未跟踪会让 `lock --update` 撞「定义源工作树不干净」硬拒；v34/重要 1） → `lock --update`（本次**才**写入 `2027-01-31`，`due` 用它；v2 清单 ⇒ 写 v2 锁；**`seal_anchors` 属 C 批、今天不建键，PASS 不构成 `due` 已评测**，v34/重要 2） → **锁提交**（HEAD 清单与锁同源，干净工作树上复验 PASS）、`signed_at` **钉死、不得用运行时 `now`**（否则 2027-02-01 后 `origin` 日期 > `due` 自动翻红；与 `first_seen_origin` 同值保证 `origin == signed_at`）、`d + 90d = 2027-02-03 > cutover` ⇒ `due = 2027-01-31`；③b 延展支：`acceptance_cutover = 2027-04-15` 挂 `--anchor-review`（**清单与锁两侧同写 `2027-04-15`**；步骤同 ③a 的五步（含「提交 PRD 与清单」；**不启用第二份二进制，但 reader 版本仍决定清单版本**）——① `init --cutover 2027-04-15 --anchor-review <REVIEW-ID>`、两处 review 值一致），**首签时 `signed_at` 与 `first_seen_at` 同写 `2027-04-15T00:00:00Z`**（未来值构造；无规则禁止未来 `signed_at`，`%cI` 只 WARN/INFO；不事后 amend，否则改 `L[0]` SHA 撞 `epoch_origin`），`d + 90d = 2027-07-14 > cutover` ⇒ `due = 2027-04-15`；③c `+90d` 支：默认 `cutover = 2027-03-31`，`first_seen_at` / `first_seen_origin` / `signed_at` **同写 `2026-11-05T00:00:00Z`**（**同样不用运行时 `now`**，否则 2027 年起该支翻到 `cutover` 支、`+90d` 分支失去覆盖），`d + 90d = 2027-02-03 < 2027-03-31` ⇒ `due = 2027-02-03`，永久成立；④ 续签把 `due` 改回区间内 ⇒ 恢复 PASS；**比较全在日期层**（先截 UTC 日期得 `d` 再加 90 天，全程 `date`，`cutover` 不随缺 `first_seen_origin` 跳过）**、**T-31（v23/次要 2）：干净基线注入非 `SolutionError` 的未知异常 ⇒ `check --json` 为 exit 2、合法 JSON、`errors[]` 恰一条 `internal_error`、`not_run[]` 从异常处填满、无裸 traceback；注入 `SolutionError` ⇒ 走业务码；用法错误 ⇒ exit 2 且 stdout 首行非 JSON（消费方按首字符区分）**、**S-55 前置 = S-18 的构造 + S-26 的后置 lock（v23/I-5；v24/I-2 补全；v25/I-1 改①；v26/S-7 更正理由：**已重指后删空 ⇒ ⑤ 与单调同红、按判序只报 `exemption_start_history_broken`**；前缀单调移 T-33）**（以上 v15/v16/v17/v18/v19/v20/v21/v22/v23/v24/v25/v26）**。
+- 文件：`validators/validate_apply_record.py`（新）、`validators/validate_task_card.py`（新；v41 加 Confirmed 证据列判据）、`scripts/atlas_check.py`、`scripts/atlas_apply_seal.py`（新；**封条签发与续签的唯一写入口**，产出 `signed_at` 与 `renewal_seq` / `previous_*`；**v44：不新增 `seal unfreeze`**——frozen 封条缺 upstream 绑定只降级为永久 WARN，见 §2.5）、`scripts/atlas_solution.py`（preflight / `task acceptance --backfill` / **`seal freeze --seal <path> --at <sha>`（v14/I-1：`frozen` 的唯一写入口，只写锁的 `state`/`frozen_at`，不碰封条字节）** / **`seal reanchor --review <REVIEW-ID> --from-a <sha>`（v23/I-4 补进本表：`exemption_start_history[]` 的**唯一**写入口——它重写 `L[0]`、同步重指 `exemption_started_at`、并向 `exemption_start_history` append 一项 `{from, to, commit: R 的父提交}`；不写则 `exemption_start_history_broken`）** / **`lock --update --assets-root <new> --anchor-review <ID>`（v15/D-1：改根唯一出口，append `assets_root_history`）** / 默认 strict / `--lenient` 只看封条）、`apply/reference.md`、`shared/layout.md`、`docs/map/apply.md`、`tests/test_apply_record.py`、`tests/test_task_card.py`；**C 批新增只读依赖 `ac-crosswalk-waivers.md`**（`waiver_baseline_digest` 重算集合；文件缺失 ⇒ 集合 `[]`，不是 crosswalk 解析器依赖）。
+- 夹具：title/description 带 AC 的空壳卡（B1）；围栏块藏 `atlas-acceptance:`（I5）；Notes 修改不 stale；验收行改 + 无误 reason；`card-acceptance-change`；AC 不在该需求 `acs` 内；**卡门边界（v41）：只判 `⊆ requirements[].acs`，crosswalk 像 / 孤儿成员 AC 归 D，C 批夹具不因此变红**；**Confirmed 表：`verified` 无指针 / `unverified` / 缺列（K-20…K-22）**；**`waiver_baseline_digest` 漂移 ⇒ `waiver_baseline_drift` FAIL（v43/重要 3：从 D 移到 C）；waivers 缺失分两态（v44/重要 7）：基线 `null` + 文件缺失 ⇒ 不判；基线非 null + 文件缺失 ⇒ 集合 `[]` ≠ 基线 ⇒ `waiver_baseline_drift` FAIL（删文件检测）**；有 AC 写 `none`；成员仓未跟踪卡 ⇒ `card_untracked` FAIL（K-13，无宽限）；有封条但卡在 active 与 archive 都缺失（K-14）；归档卡在 `tasks/archive/<month>/` 命中 ⇒ 不误红、不判新鲜度；分片块改 / 索引状态回写 / `关联AC` 改（link-change）；case+link 同改；`previous_cases` 错；`gap.due=1970-01-01`；`case_ids` 双真相不等；孤儿封条（active + archive 都无）；legacy 白名单（新任务有/无 review）；backfill 续签链；原地改写（`seq` 回 1 + `previous_*` null，S-17）；删封条重建（`seal_history_reset`）；普通 `--no-ff` merge 不打断链（S-21）；冲突解决 merge 手写新字节 ⇒ `seal_merge_conflict`，取一侧 + 独立续签提交且 `previous_seal_commit = 提交前 L[-1]` ⇒ PASS（S-22/I1）；add/add 冲突按**提交数**判 `seal_history_ambiguous`（S-19）；reanchor 后**立刻** `check` PASS（S-18）；**reanchor → 再续签 → 篡改 `previous_seal_commit` ⇒ `renewal_chain_broken`（S-23/B1）**；**伪造 reanchor 且改载荷 ⇒ `reanchor_payload_mismatch`（S-24/B1-v9）**；**伪造 reanchor、载荷不变、`from_a` 随机 ⇒ `reanchor_anchor_mismatch`（S-25/B1-v9）**；**reanchor → 后置 `lock --update` 独立提交 → `check` PASS（S-26/v10/B-1）**；**合法 reanchor → 下一次续签删掉 `reanchor` ⇒ `reanchor_record_missing`（S-27/v10/B-2）**；**非边界续签把 `from_a` 换成随机 sha ⇒ `reanchor_record_mismatch`（S-28/v10/B-2）**；**浅克隆执行 `seal reanchor` ⇒ 非零退出（S-29/v11/阻断 2）；`--filter=blob:none` 的 partial clone 同理（S-29b/v12/阻断 2）**；**多纪元回滚 `reanchor` ⇒ `reanchor_record_mismatch`（review 外部锚，S-30/v11/重要 1）**；**换封条路径：新路径 PASS、旧路径删 `reanchor` 必须红（S-31/S-31b/v12/阻断 1）**；**两枚封条各自 `lock --update` 互不搬锚，两路径各自续签都 PASS（S-32）**；**换路径后旧路径做多纪元回滚仍红（S-33）**；**`seal_anchors` 缺键 / 多键 ⇒ `seal_anchor_path_unmapped` / `seal_anchor_path_orphaned`（S-34、T-20/T-21）**；**换路径但 `moved_from` 指向已删/链不 PASS/sha 不符的旧路径 ⇒ `seal_path_history_lost`（S-35、T-22）**；**改名时删旧键 + 删旧文件 + 不写 `moved_from` ⇒ 必红（S-36，首报 `seal_anchor_path_unmapped`；v13/R12-1）**；**多封条不给 `--seal` ⇒ exit 2 并列候选（S-37）**；**合法 `frozen` PASS + 冻结后改写/删除 ⇒ `seal_frozen_modified`（S-38、T-24）**；**`retired` 路径被写 ⇒ `seal_path_retired_write`（T-23）**；**state 与 HEAD 不符 ⇒ `seal_anchor_path_state_mismatch`（T-25）**；`seal_anchors[S]` 缺失/过期 ⇒ `reanchor_anchor_missing` / `seal_anchor_stale`（**先判 stale，成立即抑制 mismatch**）；`N == 1` 的 reanchor（`base_n: 0`）⇒ `reanchor_invalid`，不 `IndexError`（v10/I-2）；删+重建型 filter-branch（`D>0`）⇒ `seal_history_reset`，reanchor 不适用（重要 4）；shallow 先判 `--is-shallow-repository`（S-20）；**`merge -s ours` 后删键删文件必红（S-39/v14/B-1）、merge 内新增封条能建键（S-40/v14/B-1）、`docs/examples/` 样例不入 `U`（S-41/v14/I-4）、换路径 + 改载荷 + 无 `reasons`/`previous_cases` ⇒ `seal_move_payload_mismatch`（S-42/T-26/v14/I-2）**；**改根 + 删旧键必红（S-43）、合法改根走 `--assets-root` 后旧键不 orphaned 且已 reanchor 的路径仍 PASS（S-44）、首签 rebase 受控重指后 `epoch_origin_history` 两条（S-45，前置：建键即 `[epoch_origin]`）、`renewal_seq == 2` 的 rebase 必红（S-46）、`frozen` 键手改 `frozen_at` ⇒ `seal_frozen_modified` / 不动 ⇒ PASS（S-47a）、`retired` 键 `lock --update` 后 `moved_to`/`state` 原样（S-47b）、单提交整段重写 `assets_root_history` + 删封条删键 + 挪树改 config ⇒ `assets_root_history_rewritten`（S-48；**基座前置（v31/B-1；v32/B-2 更正）：必须是 `schema_version: 2`、历史版本带旧根、且重建后 **HEAD 仍有锁**——B-0 的 c3 形态 HEAD 无锁，会先撞哨兵 `lock_tracked_but_deleted` 短路、根断言走不到（§6 B-0 已改纯函数），故该形态只归本条**）、三段/一段路径 ⇒ `seal_path_unsupported`（T-27）、`exemption_started_at` 与 `L[0]` 封条 `signed_at` 不逐字节相等 / 换路径未沿 `moved_from` 递归继承链首值 ⇒ `exemption_start_conflict` FAIL（T-28；`%cI` 越界只 WARN/INFO）；非规范形态（**锁内 `exemption_started_at` 字面值**）⇒ `exemption_start_signed_at_not_canonical` FAIL（**`L[0]` 等任何封条 blob 的形态归 T-29 的 `signed_at_not_canonical`**，v24/B-1）；`exemption_start_history[]` 断裂（删中间项 / 改 `from` / 末项 `to` 与 `L[0]` 不等 / 只改 `exemption_started_at` 不 append）⇒ `exemption_start_history_broken` FAIL（**S-55 三变体**，v22/I-6）、**提交 A 把 `assets_root_history` 写坏（坏 JSON / `[]` / `{root: null}` / `[{}]` / 元素缺 `.root`）→ 提交 B 改根 + 删封条 + 删键 + 锁写干净 ⇒ **CLI 面**断言 `check --json` 的 `errors[].code == lock_history_unparsable`、stdout 是合法 JSON、`exit 1`（`historical_roots()` 抛 `LockHistoryUnparsable` 只作单元测试细节，v19/重要 2；S-49 五变体，v18/阻断 1）**、**锁文件非 JSON / 顶层不是对象 / `schema_version: 1.0` 或 `true` / `members: {}` / **`members` 或 `contracts` 缺失（当前锁必填，v19/次要 1）** / `assets_root_history: []` ⇒ `lock_unparsable` FAIL 且 ⓪-0 即短路（`errors[]` 只有该码、不进第 1 步，v19/重要 1），不得落 `lock_missing` 的「跳过」（S-50，v18/阻断 2）**、**S-51（正）：资产根 `产品 根`（中文 + 空格）经 `install.py --assets-root` 合法装入 ⇒ `check` PASS、`assets_root_history_rewritten` 不报（根字符集单源，v19/阻断 1）；对照 `ROOT_RE` 只是写侧建议，不得据此判红**、**S-52（负）：历史锁根 `../product` / `/product` / `.atlas/product` ⇒ `lock_history_unparsable`；当前锁同形态 ⇒ `lock_unparsable`（v21/I-2：⓪-0 吸收当前锁全部结构性与词法性错误）；首尾空白在解析层拒、写侧拒空白（**写侧「不 trim」与 `_root_by_index_ok` 分层 / `lexical=True` 零 FS 已在 B-0 清单验，此处不重复**，v27/I-3；v23/次要 6：当前 `layout.py` 因 `raw = value.strip()` 在先仍会 ACCEPT）**、**S-53：orphan 分支或已删分支上的锁版本含旧根 ⇒ 不进 `UH`、不参与 ⓪-3（只信 HEAD 可达历史，v19/次要 3）**、**V-20 → 已移入 B-0 夹具（v21/I-4，此处不再重复）**、**V-21（v20/阻断 2 两变体）：① 清单 `definition.commit` 指向本地不存在对象 ⇒ WARN + `downgrades[]`（`scope: definition_source`、`flag: --allow-unverifiable-chain`）、`exit 0`；不带开关 ⇒ `definition_commit_unverifiable` FAIL；② 封条 `epoch_origin` 指向本地不存在对象 ⇒ 带开关也 FAIL（`previous_seal_commit` / `anchor_review` 同）；读取层：历史提交对象本地缺失 ⇒ `chain_unverifiable`（**`<c>` 来自 `git log`，⓪-1 不可达**）；该提交没有锁路径 ⇒ `continue`、不报码；对象与路径都在但 `git show` 失败 ⇒ `lock_history_unparsable`；`git log` 非零 ⇒ `chain_unverifiable`（不是 `lock_history_unparsable`）（v19/阻断 3、重要 5）**、**S-51 三变体（v20/阻断 1；v21/B-1 补普通文件、I-2 改报码；v22/I-1 补构造条件）：`assets_root_history` 至少两个元素，被破坏的根必须位于 `hist[:-1]`（三个变体分别破坏第 0 个元素），**末元素必须是更新后的当前根且真实存在、是目录**；① 该历史根对应目录已删除 ⇒ 仍 PASS；② 该历史根被换成指向仓外的 symlink ⇒ 仍 PASS；③ 该历史根被换成**普通文件** ⇒ 仍 PASS**（历史根只做词法校验，不因今天的工作树判红）、**S-53 注（v20/次要 1）：merge 带入的祖先仍算 HEAD 可达**、**S-54-C（v20/重要 2；v21/I-4 拆半）：同一个 `REVIEW-ID` 先用于 `lock --update --assets-root` 改根、再用于 `--cutover` ⇒ `review_reused` FAIL；同决策链内复用不算。B-0 只验形态判定（S-54-B0），本夹具验「换根动作后」的复用**、**T-29（v20/重要 4；v22/I-2 补读侧）：写侧只产 `...Z`——封条签发 / 续签后 `signed_at` 匹配 `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$`；**读侧校验点是链上每枚封条 blob 的 `signed_at`**（从 HEAD 沿 `previous_seal_commit` 逐级取，含 `L[0]`），两态夹具：`N == 1` amend 唯一封条（覆盖 `L[0]`）、`N > 1` **amend 最新续签提交**（v25/次要 3：不是字面 `HEAD`）；中间续签**不可构造**（改它必先破 `previous_seal_commit` ⇒ `renewal_chain_broken`），不设该变体；出现 `+00:00` 或小数秒 ⇒ `signed_at_not_canonical` FAIL**、**T-30（v23/I-1/I-2；v24/B-2 补⑤；v25/I-3/I-4 补⑥、删「重排」，六变体）：① 单提交把 `exemption_start_origin` 改成任意别的规范时间（其余不动）⇒ `exemption_start_origin_rewritten` FAIL；② 单提交把 `first_seen_origin` 重置成「今天」⇒ `first_seen_origin_rewritten` FAIL；③ 单提交把 `exemption_start_history[]` **删一项 / 改一项** ⇒ `exemption_start_history_broken` FAIL（版本前缀单调；**「重排」已删**，≥2 条不可端到端构造，前缀单调由 T-33 纯函数单测覆盖）；④ 回填夹具：**老锁必须是 `schema_version: 2` + 封条**（v1 会先撞 ⓪-2），缺 `exemption_start_origin` / `exemption_start_history` / `first_seen_origin`，`lock --update` 后补 `origin = 原 started_at`、`history = []`、`first_seen_origin = 当前 first_seen_at`，其余逐字节不变、`check` PASS，有值时一字不改；⑤ ④之后再单提交改 `first_seen_origin` ⇒ `first_seen_origin_rewritten` FAIL，同构改 `exemption_start_origin` 同理（存量锚非死码）；⑥ 首签封条 `first_seen_at` 写未来值、锁键照抄 ⇒ `first_seen_origin > L[0].signed_at` ⇒ `first_seen_origin_rewritten` FAIL（`detail.kind = after_signed_at`，初值防护；**构造：建键时一次写成、不事后 amend 载荷**，v26/S-11：首签无前一版封条、`first_seen_at` 不在 digest 覆盖内，无需重签；事后 amend 会改 `L[0]` SHA、使 `epoch_origin` 失配）**、**T-32（v24/I-3；v25/I-2；v26/B-1 端点对齐 V-20）：① `--amend` 改已签封条 `due` 到闭区间外（含 `2027-06-30` 超限）⇒ `exemption_due_out_of_range` FAIL（不得新开提交，否则 `renewal_seq != N` 抢码）；② `origin > due` ⇒ 同码；③ 三条端点 PASS、各钉 `min` 一支，且均满足 `first_seen_origin ≤ L[0].signed_at`——③a 早于默认的 `cutover` 支：`acceptance_cutover = 2027-01-31`（早于默认 `2027-03-31`，§5.1 允许收紧、无需 `--anchor-review`；**五步序列见 §7 T-32，v33/B-1 补 PRD 提交步与首锁 `null`**）：**前置 = 全新空仓 + 已提交的 `product/prd/solution-prd.md` + 无封条**（PRD 由 `init` 生成骨架、第③步提交；「已迁移仓」删除），`init --name demo --member <m>=<path> --cutover 2027-01-31`（清单一次写 v2；**首锁的 `acceptance_cutover` 为 `null`**——`lock_payload` 只在 `definition.commit` 非空时写值） → 首签载荷一次写死 `signed_at = first_seen_at = first_seen_origin = 2026-11-05T00:00:00Z`、`due = 2027-01-31`（不经 `now`、**不 amend**） → **提交 PRD、清单与配置**（`git add -A`，含 `.gitignore` 与成员仓初始提交；PRD 未跟踪会让 `lock --update` 撞「定义源工作树不干净」硬拒；v34/重要 1） → `lock --update`（本次**才**写入 `2027-01-31`，`due` 用它；v2 清单 ⇒ 写 v2 锁；**`seal_anchors` 属 C 批、今天不建键，PASS 不构成 `due` 已评测**，v34/重要 2） → **锁提交**（HEAD 清单与锁同源，干净工作树上复验 PASS）、`signed_at` **钉死、不得用运行时 `now`**（否则 2027-02-01 后 `origin` 日期 > `due` 自动翻红；与 `first_seen_origin` 同值保证 `origin == signed_at`）、`d + 90d = 2027-02-03 > cutover` ⇒ `due = 2027-01-31`；③b 延展支：`acceptance_cutover = 2027-04-15` 挂 `--anchor-review`（**清单与锁两侧同写 `2027-04-15`**；步骤同 ③a 的五步（含「提交 PRD 与清单」；**不启用第二份二进制，但 reader 版本仍决定清单版本**）——① `init --cutover 2027-04-15 --anchor-review <REVIEW-ID>`、两处 review 值一致），**首签时 `signed_at` 与 `first_seen_at` 同写 `2027-04-15T00:00:00Z`**（未来值构造；无规则禁止未来 `signed_at`，`%cI` 只 WARN/INFO；不事后 amend，否则改 `L[0]` SHA 撞 `epoch_origin`），`d + 90d = 2027-07-14 > cutover` ⇒ `due = 2027-04-15`；③c `+90d` 支：默认 `cutover = 2027-03-31`，`first_seen_at` / `first_seen_origin` / `signed_at` **同写 `2026-11-05T00:00:00Z`**（**同样不用运行时 `now`**，否则 2027 年起该支翻到 `cutover` 支、`+90d` 分支失去覆盖），`d + 90d = 2027-02-03 < 2027-03-31` ⇒ `due = 2027-02-03`，永久成立；④ 续签把 `due` 改回区间内 ⇒ 恢复 PASS；**比较全在日期层**（先截 UTC 日期得 `d` 再加 90 天，全程 `date`，`cutover` 不随缺 `first_seen_origin` 跳过）**、**T-31（v23/次要 2）：干净基线注入非 `SolutionError` 的未知异常 ⇒ `check --json` 为 exit 2、合法 JSON、`errors[]` 恰一条 `internal_error`、`not_run[]` 从异常处填满、无裸 traceback；注入 `SolutionError` ⇒ 走业务码；用法错误 ⇒ exit 2 且 stdout 首行非 JSON（消费方按首字符区分）**、**S-55 前置 = S-18 的构造 + S-26 的后置 lock（v23/I-5；v24/I-2 补全；v25/I-1 改①；v26/S-7 更正理由：**已重指后删空 ⇒ ⑤ 与单调同红、按判序只报 `exemption_start_history_broken`**；前缀单调移 T-33）**（以上 v15/v16/v17/v18/v19/v20/v21/v22/v23/v24/v25/v26）**。
 - 依赖：B。
 
 - **C 批写入口：全仓不存在，本稿一律标「C 批实现时补」（v32/结构项）**：`seal freeze --seal <path> --at <sha>`、`seal reanchor --review <ID> --from-a <sha>`、`lock --update --assets-root <new> --anchor-review <ID>` 三条命令**今天都不存在**（`scripts/atlas_solution.py` 没有对应子命令；`_support/solution.py` 的 `lock_payload` 只写 `schema_version` / `solution` / `mode` / `locked_at` / `members` / `contracts`（+ `definition`、`acceptance_cutover` 与根字段），**没有** `seal_anchors`（C 批才建）；`acceptance_cutover_review` 在 review 非空时写（`_support/solution.py:1314-1315`，v35/重要 5 更正））。因此本批**不再写「看起来今天就能跑」的 CLI 夹具**，统一按三要素表述：
@@ -2072,8 +2215,8 @@ D  = L 中状态字母含 D 的「提交数」
 
 ### 批次 D：#51 crosswalk + #53 证据/契约 AC + 期限执行点
 
-- 文件：`_support/solution.py`（`check_solution` 读 crosswalk、waiver、证据列；**父仓按 crosswalk 扫被引用成员 PRD、缺列报 `evidence_columns_unbound` 的那半边只在这里，v17 明确归 D**）、`_support/solution_task.py`（`task_status`）、`templates/prd/domain.md`（**仅** §五-b / Assumptions 证据列，并把 `prd_schema` 由 1 升 2；`prd_version` 已随 B）、`templates/prd/ac-crosswalk.md`（新）、`validators/validate_prd.py`（只留**成员侧**证据列期限判据的接线；成员侧 `prd_schema` 谓词已在 B 落地）、`validators/validate_ac_alignment.py`、`shared/solution.md`、`tests/test_prd_contract_ac.py`、`tests/test_solution_task.py`。
-- 夹具：成员多 PRD 定位（I1）；`(方案AC,成员)` 无需求行；重复三元组；需求级豁免；后加需求不可豁免；`waiver_baseline_digest` 漂移；`verified` 无指针；被引用域缺列（父仓 FAIL `evidence_columns_unbound`）；**父仓按 crosswalk 扫被引用 PRD、crosswalk 缺失 ⇒ `evidence_columns_unbound`（v17：这半边依赖 crosswalk 落地，不能出现在 B 的清单里）**；`prd_schema: 2` 新 PRD 缺列（立即 FAIL）；`prd_schema: 1` 存量未引用域缺列（2027-06-30 含前 WARN；07-01 起成员 `validate_prd` FAIL）；成员单独 `atlas check` 证据列 N/A。
+- 文件：**`_support/ac_crosswalk.py`（新，v41：`parse_crosswalk` / `crosswalk_findings` / `resolve_crosswalk_path`，见 §2.1）**、`tests/test_ac_crosswalk.py`（新）、`_support/solution.py`（`check_solution` 读 crosswalk、waiver、证据列；**父仓按 crosswalk 扫被引用成员 PRD、缺列报 `evidence_columns_unbound` 的那半边只在这里，v17 明确归 D**）、`_support/solution_task.py`（`task_status`）、`templates/prd/domain.md`（**仅** §五-b 契约表；`prd_schema: 2` 与证据两列已随 B 落地，**D 不再升版本**；`prd_version` 已随 B）、`templates/prd/ac-crosswalk.md`（新）、`validators/validate_prd.py`（只留**成员侧**证据列期限判据的接线；成员侧 `prd_schema` 谓词已在 B 落地）、`validators/validate_ac_alignment.py`、`shared/solution.md`、`tests/test_prd_contract_ac.py`、`tests/test_solution_task.py`。
+- 夹具：成员多 PRD 定位（I1）；`(方案AC,成员)` 无需求行；重复三元组；需求级豁免；后加需求不可豁免；（`waiver_baseline_digest` 漂移已移 C，v43/重要 3）`verified` 无指针；被引用域缺列（父仓 FAIL `evidence_columns_unbound`）；**`成员AC = AC-CONTRACT-001` ⇒ `contract_ac_in_member_slot` FAIL；成员 PRD AC 表出现契约 AC ⇒ 同码（D-46）**；**父仓按 crosswalk 扫被引用 PRD、crosswalk 缺失 ⇒ `evidence_columns_unbound`（v17：这半边依赖 crosswalk 落地，不能出现在 B 的清单里）**；`prd_schema: 2` 新 PRD 缺列（立即 FAIL）；`prd_schema: 1` 存量未引用域缺列（2027-06-30 含前 WARN；07-01 起成员 `validate_prd` FAIL）；成员单独 `atlas check` 证据列 N/A；**§五-b 契约 AC（v42/重要 7）**：正例（六列齐全、`AC-CONTRACT-001` 被 `requirements[].acs` 引用、`关联AC` 有效）；反例（缺 `契约AC` 表头 ⇒ `contract_ac_table_missing`；引用未定义 ⇒ `contract_ac_undefined`；`关联AC` 悬空 ⇒ `contract_ac_orphan`；重复 `契约AC`；编号 `AC-CONTRACT-1` 形态错 ⇒ parse `ac_format`）。
 - 依赖：B；D 必须在 B 后。**批次内依赖（v17/§1.5 第 2 条）**：`evidence_columns_unbound` 的父仓半边**只能**在 crosswalk 落地后实现；B 批只交付成员侧 `validators/validate_prd.py` 的同一谓词，不得以「父仓证据列已实现」的姿态记入 B 的验收。
 
 串行：**A → B-0 → B → C → D**。任何两会话不得同时写 `_support/solution.py` 或 `shared/solution.md`。
@@ -2099,6 +2242,9 @@ D  = L 中状态字母含 D 的「提交数」
 | K-14a | 有封条、卡已归档到 `.trellis/tasks/archive/<month>/<ID>/` | PASS（不算 `card_absent`，不判新鲜度） |
 | K-15 | 卡挂别的需求的 AC（⊄ 本 `(id,member)` 的 `acs`） | FAIL |
 | K-16 | 需求有 AC 却写 `none` | FAIL（须走需求级豁免） |
+| K-20 | 任务卡 Confirmed 表 `verified` 无证据指针 / `assumed` 无默认值来源 | `confirmed_evidence_missing` FAIL（C，v41；v42 改号） |
+| K-21 | 任务卡 Confirmed 表 `unverified` | `confirmed_unverified` WARN（exit 0；C，v41；v42 改号） |
+| K-22 | `prd_schema: 2` 但 Confirmed 小节缺表 / 缺 `确认项` 或 `证据状态` 列 | `confirmed_columns_missing` FAIL（C，v41；v42 改号） |
 | D-01 | v2 清单无 `definition` | FAIL unbound（v1 见 V-02 硬拒） |
 | D-02 | v2 缺 `acceptance_cutover`（无论是否有 AC） | FAIL `acceptance_cutover_missing`（v18/阻断 3：v2 必填）；对照 v1 缺 ⇒ 只 `migration_required` WARN |
 | D-03 | 同 domain/code/version 副本替换 | `lock --update` 拒绝（版本未升） |
@@ -2139,7 +2285,15 @@ D  = L 中状态字母含 D 的「提交数」
 | D-38 | `reader_version >= 0.4.0-0`（含 beta）但 `PRD_SCHEMA_2_FROM` 未设置（`None`）；对照：发布 tag 日期与常量日期不一致 | `prd_schema_gate_unarmed` **WARN**（exit 0，不计入 FAIL，提示「判据未武装」）；后者在**发版门** FAIL（判据不得与 tag 漂移）。**v19/重要 4 注**：本夹具测的是「正式版带未武装常量」这种**不该存在的配置**——它能绿只说明 WARN 生效，不说明 `prd_schema_too_low` 判据可用；真正可用必须等 D-37 的常量置值 |
 | D-39 | **已首次刷新**（锁历史任一版本 `definition.commit != null`）后：① 清单有 cutover、锁缺；② 两侧皆空；③ 两侧有值不等。对照：`definition.commit == null` 期间两侧皆空 / 单侧有值 | ①② ⇒ `acceptance_cutover_missing` **FAIL**；③ ⇒ `acceptance_cutover_mismatch` **FAIL**；对照 ⇒ pending PASS（单侧有值放行，B-0 期锁尚未写该字段）。写入侧不得把值写回 `null`。**v19/次要 5**：① 是**人工篡改形态**（`init` / `migrate --to 2` 必写清单、B 首次 `lock --update` 必写锁），不是常规写侧路径；夹具里要注明是手工删锁字段 |
 | D-40 | **发版门（v19/重要 3）**：发布 tag 的 UTC 日期 vs `PRD_SCHEMA_2_FROM`；对照：prerelease 版（`0.4.0-beta.1`）且常量已置值 | `tests/test_release_gate.py`（或 `scripts/release_check.py`）断言「常量非 `None` 且 `==` tag 的 UTC 日期」⇒ PASS；不等 / 常量仍 `None` ⇒ **FAIL**。武装条件用 `reader_version >= 0.4.0-0`，beta 期也必须武装，不允许整段 beta 静默 |
-| C-01 | 方案 AC 无 crosswalk 行 | 该需求 FAIL |
+| D-41 | 锁历史含 non-null `requirements_digest`，当前锁改成缺键 / `null` | `manifest_digest_removed` FAIL，`detail.field = requirements_digest`（v43） |
+| D-42 | 锁 `prd_version` 从 5 回退到 3（其余不动） | `manifest_rollback` FAIL，`detail.prd_version = {3, 5}`；若同时缺键，**只报本码**（抑制 `manifest_digest_removed`，v43） |
+| D-43 | D 批 `SEAL_UPSTREAM_BIND_FROM` 起 90 天后，C 期封条缺 `prd-domain` / `ac-crosswalk` | `seal_upstream_unbound` FAIL；`state=frozen` 豁免；窗口内只 WARN（v43） |
+| D-44 | Confirmed 行 `unverified` 无 `confirmed_review:` / 有则 PASS | `confirmed_downgrade_unreviewed` FAIL / PASS（v43：当前行判，不读历史） |
+| D-45 | crosswalk 文件缺失 / 不可读 | `crosswalk_unresolvable` FAIL，**抑制 C-01…C-11（含 C-09）**（v44） |
+| D-46 | `成员AC = AC-CONTRACT-001`；成员 PRD AC 表出现契约 AC | `contract_ac_in_member_slot` FAIL（v44/重要 5） |
+| D-47 | crosswalk 能读但坏行（表头 / 列数 / AC 形态 / 路径 / 成员字段空 五类） | `crosswalk_parse_error` FAIL，`detail.kind` 取五值之一；**抑制 `C-01…C-11`（含 C-09；只报本码）**；**不是** `crosswalk_unresolvable`（v45） |
+| D-48 | **常量发版门（v44/阻断 1）**：`SEAL_UPSTREAM_BIND_FROM` ≠ D 批首个 tag 的 UTC 日期 | FAIL（与 D-40 同构；写晚 ⇒ 追溯窗口永不到期） |
+| C-01 | 方案 AC 无 crosswalk 行 | 该需求 FAIL。**排除**：`AC-CONTRACT-*` 不要求 crosswalk 行（§1.5 第 7 条）；crosswalk 文件缺失 / 不可读 ⇒ 整表抑制，只报 `crosswalk_unresolvable`；**能读但坏行 ⇒ 整表抑制，只报 `crosswalk_parse_error`** |
 | C-02 | 成员 PRD 路径缺失 / 多 PRD 无法定位 | FAIL |
 | C-03 | 成员 AC 不在指定成员 PRD | FAIL |
 | C-04 | `(方案AC,成员)` 无需求行 | FAIL |
@@ -2147,6 +2301,9 @@ D  = L 中状态字母含 D 的「提交数」
 | C-06 | 后加需求进豁免表 | FAIL（baseline 不含） |
 | C-07 | 豁免 due 超 cutover | 拒绝 |
 | C-08 | 一个成员 AC 映射两个方案 AC | PASS（两行合法） |
+| C-09 | 显式行存在、成员 AC 也在成员 PRD，但该行把成员 AC 映射到**错误的方案 AC**（与 PRD 的 `关联AC` 不一致） | FAIL（映射错位；v42/重要 6 改成真正不同的反例） |
+| C-10 | D 批默认配置下跑孤儿成员 AC（未列进 crosswalk） | **断言不产生** `crosswalk_orphan_member_ac`（默认 WARN 关闭/不报）；只有显式开启可选开关才 WARN（v42/重要 6，避免恒真假绿） |
+| C-11 | 成员 PRD front matter `domain` 与 crosswalk `成员` 列不符 | FAIL `member_domain_mismatch`（§1.3 已写「不一致 ⇒ FAIL」；v43/阻断 4 补码） |
 | E-01 | `verified` 无指针 | FAIL |
 | E-02 | 被需求引用的域缺证据列（0.4.0，父仓） | FAIL |
 | E-03 | `prd_schema: 1` 存量未引用域缺列 | 2027-06-30 含前 WARN；07-01 起 FAIL |
@@ -2156,6 +2313,9 @@ D  = L 中状态字母含 D 的「提交数」
 | E-07 | 2027-07-01 后未引用域仍四列 | FAIL（成员 `validate_prd` 执行） |
 | E-08 | `prd_schema: 2` 新 PRD 缺两列 | 立即 FAIL（无缓冲） |
 | E-09 | 缓冲期内把缺列判成 N/A | 夹具红（必须 WARN） |
+| E-10 | 引用 `AC-CONTRACT-*` 但 §五-b 表无该行 / 无 `契约AC` 表头 | `contract_ac_undefined` / `contract_ac_table_missing` FAIL（D） |
+| E-11 | §五-b 行的 `关联AC` 不在 §五 AC 表 | `contract_ac_orphan` FAIL（D） |
+| E-12 | 父仓单独判任务卡 Confirmed 证据状态 | N/A `confirmed_parent_only`（父仓不读卡正文；v42/次要 6） |
 | T-01 | 任务目录 `cases.md` 出现任一条用例行（`E2E-*` / `BE-SYNC-*` / `HC-RECORD-*` / `TW-PUSH-*`，含成员任务目录与 archive） | 0.3.x WARN；0.4.0 起 FAIL `task_dir_case_duplicate` |
 | T-02 | `not_ready` 无 gap | FAIL |
 | T-03 | `gap.due=1970-01-01` / 过去 | 拒绝签发 |
@@ -2345,8 +2505,9 @@ D  = L 中状态字母含 D 的「提交数」
 原有开放问题：
 
 1. `关联AC` 同列多值（`、`/`,`）是否够；是否需要单独的链接表。
-2. `atlas apply archive` 的归档条件：是否要求「所有 AC 有 E2E 状态或显式 n/a」。
-3. `min_atlas` 的强制点：只靠 `install.sh --update`，还是必须 CI 比对。
+2. **`crosswalk_orphan_member_ac` 是否升 FAIL（v42/横切）**：D 批默认只 WARN（默认配置下不报，见 C-10）；#51 的「双向对账」另一半（成员 AC → 方案）仍无人判。选项：(a) 保持可选 WARN；(b) D 批首版即 FAIL，给 90 天迁移；(c) 只对「成员 PRD 已被 `prd-domain` 绑定的仓」FAIL。**待拍板**，未定前默认 (a)。
+3. `atlas apply archive` 的归档条件：是否要求「所有 AC 有 E2E 状态或显式 n/a」。
+4. `min_atlas` 的强制点：只靠 `install.sh --update`，还是必须 CI 比对。
 
 ## 10. 本 RFC 不做什么
 
