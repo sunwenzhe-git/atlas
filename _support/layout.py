@@ -288,7 +288,8 @@ def _parse_config(text: str) -> dict:
     return {"version": top.get("version"), "layout": layout}
 
 
-def _validate_rel_path(root: Path, key: str, value: str) -> Path:
+def _validate_rel_path(root: Path, key: str, value: str,
+                       lexical: bool = False) -> Path:
     raw = value.strip()
     if not raw:
         raise LayoutError(f"layout.{key} 不能为空")
@@ -304,6 +305,12 @@ def _validate_rel_path(root: Path, key: str, value: str) -> Path:
     if parts[0].casefold() in _FORBIDDEN_FIRST_PARTS:
         raise LayoutError(f"layout.{key} 不得落在 {parts[0]}/：{raw!r}")
 
+    if lexical:
+        # 纯词法层：零文件系统访问。历史根 / `assets_root_history[]` 只走这一层——
+        # 历史根今天可能已变成仓外 symlink 或普通文件，用今天的工作树去判会永红，
+        # 而 append-only 数组没有出口（v20）。
+        return root / Path(*parts)
+
     root_resolved = root.resolve()
     candidate = (root_resolved / Path(*parts)).resolve()
     try:
@@ -315,10 +322,17 @@ def _validate_rel_path(root: Path, key: str, value: str) -> Path:
     return root / Path(*parts)
 
 
-def validate_value(root: Path, key: str, value: str) -> Path:
+def validate_value(root: Path, key: str, value: str, lexical: bool = False) -> Path:
+    """布局值校验（单源）。
+
+    `lexical=True` 只做字符 / 结构规则（strip、反斜杠、引号、`#`、换行、绝对路径、
+    `..`、保留首段），**零 FS 访问**；默认还做 `resolve()` + `relative_to` 逃逸检查与
+    「已存在但不是目录」。注意两层都**不禁中文、不禁空格**——`install.py --assets-root 产品`
+    是合法输入，检查器不得另立一套字符集。
+    """
     if key not in _ALLOWED_LAYOUT:
         raise LayoutError(f"未知 layout 键：{key!r}（只允许 assets_root / adr）")
-    return _validate_rel_path(Path(root).absolute(), key, value)
+    return _validate_rel_path(Path(root).absolute(), key, value, lexical=lexical)
 
 
 def write_config(root: Path, assets_root: str, adr: str | None = None,

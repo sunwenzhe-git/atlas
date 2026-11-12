@@ -139,6 +139,11 @@ def build_parser(version: str | None = None) -> argparse.ArgumentParser:
     p_init.add_argument("--member", action="append", default=[],
                         help="成员仓 name=path[:frontend|backend|fullstack|mobile]，可重复")
     p_init.add_argument("--assets-root", default="product")
+    p_init.add_argument("--cutover", default=None,
+                        help="验收切点 YYYY-MM-DD（默认 2027-03-31；往后推需同时给 "
+                             "--anchor-review，且不超过默认 + 90 天）")
+    p_init.add_argument("--anchor-review", default=None,
+                        help="改切点的评审号（只用于 --cutover 晚于默认值时）")
     p_init.add_argument("--no-install", action="store_true", help="不自动装配 .atlas（测试/离线用）")
 
     p_adopt = sub.add_parser("adopt", help="检测已有成员资产并生成 federated 清单")
@@ -183,6 +188,11 @@ def build_parser(version: str | None = None) -> argparse.ArgumentParser:
                            help="定义源路径（B-0 只接受 <assets_root>/prd/solution-prd.md）")
     p_migrate.add_argument("--check-members", action="store_true",
                            help="只读：逐成员打印卡片 git add -f 命令（active 与 archive）")
+    p_migrate.add_argument("--cutover", default=None,
+                           help="验收切点 YYYY-MM-DD（默认 2027-03-31；往后推需同时给 "
+                                "--anchor-review，且不超过默认 + 90 天）")
+    p_migrate.add_argument("--anchor-review", default=None,
+                           help="改切点的评审号（只用于 --cutover 晚于默认值时）")
 
     p_lock = sub.add_parser("lock", help="查看或更新契约锁")
     _add_common(p_lock)
@@ -223,6 +233,43 @@ def build_parser(version: str | None = None) -> argparse.ArgumentParser:
     return ap
 
 
+def _internal_error_report(core_mod, root: Path, exc: BaseException) -> dict:
+    """RFC §3.2 第 4 层：未知异常 ⇒ 合法 JSON（`schema_version: 2`）+ 六段全进 `not_run[]`。
+
+    异常从 `check_solution` 内部抛出时无法知道跑到第几步，按最保守口径「一段都没跑完」
+    填满六项（RFC v31/S-2 用「完整六项」而不是子集）。
+    """
+    first = str(exc).splitlines()[0] if str(exc) else ""
+    message = f"{type(exc).__name__}: {first}" if first else type(exc).__name__
+    try:
+        reader = core_mod.reader_version(root)
+    except Exception:  # noqa: BLE001 - 报告本身不能再抛
+        reader = ""
+    return {
+        "schema_version": 2,
+        "ok": False,
+        "reader_version": reader,
+        "definition_source": None,
+        "errors": [{"code": "internal_error", "message": message, "path": None}],
+        "warnings": [],
+        "info": [],
+        "skipped": [],
+        "downgrades": [],
+        "not_run": list(core_mod.NOT_RUN_SEGMENTS),
+    }
+
+
+def _emit_internal_error(core_mod, root: Path, exc: BaseException, as_json: bool) -> int:
+    """`internal_error` 是 exit 2 里唯一产 JSON 的出口；非 `--json` 走可读文案。"""
+    report = _internal_error_report(core_mod, root, exc)
+    if as_json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(f"[FAIL] internal_error: {report['errors'][0]['message']}", file=sys.stderr)
+        print("未执行: " + "、".join(report["not_run"]), file=sys.stderr)
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     # `--root` 允许出现在子命令前（bin/atlas.js 就是这样传的）或后；先摘出来，
@@ -258,11 +305,18 @@ def main(argv: list[str] | None = None) -> int:
             members = [_parse_member(m) for m in args.member]
             path = core.init_solution(root, args.name, members,
                                       assets_root=args.assets_root,
-                                      install=not args.no_install)
+                                      install=not args.no_install,
+                                      cutover=args.cutover,
+                                      anchor_review=args.anchor_review)
             data = {"manifest": str(path), "solution": args.name, "mode": "federated",
                     "members": len(members)}
             print(json.dumps(data, ensure_ascii=False, indent=2) if args.json
                   else f"[OK] solution 清单已创建: {path}")
+            if not args.json:
+                manifest = core.load_manifest(root)
+                if manifest["version"] == 2 and manifest.get("acceptance_cutover"):
+                    print("     " + core._cutover_note(
+                        manifest["acceptance_cutover"], args.cutover))
             return 0
 
         if args.cmd == "adopt":
@@ -299,11 +353,17 @@ def main(argv: list[str] | None = None) -> int:
                 print("[FAIL] --lenient 仅限无封条", file=sys.stderr)
                 return 2
             if not args.fix_acs:
-                data = core.check_solution(root, strict=args.strict,
-                                           allow_dangling_acs=allow,
-                                           lenient=args.lenient,
-                                           allow_unverifiable_chain=(
-                                               args.allow_unverifiable_chain))
+                try:
+                    data = core.check_solution(root, strict=args.strict,
+                                               allow_dangling_acs=allow,
+                                               lenient=args.lenient,
+                                               allow_unverifiable_chain=(
+                                                   args.allow_unverifiable_chain))
+                except core.SolutionError:
+                    # RFC §3.2 第 2 层：SolutionError 原样上抛（exit 2、无 JSON 报告）。
+                    raise
+                except Exception as exc:  # noqa: BLE001 - §3.2 第 4 层：unknown ⇒ internal_error
+                    return _emit_internal_error(core, root, exc, args.json)
                 print(json.dumps(data, ensure_ascii=False, indent=2) if args.json
                       else core.render_check(data))
                 return 1 if data["overall"] == "FAIL" else 0
@@ -327,11 +387,16 @@ def main(argv: list[str] | None = None) -> int:
             if not args.apply:
                 return 0
             # 写成功不等于门变绿：退出码只由重跑结果决定。
-            report = core.check_solution(root, strict=args.strict,
-                                         allow_dangling_acs=allow,
-                                         lenient=args.lenient,
-                                         allow_unverifiable_chain=(
-                                             args.allow_unverifiable_chain))
+            try:
+                report = core.check_solution(root, strict=args.strict,
+                                             allow_dangling_acs=allow,
+                                             lenient=args.lenient,
+                                             allow_unverifiable_chain=(
+                                                 args.allow_unverifiable_chain))
+            except core.SolutionError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - 与主检查同口径
+                return _emit_internal_error(core, root, exc, args.json)
             if not args.json:
                 print(core.render_check(report))
             return 1 if report["overall"] == "FAIL" else 0
@@ -353,7 +418,9 @@ def main(argv: list[str] | None = None) -> int:
             if not args.to:
                 raise core.SolutionError("migrate 需要 --to 2（或只用 --check-members）")
             result = core.migrate_manifest(root, to=args.to,
-                                           definition_path=args.definition_path)
+                                           definition_path=args.definition_path,
+                                           cutover=args.cutover,
+                                           anchor_review=args.anchor_review)
             if args.json:
                 print(json.dumps(result, ensure_ascii=False, indent=2))
             elif not result["changed"]:
@@ -361,6 +428,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"[OK] {core.MANIFEST_NAME} v{result['from']} → v{result['to']}；"
                       f"补: {'、'.join(result['added']) or '无'}")
+                print("     " + core._cutover_note(result["acceptance_cutover"],
+                                                  args.cutover))
                 print("     下一步：提交清单 → atlas solution lock --update → 提交锁")
             return 0
 
