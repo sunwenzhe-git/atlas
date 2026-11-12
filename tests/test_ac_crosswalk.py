@@ -371,6 +371,17 @@ def test_no_solution_ac_requirement_does_not_require_crosswalk(tmp_path: Path) -
     assert check(tmp_path, {**data(), "requirements": []}) == []
 
 
+def test_d45_unreadable_crosswalk_is_unresolvable(tmp_path: Path) -> None:
+    """D-45 的「不可读」分支：文件在但 UTF-8 解码失败 ⇒ 同 `crosswalk_unresolvable`，不落 parse_error。"""
+    write(tmp_path, PRD, PRD_OK)
+    path = tmp_path / "product" / "prd" / "ac-crosswalk.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xff\xfe\x00\x81")
+    got = check(tmp_path, data())
+    assert [f["code"] for f in got] == [
+        "crosswalk_unresolvable", "evidence_columns_unbound"]
+
+
 @pytest.mark.parametrize("body,kind", [
     ("| 方案AC | 成员 |\n|---|---|\n| AC-SOLUTION-001 | backend |\n",
      "header_missing"),
@@ -453,3 +464,19 @@ prd_schema: 2
     assert check(tmp_path, data(
         acs=("AC-SOLUTION-001", "AC-CONTRACT-001"),
         definition="product/prd/solution-prd.md")) == []
+
+
+def test_parent_side_does_not_judge_confirmed_state(tmp_path: Path) -> None:
+    """E-12：父仓只验封条投影、不读卡正文 ⇒ 任务卡里坏的 Confirmed 表不产 `confirmed_*`。
+
+    证据状态由成员 `validate_task_card` 判（C 批）；父仓端 N/A `confirmed_parent_only`。
+    """
+    write(tmp_path, PRD, PRD_OK)
+    write(tmp_path, "product/prd/ac-crosswalk.md", cw(ROW))
+    write(tmp_path, "backend/.trellis/tasks/T-1/prd.md",
+          "## Confirmed\n\n| 确认项 | 口径 | 证据状态 | 证据指针 |\n"
+          "|---|---|---|---|\n| 认证方式 | JWT | unverified | — |\n")
+    got = check(tmp_path, data())
+    assert [f["code"] for f in got
+            if f["code"].startswith("confirmed_")] == []
+    assert got == []
