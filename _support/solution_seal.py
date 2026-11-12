@@ -38,10 +38,11 @@ ROLES = ("manifest", "prd-global", "prd-domain", "ac-crosswalk",
 BOUNDARY_EXEMPT = frozenset({
     "renewal_seq", "previous_seal_commit", "previous_seal_sha256",
     "reanchor", "signed_at"})
-# 换路径首签豁免集（§3.2 链规则 3 / T-26）
+# 换路径首签豁免集（§3.2 链规则 3 / T-26）。`reasons` 是注释不是业务载荷：
+# 纯改名写一条 `--reason` 不得因此判「载荷不等」。
 MOVE_EXEMPT = frozenset({
     "renewal_seq", "previous_seal_commit", "previous_seal_sha256",
-    "moved_from", "reanchor"})
+    "moved_from", "reanchor", "reasons"})
 
 
 class SealError(ValueError):
@@ -660,7 +661,8 @@ def _move_payload(root: Path, path: str, seal: dict, moved_from: dict) -> list[d
         if not (isinstance(reasons, list) and reasons
                 and isinstance(prev_cases, list) and prev_cases):
             return [_f("seal_move_payload_mismatch", "error",
-                       "换路径首签载荷不等，且未写 reasons[] / previous_cases[]",
+                       "换路径首签的业务载荷与旧封条不等：需非空 reasons[] 说明改动，"
+                       "并给出覆盖所有改动用例的 previous_cases[]（reasons[] 本身不计载荷）",
                        path)]
     return []
 
@@ -833,6 +835,25 @@ def _schema_findings(root: Path, data: dict, seal: dict, seal_path: str,
     return out
 
 
+def _resolve_card_file(member_dir: Path, card_path: str) -> Path | None:
+    """卡路径双解析（§1.3.6 / 重要 2）：先 active，未命中再 `archive/*/<ID>/<tail>`。
+
+    封条 `card.path` 不随归档改写（§2.4 决策 6），卡归档后仍须能定位；
+    归档命中不判新鲜度（只在调用方读字节 / 判跟踪）。
+    """
+    direct = member_dir / card_path
+    if direct.is_file():
+        return direct
+    parts = Path(card_path).parts
+    if len(parts) >= 4 and parts[0] == ".trellis" and parts[1] == "tasks":
+        task_id, tail = parts[2], Path(*parts[3:]).as_posix()
+        hits = sorted(member_dir.glob(
+            f".trellis/tasks/archive/*/{task_id}/{tail}"))
+        if hits:
+            return hits[-1]
+    return None
+
+
 def _apply_record_findings(root: Path, data: dict, seal: dict,
                            seal_path: str) -> list[dict]:
     """§1.4：`kind=binding|backfill` 要求成员侧任务卡与 `atlas-apply.md` 存在。
@@ -863,15 +884,29 @@ def _apply_record_findings(root: Path, data: dict, seal: dict,
         empty = not any(member_dir.iterdir())
     except OSError:
         empty = True
-    if empty:
+    rc, out, _ = _git(root, "ls-files", "-s", "--", str(member["path"]))
+    is_gitlink = rc == 0 and out.strip().startswith("160000")
+    rc2, top, _ = _git(member_dir, "rev-parse", "--show-toplevel")
+    own_repo = (rc2 == 0 and bool(top.strip())
+                and Path(top.strip()).resolve() == member_dir.resolve())
+    if empty or (is_gitlink and not own_repo):
         # submodule / gitlink 未 init 时留下的是空目录：同样不可验证，不是「卡确实缺」。
         return [_f("apply_record_missing", "warn",
-                   f"成员子树为空（{member['path']}/ 未 checkout）；本项不可验证",
+                   f"成员子树未 checkout（{member['path']}/ 为空或仅 gitlink）；本项不可验证",
                    seal_path, {"kind": "member_not_checked_out"})]
-    card_file = member_dir / str(card_path)
-    if not card_file.is_file():
+    card_file = _resolve_card_file(member_dir, str(card_path))
+    if card_file is None:
         return [_f("card_absent", "error",
-                   f"封条指向的任务卡不存在: {card_path}", seal_path)]
+                   f"封条指向的任务卡在 active 与 archive 都不存在: {card_path}",
+                   seal_path, {"kind": "card_absent", "card": str(card_path)})]
+    rel_card = card_file.relative_to(member_dir).as_posix()
+    # 卡必须被**成员仓**跟踪（C 批前置）；成员是嵌套仓时 `git -C` 落到成员仓，
+    # 成员树直接内嵌父仓时落到父仓——两处都要求 `ls-files` 能命中这条路径。
+    rc, _, _ = _git(member_dir, "ls-files", "--error-unmatch", "--", rel_card)
+    if rc != 0:
+        return [_f("card_untracked", "error",
+                   f"任务卡未被 git 跟踪: {rel_card}", seal_path,
+                   {"kind": "card_untracked", "card": rel_card})]
     apply_md = card_file.parent / "atlas-apply.md"
     if not apply_md.is_file():
         return [_f("apply_record_missing", "error",
@@ -1120,9 +1155,19 @@ def check_anchor_fields(root: Path, path: str, anchor: dict, head_doc: dict,
         # T-30①：`exemption_start_origin` **不可变**，外部锚 = 锁历史首个含该字段的
         # 版本里的值（v23/I-1；v24/B-2 取法）。重指后 `L[0]` 会变，不能拿它当锚，
         # 否则「重指 + 重签」永久红且二次 `lock --update` 不自愈。
-        anchor_origin = _anchor_value_in_history(root, path,
-                                                 "exemption_start_origin")
-        if anchor_origin is not None and origin != anchor_origin:
+        entry = _anchor_entry_in_history(root, path, "exemption_start_origin")
+        epoch_history = anchor.get("epoch_origin_history")
+        epoch_history = epoch_history if isinstance(epoch_history, list) else []
+        # 外部锚必须**独立**：首版与当前 L[0] 同源（squash / orphan 新根里连锁一起
+        # 压平）⇒ 锚自指；或者链里记了重指、epoch 历史却只有一项（被截断）⇒ 不可信。
+        # 取不到独立锚 ⇒ fail-closed（不接受自述降级）。
+        if entry is None or entry[0] == L[0] or (chain and len(epoch_history) <= 1):
+            out.append(_f("chain_unverifiable", "error",
+                          "无法取得独立外部锚（锁首版与当前封条同源或 epoch 历史被压平）",
+                          path, {"cause": "anchor_not_independent"}))
+            return out
+        anchor_origin = entry[1]
+        if origin != anchor_origin:
             out.append(_f("exemption_start_origin_rewritten", "error",
                           "exemption_start_origin 与锁历史锚不等"
                           "（历史豁免起点被改写）", path,
@@ -1261,7 +1306,11 @@ def compute_anchor(root: Path, path: str, prior: dict | None,
         new_started = (head_doc or {}).get("signed_at")
         old_started = anchor.get("exemption_started_at")
         history = list(anchor.get("exemption_start_history") or [])
-        if (old_started and isinstance(new_started, str)
+        # 写侧不得用**未核验**的 old_started 编审计链：只有「无既有链且起点就是
+        # 不可变 origin」时，才把这次同步记成一条可复核的 from→to。
+        if (not history and old_started
+                and old_started == anchor.get("exemption_start_origin")
+                and isinstance(new_started, str)
                 and new_started != old_started):
             history.append({"from": old_started, "to": new_started,
                             "commit": head_commit or _rev_parse(root, "HEAD")})
@@ -1319,13 +1368,13 @@ def _lock_anchors(root: Path) -> dict:
             if isinstance(v, dict)} if isinstance(anchors, dict) else {}
 
 
-def _lock_anchor_versions(root: Path, path: str) -> list[dict]:
-    """锁文件全历史里该封条路径的锚（提交正序；不可解析 / 无该键的版本跳过）。"""
+def _lock_anchor_versions(root: Path, path: str) -> list[tuple[str, dict]]:
+    """锁文件全历史里该封条路径的锚（`(提交, 锚)` 正序；不可解析 / 无键的版本跳过）。"""
     rc, out, _ = _git(root, "log", "-m", "--full-history", "--reverse",
                       "--format=%H", "HEAD", "--", "atlas.solution.lock.json")
     if rc != 0:
         return []
-    versions: list[dict] = []
+    versions: list[tuple[str, dict]] = []
     seen: set[str] = set()
     for commit in out.split():
         if commit in seen:
@@ -1341,16 +1390,22 @@ def _lock_anchor_versions(root: Path, path: str) -> list[dict]:
         anchors = doc.get("seal_anchors") if isinstance(doc, dict) else None
         anchor = anchors.get(path) if isinstance(anchors, dict) else None
         if isinstance(anchor, dict):
-            versions.append(anchor)
+            versions.append((commit, anchor))
     return versions
 
 
-def _anchor_value_in_history(root: Path, path: str, field: str):
-    """外部锚：锁历史中**首个同时含该字段**的版本里该字段的值（无 ⇒ `None`）。"""
-    for anchor in _lock_anchor_versions(root, path):
+def _anchor_entry_in_history(root: Path, path: str,
+                             field: str) -> tuple[str, object] | None:
+    """外部锚：锁历史中**首个同时含该字段**的 `(提交, 值)`（无 ⇒ `None`）。"""
+    for commit, anchor in _lock_anchor_versions(root, path):
         if field in anchor:
-            return anchor[field]
+            return commit, anchor[field]
     return None
+
+
+def _anchor_value_in_history(root: Path, path: str, field: str):
+    entry = _anchor_entry_in_history(root, path, field)
+    return entry[1] if entry else None
 
 
 def select_seal(root: Path, anchors: dict | None, requested: str | None,
@@ -1447,14 +1502,15 @@ def build_seal_payload(root: Path, data: dict, seal_path: str, *,
         payload["moved_from"] = moved_from
         if reasons:
             payload["reasons"] = list(reasons)
-            # 换路径 + 业务改动（reasons 非空）：e2e / upstream 必须按当前树复算，
-            # 不能整段沿用旧载荷——否则合法改动会被 `upstream_stale` /
-            # `seal_e2e_case_sha_mismatch` 判红（读侧以 `_move_payload` 为准）。
+            # 换路径 + **真的**换了用例：e2e / upstream 必须按当前树复算，不能整段
+            # 沿用旧载荷；纯改名（用例没变）保持复制，避免把注释写进业务载荷。
             current_cases = [{"id": cid, "sha256": _case_sha(root, assets_root, cid)}
                              for cid in sorted(set(case_ids or []))]
-            payload["e2e"] = _e2e_payload(data, current_cases, e2e_status, gap,
-                                          base_e2e, old_doc, None, first=False)
-            payload["upstream"] = _upstream_entries(root, data, assets_root)
+            e2e = _e2e_payload(data, current_cases, e2e_status, gap,
+                               base_e2e, old_doc, None, first=False)
+            if e2e.get("changed_case_ids"):
+                payload["e2e"] = e2e
+                payload["upstream"] = _upstream_entries(root, data, assets_root)
         return payload
     projection = {
         "acceptance_acs": sorted(set(acceptance_acs or [])),

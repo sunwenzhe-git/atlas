@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -95,6 +96,10 @@ def init_repo(tmp: Path) -> Path:
     card.parent.mkdir(parents=True, exist_ok=True)
     card.write_text("atlas-acceptance: AC-SOLUTION-001\n", encoding="utf-8")
     (card.parent / "atlas-apply.md").write_text("# apply\n", encoding="utf-8")
+    # 卡必须在**成员仓**里被跟踪（父仓判 `card_untracked` 时会 `git -C web ls-files`）
+    git(tmp / "web", "add", "-A")
+    git(tmp / "web", "-c", "user.email=a@b", "-c", "user.name=a",
+        "commit", "-qm", "card")
     commit(tmp, ".", message="assets")
     data = core.load_manifest(tmp)
     payload = seal.build_seal_payload(
@@ -370,12 +375,13 @@ def test_c_reanchor_writer_advances_epoch(tmp_path: Path) -> None:
     anchor = core.read_lock(fresh)["seal_anchors"][SEAL_REL]
     assert anchor["epoch_origin"] == record
     assert anchor["anchor_review"] == "REVIEW-20261112-01"
-    assert codes(fresh) == []
+    # fresh clone 里成员树未 checkout：卡判据只出 WARN，错误面必须为空
+    assert _error_codes(fresh) == []
     # B4：reanchor 后的正常续签必须仍绿
     renew(fresh)
     core.write_lock(fresh, core.load_manifest(fresh), require_clean=True)
     commit(fresh, core.LOCK_NAME, message="renew after reanchor")
-    assert codes(fresh) == []
+    assert _error_codes(fresh) == []
     # B2：删 reanchor + 回退 renewal_seq 必须红（epoch_origin=R0 守卫）
     doc = read_doc(fresh)
     doc.pop("reanchor")
@@ -473,7 +479,7 @@ def test_c_retired_write_is_detected(repo: Path) -> None:
 
 
 def test_c_validator_cli_reports_and_n_a(repo: Path) -> None:
-    errors, warnings, paths, count = validator.collect_errors(repo)
+    errors, warnings, paths, count, _ = validator.collect_errors(repo)
     assert count == 1 and not errors
     empty = repo / "empty"
     empty.mkdir()
@@ -513,7 +519,7 @@ def test_c_seal_cli_exit_codes(repo: Path) -> None:
 
 
 def _validator_codes(root: Path) -> list[str]:
-    errors, _, _, _ = validator.collect_errors(root)
+    errors, _, _, _, _ = validator.collect_errors(root)
     return [e["code"] for e in errors]
 
 
@@ -534,7 +540,7 @@ def test_b1_deleted_anchor_key_fails_at_delivery_gate(repo: Path) -> None:
 def test_b1_missing_lock_with_seal_is_not_n_a(repo: Path) -> None:
     (repo / core.LOCK_NAME).unlink()
     commit_all(repo, message="drop lock")
-    errors, _, paths, count = validator.collect_errors(repo)
+    errors, _, paths, count, _ = validator.collect_errors(repo)
     assert count == 1 and paths
     assert "seal_anchor_path_unmapped" in [e["code"] for e in errors]
 
@@ -598,6 +604,167 @@ def test_i7_origin_rewritten_is_detected(repo: Path) -> None:
         json.dumps(lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     commit(repo, core.LOCK_NAME, message="rewrite origin")
     assert "exemption_start_origin_rewritten" in codes(repo)
+
+
+def test_r4_archived_card_is_not_card_absent(repo: Path) -> None:
+    """卡归档后封条 `card.path` 不改写：双解析到 archive 仍须绿；两处都缺才红。"""
+    member = repo / "web"
+    archived = member / ".trellis/tasks/archive/2026-11/01-x/prd.md"
+    archived.parent.mkdir(parents=True)
+    card = member / CARD
+    card.rename(archived)
+    (card.parent / "atlas-apply.md").rename(archived.parent / "atlas-apply.md")
+    git(member, "add", "-A")
+    git(member, "-c", "user.email=a@b", "-c", "user.name=a",
+        "commit", "-qm", "archive card")
+    assert codes(repo) == []
+    archived.unlink()
+    git(member, "add", "-A")
+    git(member, "-c", "user.email=a@b", "-c", "user.name=a",
+        "commit", "-qm", "drop archived card")
+    assert "card_absent" in codes(repo)
+
+
+def test_r4_allow_card_absent_downgrades_with_record(repo: Path) -> None:
+    """`--allow-card-absent`：默认 FAIL；开开关降 WARN 并写入 `downgrades[]`。"""
+    (repo / "web" / CARD).unlink()
+    errors, _, _, _, downgrades = validator.collect_errors(repo)
+    assert "card_absent" in [e["code"] for e in errors]
+    assert downgrades == []
+    errors, warnings, _, _, downgrades = validator.collect_errors(
+        repo, allow_card_absent=True)
+    assert "card_absent" not in [e["code"] for e in errors]
+    assert "card_absent" in [w["code"] for w in warnings]
+    assert downgrades == [{
+        "code": "card_absent",
+        "flag": "--allow-card-absent",
+        "scope": "card_absent",
+        "path": CARD,
+        "detail": downgrades[0]["detail"],
+    }]
+    res = subprocess.run(
+        [sys.executable, str(PKG / "validators" / "validate_apply_record.py"),
+         "--root", str(repo), "--allow-card-absent", "--json"],
+        capture_output=True, text=True)
+    assert res.returncode == 0, res.stdout
+    payload = json.loads(
+        res.stdout[res.stdout.index("{"):res.stdout.rindex("}") + 1])
+    assert payload["downgrades"][0]["code"] == "card_absent"
+    assert payload["ok"] is True
+
+
+def test_r4_squashed_external_anchor_is_chain_unverifiable(tmp_path: Path) -> None:
+    """锁与封条压进同一个 orphan 根并同改 origin/started ⇒ 锚自指，必须 fail-closed。"""
+    root = init_repo(tmp_path)
+    git(root, "checkout", "-q", "--orphan", "squashed")
+    doc = read_doc(root)
+    doc["signed_at"] = "2020-01-01T00:00:00Z"
+    doc["first_seen_at"] = "2020-01-01T00:00:00Z"
+    write_doc(root, doc)
+    lock = core.read_lock(root)
+    anchor = lock["seal_anchors"][SEAL_REL]
+    anchor["exemption_start_origin"] = "2020-01-01T00:00:00Z"
+    anchor["exemption_started_at"] = "2020-01-01T00:00:00Z"
+    anchor["first_seen_origin"] = "2020-01-01T00:00:00Z"
+    (root / core.LOCK_NAME).write_text(
+        json.dumps(lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    commit_all(root, message="squashed root")
+    assert "chain_unverifiable" in codes(root)
+
+
+def test_r4_pure_rename_with_reason_is_green(tmp_path: Path) -> None:
+    """纯改名带 `--reason`：`reasons` 不计载荷，不得判 `seal_move_payload_mismatch`。"""
+    root = init_repo(tmp_path)
+    new = "product/reviews/apply/web/T-001-moved.seal.json"
+    _move_seal(root, new, reasons=["renamed"])
+    assert codes(root) == []
+
+
+def test_r4_two_missing_cases_are_both_reported(tmp_path: Path) -> None:
+    """同码同路径的并列成因（两条用例同时缺失）不得被去重压成一条。"""
+    root = init_repo(tmp_path)
+    renew_mutate(root, lambda p: p["e2e"].update(cases=[
+        {"id": CASE_ID, "sha256": "0" * 64},
+        {"id": "E2E-MISSING-002", "sha256": "1" * 64},
+    ]))
+    core.write_lock(root, core.load_manifest(root), require_clean=True)
+    commit(root, core.LOCK_NAME, message="lock")
+    (root / "product" / "e2e" / "cases" / f"{CASE_ID}.md").unlink()
+    commit_all(root, message="drop case")
+    codes_ = _validator_codes(root)
+    assert codes_.count("seal_e2e_case_missing") == 2
+
+
+def test_r4_parent_reports_untracked_card(repo: Path) -> None:
+    """父仓判跟踪：卡在盘上但成员仓未跟踪 ⇒ `card_untracked` FAIL。"""
+    member = repo / "web"
+    git(member, "rm", "-q", "--cached", CARD)
+    assert (member / CARD).is_file()
+    assert "card_untracked" in codes(repo)
+
+
+def test_r4_non_anchor_path_cannot_bypass_chain_checks(repo: Path) -> None:
+    """未进 `by_path` 的封条仍由 `analyze` 的 unmapped 支报红，不绕过 chain 判据。"""
+    lock = core.read_lock(repo)
+    lock["seal_anchors"] = {}
+    (repo / core.LOCK_NAME).write_text(
+        json.dumps(lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    commit(repo, core.LOCK_NAME, message="drop anchors")
+    errors, _, paths, count, _ = validator.collect_errors(repo)
+    assert count == 1 and paths
+    assert "seal_anchor_path_unmapped" in [e["code"] for e in errors]
+
+
+def _rewrite_keeping_old_path_tree(tmp_path: Path) -> tuple[Path, str]:
+    """`commit-tree` 重写：新根树同时保住**旧路径**封条与迁移后封条，旧提交不进克隆。
+
+    这样旧 `epoch_origin` 对象在 fresh clone 里不存在（`seal reanchor` 允许），
+    而 `moved_from` 需要的旧路径 `L_pre[-1]` 仍可读——即「move 与 reanchor 组合」。
+    """
+    original = init_repo(tmp_path / "orig")
+    new = "product/reviews/apply/web/T-001-moved.seal.json"
+    _move_seal(original, new, reasons=["renamed"])
+    from_a = core.read_lock(original)["seal_anchors"][new]["epoch_origin"]
+    old_blob = git(original, "rev-parse", f"HEAD~2:{SEAL_REL}").stdout.strip()
+    base_tree = git(original, "rev-parse", "HEAD^{tree}").stdout.strip()
+    env = dict(os.environ, GIT_INDEX_FILE=str(tmp_path / "rewritten.index"))
+    subprocess.run(["git", "-C", str(original), "read-tree", base_tree],
+                   check=True, env=env)
+    subprocess.run(["git", "-C", str(original), "update-index", "--add",
+                    "--cacheinfo", f"100644,{old_blob},{SEAL_REL}"],
+                   check=True, env=env)
+    tree = subprocess.run(["git", "-C", str(original), "write-tree"],
+                          check=True, capture_output=True, text=True,
+                          env=env).stdout.strip()
+    root = subprocess.run(
+        ["git", "-C", str(original), "-c", "user.email=a@b",
+         "-c", "user.name=a", "commit-tree", tree, "-m", "rewritten root"],
+        check=True, capture_output=True, text=True).stdout.strip()
+    git(original, "branch", "-f", "rewritten", root)
+    fresh = tmp_path / "fresh"
+    subprocess.run(["git", "clone", "-q", "--single-branch", "--branch",
+                    "rewritten", "file://" + str(original), str(fresh)],
+                   check=True)
+    assert git(fresh, "cat-file", "-e", from_a, check=False).returncode != 0
+    return fresh, new
+
+
+def test_r4_move_then_reanchor_combo_is_not_silently_green(
+        tmp_path: Path) -> None:
+    """`move → reanchor → renew` **未定义**：只断言它不会被静默放过。
+
+    用 `commit-tree` 保住旧路径树后，新键能被 reanchor，但 retired 旧键的
+    `epoch_origin` 随重写一起失效（RFC 未定义「重指是否覆盖 retired 键」），
+    因此读侧必须保持红——覆盖声明见 `gates.md`，不得算成已覆盖。
+    """
+    fresh, new = _rewrite_keeping_old_path_tree(tmp_path)
+    core.reanchor_seal(fresh, new, "REVIEW-20261112-01",
+                       core.read_lock(fresh)["seal_anchors"][new]["epoch_origin"])
+    commit_all(fresh, message="reanchor R")
+    core.write_lock(fresh, core.load_manifest(fresh), require_clean=True, seal=new)
+    commit(fresh, core.LOCK_NAME, message="R2")
+    errs = _error_codes(fresh)
+    assert {"reanchor_record_missing", "chain_unverifiable"} & set(errs)
 
 
 def test_i9_anchor_review_format_is_enforced(repo: Path) -> None:
@@ -673,8 +840,8 @@ def test_i2_case_change_then_move_recomputes_from_old_path(tmp_path: Path) -> No
     assert codes(root) == []
 
 
-def test_i7_reanchor_is_inherited_alongside_moved_from(repo: Path) -> None:
-    """先 move 后 reanchor 再续签：`reanchor` 与 `moved_from` 必须同时保留。"""
+def test_i7_payload_inherits_reanchor_alongside_moved_from(repo: Path) -> None:
+    """写侧：`reanchor` 与 `moved_from` 必须同时保留（链路未覆盖，见 gates）。"""
     new = "product/reviews/apply/web/T-001-moved.seal.json"
     reanchor = {"from_a": "0" * 40, "from_b": "1" * 40,
                 "review": "REVIEW-20261112-01",
@@ -714,8 +881,14 @@ def _rewrite_first_sign(tmp_path: Path) -> Path:
     doc["signed_at"] = "2027-01-01T00:00:00Z"
     write_doc(original, doc)
     git(original, "add", "-A")
+    # 锁单独成一次提交：外部锚必须与 L[0] 异源（R4-3），压进同一次提交会被
+    # 判 `chain_unverifiable`（那正是 squashed 篡改的形态）。
+    git(original, "rm", "-q", "--cached", core.LOCK_NAME)
     git(original, "-c", "user.email=a@b", "-c", "user.name=a",
         "commit", "-qm", "rewritten root")
+    git(original, "add", core.LOCK_NAME)
+    git(original, "-c", "user.email=a@b", "-c", "user.name=a",
+        "commit", "-qm", "rewritten lock")
     git(original, "branch", "-M", "main")
     fresh = tmp_path / "fresh"
     subprocess.run(["git", "clone", "-q", "file://" + str(original), str(fresh)],
@@ -779,7 +952,7 @@ def test_i3_apply_record_unverifiable_when_member_not_checked_out(
         repo: Path) -> None:
     """成员子树未 checkout ⇒ 不可验证（WARN），不得误判 `card_absent` FAIL。"""
     (repo / "web").rename(repo / "web-not-checked-out")
-    errors, warnings, _, _ = validator.collect_errors(repo)
+    errors, warnings, _, _, _ = validator.collect_errors(repo)
     assert "apply_record_missing" in [w["code"] for w in warnings]
     assert "apply_record_missing" not in [e["code"] for e in errors]
     assert "card_absent" not in [e["code"] for e in errors]
