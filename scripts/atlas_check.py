@@ -253,6 +253,12 @@ def check_validators(root: Path, rows: Row, py: str) -> None:
             rows.add(v, status, "; ".join(na) or tail, duration_ms=duration_ms)
         else:
             rows.add(v, status, tail, duration_ms=duration_ms)
+    # E-06（#53）：成员侧没有 crosswalk 概念，被引用域证据列只能由父仓判（E-02）。
+    # 成员 `atlas check` 给显式 N/A 出口，不静默缺席；父仓根有清单 ⇒ 归父仓，不在此出 N/A。
+    if not (root / "atlas.solution.yaml").is_file():
+        rows.add("证据列（被引用域）", "N/A",
+                 "evidence_columns_parent_only：成员侧无 crosswalk 概念；"
+                 "被引用成员 PRD 的证据列由父仓 atlas solution check 判（E-02）")
 
 
 def check_factory(root: Path, rows: Row, py: str) -> None:

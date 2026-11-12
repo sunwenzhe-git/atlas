@@ -2,6 +2,7 @@
 """D 批：`_support/ac_crosswalk.py` 的解析、C-01…C-11 与父仓接线（RFC-20261111-03 §2.1 / §7）。"""
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -480,3 +481,36 @@ def test_parent_side_does_not_judge_confirmed_state(tmp_path: Path) -> None:
     assert [f["code"] for f in got
             if f["code"].startswith("confirmed_")] == []
     assert got == []
+
+
+def test_e06_member_na_exit_and_parent_e02_still_red(tmp_path: Path) -> None:
+    """E-06：成员侧给显式 N/A 出口（`evidence_columns_parent_only`）；父仓缺列仍 E-02 FAIL。"""
+    spec = importlib.util.spec_from_file_location(
+        "atlas_check_e06", PKG_ROOT / "scripts" / "atlas_check.py")
+    check_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(check_mod)
+    (tmp_path / "product" / "prd").mkdir(parents=True)
+
+    rows = check_mod.Row()
+    check_mod.check_validators(tmp_path, rows, sys.executable)
+    row = next(r for r in rows.rows if r["name"] == "证据列（被引用域）")
+    assert row["status"] == "N/A"
+    assert "evidence_columns_parent_only" in row["detail"]
+
+    # 父仓根（有清单）不再出成员侧 N/A，归父仓 `atlas solution check` 判。
+    (tmp_path / "atlas.solution.yaml").write_text("solution: x\n", encoding="utf-8")
+    rows = check_mod.Row()
+    check_mod.check_validators(tmp_path, rows, sys.executable)
+    assert not [r for r in rows.rows if r["name"] == "证据列（被引用域）"]
+
+    # 父仓侧 E-02 照旧红：被引用成员 PRD 缺证据两列。
+    write(tmp_path, PRD, PRD_OK + """
+## 六、Assumptions & Defaults
+
+| 假设内容 | 采用的默认值 |
+|---|---|
+| 默认值待定 | — |
+""")
+    write(tmp_path, "product/prd/ac-crosswalk.md", cw(ROW))
+    assert [f["code"] for f in check(tmp_path, data())] == [
+        "evidence_columns_missing"]
