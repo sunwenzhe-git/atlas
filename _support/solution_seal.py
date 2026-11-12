@@ -474,9 +474,11 @@ def analyze_chain(root: Path, path: str, seal: dict, anchor: dict | None,
         out.append(_f("renewal_chain_broken", "error",
                       f"renewal_seq={seq} != N={N}", path))
         return out
-    # 4b：边界记录认证
+    # 4b：边界记录认证（v49/项 2：`reanchor_record_missing` 只对 `active` / `frozen`
+    # 判；`retired` 键的 `epoch_origin` 已固化，不因旧路径树被重写而报）。
     if reanchor is None:
-        if anchor and anchor.get("epoch_origin") not in (None, L[0]):
+        if state in ("active", "frozen") and anchor \
+                and anchor.get("epoch_origin") not in (None, L[0]):
             out.append(_f("reanchor_record_missing", "error",
                           f"锁内 epoch_origin={anchor.get('epoch_origin')} != "
                           f"L[0]={L[0]}，但封条没有 reanchor", path))
@@ -733,6 +735,11 @@ def analyze_state(root: Path, path: str, anchor: dict, assets_root: str,
     if not isinstance(target_anchor, dict):
         return [_f("seal_path_history_lost", "error",
                    f"moved_to={moved_to} 不是锁内键", path)]
+    # v49/项 2：`retired` 只判「`moved_to` 指向的新键存在且 state == active」。
+    if target_anchor.get("state") != "active":
+        return [_f("seal_path_history_lost", "error",
+                   f"moved_to={moved_to} 的目标键 state="
+                   f"{target_anchor.get('state')!r}，应为 active", path)]
     target_raw = head_blob(root, moved_to)
     if target_raw is None:
         return [_f("seal_path_history_lost", "error",
@@ -759,6 +766,20 @@ def analyze_state(root: Path, path: str, anchor: dict, assets_root: str,
             doc = parse_seal(last_raw)
         except SealError:
             doc = None
+        head_doc_retired = None
+        if head_raw is not None:
+            try:
+                head_doc_retired = parse_seal(head_raw)
+            except SealError:
+                head_doc_retired = None
+        # v49/项 1：本键已写 `moved_to`（retired），封条（迁出前最后一枚或 HEAD
+        # 保留的旧文件）再带 `reanchor` ⇒ 互斥。
+        if any(isinstance(item, dict) and isinstance(item.get("reanchor"), dict)
+               for item in (head_doc_retired, doc)):
+            out.append(_f("seal_move_reanchor_conflict", "error",
+                          "retired 封条（旧键 moved_to）同时带 reanchor", path,
+                          {"kind": "moved_to_reanchor"}))
+            return out
         if doc is not None:
             out.extend(analyze_chain(root, path, doc, anchor, "retired"))
     return out
@@ -825,6 +846,13 @@ def _schema_findings(root: Path, data: dict, seal: dict, seal_path: str,
     if "backfill" in seal and not isinstance(seal.get("backfill"), dict):
         out.append(_f("seal_backfill_invalid", "error",
                       "backfill 不是对象", seal_path))
+    # v49/项 1（§2.5、RFC L1616）：`moved_to` 写在**旧/retired** 封条上，`reanchor`
+    # 写在同一封条即互斥。`moved_from` 在**新**封条上，与自己的 `reanchor` 允许
+    # 并存，故这里只认 `moved_to`，绝不看 `moved_from`。
+    if "moved_to" in seal and isinstance(seal.get("reanchor"), dict):
+        out.append(_f("seal_move_reanchor_conflict", "error",
+                      "同一封条同时带 moved_to 与 reanchor", seal_path,
+                      {"kind": "moved_to_reanchor"}))
     probe = dict(seal)
     probe["__state"] = state
     out.extend(upstream_findings(root, data, probe, seal_path, assets_root,
@@ -1145,8 +1173,11 @@ def check_anchor_fields(root: Path, path: str, anchor: dict, head_doc: dict,
         out.append(_f("exemption_start_history_broken", "error",
                       "exemption_start_history 不是数组", path))
         return out
-    if first_doc is not None and "reanchor" not in head_doc \
-            and "moved_from" not in head_doc:
+    # v49/项 2：`retired` 键的 `epoch_origin` 已固化（不随历史重写重指），读侧不再
+    # 判锚可达性 / 起点等值——本块（`chain_unverifiable` / `exemption_start_origin_
+    # rewritten` / `exemption_start_conflict`）只对 `active` / `frozen` 生效。
+    if anchor.get("state") != "retired" and first_doc is not None \
+            and "reanchor" not in head_doc and "moved_from" not in head_doc:
         signed = first_doc.get("signed_at")
         if not SIGNED_AT_RE.match(str(signed or "")):
             out.append(_f("signed_at_not_canonical", "error",
@@ -1158,21 +1189,37 @@ def check_anchor_fields(root: Path, path: str, anchor: dict, head_doc: dict,
         entry = _anchor_entry_in_history(root, path, "exemption_start_origin")
         epoch_history = anchor.get("epoch_origin_history")
         epoch_history = epoch_history if isinstance(epoch_history, list) else []
-        # 外部锚必须**独立**：首版与当前 L[0] 同源（squash / orphan 新根里连锁一起
-        # 压平）⇒ 锚自指；或者链里记了重指、epoch 历史却只有一项（被截断）⇒ 不可信。
-        # 取不到独立锚 ⇒ fail-closed（不接受自述降级）。
-        if entry is None or entry[0] == L[0] or (chain and len(epoch_history) <= 1):
+        # v49/项 3（RFC L1198）：两态不得合并。
+        # ① 首次信任（TOFU）：`epoch_origin_history` 长度 1、其值 == `L[0]`、
+        #    `anchor_review == null`、封条不带 `reanchor` ⇒ 首次建立时不存在被改写的
+        #    历史，锚自指是事实，不报 `chain_unverifiable`（否则任何首签永久红）。
+        first_trust = (len(epoch_history) == 1
+                       and epoch_history[0] == L[0]
+                       and anchor.get("anchor_review") in (None, "")
+                       and not isinstance(head_doc.get("reanchor"), dict))
+        # ② 重指痕迹：epoch 历史多于一项 / 有过 anchor_review / 封条带 reanchor /
+        #    当前 epoch_origin 已不是 L[0]（重写后旧纪元仍留在锁里）。
+        repointed = (len(epoch_history) > 1
+                     or anchor.get("anchor_review") not in (None, "")
+                     or isinstance(head_doc.get("reanchor"), dict)
+                     or str(anchor.get("epoch_origin")) != L[0])
+        self_ref = entry is not None and entry[0] == L[0]
+        truncated = bool(chain) and len(epoch_history) <= 1
+        # ① 不判红；② 有痕迹而锚仍自指（或取不到锚 / epoch 历史被压平）⇒ fail-closed。
+        if not first_trust and ((entry is None and repointed) or truncated
+                                or (self_ref and repointed)):
             out.append(_f("chain_unverifiable", "error",
-                          "无法取得独立外部锚（锁首版与当前封条同源或 epoch 历史被压平）",
+                          "重指后无法取得独立外部锚（锚自指或 epoch 历史被压平）",
                           path, {"cause": "anchor_not_independent"}))
             return out
-        anchor_origin = entry[1]
-        if origin != anchor_origin:
-            out.append(_f("exemption_start_origin_rewritten", "error",
-                          "exemption_start_origin 与锁历史锚不等"
-                          "（历史豁免起点被改写）", path,
-                          {"kind": "rewritten"}))
-            return out
+        if entry is not None and not self_ref:
+            anchor_origin = entry[1]
+            if origin != anchor_origin:
+                out.append(_f("exemption_start_origin_rewritten", "error",
+                              "exemption_start_origin 与锁历史锚不等"
+                              "（历史豁免起点被改写）", path,
+                              {"kind": "rewritten"}))
+                return out
         if started != signed:
             out.append(_f("exemption_start_conflict", "error",
                           "exemption_started_at 与 L[0].signed_at 不逐字节相等",

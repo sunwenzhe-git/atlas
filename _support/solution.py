@@ -1537,11 +1537,26 @@ def _seal_anchors_for_write(root: Path, data: dict, existing: dict | None,
         moved_from = head_doc.get("moved_from")
         if isinstance(moved_from, dict) and moved_from.get("path"):
             old_path = moved_from["path"]
+            old_hist = _SEAL.seal_history(root, old_path)
+            # v49/项 1：`moved_to` 与 `reanchor` 互斥。旧路径封条（HEAD 或迁出前最后
+            # 一枚）若带 `reanchor`，写侧拒绝、exit 2、不写任何文件。
+            old_raw = _SEAL.head_blob(root, old_path)
+            if old_raw is None and not old_hist["error"] and old_hist["L_pre"]:
+                old_raw = _SEAL.blob_at(root, old_hist["L_pre"][-1], old_path)
+            old_doc = None
+            if old_raw is not None:
+                try:
+                    old_doc = _SEAL.parse_seal(old_raw)
+                except _SEAL.SealError:
+                    old_doc = None
+            if isinstance(old_doc, dict) and isinstance(old_doc.get("reanchor"), dict):
+                raise SolutionError(
+                    "seal_move_reanchor_conflict: 旧路径封条带 reanchor，"
+                    f"不得在同一封条上写 moved_to（{old_path}）")
             old_anchor = dict(result.get(old_path)
                               or prior.get(old_path) or {})
             old_anchor["state"] = "retired"
             old_anchor["moved_to"] = path
-            old_hist = _SEAL.seal_history(root, old_path)
             if not old_hist["error"]:
                 old_anchor["n"] = len(old_hist["L_pre"])
             result[old_path] = old_anchor
@@ -3731,6 +3746,12 @@ def reanchor_seal(root: Path, seal_path: str, review: str, from_a: str) -> dict:
     if not isinstance(anchors, dict) or path not in anchors:
         raise SolutionError(f"reanchor_anchor_missing: 锁内没有该路径键 {path}")
     anchor = dict(anchors[path])
+    # v49/项 1：`moved_to` 与 `reanchor` 互斥——键已 `retired`（带 `moved_to`）或
+    # 封条本身带 `moved_to` 时，写侧拒绝、exit 2、不写任何文件。
+    if "moved_to" in anchor or "moved_to" in head_doc:
+        raise SolutionError(
+            "seal_move_reanchor_conflict: 该键 / 封条已带 moved_to（retired），"
+            "不得再写 reanchor")
     hist = _SEAL.seal_history(root, path)
     N = hist["N"]
     if anchor.get("renewal_seq") != head_doc.get("renewal_seq") \

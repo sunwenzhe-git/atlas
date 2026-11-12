@@ -672,6 +672,47 @@ def test_r4_squashed_external_anchor_is_chain_unverifiable(tmp_path: Path) -> No
     assert "chain_unverifiable" in codes(root)
 
 
+def _single_commit_first_sign(tmp_path: Path, *, repoint: bool) -> Path:
+    """单提交仓：封条与锁同在一个根提交，`epoch_origin == L[0]`（首签基线）。"""
+    root = init_repo(tmp_path / "orig")
+    head_tree = git(root, "rev-parse", "HEAD^{tree}").stdout.strip()
+    r0 = subprocess.run(
+        ["git", "-C", str(root), "-c", "user.email=a@b", "-c", "user.name=a",
+         "commit-tree", head_tree, "-m", "imported root"],
+        check=True, capture_output=True, text=True).stdout.strip()
+    git(root, "reset", "-q", "--hard", r0)
+    lock = core.read_lock(root)
+    seal_doc = read_doc(root)
+    anchor = lock["seal_anchors"][SEAL_REL]
+    anchor["epoch_origin"] = r0
+    anchor["epoch_origin_history"] = [r0]
+    anchor["renewal_seq"] = 1
+    anchor["n"] = 1
+    anchor["exemption_start_origin"] = seal_doc["signed_at"]
+    anchor["exemption_started_at"] = seal_doc["signed_at"]
+    if repoint:
+        # v49/项 3 认可的「重指痕迹」之一：`anchor_review != null`（不再是豁免链，
+        # 链长度不再算重指痕迹）。
+        anchor["anchor_review"] = "REVIEW-20261112-01"
+    (root / core.LOCK_NAME).write_text(
+        json.dumps(lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    commit(root, core.LOCK_NAME, message="single commit lock")
+    return root
+
+
+def test_r4_single_commit_first_sign_is_tofu_green(tmp_path: Path) -> None:
+    """TOFU：单提交仓首签、无重指痕迹 ⇒ 锚同源是事实，不判红。"""
+    root = _single_commit_first_sign(tmp_path, repoint=False)
+    assert codes(root) == []
+
+
+def test_r4_single_commit_with_repoint_is_chain_unverifiable(
+        tmp_path: Path) -> None:
+    """单提交仓 + 重指痕迹 ⇒ 锚自指不再可信，必须 fail-closed。"""
+    root = _single_commit_first_sign(tmp_path, repoint=True)
+    assert "chain_unverifiable" in codes(root)
+
+
 def test_r4_pure_rename_with_reason_is_green(tmp_path: Path) -> None:
     """纯改名带 `--reason`：`reasons` 不计载荷，不得判 `seal_move_payload_mismatch`。"""
     root = init_repo(tmp_path)
@@ -749,22 +790,72 @@ def _rewrite_keeping_old_path_tree(tmp_path: Path) -> tuple[Path, str]:
     return fresh, new
 
 
-def test_r4_move_then_reanchor_combo_is_not_silently_green(
-        tmp_path: Path) -> None:
-    """`move → reanchor → renew` **未定义**：只断言它不会被静默放过。
+def test_r4_v49_moved_from_with_own_reanchor_is_green(tmp_path: Path) -> None:
+    """v49/项 1：新封条可同时带 `moved_from` 与**自己的** `reanchor` ⇒ 绿。
 
-    用 `commit-tree` 保住旧路径树后，新键能被 reanchor，但 retired 旧键的
-    `epoch_origin` 随重写一起失效（RFC 未定义「重指是否覆盖 retired 键」），
-    因此读侧必须保持红——覆盖声明见 `gates.md`，不得算成已覆盖。
+    构造 = move → 在新路径上 reanchor（旧路径树用 `commit-tree` 保住，使
+    `moved_from` 依赖的 `L_pre[-1]` 仍可读）。旧（retired）键按 v49/项 2 固化：
+    `epoch_origin` 保持原值、读侧不判锚可达性、不报 `reanchor_record_missing`。
+    这条替代上一轮的「move → reanchor 不得静默放过」临时钉子——v49 已定稿。
     """
     fresh, new = _rewrite_keeping_old_path_tree(tmp_path)
+    old_epoch = core.read_lock(fresh)["seal_anchors"][SEAL_REL]["epoch_origin"]
     core.reanchor_seal(fresh, new, "REVIEW-20261112-01",
                        core.read_lock(fresh)["seal_anchors"][new]["epoch_origin"])
     commit_all(fresh, message="reanchor R")
     core.write_lock(fresh, core.load_manifest(fresh), require_clean=True, seal=new)
     commit(fresh, core.LOCK_NAME, message="R2")
-    errs = _error_codes(fresh)
-    assert {"reanchor_record_missing", "chain_unverifiable"} & set(errs)
+    doc = read_doc(fresh, new)
+    assert doc["moved_from"]["path"] == SEAL_REL
+    assert doc["reanchor"]["review"] == "REVIEW-20261112-01"
+    assert "seal_move_reanchor_conflict" not in codes(fresh)
+    assert _error_codes(fresh) == []
+    # retired 键的锚固化：不随重指改写
+    assert core.read_lock(fresh)["seal_anchors"][SEAL_REL]["epoch_origin"] == old_epoch
+
+
+def test_r4_v49_moved_to_with_reanchor_is_conflict(tmp_path: Path) -> None:
+    """v49/项 1：旧（retired）封条同时带 `moved_to` 与 `reanchor` ⇒ 写侧 exit 2、读侧红。
+
+    `moved_to` 与 `moved_from` 是两回事：本夹具只让**旧**封条带 `reanchor`，
+    新封条只带 `moved_from`（上一条夹具钉它的绿侧）。
+    """
+    root = init_repo(tmp_path)
+    # 旧路径封条先带上 reanchor（合法历史里 reanchor 只出现在 active 期）
+    old_doc = read_doc(root)
+    old_doc["reanchor"] = {"from_a": "0" * 40,
+                           "review": "REVIEW-20261112-01",
+                           "signed_at": "2027-01-01T00:00:00Z",
+                           "base_seq": 2, "base_n": 1}
+    write_doc(root, old_doc)
+    commit(root, SEAL_REL, message="reanchor on old path")
+    new = "product/reviews/apply/web/T-001-moved.seal.json"
+    moved = seal.build_seal_payload(
+        root, core.load_manifest(root), new, assets_root="product",
+        kind="binding", card_path=CARD, acceptance_acs=["AC-SOLUTION-001"],
+        e2e_status="ready", case_ids=[CASE_ID], moved_from={"path": SEAL_REL})
+    moved.pop("reanchor", None)  # 新封条只留 moved_from，冲突只落在旧封条上
+    write_doc(root, moved, new)
+    git(root, "rm", "-q", SEAL_REL)
+    commit_all(root, message="move seal")
+    lock_file = root / core.LOCK_NAME
+    before = lock_file.read_bytes()
+    # 写侧：旧封条带 reanchor ⇒ 拒绝写 moved_to，exit 2 且不写任何文件
+    with pytest.raises(core.SolutionError, match="seal_move_reanchor_conflict"):
+        core.write_lock(root, core.load_manifest(root), require_clean=True, seal=new)
+    assert lock_file.read_bytes() == before
+    # 读侧：模拟已落盘的坏状态（旧键 retired + moved_to），必须报互斥
+    lock = core.read_lock(root)
+    anchors = lock["seal_anchors"]
+    old_anchor = dict(anchors[SEAL_REL])
+    old_anchor.update(state="retired", moved_to=new)
+    anchors[SEAL_REL] = old_anchor
+    anchors[new] = seal.compute_anchor(root, new, None, read_doc(root, new),
+                                       None, all_prior=anchors)
+    lock_file.write_text(json.dumps(lock, ensure_ascii=False, indent=2) + "\n",
+                         encoding="utf-8")
+    commit(root, core.LOCK_NAME, message="bad lock")
+    assert "seal_move_reanchor_conflict" in codes(root)
 
 
 def test_i9_anchor_review_format_is_enforced(repo: Path) -> None:
