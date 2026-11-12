@@ -212,9 +212,27 @@ def test_cli_status_json(tmp_path: Path) -> None:
     assert data["members"][0]["name"] == "web"
 
 
-def run_cli(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([sys.executable, str(SCRIPT), *args],
+def run_cli(root: Path, *args: str,
+            script: Path = SCRIPT) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([sys.executable, str(script), *args],
                           capture_output=True, text=True)
+
+
+def tool_copy(tmp_path: Path, version: str = "0.3.0") -> Path:
+    """复制一份工具包并写入指定版本号，返回其 CLI 路径。
+
+    子进程里的 `_TOOL_PACKAGE_ROOT` 无法 monkeypatch，而开发树版本 <0.3.0 时新版 reader
+    按版本门会硬拒 v2 清单；需要跑「0.3.x 读 v2」的子进程夹具只能换一份工具副本。
+    """
+    import shutil
+
+    pkg = tmp_path / "toolpkg"
+    shutil.copytree(PKG_ROOT / "_support", pkg / "_support")
+    (pkg / "scripts").mkdir(parents=True)
+    shutil.copy(SCRIPT, pkg / "scripts" / "atlas_solution.py")
+    (pkg / "package.json").write_text(json.dumps({"version": version}),
+                                      encoding="utf-8")
+    return pkg / "scripts" / "atlas_solution.py"
 
 
 def commit_root(root: Path, *paths: str) -> None:
@@ -263,7 +281,10 @@ def test_check_pass_positive(tmp_path: Path) -> None:
     core.write_lock(tmp_path, core.load_manifest(tmp_path))
     commit_root(tmp_path, core.MANIFEST_NAME, core.LOCK_NAME)
     result = core.check_solution(tmp_path)
-    assert result["overall"] == "PASS", result["checks"]
+    # v1 清单缺 `acceptance_cutover` 只给 `migration_required` WARN（v18），不是 FAIL。
+    assert result["overall"] == "WARN", result["checks"]
+    assert [c for c in result["checks"] if c["status"] == "FAIL"] == []
+    assert any("migration_required" in c["detail"] for c in result["checks"])
 
 
 def test_check_strict_fails_when_lock_untracked_or_stale(tmp_path: Path) -> None:
@@ -402,14 +423,17 @@ def test_cli_root_equals_form(tmp_path: Path) -> None:
     assert json.loads(res.stdout)["members"][0]["name"] == "web"
 
 
-def test_corrupt_lock_is_warn_not_crash(tmp_path: Path) -> None:
+def test_corrupt_lock_is_unparsable_fail(tmp_path: Path) -> None:
+    """§3.2 ⓪-0：当前锁字节坏 ⇒ `lock_unparsable` FAIL 短路（不再是 WARN）。"""
     make_repo(tmp_path / "web")
     core.init_solution(tmp_path, "demo", [("web", "web", "frontend")],
                        install=False)
     (tmp_path / core.LOCK_NAME).write_text("[1]\n", encoding="utf-8")
     result = core.check_solution(tmp_path)
-    assert result["overall"] == "WARN"
-    assert any("契约锁" in c["check"] for c in result["checks"])
+    assert result["overall"] == "FAIL"
+    assert [e["code"] for e in result["errors"]] == ["lock_unparsable"]
+    assert result["not_run"] == core.NOT_RUN_SEGMENTS
+    assert any("锁解析" in c["check"] for c in result["checks"])
 
 
 def test_adopt_does_not_modify_member(tmp_path: Path) -> None:
@@ -458,7 +482,8 @@ def test_member_path_hash_rejected(tmp_path: Path) -> None:
                            install=False)
 
 
-def test_corrupt_lock_structure_is_warn(tmp_path: Path) -> None:
+def test_corrupt_lock_structure_is_unparsable_fail(tmp_path: Path) -> None:
+    """§3.2 ⓪-0：当前锁结构坏（`members` 非 list-of-dict）⇒ `lock_unparsable` FAIL。"""
     make_repo(tmp_path / "web")
     core.init_solution(tmp_path, "demo", [("web", "web", "frontend")],
                        install=False)
@@ -466,8 +491,9 @@ def test_corrupt_lock_structure_is_warn(tmp_path: Path) -> None:
         '{"schema_version": 1, "members": "web", "contracts": []}\n',
         encoding="utf-8")
     result = core.check_solution(tmp_path)
-    assert result["overall"] == "WARN"
-    assert any("契约锁" in c["check"] for c in result["checks"])
+    assert result["overall"] == "FAIL"
+    assert [e["code"] for e in result["errors"]] == ["lock_unparsable"]
+    assert result["not_run"] == core.NOT_RUN_SEGMENTS
 
 
 def test_missing_contract_file_warns(tmp_path: Path) -> None:
@@ -646,9 +672,12 @@ def test_r2_defined_acs_pass_default_and_strict(tmp_path: Path) -> None:
     e2e_kernel.init(tmp_path)
     core.write_lock(tmp_path, core.load_manifest(tmp_path))
     commit_root(tmp_path, core.MANIFEST_NAME, core.LOCK_NAME)
-    assert core.check_solution(tmp_path)["overall"] == "PASS"
+    # v1 清单的 `migration_required` 只是 WARN（v18），strict 的门是「无 FAIL」。
+    plain = core.check_solution(tmp_path)
+    assert plain["overall"] == "WARN", plain["checks"]
     strict = core.check_solution(tmp_path, strict=True)
-    assert strict["overall"] == "PASS", strict["checks"]
+    assert strict["overall"] == "WARN", strict["checks"]
+    assert [c for c in strict["checks"] if c["status"] == "FAIL"] == []
     assert run_cli(tmp_path, "--root", str(tmp_path), "check", "--strict").returncode == 0
 
 
@@ -1038,8 +1067,10 @@ members:
 """
 
 
-def test_b0_v2_manifest_roundtrip_keeps_definition_and_scalars(tmp_path: Path) -> None:
-    """D-32：v2 新键进结构，不落 unknown；load_manifest 版本为 2。"""
+def test_b0_v2_manifest_roundtrip_keeps_definition_and_scalars(
+        tmp_path: Path, monkeypatch) -> None:
+    """D-32：v2 新键进结构，不落 unknown；load_manifest 版本为 2（0.3.x 读者）。"""
+    stub_reader_version(monkeypatch, tmp_path, "0.3.0")
     data = core.parse_manifest_text(V2_MANIFEST)
     assert data["unknown"] == []
     assert data["definition"] == {"domain": "solution",
@@ -1073,12 +1104,15 @@ def test_b0_unknown_manifest_keys_raise_instead_of_silently_dropped() -> None:
             "definition:\n  domain: demo\n  bogus: x\n")
 
 
-def test_b0_version_gate_accepts_1_and_2_rejects_others(tmp_path: Path) -> None:
-    """§5.3：0.3.x 同时接受 v1 / v2；其他值 `manifest_schema_unsupported`。"""
+def test_b0_version_gate_accepts_1_and_2_on_03x_rejects_others(
+        tmp_path: Path, monkeypatch) -> None:
+    """§5.3：0.3.x（B-0 发布带）同时接受 v1 / v2；其他值 `manifest_schema_unsupported`。"""
+    stub_reader_version(monkeypatch, tmp_path, "0.3.0")
     (tmp_path / "web").mkdir()
     for version in (1, 2):
+        cutover = "acceptance_cutover: 2027-03-31\n" if version == 2 else ""
         (tmp_path / core.MANIFEST_NAME).write_text(
-            f"version: {version}\nsolution: demo\nmode: federated\nmembers:\n"
+            f"version: {version}\nsolution: demo\nmode: federated\n{cutover}members:\n"
             "  - name: web\n    path: web\n    assets: member\n",
             encoding="utf-8")
         assert core.load_manifest(tmp_path)["version"] == version
@@ -1142,8 +1176,10 @@ def test_b0_migrate_never_overwrites_existing_values(tmp_path: Path) -> None:
     assert "min_atlas: 0.4.0" in text
 
 
-def test_b0_migrate_heals_v2_without_definition(tmp_path: Path) -> None:
+def test_b0_migrate_heals_v2_without_definition(
+        tmp_path: Path, monkeypatch) -> None:
     """V-15：v2 清单缺 definition 时 migrate 自愈，且不动已有标量。"""
+    stub_reader_version(monkeypatch, tmp_path, "0.3.0")
     (tmp_path / "web").mkdir()
     (tmp_path / core.MANIFEST_NAME).write_text(
         "version: 2\nsolution: demo\nmode: federated\n"
@@ -1186,8 +1222,10 @@ def test_b0_migrate_rejects_missing_definition_path(tmp_path: Path) -> None:
     assert "definition:" not in path.read_text(encoding="utf-8")
 
 
-def test_b0_migrate_replaces_definition_null_in_place(tmp_path: Path) -> None:
+def test_b0_migrate_replaces_definition_null_in_place(
+        tmp_path: Path, monkeypatch) -> None:
     """评审重要 7：`definition: null` 被 `migrate --to 2` 原地替换，不追加第二块。"""
+    stub_reader_version(monkeypatch, tmp_path, "0.3.0")
     make_repo(tmp_path / "web")
     core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
     path = tmp_path / core.MANIFEST_NAME
@@ -1249,26 +1287,29 @@ def test_b0_v07_migrate_keeps_lock_bytes_and_dirty_prd_blocks_lock(tmp_path: Pat
     core.migrate_manifest(tmp_path)
     assert lock.read_bytes() == before
 
-    res = run_cli(tmp_path, "--root", str(tmp_path), "lock", "--update")
+    tool = tool_copy(tmp_path, "0.3.0")
+    res = run_cli(tmp_path, "--root", str(tmp_path), "lock", "--update", script=tool)
     assert res.returncode == 2, res.stdout + res.stderr
     assert "定义源工作树不干净" in (res.stdout + res.stderr)
 
     # 只提交清单与 PRD 后再 lock：不抛 SolutionError；v2 清单的首锁升到 schema_version 2
     # 并写入 definition（B 批起；B-0 期锁仍是 1）。
     commit_root(tmp_path, core.MANIFEST_NAME, "product/prd/solution-prd.md")
-    res = run_cli(tmp_path, "--root", str(tmp_path), "lock", "--update")
+    res = run_cli(tmp_path, "--root", str(tmp_path), "lock", "--update", script=tool)
     assert res.returncode == 0, res.stdout + res.stderr
     written = json.loads(lock.read_text(encoding="utf-8"))
     assert written["schema_version"] == 2
     assert written["definition"]["commit"]
 
 
-def test_b0_v14_init_writes_v1_then_migrate_reaches_v2(tmp_path: Path) -> None:
+def test_b0_v14_init_writes_v1_then_migrate_reaches_v2(
+        tmp_path: Path, monkeypatch) -> None:
     """V-14：0.3.x reader（<0.4.0）的 init 写 v1，migrate 后才出现 v2。
 
     0.4.0 reader 的 init 写 v2 由 V-13 夹具钉（`test_b_v13_v16_...`）；本夹具只证
     0.3.x 侧的迁移前形态，不再声称「init 一律写 v1」。
     """
+    stub_reader_version(monkeypatch, tmp_path, "0.3.0")
     make_repo(tmp_path / "web")
     core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
     text = (tmp_path / core.MANIFEST_NAME).read_text(encoding="utf-8")
@@ -1559,6 +1600,113 @@ def test_b_v13_v16_init_040_writes_v2_with_commit_null_then_pending_warn(
     assert not any(c["status"] == "FAIL" for c in report["checks"])
 
 
+def test_b_assets_root_history_first_lock_is_object_with_null_audit(
+        tmp_path: Path, monkeypatch) -> None:
+    """v2 首锁落 `layout_assets_root` + `assets_root_history`（v16 元素形态）。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+
+    lock = _lock_bytes(root)
+    assert lock["schema_version"] == 2
+    assert lock["layout_assets_root"] == "product"
+    assert lock["assets_root_history"] == [
+        {"root": "product", "review": None, "commit": None}]
+
+
+def test_b_assets_root_history_append_only_keeps_existing_elements_verbatim(
+        tmp_path: Path, monkeypatch) -> None:
+    """只允许首写 / 尾追加：既有元素不重排、不补键、不归一化（含未知审计键）。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+
+    lock = _lock_bytes(root)
+    old = [
+        {"root": "product", "review": None, "commit": None, "legacy": 1},
+        {"root": "product", "review": "R-2026-001", "commit": "deadbeef"},
+    ]
+    lock["layout_assets_root"] = "product"
+    lock["assets_root_history"] = [dict(item) for item in old]
+    _write_lock_json(root, lock)
+
+    data = core.load_manifest(root)
+    core.write_lock(root, data)
+    after = _lock_bytes(root)
+    # 幂等：不 append、元素逐键逐序保留（`legacy` 也不被清掉）。
+    assert after["assets_root_history"] == old
+    assert after["layout_assets_root"] == "product"
+    assert list(after["assets_root_history"][0]) == list(old[0])
+
+    core.write_lock(root, data, assets_root="product/domains",
+                    anchor_review="R-2026-002")
+    appended = _lock_bytes(root)
+    assert appended["assets_root_history"][:2] == old
+    assert appended["layout_assets_root"] == "product/domains"
+    head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                          check=True, capture_output=True, text=True).stdout.strip()
+    assert appended["assets_root_history"][-1] == {
+        "root": "product/domains", "review": "R-2026-002", "commit": head}
+
+
+def test_b_assets_root_change_needs_review_and_config_edit_does_not_append(
+        tmp_path: Path, monkeypatch) -> None:
+    """只改 config 不会追加历史；显式改根缺评审号 ⇒ 拒绝且磁盘零变化。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+    data = core.load_manifest(root)
+    (root / core.CONFIG_NAME).write_text(
+        "version: 1\nlayout:\n  assets_root: docs\n", encoding="utf-8")
+
+    core.write_lock(root, data)
+    after = _lock_bytes(root)
+    assert after["layout_assets_root"] == "product"
+    assert len(after["assets_root_history"]) == 1
+
+    before = (root / core.LOCK_NAME).read_bytes()
+    with pytest.raises(core.SolutionError, match="anchor-review"):
+        core.write_lock(root, data, assets_root="docs")
+    assert (root / core.LOCK_NAME).read_bytes() == before
+
+
+def test_b_assets_root_write_side_refuses_inconsistent_or_corrupt_lock(
+        tmp_path: Path, monkeypatch) -> None:
+    """写侧不修既有元素：布局与历史末元素不一致、或锁不可解析 ⇒ 拒绝覆盖。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+    data = core.load_manifest(root)
+
+    lock = _lock_bytes(root)
+    lock["layout_assets_root"] = "product"
+    lock["assets_root_history"] = [{"root": "legacy", "review": None, "commit": None}]
+    _write_lock_json(root, lock)
+    before = (root / core.LOCK_NAME).read_bytes()
+    with pytest.raises(core.SolutionError, match="不一致"):
+        core.write_lock(root, data)
+    assert (root / core.LOCK_NAME).read_bytes() == before
+
+    (root / core.LOCK_NAME).write_text("{ broken", encoding="utf-8")
+    with pytest.raises(core.SolutionError, match="无法解析"):
+        core.write_lock(root, data)
+    assert (root / core.LOCK_NAME).read_text(encoding="utf-8") == "{ broken"
+
+
+def test_b_assets_root_uses_layout_single_source(tmp_path: Path) -> None:
+    """根校验单源走 `_support/layout.py`：不禁中文 / 空格（`install.py` 就吃这两个）。"""
+    assert core.validate_assets_root(tmp_path, "product") == "product"
+    assert core.validate_assets_root(tmp_path, "产品 空间") == "产品 空间"
+    assert core.validate_assets_root(tmp_path, "product/domains") == "product/domains"
+    for bad in ("../product", "/abs", "a//b", ".", ".atlas/x", "product\\x"):
+        with pytest.raises(core.SolutionError):
+            core.validate_assets_root(tmp_path, bad)
+
+
 def test_b_first_lock_update_fills_definition_commit_and_cutover(
         tmp_path: Path, monkeypatch) -> None:
     """首次 `lock --update`（PRD 已入库）补齐真实 commit，并开始写 acceptance_cutover。"""
@@ -1749,3 +1897,668 @@ def test_b_acceptance_cutover_lock_only_changed_fails(
     assert len(rows) == 1, rows
     assert rows[0]["status"] == "FAIL"
     assert "acceptance_cutover_mismatch" in rows[0]["detail"]
+
+
+# ------------------------------------------- 评审五条：版本门 / 双空切点 / 迁移原子性
+
+def _v1_manifest_root(tmp_path: Path, monkeypatch, reader: str = "0.3.0") -> Path:
+    """0.3.x 读者 + v1 清单（无 definition），用于版本门与 definition_unbound 的交叉钉。"""
+    stub_reader_version(monkeypatch, tmp_path, reader)
+    root = make_repo(tmp_path / "root")
+    (root / "web").mkdir()
+    (root / core.MANIFEST_NAME).write_text(
+        "version: 1\nsolution: demo\nmode: federated\nmembers:\n"
+        "  - name: web\n    path: web\n    assets: member\n", encoding="utf-8")
+    (root / core.CONFIG_NAME).write_text(
+        "version: 1\nlayout:\n  assets_root: product\n", encoding="utf-8")
+    return root
+
+
+def test_b_reader_gate_040_rejects_v1_with_migrate_hint(
+        tmp_path: Path, monkeypatch) -> None:
+    """0.4.0 读者只收 v2：v1 给 `migrate --to 2` 口令，不是裸拒。"""
+    root = _v1_manifest_root(tmp_path, monkeypatch, reader="0.4.0")
+    with pytest.raises(core.SolutionError) as exc:
+        core.load_manifest(root)
+    assert "manifest_schema_unsupported" in str(exc.value)
+    assert "migrate --to 2" in str(exc.value)
+
+
+def test_b_reader_gate_pre_030_rejects_v2(tmp_path: Path, monkeypatch) -> None:
+    """<0.3.0 读者只收 v1：v2 清单（definition 读不懂）必须硬拒。"""
+    stub_reader_version(monkeypatch, tmp_path, "0.2.0-beta.33")
+    root = make_repo(tmp_path / "root")
+    (root / "web").mkdir()
+    (root / core.MANIFEST_NAME).write_text(
+        "version: 2\nsolution: demo\nmode: federated\ndefinition:\n"
+        "  domain: demo\n  path: product/prd/solution-prd.md\nmembers:\n"
+        "  - name: web\n    path: web\n    assets: member\n", encoding="utf-8")
+    (root / core.CONFIG_NAME).write_text(
+        "version: 1\nlayout:\n  assets_root: product\n", encoding="utf-8")
+    with pytest.raises(core.SolutionError, match="<0.3.0"):
+        core.load_manifest(root)
+
+
+def test_b_reader_gate_unknown_accepts_both(tmp_path: Path, monkeypatch) -> None:
+    """reader_version 不可判 ⇒ 不设门（判不出自身版本时不得误拒）。"""
+    toolroot = tmp_path / "toolroot-unknown"
+    toolroot.mkdir()
+    monkeypatch.setattr(core, "_TOOL_PACKAGE_ROOT", toolroot)
+    root = make_repo(tmp_path / "root")
+    (root / "web").mkdir()
+    (root / core.CONFIG_NAME).write_text(
+        "version: 1\nlayout:\n  assets_root: product\n", encoding="utf-8")
+    for version in (1, 2):
+        extra = ("definition:\n  domain: demo\n"
+                 "  path: product/prd/solution-prd.md\n" if version == 2 else "")
+        cutover = "acceptance_cutover: 2027-03-31\n" if version == 2 else ""
+        (root / core.MANIFEST_NAME).write_text(
+            f"version: {version}\nsolution: demo\nmode: federated\n{extra}{cutover}"
+            "members:\n  - name: web\n    path: web\n    assets: member\n",
+            encoding="utf-8")
+        assert core.load_manifest(root)["version"] == version
+
+
+def test_b_read_lock_rejects_unknown_schema_version(tmp_path: Path) -> None:
+    """锁 `schema_version` 只认非 bool 的 int 1 / 2；3、`1.0`、`True`、`"2"` 都不算。
+
+    v18 边界：不设跨版本必需字段集——没有 `definition.*` / 根字段 / `seal_anchors`
+    的历史锁仍必须可读，否则所有有历史的仓永久红。
+    """
+    root = tmp_path / "root"
+    root.mkdir()
+    for schema, ok in ((1, True), (2, True), (3, False), ("2", False),
+                       (1.0, False), (2.0, False), (True, False)):
+        (root / core.LOCK_NAME).write_text(json.dumps({
+            "schema_version": schema, "locked_at": "2026-11-11T00:00:00+00:00",
+            "members": [], "contracts": []}), encoding="utf-8")
+        assert (core.read_lock(root) is not None) is ok, schema
+    # 历史锁：v1 无 definition、B 之前无根字段 / seal_anchors ⇒ 仍然可读。
+    (root / core.LOCK_NAME).write_text(json.dumps({
+        "schema_version": 1, "locked_at": "2026-11-11T00:00:00+00:00",
+        "members": [], "contracts": []}), encoding="utf-8")
+    assert core.read_lock(root) is not None
+    # 字段存在则结构必须正确。
+    for bad in ({"members": {}}, {"contracts": [1]}):
+        payload = {"schema_version": 2, "members": [], "contracts": []}
+        payload.update(bad)
+        (root / core.LOCK_NAME).write_text(json.dumps(payload), encoding="utf-8")
+        assert core.read_lock(root) is None, bad
+
+
+def test_b_definition_unbound_judges_by_lock2_not_manifest_version(
+        tmp_path: Path, monkeypatch) -> None:
+    """清单降成 v1 也绕不过：锁 schema 2 + definition 缺失 ⇒ 仍 `definition_unbound`。"""
+    root = _v1_manifest_root(tmp_path, monkeypatch)
+    (root / core.LOCK_NAME).write_text(json.dumps({
+        "schema_version": 2, "locked_at": "2026-11-11T00:00:00+00:00",
+        "definition": None, "members": [], "contracts": []}), encoding="utf-8")
+
+    rows = _definition_findings(core.check_solution(root))
+    assert len(rows) == 1, rows
+    assert rows[0]["status"] == "FAIL"
+    assert "definition_unbound" in rows[0]["detail"]
+
+
+def test_b_acceptance_cutover_both_empty_after_refresh_fails(
+        tmp_path: Path, monkeypatch) -> None:
+    """刷新后两侧皆空 ⇒ `acceptance_cutover_missing` FAIL（不再整行不输出）。
+
+    v18 起 v2 清单必填 cutover，所以「两侧皆空」的合法构造是 v1 清单（无该字段）
+    + 锁 schema 2 且 `definition.commit != null`；v1 的 `migration_required` WARN
+    只覆盖未刷新的 pending 态，刷新后必须 FAIL。
+    """
+    root = _v1_manifest_root(tmp_path, monkeypatch)
+    (root / core.LOCK_NAME).write_text(json.dumps({
+        "schema_version": 2, "locked_at": "2026-11-11T00:00:00+00:00",
+        "definition": {"commit": "deadbeef"}, "acceptance_cutover": None,
+        "members": [], "contracts": []}), encoding="utf-8")
+
+    rows = _cutover_rows(core.check_solution(root))
+    assert len(rows) == 1, rows
+    assert rows[0]["status"] == "FAIL"
+    assert "acceptance_cutover_missing" in rows[0]["detail"]
+    assert "两侧均为空" in rows[0]["detail"]
+
+
+def test_b_acceptance_cutover_manifest_side_missing_fails(
+        tmp_path: Path, monkeypatch) -> None:
+    """刷新后清单侧缺失、锁侧有值 ⇒ 单侧缺失 FAIL（不再豁免）。"""
+    root = _v1_manifest_root(tmp_path, monkeypatch)
+    (root / core.LOCK_NAME).write_text(json.dumps({
+        "schema_version": 2, "locked_at": "2026-11-11T00:00:00+00:00",
+        "definition": {"commit": "deadbeef"},
+        "acceptance_cutover": "2027-03-31",
+        "members": [], "contracts": []}), encoding="utf-8")
+
+    rows = _cutover_rows(core.check_solution(root))
+    assert len(rows) == 1, rows
+    assert rows[0]["status"] == "FAIL"
+    assert "acceptance_cutover_missing" in rows[0]["detail"]
+    assert "单侧缺失" in rows[0]["detail"] and "清单" in rows[0]["detail"]
+
+
+def test_b_migrate_leaves_disk_untouched_when_prd_not_utf8(
+        tmp_path: Path, monkeypatch) -> None:
+    """PRD 非 UTF-8 ⇒ 两份新内容都没落盘（旧实现会先改清单再 exit 2）。"""
+    root = _v1_manifest_root(tmp_path, monkeypatch)
+    prd = root / "product" / "prd" / "solution-prd.md"
+    prd.parent.mkdir(parents=True)
+    prd.write_bytes("---\ndate: 2026-11-11\n---\n中文\n".encode("gb18030"))
+    before_manifest = (root / core.MANIFEST_NAME).read_bytes()
+    before_prd = prd.read_bytes()
+
+    with pytest.raises(core.SolutionError, match="UTF-8"):
+        core.migrate_manifest(root)
+    assert (root / core.MANIFEST_NAME).read_bytes() == before_manifest
+    assert prd.read_bytes() == before_prd
+
+
+# ---------------------------------------- 评审 v19/v20：cutover 边界 / 武装检查 / shallow
+
+def test_b_cutover_boundaries_use_default_plus_90_days() -> None:
+    """`--cutover` 边界：默认 2027-03-31；往后推需评审号，上限 = 默认 + 90 天（含）。"""
+    from datetime import date, timedelta
+
+    assert core.ACCEPTANCE_CUTOVER_DEFAULT == "2027-03-31"
+    assert core.resolve_cutover() == "2027-03-31"
+    assert core.resolve_cutover(None, "R-2026-001") == "2027-03-31"
+    # 提前收紧不需要评审号。
+    assert core.resolve_cutover("2026-06-30") == "2026-06-30"
+    # 往后推必须带评审号。
+    with pytest.raises(core.SolutionError, match="anchor-review"):
+        core.resolve_cutover("2027-05-15")
+    assert core.resolve_cutover("2027-05-15", "R-2026-001") == "2027-05-15"
+    # 上限按「默认 + 90 天」算：2027-06-29 通过，2027-06-30 超限。
+    ceiling = (date(2027, 3, 31) + timedelta(days=core.ACCEPTANCE_CUTOVER_MAX_DAYS))
+    assert ceiling.isoformat() == "2027-06-29"
+    assert core.resolve_cutover(ceiling.isoformat(), "R-2026-001") == ceiling.isoformat()
+    with pytest.raises(core.SolutionError, match="超过上限"):
+        core.resolve_cutover("2027-06-30", "R-2026-001")
+    with pytest.raises(core.SolutionError, match="YYYY-MM-DD"):
+        core.resolve_cutover("2027/05/15", "R-2026-001")
+
+
+def test_b_init_and_migrate_write_cutover(tmp_path: Path, monkeypatch) -> None:
+    """v18：v2 清单必填 cutover，`init` / `migrate --to 2` 都写，且可被 `--cutover` 覆盖。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False,
+                       cutover="2027-05-15", anchor_review="REVIEW-20261111-01")
+    assert "acceptance_cutover: 2027-05-15" in (
+        root / core.MANIFEST_NAME).read_text(encoding="utf-8")
+
+    # 迁移：v1 → v2 写默认值；显式给了更晚的切点却没评审号 ⇒ 拒绝且磁盘零变化。
+    mig_dir = tmp_path / "mig"
+    mig_dir.mkdir()
+    v1 = _v1_manifest_root(mig_dir, monkeypatch)
+    (v1 / "product" / "prd").mkdir(parents=True)
+    (v1 / "product" / "prd" / "solution-prd.md").write_text(
+        "---\ndomain: \"solution\"\n---\n\n# solution\n", encoding="utf-8")
+    before = (v1 / core.MANIFEST_NAME).read_bytes()
+    with pytest.raises(core.SolutionError, match="anchor-review"):
+        core.migrate_manifest(v1, cutover="2027-05-15")
+    assert (v1 / core.MANIFEST_NAME).read_bytes() == before
+
+    result = core.migrate_manifest(v1)
+    assert result["acceptance_cutover"] == "2027-03-31"
+    assert "acceptance_cutover: 2027-03-31" in (
+        v1 / core.MANIFEST_NAME).read_text(encoding="utf-8")
+
+    # 已有不同的 cutover 时不许 --cutover 静默覆盖（migrate 只补缺）。
+    with pytest.raises(core.SolutionError, match="不覆盖"):
+        core.migrate_manifest(v1, cutover="2027-05-15",
+                              anchor_review="REVIEW-20261111-01")
+
+
+def test_b_init_rejects_cutover_when_reader_writes_v1(
+        tmp_path: Path, monkeypatch) -> None:
+    """评审一：reader <0.4.0 只能写 v1 清单，显式 `--cutover` 必须报错而非静默丢弃。"""
+    stub_reader_version(monkeypatch, tmp_path, "0.3.0")
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    with pytest.raises(core.SolutionError, match="需要 0.4.0 清单"):
+        core.init_solution(root, "demo", [("web", "web", "frontend")],
+                           install=False, cutover="2027-01-31")
+    assert not (root / core.MANIFEST_NAME).exists()
+    assert not (root / core.CONFIG_NAME).exists()
+
+    # CLI 面：exit 2、stderr 带固定提示、不落任何文件。
+    script = tool_copy(tmp_path, "0.3.0")
+    cli_root = make_repo(tmp_path / "cli_root")
+    make_repo(cli_root / "web")
+    res = run_cli(cli_root, "--root", str(cli_root), "init", "--name", "demo",
+                  "--member", "web=web", "--cutover", "2027-01-31",
+                  script=script)
+    assert res.returncode == 2, (res.returncode, res.stdout, res.stderr)
+    assert "`--cutover` 需要 0.4.0 清单（v2）" in res.stderr
+    assert not (cli_root / core.MANIFEST_NAME).exists()
+
+
+def test_b_anchor_review_is_persisted_by_init_and_migrate(
+        tmp_path: Path, monkeypatch) -> None:
+    """B-0 缺口：`--anchor-review` 给了就必须落盘（清单 + 锁），不许静默丢弃。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False,
+                       cutover="2027-05-15", anchor_review="REVIEW-20261111-01")
+    text = (root / core.MANIFEST_NAME).read_text(encoding="utf-8")
+    assert "acceptance_cutover_review: REVIEW-20261111-01" in text
+    assert _lock_bytes(root)["acceptance_cutover_review"] == "REVIEW-20261111-01"
+
+    mig = tmp_path / "mig"
+    mig.mkdir()
+    v1 = _v1_manifest_root(mig, monkeypatch)
+    (v1 / "product" / "prd").mkdir(parents=True)
+    (v1 / "product" / "prd" / "solution-prd.md").write_text(
+        "---\ndomain: \"solution\"\n---\n\n# solution\n", encoding="utf-8")
+    result = core.migrate_manifest(v1, cutover="2027-05-15",
+                                   anchor_review="REVIEW-20261118-03")
+    assert result["acceptance_cutover"] == "2027-05-15"
+    assert "acceptance_cutover_review: REVIEW-20261118-03" in (
+        v1 / core.MANIFEST_NAME).read_text(encoding="utf-8")
+
+
+def test_b_cutover_review_absent_when_not_given(
+        tmp_path: Path, monkeypatch) -> None:
+    """没给 `--anchor-review` ⇒ 清单与锁都不出现该键（不写 `null` 占位）。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+    assert "acceptance_cutover_review" not in (
+        root / core.MANIFEST_NAME).read_text(encoding="utf-8")
+    assert "acceptance_cutover_review" not in _lock_bytes(root)
+
+    mig = tmp_path / "mig"
+    mig.mkdir()
+    v1 = _v1_manifest_root(mig, monkeypatch)
+    (v1 / "product" / "prd").mkdir(parents=True)
+    (v1 / "product" / "prd" / "solution-prd.md").write_text(
+        "---\ndomain: \"solution\"\n---\n\n# solution\n", encoding="utf-8")
+    core.migrate_manifest(v1)
+    assert "acceptance_cutover_review" not in (
+        v1 / core.MANIFEST_NAME).read_text(encoding="utf-8")
+
+
+def test_b_handwritten_cutover_review_is_a_known_field(
+        tmp_path: Path, monkeypatch) -> None:
+    """手写 `acceptance_cutover_review` 不再被判 `manifest_field_unknown`。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+    path = root / core.MANIFEST_NAME
+    text = path.read_text(encoding="utf-8").replace(
+        "acceptance_cutover: 2027-03-31",
+        "acceptance_cutover: 2027-03-31\n"
+        "acceptance_cutover_review: REVIEW-20261118-03", 1)
+    path.write_text(text, encoding="utf-8")
+    assert core.load_manifest(root)["acceptance_cutover_review"] == "REVIEW-20261118-03"
+
+
+def test_b_anchor_review_shape_is_enforced_on_write(
+        tmp_path: Path, monkeypatch) -> None:
+    """写侧形态门：`--anchor-review` 不符 `REVIEW-\\d{8}-\\d{2}` ⇒ 抛错且零落盘。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    with pytest.raises(core.SolutionError, match="REVIEW-YYYYMMDD-NN"):
+        core.init_solution(root, "demo", [("web", "web", "frontend")], install=False,
+                           cutover="2027-05-15", anchor_review="R-2026-001")
+    assert not (root / core.MANIFEST_NAME).exists()
+    assert not (root / core.CONFIG_NAME).exists()
+
+    mig = tmp_path / "mig"
+    mig.mkdir()
+    v1 = _v1_manifest_root(mig, monkeypatch)
+    (v1 / "product" / "prd").mkdir(parents=True)
+    (v1 / "product" / "prd" / "solution-prd.md").write_text(
+        "---\ndomain: \"solution\"\n---\n\n# solution\n", encoding="utf-8")
+    before = (v1 / core.MANIFEST_NAME).read_bytes()
+    with pytest.raises(core.SolutionError, match="REVIEW-YYYYMMDD-NN"):
+        core.migrate_manifest(v1, anchor_review="RV-20261118-03")
+    assert (v1 / core.MANIFEST_NAME).read_bytes() == before
+
+    # V-23d CLI 面：exit 2、stderr 给形态、不写清单（0.4.0 读者才走 v2 写侧）。
+    script = tool_copy(tmp_path, "0.4.0")
+    cli_root = tmp_path / "cli"
+    make_repo(cli_root)
+    make_repo(cli_root / "web")
+    res = run_cli(cli_root, "--root", str(cli_root), "init", "--name", "demo",
+                  "--member", "web=web", "--cutover", "2027-05-15",
+                  "--anchor-review", "R-2026-001", script=script)
+    assert res.returncode == 2, (res.returncode, res.stdout, res.stderr)
+    assert "REVIEW-YYYYMMDD-NN" in res.stderr
+    assert not (cli_root / core.MANIFEST_NAME).exists()
+
+
+def test_b_malformed_review_in_manifest_is_fail_not_exit2(
+        tmp_path: Path, monkeypatch) -> None:
+    """读侧：清单里的坏 review ⇒ `acceptance_cutover_review_malformed` FAIL（exit 1）。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+    path = root / core.MANIFEST_NAME
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        "acceptance_cutover: 2027-03-31",
+        "acceptance_cutover: 2027-03-31\nacceptance_cutover_review: R-2026-001", 1),
+        encoding="utf-8")
+
+    report = core.check_solution(root)
+    assert report["overall"] == "FAIL"
+    assert [e["code"] for e in report["errors"]] == [
+        "acceptance_cutover_review_malformed"]
+    assert any(c["status"] == "FAIL"
+               and "acceptance_cutover_review_malformed" in c["detail"]
+               for c in report["checks"])
+
+    # CLI 面：exit 1（不是 exit 2）、stdout 是合法 JSON。
+    script = tool_copy(tmp_path, "0.3.0")
+    res = run_cli(root, "--root", str(root), "check", "--json", script=script)
+    assert res.returncode == 1, (res.returncode, res.stdout, res.stderr)
+    payload = json.loads(res.stdout)
+    assert payload["errors"][0]["code"] == "acceptance_cutover_review_malformed"
+
+
+def test_b_late_cutover_without_review_fails_unreviewed(
+        tmp_path: Path, monkeypatch) -> None:
+    """V-20⑥：晚于默认切点且无 review ⇒ `acceptance_cutover_unreviewed`；两码互斥。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+    path = root / core.MANIFEST_NAME
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        "acceptance_cutover: 2027-03-31", "acceptance_cutover: 2027-04-15", 1),
+        encoding="utf-8")
+
+    report = core.check_solution(root)
+    assert report["overall"] == "FAIL"
+    assert [e["code"] for e in report["errors"]] == ["acceptance_cutover_unreviewed"]
+
+    # 早于/等于默认：即使没有 review 也不报。
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        "acceptance_cutover: 2027-04-15", "acceptance_cutover: 2027-03-31", 1),
+        encoding="utf-8")
+    assert "acceptance_cutover_unreviewed" not in [
+        e["code"] for e in core.check_solution(root)["errors"]]
+
+    # 晚切点 + 坏形态 ⇒ 只报 malformed（空值不落 malformed，形态坏不再算缺 review）。
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        "acceptance_cutover: 2027-03-31",
+        "acceptance_cutover: 2027-04-15\nacceptance_cutover_review: R-2026-001", 1),
+        encoding="utf-8")
+    codes = [e["code"] for e in core.check_solution(root)["errors"]]
+    assert codes == ["acceptance_cutover_review_malformed"], codes
+
+    # 晚切点 + 合法 review ⇒ 只存档，不报 unreviewed。
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        "acceptance_cutover_review: R-2026-001",
+        "acceptance_cutover_review: REVIEW-20261111-01", 1), encoding="utf-8")
+    assert core.check_solution(root)["errors"] == []
+
+    script = tool_copy(tmp_path, "0.3.0")
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        "\nacceptance_cutover_review: REVIEW-20261111-01", "", 1), encoding="utf-8")
+    res = run_cli(root, "--root", str(root), "check", "--json", script=script)
+    assert res.returncode == 1, (res.returncode, res.stdout, res.stderr)
+    assert json.loads(res.stdout)["errors"][0]["code"] == "acceptance_cutover_unreviewed"
+
+
+def test_b_check_report_carries_schema_v2_shape(
+        tmp_path: Path, monkeypatch) -> None:
+    """RFC §5.2：`schema_version: 2` + `warnings` / `info` / `downgrades` / `not_run` 齐备。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+
+    report = core.check_solution(root)
+    assert report["schema_version"] == 2
+    for key in ("errors", "warnings", "info", "downgrades", "not_run"):
+        assert key in report, key
+    assert report["warnings"] == []
+    # init 写完锁但未提交 ⇒ ⓪-1 可见 INFO（不进 errors/warnings、不改 exit）。
+    assert [i["code"] for i in report["info"]] == ["lock_history_empty"]
+    assert report["downgrades"] == [] and report["not_run"] == []
+
+    script = tool_copy(tmp_path, "0.3.0")
+    res = run_cli(root, "--root", str(root), "check", "--json", script=script)
+    payload = json.loads(res.stdout)
+    for key in ("schema_version", "errors", "warnings", "info",
+                "downgrades", "not_run"):
+        assert key in payload, key
+    assert payload["schema_version"] == 2
+
+
+def test_b_downgrade_entry_uses_note_not_detail(tmp_path: Path) -> None:
+    """`downgrades[]` 项字段是 `note`（不是 `detail`）。"""
+    root = make_repo(tmp_path / "root")
+    data = {"definition": {"domain": "solution",
+                           "path": "product/prd/solution-prd.md"}}
+    lock = {"schema_version": 2,
+            "definition": {"commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}}
+    rows: list[dict] = []
+    downgrades: list[dict] = []
+    core._check_definition_lock(
+        root, data, lock, lambda n, s, d: rows.append({"status": s}),
+        allow_unverifiable=True, downgrades=downgrades)
+    assert rows[-1]["status"] == "WARN"
+    assert downgrades[0]["code"] == "definition_commit_unverifiable"
+    assert downgrades[0]["scope"] == "definition_source"
+    assert "note" in downgrades[0] and "detail" not in downgrades[0]
+
+
+def test_b_downgrade_sort_uses_scope_before_path() -> None:
+    """冻结基线 §5.2：`downgrades[]` 排序键是 `(code, scope, path)`，不是 `(code, path, scope)`。"""
+    downgrades = [
+        {"code": "reader_version", "scope": "reader_version", "path": "a.md"},
+        {"code": "reader_version", "scope": "card_absent", "path": "z.md"},
+    ]
+    core._sort_report_arrays([], [], [], downgrades)
+    assert [i["scope"] for i in downgrades] == ["card_absent", "reader_version"]
+
+
+def test_b_current_lock_non_blob_is_lock_unparsable_and_short_circuits(
+        tmp_path: Path, monkeypatch) -> None:
+    """V-24 当前侧（独立夹具）：当前锁是 symlink ⇒ `lock_unparsable`，不读历史。"""
+    import os
+
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+    (root / "real.json").write_text('{"schema_version": 2}', encoding="utf-8")
+    os.remove(root / core.LOCK_NAME)
+    os.symlink("real.json", root / core.LOCK_NAME)
+
+    def _must_not_read_history(*_a, **_kw):
+        raise AssertionError("⓪-0 一红必须短路，不得读历史")
+
+    monkeypatch.setattr(core, "iter_lock_history", _must_not_read_history)
+    report = core.check_solution(root)
+    assert report["overall"] == "FAIL"
+    assert [e["code"] for e in report["errors"]] == ["lock_unparsable"]
+    assert report["not_run"] == core.NOT_RUN_SEGMENTS
+
+
+def test_b_history_non_blob_is_lock_history_unparsable(tmp_path: Path) -> None:
+    """V-24 历史侧（独立夹具）：历史版本是 symlink ⇒ `lock_history_unparsable`。
+
+    当前锁必须合法，否则会先撞 ⓪-0（两条夹具不写成同一运行双报）。
+    """
+    import os
+
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+    good = (root / core.LOCK_NAME).read_text(encoding="utf-8")
+
+    # c1：历史版本是 symlink（non_blob）。
+    (root / "real.json").write_text('{"schema_version": 2}', encoding="utf-8")
+    os.remove(root / core.LOCK_NAME)
+    os.symlink("real.json", root / core.LOCK_NAME)
+    git(root, "add", "-A")
+    git(root, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "bad")
+    # c2：当前锁恢复成普通文件。
+    os.remove(root / core.LOCK_NAME)
+    (root / core.LOCK_NAME).write_text(good, encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "good")
+
+    report = core.check_solution(root)
+    assert report["overall"] == "FAIL"
+    assert [e["code"] for e in report["errors"]] == ["lock_history_unparsable"]
+    assert report["not_run"] == core.NOT_RUN_SEGMENTS
+
+
+def test_b_lock_info_codes_are_mutually_exclusive(tmp_path: Path) -> None:
+    """`lock_missing` / `lock_tracked_but_deleted` / `lock_history_empty` 三码互斥。"""
+    def fresh(name: str) -> Path:
+        root = make_repo(tmp_path / name)
+        make_repo(root / "web")
+        core.init_solution(root, "demo", [("web", "web", "frontend")],
+                           install=False)
+        return root
+
+    # 从未有过锁：删掉 init 产物、且历史里没有锁。
+    missing = fresh("missing")
+    (missing / core.LOCK_NAME).unlink()
+    codes = [i["code"] for i in core.check_solution(missing)["info"]]
+    assert codes == ["lock_missing"], codes
+
+    # 提交过锁、又提交删除（HEAD 无锁）⇒ tracked_but_deleted。
+    deleted = fresh("deleted")
+    git(deleted, "add", "-A")
+    git(deleted, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "lock")
+    (deleted / core.LOCK_NAME).unlink()
+    git(deleted, "add", "-A")
+    git(deleted, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "rm")
+    codes = [i["code"] for i in core.check_solution(deleted)["info"]]
+    assert codes == ["lock_tracked_but_deleted"], codes
+
+    # 锁在但从未提交 ⇒ lock_history_empty（与上面两码互斥）。
+    untracked = fresh("untracked")
+    codes = [i["code"] for i in core.check_solution(untracked)["info"]]
+    assert codes == ["lock_history_empty"], codes
+
+
+def test_b_internal_error_is_exit2_with_json_and_full_not_run(
+        tmp_path: Path, monkeypatch, capsys) -> None:
+    """RFC §3.2 第 4 层：未知异常 ⇒ exit 2 + 合法 JSON + `not_run[]` 完整六项。"""
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+
+    class _CoreProxy:
+        """CLI 内部用 `_load_solution()` 取 core；代理一层以便只替换 `check_solution`。"""
+
+        def __init__(self, real):
+            self._real = real
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    proxy = _CoreProxy(core)
+    monkeypatch.setattr(cli, "_load_solution", lambda: proxy)
+
+    def boom(*_a, **_kw):
+        raise RuntimeError("boom in check")
+
+    proxy.check_solution = boom
+    rc = cli.main(["--root", str(root), "check", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 2
+    assert payload["schema_version"] == 2
+    assert payload["ok"] is False
+    assert payload["errors"][0]["code"] == "internal_error"
+    assert payload["not_run"] == [
+        "root_history_check", "root_v1_check", "root_changed_check",
+        "path_level", "state_level", "chain_level"]
+
+    # 分层：`SolutionError` 仍 exit 2 且不产 JSON（用法错误同理）。
+    def bad(*_a, **_kw):
+        raise core.SolutionError("manifest_field_unknown: 清单未知顶层键: x")
+
+    proxy.check_solution = bad
+    rc = cli.main(["--root", str(root), "check", "--json"])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert captured.out.strip() == ""
+    assert "manifest_field_unknown" in captured.err
+
+
+def test_b_migrate_review_conflict_refuses_and_same_value_not_rewritten(
+        tmp_path: Path, monkeypatch) -> None:
+    """migrate：已有不同 review ⇒ 拒覆盖；已有相同 review ⇒ 不重复写。"""
+    mig = tmp_path / "mig"
+    mig.mkdir()
+    v1 = _v1_manifest_root(mig, monkeypatch)
+    (v1 / "product" / "prd").mkdir(parents=True)
+    (v1 / "product" / "prd" / "solution-prd.md").write_text(
+        "---\ndomain: \"solution\"\n---\n\n# solution\n", encoding="utf-8")
+    path = v1 / core.MANIFEST_NAME
+    path.write_text(path.read_text(encoding="utf-8")
+                    + "acceptance_cutover_review: REVIEW-20261118-03\n",
+                    encoding="utf-8")
+
+    before = path.read_bytes()
+    with pytest.raises(core.SolutionError, match="不覆盖"):
+        core.migrate_manifest(v1, cutover="2027-05-15",
+                              anchor_review="REVIEW-20261119-01")
+    assert path.read_bytes() == before
+
+    result = core.migrate_manifest(v1, anchor_review="REVIEW-20261118-03")
+    text = path.read_text(encoding="utf-8")
+    assert text.count("acceptance_cutover_review:") == 1
+    assert "acceptance_cutover_review: REVIEW-20261118-03" in text
+    assert "acceptance_cutover_review" not in result["added"]
+
+
+def test_b_v1_init_rejects_anchor_review_without_v2(
+        tmp_path: Path, monkeypatch) -> None:
+    """v1 路径（reader <0.4.0）显式 `--anchor-review` ⇒ 抛错拒绝、不写文件。"""
+    stub_reader_version(monkeypatch, tmp_path, "0.3.0")
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    with pytest.raises(core.SolutionError, match="需要 0.4.0 清单"):
+        core.init_solution(root, "demo", [("web", "web", "frontend")],
+                           install=False, anchor_review="REVIEW-20261111-01")
+    assert not (root / core.MANIFEST_NAME).exists()
+    assert not (root / core.CONFIG_NAME).exists()
+
+
+def test_b_prd_schema_gate_unarmed_warns(tmp_path: Path, monkeypatch) -> None:
+    """读者 ≥0.4.0 但 `PRD_SCHEMA_2_FROM` 未填 ⇒ `prd_schema_gate_unarmed` WARN。"""
+    root = _refreshed_root(tmp_path, monkeypatch)
+    monkeypatch.setattr(core, "PRD_SCHEMA_2_FROM", None)
+    rows = [c for c in core.check_solution(root)["checks"]
+            if "prd_schema_gate_unarmed" in c["detail"]]
+    assert len(rows) == 1 and rows[0]["status"] == "WARN", rows
+
+    monkeypatch.setattr(core, "PRD_SCHEMA_2_FROM", "2026-11-11")
+    assert not [c for c in core.check_solution(root)["checks"]
+                if "prd_schema_gate_unarmed" in c["detail"]]
+
+
+def test_b_shallow_repo_is_chain_unverifiable_hard_fail(
+        tmp_path: Path, monkeypatch) -> None:
+    """shallow / partial 一律 hard FAIL：`--allow-unverifiable-chain` 不降这一支。"""
+    stub_reader_version(monkeypatch, tmp_path)
+    src = make_repo(tmp_path / "src")
+    make_repo(src / "web")
+    core.init_solution(src, "demo", [("web", "web", "frontend")], install=False)
+    commit_root(src, core.MANIFEST_NAME, core.CONFIG_NAME, "product")
+    core.write_lock(src, core.load_manifest(src), require_clean=True)
+    commit_root(src, core.LOCK_NAME)
+
+    shallow = tmp_path / "shallow"
+    subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{src}", str(shallow)],
+                   check=True, capture_output=True, text=True)
+    for allow in (False, True):
+        report = core.check_solution(shallow, allow_unverifiable_chain=allow)
+        rows = [c for c in report["checks"] if "chain_unverifiable" in c["detail"]]
+        assert len(rows) == 1, report["checks"]
+        assert rows[0]["status"] == "FAIL", (allow, rows[0])
