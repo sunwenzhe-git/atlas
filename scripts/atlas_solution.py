@@ -198,6 +198,26 @@ def build_parser(version: str | None = None) -> argparse.ArgumentParser:
     p_lock = sub.add_parser("lock", help="查看或更新契约锁")
     _add_common(p_lock)
     p_lock.add_argument("--update", action="store_true", help="写入 atlas.solution.lock.json")
+    p_lock.add_argument("--assets-root", default=None,
+                        help="改资产根（唯一出口；必须同时给 --anchor-review）")
+    p_lock.add_argument("--anchor-review", default=None,
+                        help="改资产根的评审号（REVIEW-YYYYMMDD-NN）")
+    p_lock.add_argument("--seal", default=None,
+                        help="多封条时指定封条路径（<assets_root>/reviews/apply/"
+                             "<member>/<task>.seal.json）")
+
+    p_seal = sub.add_parser("seal", help="封条生命周期：freeze / reanchor")
+    seal_sub = p_seal.add_subparsers(dest="seal_cmd", required=True)
+    p_sf = seal_sub.add_parser("freeze", help="冻结封条（只写锁 state/frozen_at）")
+    _add_common(p_sf)
+    p_sf.add_argument("--seal", required=False, default=None)
+    p_sf.add_argument("--at", required=True, help="冻结提交（= 该路径 L[-1]）")
+    p_sr = seal_sub.add_parser("reanchor", help="重锚：重写纪元起点并审计")
+    _add_common(p_sr)
+    p_sr.add_argument("--seal", required=False, default=None)
+    p_sr.add_argument("--review", required=True, help="REVIEW-YYYYMMDD-NN")
+    p_sr.add_argument("--from-a", required=True, dest="from_a",
+                      help="不可达的旧首签提交 SHA")
 
     p_commit = sub.add_parser("commit", help="（Phase 2）按成员提交代码")
     _add_common(p_commit)
@@ -449,9 +469,22 @@ def main(argv: list[str] | None = None) -> int:
                       else f"[OK] {core.LOCK_NAME} 已存在（{lock.get('locked_at')}）")
                 return 0
             data = core.load_manifest(root)
-            path = core.write_lock(root, data, require_clean=True)
+            path = core.write_lock(root, data, require_clean=True,
+                                   assets_root=args.assets_root,
+                                   anchor_review=args.anchor_review,
+                                   seal=args.seal)
             print(json.dumps({"lock": str(path)}, ensure_ascii=False, indent=2)
                   if args.json else f"[OK] 契约锁已更新: {path}")
+            return 0
+
+        if args.cmd == "seal":
+            if args.seal_cmd == "freeze":
+                result = core.freeze_seal(root, args.seal, args.at)
+            else:
+                result = core.reanchor_seal(root, args.seal, args.review,
+                                            args.from_a)
+            print(json.dumps(result, ensure_ascii=False, indent=2)
+                  if args.json else "\n".join(f"{k}: {v}" for k, v in result.items()))
             return 0
 
         if args.cmd == "task":

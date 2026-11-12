@@ -1,0 +1,1244 @@
+#!/usr/bin/env python3
+"""验收资产封条（seal）单源：路径解析、upstream 绑定、续签链、状态机、写侧。
+
+RFC-20261111-03 §1.1.3 / §1.4 / §1.5 / §2.5 / §3.2 / §3.4 的 C 批落点。
+本模块只依赖 stdlib + git，不 import `_support/solution.py`（避免环），
+由 `solution.py::_load_sibling` 或校验器按文件路径加载。
+
+术语：
+- `S`：封条仓内路径 `<assets_root>/reviews/apply/<member>/<task-id>.seal.json`；
+- `L`：该路径封条事件提交序列（`git show --name-status` 非空）；
+- `N = len(L)`；`A` / `D`：add / delete 提交数。
+"""
+from __future__ import annotations
+
+import fnmatch
+import hashlib
+import json
+import re
+import subprocess
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+# ---------------------------------------------------------------- 常量
+
+SEAL_RE = re.compile(
+    r"^(?P<root>.+?)/reviews/apply/(?P<member>[^/]+)/(?P<task>[^/]+)\.seal\.json$")
+SIGNED_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+REVIEW_ID_RE = re.compile(r"^REVIEW-\d{8}-\d{2}$")
+
+SEAL_STATES = ("active", "retired", "frozen")
+SEAL_KINDS = ("binding", "backfill", "legacy")
+ROLES = ("manifest", "prd-global", "prd-domain", "ac-crosswalk",
+         "e2e-index", "e2e-case", "stack-profile")
+
+# 载荷等价豁免集（§3.2 链规则 2 / 5）
+BOUNDARY_EXEMPT = frozenset({
+    "renewal_seq", "previous_seal_commit", "previous_seal_sha256",
+    "reanchor", "signed_at"})
+# 换路径首签豁免集（§3.2 链规则 3 / T-26）
+MOVE_EXEMPT = frozenset({
+    "renewal_seq", "previous_seal_commit", "previous_seal_sha256",
+    "moved_from", "reanchor"})
+
+
+class SealError(ValueError):
+    """输入 / 写侧用法错误（CLI exit 2）。"""
+
+
+# ---------------------------------------------------------------- git
+
+def _git(root: Path, *args: str, binary: bool = False):
+    proc = subprocess.run(["git", "-C", str(root), *args],
+                          capture_output=True, text=not binary)
+    if binary:
+        return proc.returncode, proc.stdout, proc.stderr.decode("utf-8", "replace")
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def _rev_parse(root: Path, rev: str) -> str | None:
+    rc, out, _ = _git(root, "rev-parse", "--verify", rev)
+    return out.strip() if rc == 0 and out.strip() else None
+
+
+def _has_object(root: Path, sha: str) -> bool:
+    """`git cat-file -e <sha>` 语义：对象在本地对象库中是否可用。"""
+    rc, _, _ = _git(root, "cat-file", "-e", sha)
+    return rc == 0
+
+
+def repo_shape(root: Path) -> tuple[str | None, str]:
+    """返回 `(cause, detail)`；`cause is None` 表示仓形态可信。
+
+    cause ∈ {shallow, partial}；非 git / 空仓按可信处理（由调用方判）。
+    """
+    rc, out, _ = _git(root, "rev-parse", "--is-shallow-repository")
+    if rc == 0 and out.strip() == "true":
+        return "shallow", "仓库是浅克隆（--is-shallow-repository=true），历史不可证"
+    rc, out, _ = _git(root, "config", "--get-regexp",
+                      r"^remote\..*\.promisor$")
+    rc2, out2, _ = _git(root, "config", "--get", "extensions.partialClone")
+    has_promisor = (rc == 0 and out.strip()) or (rc2 == 0 and out2.strip())
+    if not has_promisor:
+        pack = Path(root) / ".git" / "objects" / "pack"
+        has_promisor = pack.is_dir() and any(pack.glob("*.promisor"))
+    if has_promisor:
+        return "partial", "仓库是 partial clone（promisor），历史对象不可证"
+    return None, ""
+
+
+def _parents(root: Path, commit: str) -> list[str]:
+    rc, out, _ = _git(root, "rev-list", "--parents", "-n", "1", commit)
+    if rc != 0 or not out.strip():
+        return []
+    return out.split()[1:]
+
+
+def seal_history(root: Path, path: str) -> dict:
+    """复算 `C0 / L / L_pre / N / A / D`（§3.2 封条路径历史）。"""
+    rc, out, err = _git(root, "rev-list", "--full-history", "--no-renames",
+                        "--reverse", "HEAD", "--", path)
+    if rc != 0:
+        return {"error": "history_unreadable", "detail": err.strip(),
+                "commits": [], "statuses": {}}
+    commits = [line for line in out.splitlines() if line.strip()]
+    statuses: dict[str, str] = {}
+    kept: list[str] = []
+    for commit in commits:
+        rc2, out2, _ = _git(root, "show", "--no-renames", "--format=",
+                            "--name-status", commit, "--", path)
+        text = out2.strip()
+        if rc2 != 0 or not text:
+            continue
+        letters = "".join(line.split("\t", 1)[0].strip()
+                          for line in text.splitlines() if line.strip())
+        statuses[commit] = letters
+        kept.append(commit)
+    a_count = sum(1 for c in kept if "A" in statuses[c])
+    d_count = sum(1 for c in kept if "D" in statuses[c])
+    delete_idx = [i for i, c in enumerate(kept) if "D" in statuses[c]]
+    pre = kept[: max(delete_idx)] if delete_idx else list(kept)
+    return {"error": None, "commits": kept, "statuses": statuses,
+            "N": len(kept), "A": a_count, "D": d_count, "L_pre": pre}
+
+
+def merge_conflicts(root: Path, path: str, commits: list[str]) -> list[str]:
+    """`L` 中封条字节与所有父都不同的 merge（§3.2 冲突解决型 merge）。"""
+    bad: list[str] = []
+    for commit in commits:
+        parents = _parents(root, commit)
+        if len(parents) < 2:
+            continue
+        differs = True
+        for parent in parents:
+            rc, _, _ = _git(root, "diff", "--quiet", parent, commit, "--", path)
+            if rc == 0:
+                differs = False
+                break
+        if differs:
+            bad.append(commit)
+    return bad
+
+
+def blob_at(root: Path, commit: str, path: str) -> bytes | None:
+    """`<commit>:<path>` 的 blob 字节；不存在 / 非 blob ⇒ `None`。"""
+    rc, out, _ = _git(root, "cat-file", "-t", f"{commit}:{path}")
+    if rc != 0 or out.strip() != "blob":
+        return None
+    rc, data, _ = _git(root, "show", f"{commit}:{path}", binary=True)
+    return data if rc == 0 else None
+
+
+def head_blob(root: Path, path: str) -> bytes | None:
+    return blob_at(root, "HEAD", path)
+
+
+def worktree_dirty(root: Path, path: str) -> str:
+    rc, out, _ = _git(root, "status", "--porcelain", "--", path)
+    return out.strip() if rc == 0 else ""
+
+
+def seal_sha256(data: bytes) -> str:
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def canonical(value) -> bytes:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True,
+                      separators=(",", ":")).encode("utf-8")
+
+
+def projection_sha(projection: dict) -> str:
+    return hashlib.sha256(canonical(projection)).hexdigest()
+
+
+def parse_seal(data: bytes) -> dict:
+    try:
+        doc = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise SealError(f"封条不是合法 JSON: {exc}") from exc
+    if not isinstance(doc, dict):
+        raise SealError("封条顶层不是 JSON 对象")
+    return doc
+
+
+def is_seal_path(path: str) -> bool:
+    return bool(SEAL_RE.match(path))
+
+
+# ---------------------------------------------------------------- 角色解析
+
+def _member_prd_paths(root: Path, data: dict, assets_root: str) -> list[str]:
+    out: list[str] = []
+    for member in data.get("members") or []:
+        base = Path(root) / str(member["path"])
+        if not base.is_dir():
+            continue
+        for path in sorted((base / assets_root / "prd").glob("*-prd.md")):
+            out.append(str(path.relative_to(root)))
+    return out
+
+
+def resolve_upstreams(root: Path, data: dict, assets_root: str) -> dict:
+    """解析 C 批可绑定的 role → 仓内路径。
+
+    只返回**文件存在**的 role（`prd-domain` / `ac-crosswalk` 不存在 ⇒ 缺席，
+    不拒签，§2.5 C 批边界）。
+    """
+    root = Path(root)
+    resolved: dict[str, list[str]] = {}
+    manifest = Path(root) / "atlas.solution.yaml"
+    if manifest.is_file():
+        resolved["manifest"] = ["atlas.solution.yaml"]
+    definition = (data.get("definition") or {}).get("path")
+    if definition and (root / definition).is_file():
+        resolved["prd-global"] = [str(definition)]
+    prd_domain = _member_prd_paths(root, data, assets_root)
+    if prd_domain:
+        resolved["prd-domain"] = prd_domain
+    crosswalk = Path(assets_root) / "prd" / "ac-crosswalk.md"
+    if (root / crosswalk).is_file():
+        resolved["ac-crosswalk"] = [str(crosswalk)]
+    has_cases = any(req.get("case_ids") for req in data.get("requirements") or [])
+    index = Path(assets_root) / "e2e" / "e2e-index.md"
+    if has_cases and (root / index).is_file():
+        resolved["e2e-index"] = [str(index)]
+        cases: list[str] = []
+        for req in data.get("requirements") or []:
+            for case_id in req.get("case_ids") or []:
+                candidate = Path(assets_root) / "e2e" / "cases" / f"{case_id}.md"
+                if (root / candidate).is_file():
+                    cases.append(str(candidate))
+        if cases:
+            resolved["e2e-case"] = sorted(set(cases))
+    profile = Path(assets_root) / "stack-profile.yaml"
+    if (root / profile).is_file():
+        resolved["stack-profile"] = [str(profile)]
+    return resolved
+
+
+def _sha_for(root: Path, path: str) -> str | None:
+    target = Path(root) / path
+    try:
+        return hashlib.sha256(
+            target.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+    except OSError:
+        return None
+
+
+def _role_shapes(root: Path, data: dict, assets_root: str) -> dict[str, list[str]]:
+    """role 的**规定路径形态**（文件不存在时也用于区分 `deleted` 与 `unresolved`）。"""
+    definition = (data.get("definition") or {}).get("path") or ""
+    return {
+        "manifest": ["atlas.solution.yaml"],
+        "prd-global": [definition or f"{assets_root}/prd/*-prd.md"],
+        "prd-domain": [f"*/{assets_root}/prd/*-prd.md"],
+        "ac-crosswalk": [f"{assets_root}/prd/ac-crosswalk.md"],
+        "e2e-index": [f"{assets_root}/e2e/e2e-index.md"],
+        "e2e-case": [f"{assets_root}/e2e/cases/*.md"],
+        "stack-profile": [f"{assets_root}/stack-profile.yaml"],
+    }
+
+
+def _matches_role_shape(role: str, path: str, shapes: dict[str, list[str]]) -> bool:
+    return any(fnmatch.fnmatch(path, pattern)
+               for pattern in shapes.get(role, []))
+
+
+def upstream_findings(root: Path, data: dict, seal: dict, seal_path: str,
+                      assets_root: str, *, bind_from: str | None,
+                      today: date | None = None) -> list[dict]:
+    """`upstream[]` 绑定校验 + `seal_upstream_unbound`（§2.5）。"""
+    from datetime import timezone
+    today = today or datetime.now(timezone.utc).date()
+    findings: list[dict] = []
+    resolved = resolve_upstreams(root, data, assets_root)
+    shapes = _role_shapes(root, data, assets_root)
+    state = (seal.get("__state") or "active")
+    entries = seal.get("upstream")
+    if entries is None:
+        entries = []
+    if not isinstance(entries, list):
+        findings.append(_f("upstream_invalid", "error",
+                           "upstream 不是数组", seal_path))
+        entries = []
+    by_role: dict[str, list[dict]] = {}
+    for item in entries:
+        if not isinstance(item, dict):
+            findings.append(_f("upstream_invalid", "error",
+                               "upstream 项不是对象", seal_path))
+            continue
+        role = item.get("role")
+        path = item.get("path")
+        if role not in ROLES:
+            findings.append(_f("upstream_role_unknown", "error",
+                               f"upstream role 越界: {role!r}", seal_path))
+            continue
+        allowed = resolved.get(role)
+        if allowed is None:
+            if _matches_role_shape(role, path, shapes) \
+                    and not (Path(root) / str(path)).exists():
+                findings.append(_f("upstream_missing", "error",
+                                   f"上游已删除: {role} {path}", seal_path))
+            else:
+                findings.append(_f("upstream_path_unresolved", "error",
+                                   f"role {role} 在父仓不可解析（文件不存在）",
+                                   seal_path))
+            continue
+        if path not in allowed:
+            findings.append(_f("upstream_path_unresolved", "error",
+                               f"role {role} 的 path 不在规定解析内: {path!r}",
+                               seal_path))
+            continue
+        by_role.setdefault(role, []).append(item)
+    for role, items in by_role.items():
+        for item in items:
+            path = item["path"]
+            actual = _sha_for(root, path)
+            if actual is None:
+                findings.append(_f("upstream_missing", "error",
+                                   f"上游已删除: {role} {path}", seal_path))
+            elif item.get("sha256") != actual:
+                findings.append(_f("upstream_stale", "error",
+                                   f"上游字节已变（{role} {path}）", seal_path))
+    missing = [role for role in resolved if role not in by_role]
+    if missing:
+        text = ("封条 upstream 缺绑定 role: " + "、".join(missing)
+                + (f"（state=frozen 永久 WARN）" if state == "frozen" else ""))
+        if state == "frozen":
+            findings.append(_f("seal_upstream_unbound", "warning", text, seal_path))
+        elif bind_from is None:
+            findings.append(_f("seal_upstream_unbound", "warning", text, seal_path))
+        else:
+            try:
+                deadline = (datetime.strptime(bind_from, "%Y-%m-%d").date()
+                            + timedelta(days=90))
+            except ValueError:
+                deadline = None
+            severity = "error" if deadline and today > deadline else "warning"
+            findings.append(_f("seal_upstream_unbound", severity, text, seal_path))
+    return findings
+
+
+def _f(code: str, severity: str, message: str, path: str | None,
+       detail: dict | None = None) -> dict:
+    item = {"code": code, "severity": severity, "message": message, "path": path}
+    if detail is not None:
+        item["detail"] = detail
+    return item
+
+
+# ---------------------------------------------------------------- 路径宇宙
+
+def seal_universe(root: Path, roots: list[str]) -> tuple[set[str], set[str]]:
+    """`U`（历史新增封条路径并集）与 unsupported（键不匹配任何根谓词）。
+
+    返回 `(U, supported_roots)`。
+    """
+    universe: set[str] = set()
+    for asset_root in roots:
+        pattern = f":(glob){asset_root}/reviews/apply/*/*.seal.json"
+        rc, out, _ = _git(root, "log", "-m", "--full-history",
+                          "--diff-filter=A", "--no-renames",
+                          "--format=", "--name-only", "HEAD", "--", pattern)
+        if rc != 0:
+            continue
+        for line in out.splitlines():
+            rel = line.strip()
+            m = SEAL_RE.match(rel)
+            if m and m.group("root") == asset_root:
+                universe.add(rel)
+    return universe, set(roots)
+
+
+def key_matches_root(key: str, roots: list[str]) -> bool:
+    m = SEAL_RE.match(key)
+    return bool(m and m.group("root") in roots)
+
+
+# ---------------------------------------------------------------- 链
+
+def _payload_of(doc: dict, exempt: frozenset) -> bytes:
+    return canonical({k: v for k, v in doc.items()
+                      if k not in exempt and not k.startswith("__")})
+
+
+def analyze_chain(root: Path, path: str, seal: dict, anchor: dict | None,
+                  state: str) -> list[dict]:
+    """单路径链校验（active / retired / frozen 共用，按状态分派）。
+
+    `seal` 为 HEAD（frozen 为 frozen_at）封条文档；`anchor` 为
+    `seal_anchors[path]`（可能为 None）。
+    """
+    out: list[dict] = []
+    hist = seal_history(root, path)
+    if hist["error"]:
+        return [_f("chain_unverifiable", "error",
+                   f"链历史不可读（{hist.get('detail') or 'git log 失败'}）", path,
+                   {"cause": "history_unreadable"})]
+    commits: list[str] = hist["commits"]
+    statuses: dict[str, str] = hist["statuses"]
+    L = hist["L_pre"] if state in ("retired", "frozen") else commits
+    if not L:
+        return [_f("chain_unverifiable", "error",
+                   "该路径没有可读的封条提交（L 为空）", path,
+                   {"cause": "history_unreadable"})]
+    if 0 == hist["A"]:
+        return [_f("chain_unverifiable", "error",
+                   "首签对象本地缺失（A == 0）", path,
+                   {"cause": "history_unreadable"})]
+    for commit in merge_conflicts(root, path, L):
+        out.append(_f("seal_merge_conflict", "error",
+                      f"冲突解决型 merge 手写新字节: {commit[:12]}", path))
+    if out:
+        return out
+    if state == "active":
+        if hist["D"] > 0:
+            return [_f("seal_history_reset", "error",
+                       "封条路径出现删除提交（D>0），删+重建视为重置", path)]
+        if hist["A"] >= 2:
+            return [_f("seal_history_ambiguous", "error",
+                       "封条路径有多个 add（A>=2），要求重签", path)]
+        if "A" not in statuses.get(L[0], ""):
+            out.append(_f("chain_unverifiable", "error",
+                          "L[0] 不是首签提交（add）", path,
+                          {"cause": "history_unreadable"}))
+            return out
+    elif state == "retired":
+        if hist["D"] > 1:
+            out.append(_f("seal_path_history_lost", "error",
+                          "retired 路径出现多次删除，无法用 moved_from 覆盖", path))
+    N = len(L)
+    seq = seal.get("renewal_seq")
+    if not isinstance(seq, int) or isinstance(seq, bool) or seq < 1:
+        out.append(_f("renewal_chain_broken", "error",
+                      f"renewal_seq 非法: {seq!r}", path))
+        return out
+    reanchor = seal.get("reanchor")
+    if reanchor is not None:
+        if not isinstance(reanchor, dict):
+            out.append(_f("reanchor_invalid", "error",
+                          "reanchor 不是对象", path))
+            return out
+        base_n = reanchor.get("base_n")
+        base_seq = reanchor.get("base_seq")
+        if not isinstance(base_n, int) or isinstance(base_n, bool) or base_n < 1 \
+                or N < 2:
+            out.append(_f("reanchor_invalid", "error",
+                          f"reanchor.base_n={base_n!r} / N={N} 不满足 N>=2 且 "
+                          "base_n>=1", path))
+            return out
+        if not isinstance(base_seq, int) or isinstance(base_seq, bool):
+            out.append(_f("reanchor_invalid", "error",
+                          f"reanchor.base_seq={base_seq!r} 非法", path))
+            return out
+        expect = base_seq + (N - base_n) - 1
+        if seq != expect:
+            out.append(_f("renewal_chain_broken", "error",
+                          f"renewal_seq={seq} != reanchor 公式 {expect}"
+                          f"（base_seq={base_seq}, base_n={base_n}, N={N}）", path))
+            return out
+    elif seq != N:
+        out.append(_f("renewal_chain_broken", "error",
+                      f"renewal_seq={seq} != N={N}", path))
+        return out
+    # 4b：边界记录认证
+    if reanchor is None:
+        if anchor and anchor.get("epoch_origin") not in (None, L[0]):
+            out.append(_f("reanchor_record_missing", "error",
+                          f"锁内 epoch_origin={anchor.get('epoch_origin')} != "
+                          f"L[0]={L[0]}，但封条没有 reanchor", path))
+            return out
+    else:
+        matches = []
+        for commit in L:
+            raw = blob_at(root, commit, path)
+            if raw is None:
+                continue
+            try:
+                doc = parse_seal(raw)
+            except SealError:
+                continue
+            if doc.get("renewal_seq") == reanchor.get("base_seq"):
+                matches.append((commit, doc))
+        if len(matches) != 1:
+            out.append(_f("reanchor_record_mismatch", "error",
+                          f"L 中 renewal_seq == base_seq 的提交有 {len(matches)} 枚"
+                          "（要求恰好 1 枚）", path))
+            return out
+        record_commit, record_doc = matches[0]
+        if canonical(record_doc.get("reanchor")) != canonical(reanchor):
+            out.append(_f("reanchor_record_mismatch", "error",
+                          "边界记录与当前 reanchor 不逐字节相同", path))
+            return out
+        if anchor and anchor.get("anchor_review") not in (None, ""):
+            if (reanchor.get("review") or "") != anchor.get("anchor_review"):
+                out.append(_f("reanchor_record_mismatch", "error",
+                              "reanchor.review 与锁内 anchor_review 不符"
+                              "（多纪元回滚）", path))
+                return out
+        # 4a：只在 HEAD == R0（当前提交就是写下 reanchor 的那枚）时执行
+        head = _rev_parse(root, "HEAD")
+        if head == record_commit:
+            out.extend(_anchor_checks(root, path, seal, anchor, L, N, reanchor))
+    # 5 / 6 / 7 / 8
+    prev_commit = seal.get("previous_seal_commit")
+    prev_sha = seal.get("previous_seal_sha256")
+    boundary = (reanchor is not None
+                and seq == reanchor.get("base_seq"))
+    if seq > 1 and N >= 2:
+        if boundary:
+            if prev_commit != reanchor.get("from_a"):
+                out.append(_f("renewal_chain_broken", "error",
+                              "边界封条 previous_seal_commit != reanchor.from_a",
+                              path))
+            if prev_sha is not None:
+                out.append(_f("renewal_chain_broken", "error",
+                              "边界封条 previous_seal_sha256 必须为 null", path))
+            old = blob_at(root, L[-2], path)
+            if old is not None:
+                try:
+                    old_doc = parse_seal(old)
+                except SealError:
+                    old_doc = None
+                if old_doc is not None and \
+                        _payload_of(old_doc, BOUNDARY_EXEMPT) != \
+                        _payload_of(seal, BOUNDARY_EXEMPT):
+                    out.append(_f("reanchor_payload_mismatch", "error",
+                                  "reanchor 提交改动了业务载荷（应与 L[-2] 逐字节相等）",
+                                  path))
+        else:
+            if prev_commit != L[-2]:
+                out.append(_f("renewal_chain_broken", "error",
+                              f"previous_seal_commit={prev_commit} != L[-2]={L[-2]}",
+                              path))
+            old = blob_at(root, L[-2], path)
+            if old is not None and prev_sha != seal_sha256(old):
+                out.append(_f("renewal_chain_broken", "error",
+                              "previous_seal_sha256 与 L[-2] 封条字节不符", path))
+            if old is not None:
+                try:
+                    old_doc = parse_seal(old)
+                except SealError:
+                    old_doc = None
+                if old_doc is not None and \
+                        seal.get("first_seen_at") != old_doc.get("first_seen_at"):
+                    out.append(_f("renewal_chain_broken", "error",
+                                  "first_seen_at 与上一枚封条不一致", path))
+    elif seq == 1:
+        if prev_commit is not None or prev_sha is not None:
+            out.append(_f("renewal_chain_broken", "error",
+                          "首签的 previous_* 必须为 null", path))
+        moved_from = seal.get("moved_from")
+        if isinstance(moved_from, dict) and moved_from.get("path"):
+            out.extend(_move_payload(root, path, seal, moved_from))
+        else:
+            first = blob_at(root, L[0], path)
+            if first is not None and canonical(seal) != canonical(parse_seal(first)):
+                out.append(_f("renewal_chain_broken", "error",
+                              "首签 blob 与 L[0] 不相等", path))
+    # 8：previous_seal_commit 指向的提交必须有封条
+    skip8 = boundary and prev_commit == reanchor.get("from_a")
+    if not skip8 and prev_commit and N >= 2:
+        if blob_at(root, prev_commit, path) is None:
+            if _rev_parse(root, prev_commit) is not None:
+                out.append(_f("seal_missing_at_commit", "error",
+                              f"previous_seal_commit={prev_commit[:12]} 下无封条",
+                              path))
+            else:
+                out.append(_f("chain_unverifiable", "error",
+                              f"previous_seal_commit={prev_commit[:12]} 对象本地缺失",
+                              path, {"cause": "object_missing"}))
+    # signed_at 形态（T-29）
+    if not SIGNED_AT_RE.match(str(seal.get("signed_at") or "")):
+        out.append(_f("signed_at_not_canonical", "error",
+                      f"signed_at 非规范形态: {seal.get('signed_at')!r}", path))
+    return out
+
+
+def _anchor_checks(root: Path, path: str, seal: dict, anchor: dict | None,
+                   L: list[str], N: int, reanchor: dict) -> list[dict]:
+    out: list[dict] = []
+    from_a = reanchor.get("from_a")
+    if not isinstance(from_a, str) or not re.fullmatch(r"[0-9a-f]{40}", from_a):
+        out.append(_f("reanchor_anchor_mismatch", "error",
+                      f"reanchor.from_a 形态非法: {from_a!r}", path))
+        return out
+    if _has_object(root, from_a):
+        out.append(_f("reanchor_not_allowed", "error",
+                      f"from_a={from_a[:12]} 仍可达；reanchor 只允许不可达旧 A",
+                      path))
+        return out
+    if not anchor:
+        out.append(_f("reanchor_anchor_missing", "error",
+                      "seal_anchors 为 null 或没有该路径键", path))
+        return out
+    prev_doc = None
+    if len(L) >= 2:
+        raw = blob_at(root, L[-2], path)
+        if raw is not None:
+            try:
+                prev_doc = parse_seal(raw)
+            except SealError:
+                prev_doc = None
+    if prev_doc is None or anchor.get("renewal_seq") != prev_doc.get("renewal_seq") \
+            or anchor.get("n") != N - 1:
+        out.append(_f("seal_anchor_stale", "error",
+                      "锁锚与 L[-2] 封条不同步；先 lock --update 再 reanchor", path))
+        return out
+    if (anchor.get("epoch_origin") != from_a
+            or reanchor.get("base_seq") != (anchor.get("renewal_seq") or 0) + 1
+            or reanchor.get("base_n") != anchor.get("n")):
+        out.append(_f("reanchor_anchor_mismatch", "error",
+                      "reanchor 的 from_a / base_seq / base_n 与锁锚不符", path))
+        return out
+    if anchor.get("anchor_review") not in (None, ""):
+        if (reanchor.get("review") or "") != anchor.get("anchor_review"):
+            out.append(_f("reanchor_anchor_mismatch", "error",
+                          "reanchor.review 与 anchor_review 不符", path))
+    return out
+
+
+def _move_payload(root: Path, path: str, seal: dict, moved_from: dict) -> list[dict]:
+    old_path = moved_from.get("path")
+    if not isinstance(old_path, str) or not is_seal_path(old_path):
+        return [_f("seal_path_history_lost", "error",
+                   f"moved_from.path 非法: {old_path!r}", path)]
+    old_hist = seal_history(root, old_path)
+    if old_hist["error"] or not old_hist["L_pre"]:
+        return [_f("seal_path_history_lost", "error",
+                   f"旧路径 {old_path} 链不可复算", path)]
+    old_raw = blob_at(root, old_hist["L_pre"][-1], old_path)
+    if old_raw is None:
+        return [_f("seal_path_history_lost", "error",
+                   f"旧路径最后封条不可读: {old_path}", path)]
+    if moved_from.get("sha256") != seal_sha256(old_raw):
+        return [_f("seal_path_history_lost", "error",
+                   "moved_from.sha256 与旧路径最后封条字节不符", path)]
+    try:
+        old_doc = parse_seal(old_raw)
+    except SealError:
+        old_doc = None
+    if old_doc is None:
+        return [_f("seal_path_history_lost", "error",
+                   f"旧路径封条不可解析: {old_path}", path)]
+    if _payload_of(old_doc, MOVE_EXEMPT) != _payload_of(seal, MOVE_EXEMPT):
+        reasons = seal.get("reasons")
+        prev_cases = seal.get("e2e", {}).get("previous_cases") \
+            if isinstance(seal.get("e2e"), dict) else None
+        if not (isinstance(reasons, list) and reasons
+                and isinstance(prev_cases, list) and prev_cases):
+            return [_f("seal_move_payload_mismatch", "error",
+                       "换路径首签载荷不等，且未写 reasons[] / previous_cases[]",
+                       path)]
+    return []
+
+
+# ---------------------------------------------------------------- 状态机
+
+def analyze_state(root: Path, path: str, anchor: dict, assets_root: str,
+                  data: dict, *, bind_from: str | None = None) -> list[dict]:
+    out: list[dict] = []
+    state = anchor.get("state")
+    if state not in SEAL_STATES:
+        return [_f("seal_anchor_path_state_mismatch", "error",
+                   f"state 非法: {state!r}", path)]
+    if worktree_dirty(root, path):
+        return [_f("seal_worktree_dirty", "error",
+                   "封条工作树不干净；链复算以 HEAD 为准", path)]
+    head_raw = head_blob(root, path)
+    if state == "active":
+        if head_raw is None:
+            return [_f("seal_anchor_path_state_mismatch", "error",
+                       "state=active 但 HEAD 无该封条文件", path)]
+        try:
+            seal = parse_seal(head_raw)
+        except SealError as exc:
+            return [_f("seal_unparsable", "error", str(exc), path)]
+        out.extend(_schema_findings(root, data, seal, path, assets_root,
+                                    bind_from, state))
+        out.extend(analyze_chain(root, path, seal, anchor, "active"))
+        return out
+    if state == "frozen":
+        frozen_at = anchor.get("frozen_at")
+        head = _rev_parse(root, "HEAD")
+        if not frozen_at or _rev_parse(root, frozen_at) is None:
+            return [_f("seal_frozen_modified", "error",
+                       f"frozen_at 缺失或不是有效提交: {frozen_at!r}", path)]
+        rc, _, _ = _git(root, "merge-base", "--is-ancestor", frozen_at, "HEAD")
+        if rc != 0:
+            return [_f("seal_frozen_modified", "error",
+                       f"frozen_at={frozen_at[:12]} 不是 HEAD 祖先", path)]
+        rc, out_log, _ = _git(root, "log", "--format=%H",
+                              f"{frozen_at}..HEAD", "--", path)
+        if rc == 0 and out_log.strip():
+            return [_f("seal_frozen_modified", "error",
+                       "冻结后封条路径仍有提交（改写或删除）", path)]
+        frozen_raw = blob_at(root, frozen_at, path)
+        if frozen_raw is None:
+            return [_f("seal_frozen_modified", "error",
+                       "冻结提交下封条不存在", path)]
+        try:
+            seal = parse_seal(frozen_raw)
+        except SealError as exc:
+            return [_f("seal_unparsable", "error", str(exc), path)]
+        out.extend(_schema_findings(root, data, seal, path, assets_root,
+                                    bind_from, "frozen"))
+        out.extend(analyze_chain(root, path, seal, anchor, "frozen"))
+        return out
+    # retired
+    moved_to = anchor.get("moved_to")
+    if not moved_to:
+        return [_f("seal_path_history_lost", "error",
+                   "state=retired 但缺 moved_to", path)]
+    target_anchor = (data.get("__seal_anchors") or {}).get(moved_to)
+    if not isinstance(target_anchor, dict):
+        return [_f("seal_path_history_lost", "error",
+                   f"moved_to={moved_to} 不是锁内键", path)]
+    target_raw = head_blob(root, moved_to)
+    if target_raw is None:
+        return [_f("seal_path_history_lost", "error",
+                   f"moved_to={moved_to} 的封条不存在", path)]
+    try:
+        target = parse_seal(target_raw)
+    except SealError as exc:
+        return [_f("seal_path_history_lost", "error", str(exc), path)]
+    moved_from = target.get("moved_from")
+    if not isinstance(moved_from, dict) or moved_from.get("path") != path:
+        return [_f("seal_path_history_lost", "error",
+                   "新路径封条的 moved_from.path 未指回本路径", path)]
+    hist = seal_history(root, path)
+    if hist["error"] or not hist["L_pre"]:
+        return [_f("seal_path_history_lost", "error",
+                   "retired 路径 L_pre 不可复算", path)]
+    last_raw = blob_at(root, hist["L_pre"][-1], path)
+    if last_raw is not None and head_raw is not None \
+            and canonical(parse_seal(head_raw)) != canonical(parse_seal(last_raw)):
+        out.append(_f("seal_path_retired_write", "error",
+                      "retired 路径在迁出后被继续写入", path))
+    if last_raw is not None:
+        try:
+            doc = parse_seal(last_raw)
+        except SealError:
+            doc = None
+        if doc is not None:
+            out.extend(analyze_chain(root, path, doc, anchor, "retired"))
+    return out
+
+
+def validate_seal_record(root: Path, data: dict, seal_path: str,
+                         anchor: dict | None, assets_root: str, *,
+                         bind_from: str | None) -> list[dict]:
+    """`validate_apply_record` 的单封条入口（schema + upstream + 链）。"""
+    findings: list[dict] = []
+    raw = head_blob(root, seal_path)
+    dirty = worktree_dirty(root, seal_path)
+    if dirty:
+        findings.append(_f("seal_worktree_dirty", "error",
+                           "封条工作树不干净；链复算以 HEAD 为准", seal_path))
+        return findings
+    if raw is None:
+        findings.append(_f("seal_absent", "error",
+                           "HEAD 无该封条文件", seal_path))
+        return findings
+    try:
+        seal = parse_seal(raw)
+    except SealError as exc:
+        return findings + [_f("seal_unparsable", "error", str(exc), seal_path)]
+    if anchor is not None:
+        findings.extend(analyze_state(root, seal_path, anchor,
+                                      assets_root, data, bind_from=bind_from))
+    else:
+        findings.extend(_schema_findings(root, data, seal, seal_path,
+                                         assets_root, bind_from))
+    return findings
+
+
+def _schema_findings(root: Path, data: dict, seal: dict, seal_path: str,
+                     assets_root: str, bind_from: str | None,
+                     state: str = "active") -> list[dict]:
+    out: list[dict] = []
+    kind = seal.get("kind")
+    if kind not in SEAL_KINDS:
+        out.append(_f("seal_kind_invalid", "error",
+                      f"kind 非法: {kind!r}", seal_path))
+    if not isinstance(seal.get("e2e"), dict):
+        out.append(_f("seal_e2e_missing", "error", "缺 e2e 段", seal_path))
+    else:
+        e2e = seal["e2e"]
+        status = e2e.get("status")
+        if status not in ("ready", "not_ready", "n/a"):
+            out.append(_f("seal_e2e_status_invalid", "error",
+                          f"e2e.status 非法: {status!r}", seal_path))
+        gap = e2e.get("gap")
+        if status in ("not_ready", "n/a"):
+            if not isinstance(gap, dict) or not all(
+                    gap.get(k) for k in ("reason", "owner", "due")):
+                out.append(_f("seal_gap_missing", "error",
+                              "not_ready / n/a 必须带 gap{reason,owner,due}",
+                              seal_path))
+            elif not DATE_RE.match(str(gap.get("due"))):
+                out.append(_f("seal_gap_due_invalid", "error",
+                              f"gap.due 非 YYYY-MM-DD: {gap.get('due')!r}",
+                              seal_path))
+        if status == "ready" and not (e2e.get("cases") or []):
+            out.append(_f("seal_e2e_cases_empty", "error",
+                          "e2e.status=ready 但 cases[] 为空", seal_path))
+    if "backfill" in seal and not isinstance(seal.get("backfill"), dict):
+        out.append(_f("seal_backfill_invalid", "error",
+                      "backfill 不是对象", seal_path))
+    probe = dict(seal)
+    probe["__state"] = state
+    out.extend(upstream_findings(root, data, probe, seal_path, assets_root,
+                                 bind_from=bind_from))
+    out.extend(_due_findings(seal, seal_path, data))
+    return out
+
+
+def analyze(root: Path, data: dict, lock: dict | None, roots: list[str], *,
+            bind_from: str | None) -> list[dict]:
+    """仓级封条判据：仓形态 → ⓪-2 → 路径宇宙 → 每键状态/链。
+
+    `roots` 是锁历史根并集 `UH`（由 `solution.py` 的同一严格解析器算出）。
+    ⓪-3 / ⓪-4 在 `solution.py::check_solution` 里判，本函数只消费 `roots`。
+    """
+    findings: list[dict] = []
+    if lock is None:
+        return findings
+    anchors = lock.get("seal_anchors")
+    by_path: dict[str, dict] = {}
+    if isinstance(anchors, dict):
+        by_path = {str(k): v for k, v in anchors.items() if isinstance(v, dict)}
+    elif anchors not in (None, {}):
+        findings.append(_f("seal_anchors_invalid", "error",
+                           "seal_anchors 既不是 null 也不是对象", "atlas.solution.lock.json"))
+        return findings
+    # 无锚且无封条文件 ⇒ 本子系统未接入，不重复报 chain_unverifiable
+    if not by_path and not head_seals(root, roots or []):
+        return findings
+    cause, detail = repo_shape(root)
+    if cause:
+        return [_f("chain_unverifiable", "error", f"chain_unverifiable: {detail}",
+                   None, {"cause": cause})]
+    if lock.get("schema_version") == 1 and by_path:
+        findings.append(_f("lock_v1_with_seals", "error",
+                           "schema_version=1 的锁不得有 seal_anchors", "atlas.solution.lock.json"))
+    universe, _ = seal_universe(root, roots) if roots else (set(), set())
+    unsupported = [key for key in by_path if roots and
+                   not key_matches_root(key, roots)]
+    for key in sorted(unsupported):
+        findings.append(_f("seal_path_unsupported", "error",
+                           f"键不匹配任何历史根的两段谓词: {key}", key))
+    valid_keys = {key for key in by_path if key not in unsupported}
+    for key in sorted(universe - valid_keys):
+        findings.append(_f("seal_anchor_path_unmapped", "error",
+                           f"历史新增封条路径缺锁内键: {key}", key))
+    for key in sorted(valid_keys - universe):
+        findings.append(_f("seal_anchor_path_orphaned", "error",
+                           f"锁内键从未在 U 中出现: {key}", key))
+    enriched = dict(data)
+    enriched["__seal_anchors"] = by_path
+    for key in sorted(valid_keys & universe):
+        findings.extend(analyze_state(root, key, by_path[key],
+                                      lock.get("layout_assets_root")
+                                      or _root_of(key), enriched,
+                                      bind_from=bind_from))
+    # 锚字段（T-28 / T-30 / T-32）
+    for key, anchor in sorted(by_path.items()):
+        if key in unsupported:
+            continue
+        head_raw = head_blob(root, key)
+        if head_raw is None:
+            continue
+        try:
+            head_doc = parse_seal(head_raw)
+        except SealError:
+            continue
+        findings.extend(check_anchor_fields(root, key, anchor, head_doc,
+                                            data, lock))
+    return findings
+
+
+def _root_of(key: str) -> str:
+    m = SEAL_RE.match(key)
+    return m.group("root") if m else "product"
+
+
+def check_anchor_fields(root: Path, path: str, anchor: dict, head_doc: dict,
+                        data: dict, lock: dict) -> list[dict]:
+    """锁内自述值与封条字节的等值 / 形态 / 区间判据（T-28、T-30⑥、T-32）。"""
+    out: list[dict] = []
+    hist = seal_history(root, path)
+    L = hist["commits"] if not hist.get("error") else []
+    started = anchor.get("exemption_started_at")
+    origin = anchor.get("exemption_start_origin")
+    first_seen = anchor.get("first_seen_origin")
+    if not SIGNED_AT_RE.match(str(started or "")):
+        out.append(_f("exemption_start_signed_at_not_canonical", "error",
+                      f"exemption_started_at 非规范形态: {started!r}", path))
+        return out
+    first_doc = None
+    if L:
+        raw = blob_at(root, L[0], path)
+        if raw is not None:
+            try:
+                first_doc = parse_seal(raw)
+            except SealError:
+                first_doc = None
+    chain = anchor.get("exemption_start_history")
+    if chain is None:
+        chain = []
+    if not isinstance(chain, list):
+        out.append(_f("exemption_start_history_broken", "error",
+                      "exemption_start_history 不是数组", path))
+        return out
+    if first_doc is not None and not chain:
+        signed = first_doc.get("signed_at")
+        if not SIGNED_AT_RE.match(str(signed or "")):
+            out.append(_f("signed_at_not_canonical", "error",
+                          f"L[0].signed_at 非规范形态: {signed!r}", path))
+            return out
+        if started != signed:
+            out.append(_f("exemption_start_conflict", "error",
+                          "exemption_started_at 与 L[0].signed_at 不逐字节相等",
+                          path, {"kind": "not_equal_signed_at"}))
+    if first_seen is not None:
+        if not SIGNED_AT_RE.match(str(first_seen)):
+            out.append(_f("first_seen_origin_rewritten", "error",
+                          f"first_seen_origin 非规范形态: {first_seen!r}",
+                          path, {"kind": "not_canonical"}))
+        elif first_doc is not None and \
+                str(first_seen) > str(first_doc.get("signed_at") or ""):
+            out.append(_f("first_seen_origin_rewritten", "error",
+                          "first_seen_origin 晚于 L[0].signed_at", path,
+                          {"kind": "after_signed_at"}))
+    if chain:
+        prev_to = origin
+        for index, entry in enumerate(chain):
+            if not isinstance(entry, dict):
+                out.append(_f("exemption_start_history_broken", "error",
+                              f"history[{index}] 不是对象", path))
+                return out
+            if entry.get("from") != prev_to:
+                out.append(_f("exemption_start_history_broken", "error",
+                              f"history[{index}].from 与前项 to 不连续", path))
+                return out
+            prev_to = entry.get("to")
+        if prev_to != started:
+            out.append(_f("exemption_start_history_broken", "error",
+                          "history 末项 to 与 exemption_started_at 不等", path))
+    else:
+        if origin != started:
+            out.append(_f("exemption_start_history_broken", "error",
+                          "无重指时 exemption_start_origin 必须等于 "
+                          "exemption_started_at", path))
+    if SIGNED_AT_RE.match(str(origin or "")) and SIGNED_AT_RE.match(str(started or "")) \
+            and str(origin) > str(started):
+        out.append(_f("exemption_start_history_broken", "error",
+                      "exemption_start_origin > exemption_started_at", path))
+    # due 读侧：把锁锚注入后复用同一区间判据
+    e2e = head_doc.get("e2e") if isinstance(head_doc.get("e2e"), dict) else {}
+    gap = e2e.get("gap") if isinstance(e2e.get("gap"), dict) else {}
+    if gap.get("due"):
+        probe = dict(head_doc)
+        probe["__origin"] = origin or ""
+        probe["__first_seen_origin"] = first_seen or ""
+        out.extend(_due_findings(probe, path, data))
+    return out
+
+
+def compute_anchor(root: Path, path: str, prior: dict | None,
+                   head_doc: dict | None, head_commit: str | None) -> dict:
+    """`lock --update` 写单个键的值（§1.1.3 第 3 条 / ⑦，受控重指）。
+
+    已有值一律保留（只刷新 `renewal_seq` / `n`；`retired` / `frozen` 全保留）。
+    新键：`epoch_origin = L[0]`、`exemption_start_* = L[0].signed_at`、
+    `first_seen_origin = 封条 first_seen_at`。
+    """
+    hist = seal_history(root, path)
+    if hist["error"] or not hist["commits"]:
+        raise SealError(f"{path}: 封条路径历史不可读，拒绝建键")
+    L = hist["commits"]
+    seq = (head_doc or {}).get("renewal_seq")
+    prior = prior if isinstance(prior, dict) else None
+    state = (prior or {}).get("state") or "active"
+    if state in ("retired", "frozen") and prior is not None:
+        anchor = dict(prior)
+        if state == "retired":
+            anchor["n"] = len(hist["L_pre"])
+        return anchor
+    if prior is None:
+        first_raw = blob_at(root, L[0], path)
+        first_doc = parse_seal(first_raw) if first_raw else {}
+        signed = first_doc.get("signed_at")
+        anchor = {
+            "epoch_origin": L[0],
+            "epoch_origin_history": [L[0]],
+            "renewal_seq": seq if isinstance(seq, int) else 0,
+            "n": len(L),
+            "anchor_review": None,
+            "state": "active",
+            "exemption_start_origin": signed,
+            "exemption_started_at": signed,
+            "exemption_start_history": [],
+            "first_seen_origin": first_doc.get("first_seen_at"),
+        }
+        return anchor
+    anchor = dict(prior)
+    anchor["renewal_seq"] = seq if isinstance(seq, int) else prior.get("renewal_seq")
+    anchor["n"] = len(L)
+    anchor.setdefault("epoch_origin_history", [anchor.get("epoch_origin")])
+    reanchor = (head_doc or {}).get("reanchor")
+    if isinstance(reanchor, dict):
+        # §5.1：reanchor 提交合并后再 lock --update 把 epoch_origin 推进到新 L[0]
+        if anchor.get("epoch_origin") != L[0]:
+            anchor["epoch_origin"] = L[0]
+            history = list(anchor["epoch_origin_history"])
+            if L[0] not in history:
+                history.append(L[0])
+            anchor["epoch_origin_history"] = history
+        if not anchor.get("anchor_review"):
+            anchor["anchor_review"] = reanchor.get("review")
+    # 受控重指（S-45）：首签 + active + 从未 reanchor + 旧锚不可达
+    if (reanchor is None and seq == 1 and anchor.get("state") == "active"
+            and not anchor.get("anchor_review")
+            and anchor.get("epoch_origin") != L[0]
+            and not _has_object(root, str(anchor.get("epoch_origin")))
+            and len(anchor["epoch_origin_history"]) < 2):
+        anchor["epoch_origin"] = L[0]
+        anchor["epoch_origin_history"].append(L[0])
+        anchor["exemption_started_at"] = \
+            (head_doc or {}).get("signed_at", anchor.get("exemption_started_at"))
+    if anchor.get("exemption_start_origin") is None:
+        anchor["exemption_start_origin"] = anchor.get("exemption_started_at")
+    if anchor.get("exemption_started_at") is None:
+        anchor["exemption_started_at"] = anchor.get("exemption_start_origin")
+    if anchor.get("exemption_start_history") is None:
+        anchor["exemption_start_history"] = []
+    if anchor.get("first_seen_origin") is None:
+        anchor["first_seen_origin"] = (head_doc or {}).get("first_seen_at")
+    return anchor
+
+
+def select_seal(root: Path, anchors: dict | None, requested: str | None,
+                candidates: list[str] | None = None) -> str:
+    """多封条选择（S-37）：不给 `--seal` 且有多个候选 ⇒ exit 2 候选列表。"""
+    paths = sorted(set(candidates or []))
+    if requested:
+        return requested
+    if len(paths) == 1:
+        return paths[0]
+    if not paths:
+        raise SealError("仓内没有封条；先签发一枚封条")
+    raise SealError("存在多枚封条，必须用 --seal <path> 指定；候选：\n  "
+                    + "\n  ".join(paths))
+
+
+def head_seals(root: Path, roots: list[str]) -> list[str]:
+    found: set[str] = set()
+    for asset_root in roots:
+        base = Path(root) / asset_root / "reviews" / "apply"
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*.seal.json"):
+            rel = str(path.relative_to(root))
+            if is_seal_path(rel):
+                found.add(rel)
+    return sorted(found)
+
+
+def build_seal_payload(root: Path, data: dict, seal_path: str, *,
+                       assets_root: str, kind: str = "binding",
+                       card_path: str | None = None,
+                       acceptance_acs: list[str] | None = None,
+                       e2e_status: str = "n/a",
+                       case_ids: list[str] | None = None,
+                       gap: dict | None = None,
+                       owner: str | None = None,
+                       first_seen_at: str | None = None,
+                       moved_from: dict | None = None,
+                       reasons: list[str] | None = None,
+                       previous_cases: list[dict] | None = None,
+                       now: datetime | None = None) -> dict:
+    """构造封条载荷（写侧唯一入口；`signed_at` 由工具生成）。"""
+    now = now or datetime.now().astimezone()
+    signed_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    head_raw = head_blob(root, seal_path)
+    hist = seal_history(root, seal_path)
+    if head_raw is not None:
+        old = parse_seal(head_raw)
+        seq = int(old.get("renewal_seq") or 1) + 1
+        prev_commit = hist["commits"][-1] if hist["commits"] else None
+        prev_sha = seal_sha256(head_raw)
+        base_first = old.get("first_seen_at") or (old.get("backfill") or {}).get("first_seen_at")
+        base_card = old.get("card")
+        base_e2e = old.get("e2e") if isinstance(old.get("e2e"), dict) else {}
+    else:
+        seq = 1
+        prev_commit = None
+        prev_sha = None
+        base_first = None
+        base_card = None
+        base_e2e = {}
+    if moved_from is not None:
+        # 换路径不是重签：seq=1、previous_* = null、signed_at 沿用旧值
+        seq, prev_commit, prev_sha = 1, None, None
+        old_raw = None
+        old_path = moved_from.get("path")
+        if old_path:
+            old_hist = seal_history(root, old_path)
+            if not old_hist["error"] and old_hist["L_pre"]:
+                old_raw = blob_at(root, old_hist["L_pre"][-1], old_path)
+        if old_raw is None:
+            raise SealError(f"换路径：旧路径封条不可读: {old_path}")
+        old_doc = parse_seal(old_raw)
+        signed_at = old_doc.get("signed_at", signed_at)
+        base_first = old_doc.get("first_seen_at") or base_first
+        base_card = old_doc.get("card")
+        base_e2e = old_doc.get("e2e") if isinstance(old_doc.get("e2e"), dict) else {}
+        moved_from = dict(moved_from)
+        moved_from["sha256"] = moved_from.get("sha256") or seal_sha256(old_raw)
+    projection = {
+        "acceptance_acs": sorted(set(acceptance_acs or [])),
+        "exemption": None,
+    }
+    projection["sha256"] = projection_sha(projection)
+    card = {"path": card_path or (base_card or {}).get("path"),
+            "projection": projection}
+    cases = [{"id": cid, "sha256": _case_sha(root, assets_root, cid)}
+             for cid in sorted(set(case_ids or []))]
+    e2e = {
+        "status": e2e_status,
+        "selector_sha256": None,
+        "cases": cases,
+        "links": list(base_e2e.get("links") or []),
+        "changed_case_ids": list(reasons or []),
+        "previous_cases": list(previous_cases or []),
+        "gap": gap,
+    }
+    payload = {
+        "kind": kind,
+        "renewal_seq": seq,
+        "previous_seal_sha256": prev_sha,
+        "previous_seal_commit": prev_commit,
+        "signed_at": signed_at,
+        "first_seen_at": first_seen_at or base_first or signed_at,
+        "e2e": e2e,
+        "card": card,
+        "upstream": _upstream_entries(root, data, assets_root),
+    }
+    if isinstance(e2e.get("gap"), dict):
+        payload["backfill"] = {"first_seen_at": payload["first_seen_at"],
+                               "due": e2e["gap"].get("due"),
+                               "owner": e2e["gap"].get("owner") or owner}
+    if moved_from is not None:
+        payload["moved_from"] = moved_from
+    if reasons:
+        payload["reasons"] = list(reasons)
+    return payload
+
+
+def _upstream_entries(root: Path, data: dict, assets_root: str) -> list[dict]:
+    resolved = resolve_upstreams(root, data, assets_root)
+    rows: list[dict] = []
+    for role in ROLES:
+        for path in resolved.get(role, []):
+            sha = _sha_for(root, path)
+            if sha is None:
+                continue
+            rows.append({"role": role, "path": path, "sha256": sha})
+    return rows
+
+
+def _case_sha(root: Path, assets_root: str, case_id: str) -> str:
+    path = Path(root) / assets_root / "e2e" / "cases" / f"{case_id}.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    m = re.search(r"```atlas-case\n(.*?)```", text, re.S)
+    body = m.group(1) if m else ""
+    return seal_sha256(body.rstrip("\n").encode("utf-8"))
+
+
+def reanchor_payload(head_doc: dict, *, from_a: str, review: str,
+                     now: datetime | None = None) -> dict:
+    """`seal reanchor` 的新封条载荷（只改五个字段 + reanchor）。"""
+    if not REVIEW_ID_RE.match(review):
+        raise SealError(f"--review 形态非法: {review!r}（REVIEW-YYYYMMDD-NN）")
+    seq = head_doc.get("renewal_seq")
+    if not isinstance(seq, int) or isinstance(seq, bool) or seq < 1:
+        raise SealError("HEAD 封条 renewal_seq 非法，无法 reanchor")
+    now = now or datetime.now().astimezone()
+    payload = {k: v for k, v in head_doc.items() if not k.startswith("__")}
+    payload["renewal_seq"] = seq + 1
+    payload["previous_seal_commit"] = from_a
+    payload["previous_seal_sha256"] = None
+    payload["signed_at"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    payload["reanchor"] = {
+        "base_seq": seq + 1,
+        "base_n": None,          # 由调用方用 N 填
+        "from_a": from_a,
+        "review": review,
+    }
+    return payload
+
+
+def _due_findings(seal: dict, seal_path: str, data: dict) -> list[dict]:
+    """`gap.due` 读侧闭区间（§2.4 决策 3 / T-32）。"""
+    e2e = seal.get("e2e") if isinstance(seal.get("e2e"), dict) else {}
+    gap = e2e.get("gap") if isinstance(e2e.get("gap"), dict) else {}
+    due_raw = gap.get("due")
+    if not due_raw:
+        return []
+    if not DATE_RE.match(str(due_raw)):
+        return [_f("exemption_due_out_of_range", "error",
+                   f"gap.due 非日期形态: {due_raw!r}", seal_path)]
+    try:
+        due = date.fromisoformat(str(due_raw))
+    except ValueError:
+        return [_f("exemption_due_out_of_range", "error",
+                   f"gap.due 非真实日期: {due_raw!r}", seal_path)]
+    origin = (seal.get("__origin") or "").strip()
+    first_seen = (seal.get("__first_seen_origin")
+                  or seal.get("first_seen_at") or "")
+    upper: date | None = None
+    if DATE_RE.match(str(data.get("acceptance_cutover") or "")):
+        upper = date.fromisoformat(str(data["acceptance_cutover"]))
+    if SIGNED_AT_RE.match(first_seen):
+        d = date.fromisoformat(first_seen[:10])
+        plus = d + timedelta(days=90)
+        upper = plus if upper is None else min(upper, plus)
+    lower: date | None = None
+    if SIGNED_AT_RE.match(origin):
+        lower = date.fromisoformat(origin[:10])
+    elif DATE_RE.match(origin):
+        lower = date.fromisoformat(origin)
+    if lower and due < lower:
+        return [_f("exemption_due_out_of_range", "error",
+                   f"gap.due={due} 早于 exemption_start_origin={lower}",
+                   seal_path)]
+    if upper and due > upper:
+        return [_f("exemption_due_out_of_range", "error",
+                   f"gap.due={due} 晚于上界 {upper}", seal_path)]
+    return []

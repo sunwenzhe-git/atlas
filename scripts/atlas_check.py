@@ -61,7 +61,9 @@ VALIDATORS = (
     "validate_design_exemptions",
     "validate_adr",
     "validate_walkthrough",
-)  # E1：validate_prototype 随原型环退役；§B120：stack_profile / structure 纳入；#182：design_exemptions 纳入；§5.8：e2e_mocks 纳入；B209-1（3507 BT）：validate_ac_alignment 纳入；2026-10-13：validate_adr 纳入（架构决策资产门）；2026-10-14：validate_ledger 随知识库/台账子系统退役（AC 号唯一判据归位 validate_prd）；2026-10-23：validate_walkthrough 纳入（M1 走查锁，RFC-20261022-01）
+    "validate_task_card",
+    "validate_apply_record",
+)  # E1：validate_prototype 随原型环退役；§B120：stack_profile / structure 纳入；#182：design_exemptions 纳入；§5.8：e2e_mocks 纳入；B209-1（3507 BT）：validate_ac_alignment 纳入；2026-10-13：validate_adr 纳入（架构决策资产门）；2026-10-14：validate_ledger 随知识库/台账子系统退役（AC 号唯一判据归位 validate_prd）；2026-10-23：validate_walkthrough 纳入（M1 走查锁，RFC-20261022-01）；2026-11-12：task_card / apply_record 纳入（RFC-20261111-03 C 批）
 
 # §B120：三态前置 —— 前置未声明 ⇒ SKIP（不是通过，且必须带原因）；标记存在才真正跑。
 # 路径随 `atlas.config.yaml` 的资产根解析；配置缺失 ⇒ 默认 product/。
@@ -93,6 +95,14 @@ def _gate_preconditions(root: Path) -> dict[str, tuple[str, str]]:
         "validate_adr": (
             lay.print_value("adr"),
             f"前置未声明（未就绪，非失败）：无 {lay.print_value('adr')}/（尚未创建任何 ADR）"),
+        # 任务卡在成员仓；父仓 / 未接 Trellis 的项目 ⇒ 未走到这一步（C 批）
+        "validate_task_card": (
+            ".trellis",
+            "前置未声明（未就绪，非失败）：无 .trellis/（成员仓未接入任务卡）"),
+        # 封条归父仓；无锁 ⇒ 尚未接验收资产域（C 批，validator 自身对无封条报 N/A）
+        "validate_apply_record": (
+            "atlas.solution.lock.json",
+            "前置未声明（未就绪，非失败）：无 atlas.solution.lock.json（父仓未 lock）"),
     }
 
 GEN_NOT_READY = 3

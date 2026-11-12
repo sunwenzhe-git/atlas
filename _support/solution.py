@@ -55,6 +55,9 @@ EVIDENCE_COLUMNS = ("证据状态", "证据指针")
 ACCEPTANCE_CUTOVER_DEFAULT = "2027-03-31"
 # `--cutover` 往后推的上限：默认值 + 90 天（按日期算，不写死日期；等于上限算通过）。
 ACCEPTANCE_CUTOVER_MAX_DAYS = 90
+# D 批首版日期（UTC）；C 批写 `None` = 追溯窗口未开始 ⇒ `seal_upstream_unbound`
+# 只进 `warnings[]`。D 批发版时改为首版 tag 的 UTC 日期（§2.5 常量发版门）。
+SEAL_UPSTREAM_BIND_FROM: str | None = None
 MIN_ATLAS_FOR_V2 = "0.4.0"
 MODES = ("federated", "unified")
 ASSET_OWNERS = ("member", "solution")
@@ -86,6 +89,8 @@ yaml_scalar = _SP.yaml_scalar
 case_id = _load_sibling("case_id", "_atlas_solution_case_id")
 # 资产根校验单源（v19/v20）：检查器不得再写第二套字符集。
 _LAYOUT = _load_sibling("layout", "_atlas_solution_layout")
+# 封条单源（C 批）：路径宇宙 / 续签链 / 状态机 / 写侧。
+_SEAL = _load_sibling("solution_seal", "_atlas_solution_seal")
 
 
 # ---------------------------------------------------------------- manifest
@@ -1410,7 +1415,8 @@ def _digest_in_lock_history(root: Path, field: str) -> bool:
 
 
 def lock_payload(root: Path, data: dict, assets_root: str | None = None,
-                 anchor_review: str | None = None) -> dict:
+                 anchor_review: str | None = None,
+                 seal: str | None = None) -> dict:
     members: list[dict] = []
     for m in data["members"]:
         s = member_state(root, m)
@@ -1484,7 +1490,64 @@ def lock_payload(root: Path, data: dict, assets_root: str | None = None,
             root, existing, assets_root, anchor_review)
         payload["layout_assets_root"] = layout_root
         payload["assets_root_history"] = root_history
+        payload["seal_anchors"] = _seal_anchors_for_write(
+            root, data, existing, layout_root, seal)
     return payload
+
+
+def _seal_anchors_for_write(root: Path, data: dict, existing: dict | None,
+                            assets_root: str,
+                            selected: str | None) -> dict | None:
+    """`lock --update` 写 `seal_anchors`（§1.1.3 第 3 条；C 批起）。
+
+    只刷新被选中的一枚；其余键原样保留（`retired` / `frozen` 不改写、不删除）。
+    尚无封条且无存量键 ⇒ `None`。
+    """
+    prior_raw = (existing or {}).get("seal_anchors")
+    prior = {str(k): v for k, v in prior_raw.items()
+             if isinstance(v, dict)} if isinstance(prior_raw, dict) else {}
+    roots = [assets_root]
+    head_paths = _SEAL.head_seals(root, roots)
+    candidates = sorted(set(head_paths) | set(prior))
+    if selected:
+        if selected not in candidates:
+            raise SolutionError(
+                f"--seal {selected} 不在 HEAD 封条 ∪ 锁内键；不允许按名字新建键")
+        targets = [selected]
+    elif head_paths:
+        try:
+            targets = [_SEAL.select_seal(root, prior, None, head_paths)]
+        except _SEAL.SealError as exc:
+            raise SolutionError(str(exc)) from exc
+    else:
+        targets = []
+    result = {key: dict(value) for key, value in prior.items()}
+    for path in targets:
+        if not _SEAL.is_seal_path(path):
+            raise SolutionError(f"--seal 不是合法封条路径: {path}")
+        raw = _SEAL.head_blob(root, path)
+        if raw is None:
+            continue  # HEAD 无文件：保留旧键（状态机判 mismatch）
+        try:
+            head_doc = _SEAL.parse_seal(raw)
+        except _SEAL.SealError as exc:
+            raise SolutionError(f"{path}: {exc}") from exc
+        result[path] = _SEAL.compute_anchor(
+            root, path, prior.get(path), head_doc, None)
+        moved_from = head_doc.get("moved_from")
+        if isinstance(moved_from, dict) and moved_from.get("path"):
+            old_path = moved_from["path"]
+            old_anchor = dict(result.get(old_path)
+                              or prior.get(old_path) or {})
+            old_anchor["state"] = "retired"
+            old_anchor["moved_to"] = path
+            old_hist = _SEAL.seal_history(root, old_path)
+            if not old_hist["error"]:
+                old_anchor["n"] = len(old_hist["L_pre"])
+            result[old_path] = old_anchor
+    if not result:
+        return None
+    return {key: result[key] for key in sorted(result)}
 
 
 def _definition_dirty(root: Path, data: dict) -> str:
@@ -1505,7 +1568,8 @@ def _definition_dirty(root: Path, data: dict) -> str:
 
 def write_lock(root: Path, data: dict, require_clean: bool = False,
                assets_root: str | None = None,
-               anchor_review: str | None = None) -> Path:
+               anchor_review: str | None = None,
+               seal: str | None = None) -> Path:
     if require_clean:
         dirty = _definition_dirty(root, data)
         if dirty:
@@ -1514,7 +1578,7 @@ def write_lock(root: Path, data: dict, require_clean: bool = False,
                 f"定义源工作树不干净（{first}）；先提交 {data['definition']['path']} "
                 "再执行 atlas solution lock --update")
     payload = lock_payload(root, data, assets_root=assets_root,
-                           anchor_review=anchor_review)
+                           anchor_review=anchor_review, seal=seal)
     path = lock_path(root)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
@@ -2336,6 +2400,94 @@ def iter_lock_history(root: Path, path: str = LOCK_PATH):
         yield commit, text
 
 
+def historical_roots(root: Path) -> tuple[list[str], bool]:
+    """`UH`：锁文件 HEAD 可达历史版本的根并集（§1.1.3 第 2 条 ①）。
+
+    返回 `(roots, had_field)`。**v1 版本一律不贡献根**；`schema_version == 2`
+    且该版本有 `assets_root_history` ⇒ 取每个元素 `.root`。解析失败由
+    `_layer0_lock` 先行短路（本函数不再捕获，失败即上抛）。
+    """
+    roots: list[str] = []
+    had_field = False
+    for _commit, text in iter_lock_history(root):
+        doc = load_lock_strict(root, text, current=False)
+        if doc.get("schema_version") == 1:
+            continue
+        history = doc.get("assets_root_history")
+        if history is None:
+            continue
+        had_field = True
+        for item in history:
+            root_value = item.get("root")
+            if isinstance(root_value, str) and root_value not in roots:
+                roots.append(root_value)
+    return roots, had_field
+
+
+def _check_roots(root: Path, lock: dict | None, data: dict, add,
+                 errors: list[dict]) -> None:
+    """⓪-2 / ⓪-3 / ⓪-4（§3.2 前置断言）。
+
+    `lock is None` 时（`lock_missing`）只跳过 ⓪-0 与两条根断言。
+    """
+    def fail(code: str, message: str, path: str = LOCK_NAME):
+        add("资产根", "FAIL", message)
+        errors.append({"code": code, "message": message, "path": path})
+
+    try:
+        roots, had_field = historical_roots(root)
+    except (ChainUnverifiable, LockHistoryUnparsable):
+        return  # ⓪-1 已登记并短路
+    if lock is None:
+        return
+    anchors = lock.get("seal_anchors")
+    if lock.get("schema_version") == 1 and isinstance(anchors, dict) and anchors:
+        fail("lock_v1_with_seals", "lock_v1_with_seals: v1 锁不得有 seal_anchors")
+        return
+    history = lock.get("assets_root_history")
+    layout = lock.get("layout_assets_root")
+    if history is None and layout is None:
+        if had_field:
+            fail("assets_root_history_rewritten",
+                 "assets_root_history_rewritten: 历史版本有根字段，当前锁缺失")
+        else:
+            add("资产根", "WARN",
+                "assets_root_history_absent: 锁内没有资产根历史（无历史可判）")
+        return
+    if not isinstance(history, list) or not history:
+        return  # ⓪-0 已吸收
+    values = [item.get("root") for item in history if isinstance(item, dict)]
+    if layout != values[-1]:
+        fail("assets_root_history_rewritten",
+             "assets_root_history_rewritten: layout_assets_root != history[-1].root")
+        return
+    try:
+        validate_assets_root(root, values[-1], lexical=False)
+    except SolutionError as exc:
+        fail("assets_root_history_rewritten",
+             f"assets_root_history_rewritten: 当前根不是可用目录（{exc}）")
+        return
+    if len(set(values)) != len(values):
+        fail("assets_root_history_rewritten",
+             "assets_root_history_rewritten: history 元素 .root 重复")
+        return
+    missing_roots = [item for item in roots if item not in values]
+    if missing_roots:
+        fail("assets_root_history_rewritten",
+             "assets_root_history_rewritten: 当前 history 缺历史根 "
+             + "、".join(missing_roots))
+        return
+    # ⓪-4：config 现值必须 ∈ 当前 history
+    config = Path(root) / CONFIG_NAME
+    if not config.is_file():
+        fail("assets_root_changed", "assets_root_changed: atlas.config.yaml 缺失")
+        return
+    current = _assets_root(root)
+    if current not in values:
+        fail("assets_root_changed",
+             f"assets_root_changed: config assets_root={current} 不在锁历史根集合内")
+
+
 def _entries_of_lock_text(text: str) -> list[dict]:
     """取 `seal_anchors.exemption_start_history[]`，四边界容错（均不抛异常）。
 
@@ -2917,6 +3069,30 @@ def check_solution(root: Path, strict: bool = False,
                        "message": detail, "path": MANIFEST_NAME})
     # S-54-B0：改根与改切点共用同一 REVIEW-ID ⇒ 两个决策类别串味。
     _check_review_reused(data, lock, add, errors)
+    # ⓪-2 / ⓪-3 / ⓪-4 + 封条路径宇宙 / 状态机 / 续签链（C 批）
+    _check_roots(root, lock, data, add, errors)
+    if lock is not None:
+        try:
+            seal_roots, _ = historical_roots(root)
+            seal_findings = _SEAL.analyze(
+                root, data, lock, seal_roots,
+                bind_from=SEAL_UPSTREAM_BIND_FROM)
+        except (ChainUnverifiable, LockHistoryUnparsable):
+            seal_findings = []
+        except _SEAL.SealError as exc:
+            add("封条", "FAIL", f"seal_unparsable: {exc}")
+            errors.append({"code": "seal_unparsable", "message": str(exc),
+                           "path": None})
+            seal_findings = []
+        for item in seal_findings:
+            status = "FAIL" if item["severity"] == "error" else "WARN"
+            add("封条", status, item["message"])
+            target = errors if item["severity"] == "error" else warnings
+            row = {"code": item["code"], "message": item["message"],
+                   "path": item.get("path")}
+            if item.get("detail") is not None:
+                row["detail"] = item["detail"]
+            target.append(row)
     # 注入点武装检查：读者已 ≥0.4.0 但 `PRD_SCHEMA_2_FROM` 仍为 None ⇒ 该判据永不触发，
     # 必须可见（发版门另有一条「tag 日期与常量一致」）。
     reader = reader_version(root)
@@ -3248,6 +3424,134 @@ def _assets_root(root: Path) -> str:
                 if isinstance(v, str) and v:
                     return v
     return "product"
+
+
+# ---------------------------------------------------------------- 封条写侧（C 批）
+
+def select_seal_path(root: Path, requested: str | None = None) -> str:
+    """多封条选择：`--seal` 显式；否则唯一 HEAD 封条；多枚 ⇒ exit 2 候选。"""
+    lock = read_lock(root)
+    anchors = (lock or {}).get("seal_anchors")
+    by_path = {k: v for k, v in anchors.items()
+               if isinstance(v, dict)} if isinstance(anchors, dict) else {}
+    asset_root = (lock or {}).get("layout_assets_root") or _assets_root(root)
+    heads = _SEAL.head_seals(root, [asset_root])
+    try:
+        return _SEAL.select_seal(root, by_path, requested, heads)
+    except _SEAL.SealError as exc:
+        raise SolutionError(str(exc)) from exc
+
+
+def _write_lock_doc(root: Path, doc: dict) -> Path:
+    path = lock_path(root)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n",
+                   encoding="utf-8")
+    tmp.replace(path)
+    return path
+
+
+def freeze_seal(root: Path, seal_path: str, at: str) -> dict:
+    """`seal freeze`：只写锁的 `state` / `frozen_at`，不碰封条字节（S-38）。"""
+    path = select_seal_path(root, seal_path)
+    if not _SEAL.is_seal_path(path):
+        raise SolutionError(f"--seal 不是合法封条路径: {path}")
+    if _SEAL.head_blob(root, path) is None:
+        raise SolutionError(f"HEAD 无封条文件: {path}")
+    hist = _SEAL.seal_history(root, path)
+    if hist["error"] or at not in hist["commits"]:
+        raise SolutionError(f"--at={at} 不是 {path} 的封条提交")
+    if at != hist["commits"][-1]:
+        raise SolutionError(
+            f"--at 必须是该路径最后一枚封条提交 L[-1]={hist['commits'][-1]}")
+    lock = read_lock(root)
+    if lock is None:
+        raise SolutionError(f"缺少 {LOCK_NAME}；先 lock --update")
+    anchors = lock.get("seal_anchors")
+    if not isinstance(anchors, dict) or path not in anchors:
+        raise SolutionError(f"锁内没有该路径键（先 lock --update）: {path}")
+    anchor = dict(anchors[path])
+    anchor["state"] = "frozen"
+    anchor["frozen_at"] = at
+    anchors[path] = anchor
+    lock["seal_anchors"] = anchors
+    _write_lock_doc(root, lock)
+    return {"seal": path, "state": "frozen", "frozen_at": at}
+
+
+def reanchor_seal(root: Path, seal_path: str, review: str, from_a: str) -> dict:
+    """`seal reanchor`：重写纪元起点 + 同步 `exemption_started_at` + append 审计项。"""
+    cause, detail = _SEAL.repo_shape(root)
+    if cause:
+        raise SolutionError(f"拒绝 reanchor：{detail}（{cause}）")
+    path = select_seal_path(root, seal_path)
+    if not _SEAL.is_seal_path(path):
+        raise SolutionError(f"--seal 不是合法封条路径: {path}")
+    raw = _SEAL.head_blob(root, path)
+    if raw is None:
+        raise SolutionError(f"HEAD 无封条文件: {path}")
+    try:
+        head_doc = _SEAL.parse_seal(raw)
+    except _SEAL.SealError as exc:
+        raise SolutionError(str(exc)) from exc
+    if not re.fullmatch(r"[0-9a-f]{40}", str(from_a or "")):
+        raise SolutionError(f"--from-a 必须是 40 位提交 SHA: {from_a!r}")
+    if _SEAL._has_object(root, from_a):
+        raise SolutionError(
+            f"reanchor_not_allowed: from_a={from_a[:12]} 仍可达；"
+            "唯一可用路径是在未拉过旧历史的 fresh clone 上执行")
+    lock = read_lock(root)
+    if lock is None:
+        raise SolutionError(f"缺少 {LOCK_NAME}；先 lock --update")
+    anchors = lock.get("seal_anchors")
+    if not isinstance(anchors, dict) or path not in anchors:
+        raise SolutionError(f"reanchor_anchor_missing: 锁内没有该路径键 {path}")
+    anchor = dict(anchors[path])
+    hist = _SEAL.seal_history(root, path)
+    N = hist["N"]
+    if anchor.get("renewal_seq") != head_doc.get("renewal_seq") \
+            or anchor.get("n") != N:
+        raise SolutionError(
+            "seal_anchor_stale: 锁锚与 HEAD 封条 / N 不同步；先 lock --update")
+    if anchor.get("epoch_origin") != from_a:
+        raise SolutionError(
+            "reanchor_anchor_mismatch: from_a != seal_anchors[S].epoch_origin")
+    try:
+        payload = _SEAL.reanchor_payload(head_doc, from_a=from_a, review=review)
+    except _SEAL.SealError as exc:
+        raise SolutionError(str(exc)) from exc
+    payload["reanchor"]["base_seq"] = int(anchor.get("renewal_seq") or 0) + 1
+    payload["reanchor"]["base_n"] = int(anchor.get("n") or 0)
+    # 先验后写：审计链必须可从当前 origin 接续
+    chain = list(anchor.get("exemption_start_history") or [])
+    origin = anchor.get("exemption_start_origin")
+    old_started = anchor.get("exemption_started_at")
+    if chain:
+        if chain[-1].get("to") != old_started:
+            raise SolutionError(
+                "exemption_start_history_broken: 末项 to 与 exemption_started_at 不等")
+        prev_to = chain[-1].get("to")
+    else:
+        if origin != old_started:
+            raise SolutionError(
+                "exemption_start_history_broken: 无重指时 origin 必须等于 started_at")
+        prev_to = origin
+    target = Path(root) / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                      encoding="utf-8")
+    new_started = payload["signed_at"]
+    chain.append({"from": prev_to, "to": new_started, "commit": _head(root)})
+    anchor["exemption_started_at"] = new_started
+    anchor["exemption_start_history"] = chain
+    anchor["renewal_seq"] = payload["renewal_seq"]
+    anchors[path] = anchor
+    lock["seal_anchors"] = anchors
+    _write_lock_doc(root, lock)
+    return {"seal": path, "renewal_seq": payload["renewal_seq"],
+            "reanchor": payload["reanchor"],
+            "exemption_started_at": new_started,
+            "next": "提交封条与本锁（reanchor 提交 R），再独立跑 lock --update 并提交 R2"}
 
 
 def render_status(data: dict) -> str:
