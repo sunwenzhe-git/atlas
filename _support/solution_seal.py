@@ -1622,6 +1622,15 @@ def build_seal_payload(root: Path, data: dict, seal_path: str, *,
         "exemption": None,
     }
     projection["sha256"] = projection_sha(projection)
+    # §1.3.3 / K-07 / K-08：续签时卡验收投影变化必须显式说明。只比投影（Notes、
+    # 正文、进度都不进投影），首签无 base_card 不判。
+    if seq > 1 and isinstance(base_card, dict) \
+            and isinstance(base_card.get("projection"), dict):
+        old_proj_sha = base_card["projection"].get("sha256")
+        if old_proj_sha != projection["sha256"] \
+                and "card-acceptance-change" not in (reasons or []):
+            raise SealError(
+                "任务卡验收投影变化，续签必须带 --reason card-acceptance-change")
     card = {"path": card_path or (base_card or {}).get("path"),
             "projection": projection}
     cases = [{"id": cid, "sha256": _case_sha(root, assets_root, cid)}

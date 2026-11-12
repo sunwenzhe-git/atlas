@@ -17,6 +17,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 if str(Path(__file__).resolve().parent.parent) not in sys.path:
@@ -98,6 +99,21 @@ def main(argv: list[str] | None = None) -> int:
                     "--gap-reason / --gap-owner / --gap-due")
             gap = {"reason": args.gap_reason, "owner": args.gap_owner,
                    "due": args.gap_due}
+        if gap is not None:
+            # 写侧与读侧同口径（T-32 / §2.4 决策 3）：due 必须是真实日期且落在
+            # [exemption_start_origin, min(first_seen_origin+90d, cutover)]。
+            # 首签无锁锚时回落到本次签署时刻（compute_anchor 会把它写成 origin）。
+            anchor = ((lock or {}).get("seal_anchors") or {}).get(path) or {}
+            origin = (anchor.get("exemption_start_origin")
+                      or anchor.get("exemption_started_at"))
+            first_seen = anchor.get("first_seen_origin") or args.first_seen_at
+            if not origin:
+                origin = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            probe = {"e2e": {"gap": gap}, "__origin": origin,
+                     "__first_seen_origin": first_seen or origin}
+            due_findings = seal._due_findings(probe, path, data)
+            if due_findings:
+                raise solution.SolutionError(due_findings[0]["message"])
         moved_from = ({"path": args.moved_from}
                       if args.moved_from else None)
         payload = seal.build_seal_payload(

@@ -46,6 +46,111 @@ def _load_solution_task():
     return mod
 
 
+# ---------------------------------------------------------------- task acceptance
+
+AC_LINE_RE = re.compile(r"^[ \t]*atlas-acceptance:[ \t]*(.+?)\s*$")
+ACS_SPLIT_RE = re.compile(r"[,，、]")
+FENCE_RE = re.compile(r"^(```|~~~)")
+
+
+def _card_without_ignored(text: str) -> str:
+    """去围栏代码块与 HTML 注释块（I5），保留行结构。"""
+    out: list[str] = []
+    in_fence = False
+    in_comment = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if in_comment:
+            if "-->" in line:
+                in_comment = False
+                line = line.split("-->", 1)[1]
+                stripped = line.strip()
+            else:
+                out.append("")
+                continue
+        if not in_fence and "<!--" in line:
+            head, _, tail = line.partition("<!--")
+            if "-->" in tail:
+                line = head + tail.split("-->", 1)[1]
+                stripped = line.strip()
+            else:
+                in_comment = True
+                line = head
+                stripped = line.strip()
+        if FENCE_RE.match(stripped):
+            in_fence = not in_fence
+            out.append("")
+            continue
+        out.append("" if in_fence else line)
+    return "\n".join(out)
+
+
+def _card_has_acceptance(text: str) -> bool:
+    """只认行首（允许缩进）的专用行；围栏 / HTML 注释内的不计（K-10 / K-12）。"""
+    return any(AC_LINE_RE.match(line)
+               for line in _card_without_ignored(text).splitlines())
+
+
+def _pointer_acs(path: Path) -> list[str]:
+    if not path.is_file():
+        return []
+    text = path.read_text(encoding="utf-8", errors="replace")
+    m = re.search(r"^[ \t]*[-*]?[ \t]*acs:[ \t]*(.+?)\s*$", text, re.M)
+    if not m:
+        return []
+    return [t.strip() for t in ACS_SPLIT_RE.split(m.group(1)) if t.strip()]
+
+
+def _run_task_acceptance_backfill(root: Path, data: dict, task_core, *,
+                                  requirement: str | None, members: list[str],
+                                  apply: bool) -> dict:
+    """§1.3.7 / K-11：从指针 `acs:` 回填专用行；已存在即拒绝、不覆盖。"""
+    plans: list[dict] = []
+    warnings: list[str] = []
+    refused: list[str] = []
+    by_name = {m["name"]: m for m in data.get("members") or []}
+    for req in data.get("requirements") or []:
+        if requirement and req.get("id") != requirement:
+            continue
+        member_name = req.get("member")
+        if members and member_name not in members:
+            continue
+        member = by_name.get(member_name)
+        if member is None:
+            warnings.append(f"{req.get('id')}: 成员 {member_name} 不在清单")
+            continue
+        member_dir = Path(root) / str(member["path"])
+        found = task_core.find_task(member_dir, data["solution"], req["id"],
+                                    member_name)
+        if found is None:
+            warnings.append(f"{req.get('id')}/{member_name}: 未找到任务卡（跳过）")
+            continue
+        card: Path = found[0] / "prd.md"
+        if not card.is_file():
+            warnings.append(f"{req.get('id')}/{member_name}: prd.md 缺失（跳过）")
+            continue
+        text = card.read_text(encoding="utf-8", errors="replace")
+        if _card_has_acceptance(text):
+            refused.append(str(card.relative_to(root)))
+            continue
+        acs = sorted(set(_pointer_acs(found[0] / "solution.md")))
+        if not acs:
+            acs = sorted({str(ac).strip() for ac in req.get("acs") or []
+                          if str(ac).strip()})
+        if not acs:
+            warnings.append(f"{req.get('id')}/{member_name}: requirements.acs 为空"
+                            "（不写 none，跳过）")
+            continue
+        line = "atlas-acceptance: " + ",".join(acs)
+        if apply:
+            prefix = text if (not text or text.endswith("\n")) else text + "\n"
+            card.write_text(prefix + line + "\n", encoding="utf-8")
+        plans.append({"card": str(card.relative_to(root)), "line": line,
+                      "written": apply})
+    return {"apply": apply, "plans": plans, "warnings": warnings,
+            "refused": refused}
+
+
 def _load_solution_e2e():
     path = PKG_ROOT / "_support" / "solution_e2e.py"
     spec = importlib.util.spec_from_file_location("_atlas_solution_e2e_cli", path)
@@ -237,6 +342,14 @@ def build_parser(version: str | None = None) -> argparse.ArgumentParser:
     p_ts = task_sub.add_parser("status", help="只读查看 requirement → 成员任务")
     _add_common(p_ts)
     p_ts.add_argument("--requirement", default=None)
+    p_ta = task_sub.add_parser("acceptance",
+                               help="存量任务卡回填 atlas-acceptance 行（默认 dry-run）")
+    _add_common(p_ta)
+    p_ta.add_argument("--backfill", action="store_true", required=True,
+                      help="从 solution.md 指针的 acs 生成专用行（已有则拒绝）")
+    p_ta.add_argument("--requirement", default=None, help="只处理指定 requirements[].id")
+    p_ta.add_argument("--member", action="append", default=[], help="只处理指定成员，可重复")
+    p_ta.add_argument("--apply", action="store_true", help="真正写入成员任务卡")
 
     p_e2e = sub.add_parser("e2e", help="父仓跨仓 E2E（一期）：status / verify / init")
     e2e_sub = p_e2e.add_subparsers(dest="e2e_cmd", required=True)
@@ -469,12 +582,19 @@ def main(argv: list[str] | None = None) -> int:
                       else f"[OK] {core.LOCK_NAME} 已存在（{lock.get('locked_at')}）")
                 return 0
             data = core.load_manifest(root)
+            before = core.read_lock(root)
             path = core.write_lock(root, data, require_clean=True,
                                    assets_root=args.assets_root,
                                    anchor_review=args.anchor_review,
                                    seal=args.seal)
-            print(json.dumps({"lock": str(path)}, ensure_ascii=False, indent=2)
-                  if args.json else f"[OK] 契约锁已更新: {path}")
+            change = core.definition_change_summary(before, core.read_lock(root))
+            if args.json:
+                print(json.dumps({"lock": str(path), "definition": change},
+                                 ensure_ascii=False, indent=2))
+            else:
+                print(f"[OK] 契约锁已更新: {path}")
+                for line in core.render_definition_change(change, args.anchor_review):
+                    print(line)
             return 0
 
         if args.cmd == "seal":
@@ -508,6 +628,31 @@ def main(argv: list[str] | None = None) -> int:
                     for item in result["done"]:
                         print(f"[{item['action']}] {item['member']}: {item['task']}")
                     print("任务已创建但未 start；请在成员仓用 /trellis:start 领取。")
+                return 0
+            if args.task_cmd == "acceptance":
+                result = _run_task_acceptance_backfill(
+                    root, data, task_core,
+                    requirement=args.requirement,
+                    members=args.member or [],
+                    apply=args.apply)
+                if result["refused"]:
+                    for item in result["refused"]:
+                        print(f"[FAIL] 已存在 atlas-acceptance 行，拒绝覆盖: {item}",
+                              file=sys.stderr)
+                    if args.json:
+                        print(json.dumps(result, ensure_ascii=False, indent=2))
+                    return 2
+                if args.json:
+                    print(json.dumps(result, ensure_ascii=False, indent=2))
+                elif not result["apply"]:
+                    print("[DRY-RUN] 未写盘；确认后加 --apply")
+                    for plan in result["plans"]:
+                        print(f"  [{plan['card']}] {plan['line']}")
+                else:
+                    for plan in result["plans"]:
+                        print(f"[written] {plan['card']}: {plan['line']}")
+                for warning in result["warnings"]:
+                    print(f"  [WARN] {warning}")
                 return 0
             result = task_core.task_status(root, data, args.requirement)
             if args.json:

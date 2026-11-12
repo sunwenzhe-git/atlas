@@ -8,7 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -1116,3 +1116,126 @@ def test_b1_atlas_check_dispatcher_does_not_skip_apply_record(repo: Path) -> Non
     row = row_of()
     assert row["status"] == "FAIL", row
     assert "seal_anchor_path_unmapped" in row["detail"]
+
+
+# ---------------------------------------------------------------- T-32 写侧 due
+
+def test_t32_write_side_rejects_out_of_range_due(repo: Path) -> None:
+    """`--gap-due 1970-01-01` 写侧即拒（exit 2），不落盘（#54）。"""
+    new = "product/reviews/apply/web/T-004.seal.json"
+    res = subprocess.run(
+        [sys.executable, str(SEAL_SCRIPT), "--root", str(repo), "--seal", new,
+         "--acceptance-acs", "AC-SOLUTION-001", "--e2e-status", "not_ready",
+         "--gap-reason", "验收资产缺", "--gap-owner", "@a",
+         "--gap-due", "1970-01-01"], capture_output=True, text=True)
+    assert res.returncode == 2, res.stdout + res.stderr
+    assert not (repo / new).exists()
+
+
+def test_t32_write_side_accepts_in_range_and_read_side_green(repo: Path) -> None:
+    due = (date.today() + timedelta(days=7)).isoformat()
+    res = subprocess.run(
+        [sys.executable, str(SEAL_SCRIPT), "--root", str(repo), "--seal", SEAL_REL,
+         "--acceptance-acs", "AC-SOLUTION-001", "--e2e-status", "not_ready",
+         "--gap-reason", "验收资产缺", "--gap-owner", "@a",
+         "--gap-due", due], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    commit(repo, SEAL_REL, message="renew in-range due")
+    core.write_lock(repo, core.load_manifest(repo), require_clean=True)
+    commit(repo, core.LOCK_NAME, message="lock in-range due")
+    assert codes(repo) == []
+
+
+# ---------------------------------------------------------------- #54 五个零命中码
+
+def test_t14_gap_missing_and_due_invalid(repo: Path) -> None:
+    renew_mutate(repo, lambda p: p["e2e"].update(status="not_ready", gap=None))
+    assert "seal_gap_missing" in codes(repo)
+    # 正例：补齐 gap 三字段后本码消失
+    renew_mutate(repo, lambda p: p["e2e"].update(
+        status="not_ready", gap={"reason": "缺", "owner": "@a",
+                                 "due": (date.today() + timedelta(days=7)).isoformat()}))
+    assert "seal_gap_missing" not in codes(repo)
+
+    renew_mutate(repo, lambda p: p["e2e"].update(
+        status="not_ready", gap={"reason": "缺", "owner": "@a", "due": "not-a-date"}))
+    assert "seal_gap_due_invalid" in codes(repo)
+    # 正例：合法日期形态 ⇒ 本码消失
+    renew_mutate(repo, lambda p: p["e2e"].update(
+        status="not_ready", gap={"reason": "缺", "owner": "@a",
+                                 "due": (date.today() + timedelta(days=7)).isoformat()}))
+    assert "seal_gap_due_invalid" not in codes(repo)
+
+
+def test_t06_ready_requires_cases(repo: Path) -> None:
+    renew_mutate(repo, lambda p: p["e2e"].update(cases=[]))
+    assert "seal_e2e_cases_empty" in codes(repo)
+    # 正例：基础仓 ready 且 cases 非空 ⇒ 全绿
+    assert codes(repo) != []  # 当前 HEAD 已被篡改
+    base = init_repo(repo.parent / "green")
+    assert "seal_e2e_cases_empty" not in codes(base) and codes(base) == []
+
+
+def test_t10_selector_mismatch(repo: Path) -> None:
+    renew_mutate(repo, lambda p: p["e2e"].update(selector_sha256="0" * 64))
+    assert "seal_e2e_selector_mismatch" in codes(repo)
+    base = init_repo(repo.parent / "green-selector")
+    assert "seal_e2e_selector_mismatch" not in codes(base)
+
+
+def test_t32_due_far_future_is_out_of_range(repo: Path) -> None:
+    renew_mutate(repo, lambda p: p["e2e"].update(
+        status="not_ready", gap={"reason": "缺", "owner": "@a",
+                                 "due": "2030-01-01"}))
+    assert "exemption_due_out_of_range" in codes(repo)
+    # 正例：区间内 due ⇒ 本码消失
+    renew_mutate(repo, lambda p: p["e2e"].update(
+        status="not_ready", gap={"reason": "缺", "owner": "@a",
+                                 "due": (date.today() + timedelta(days=7)).isoformat()}))
+    assert "exemption_due_out_of_range" not in codes(repo)
+
+
+# ---------------------------------------------------------------- K-07 / K-08
+
+def test_k07_projection_change_without_reason_rejected(repo: Path) -> None:
+    with pytest.raises(seal.SealError, match="card-acceptance-change"):
+        seal.build_seal_payload(
+            repo, core.load_manifest(repo), SEAL_REL, assets_root="product",
+            kind="binding", card_path=CARD,
+            acceptance_acs=["AC-SOLUTION-002"], e2e_status="ready",
+            case_ids=[CASE_ID], owner="@a")
+
+
+def test_k08_projection_change_with_reason_green(repo: Path) -> None:
+    payload = seal.build_seal_payload(
+        repo, core.load_manifest(repo), SEAL_REL, assets_root="product",
+        kind="binding", card_path=CARD,
+        acceptance_acs=["AC-SOLUTION-002"], e2e_status="ready",
+        case_ids=[CASE_ID], owner="@a",
+        reasons=["card-acceptance-change"])
+    assert payload["renewal_seq"] == 2
+    write_doc(repo, payload)
+    commit(repo, SEAL_REL, message="renew card projection")
+    core.write_lock(repo, core.load_manifest(repo), require_clean=True)
+    commit(repo, core.LOCK_NAME, message="lock projection")
+    assert codes(repo) == []
+
+
+# ---------------------------------------------------------------- U-06 / U-07
+
+def test_u06_version_bump_without_bytes_change_passes(repo: Path) -> None:
+    """只改装配版本号（不属任何 upstream role）⇒ 不判 stale。"""
+    path = repo / ".atlas" / "package.json"
+    path.write_text('{"version": "0.4.1"}', encoding="utf-8")
+    commit(repo, ".atlas/package.json", message="version bump")
+    assert codes(repo) == []
+
+
+def test_u07_typo_in_apply_md_passes(repo: Path) -> None:
+    """`atlas-apply.md` 改错别字：封条不绑散文，机器 PASS。"""
+    apply_md = repo / "web" / Path(CARD).parent / "atlas-apply.md"
+    apply_md.write_text("# appyl 走查\n", encoding="utf-8")
+    git(repo / "web", "add", "-A")
+    git(repo / "web", "-c", "user.email=a@b", "-c", "user.name=a",
+        "commit", "-qm", "typo")
+    assert codes(repo) == []
