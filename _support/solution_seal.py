@@ -1129,11 +1129,16 @@ def analyze(root: Path, data: dict, lock: dict | None, roots: list[str], *,
         if key in unsupported:
             continue
         head_raw = head_blob(root, key)
-        if head_raw is None:
-            continue
-        try:
-            head_doc = parse_seal(head_raw)
-        except SealError:
+        head_doc: dict = {}
+        if head_raw is not None:
+            try:
+                head_doc = parse_seal(head_raw)
+            except SealError:
+                continue
+        elif anchor.get("state") != "retired":
+            # HEAD 无封条：非 `retired` 由状态机判（`seal_anchor_path_state_mismatch`
+            # 等），这里不补锚字段判据。`retired` 允许旧文件已删（S-36），仍须跑
+            # 数组 B 等与封条字节无关的判据。
             continue
         findings.extend(check_anchor_fields(root, key, anchor, head_doc,
                                             data, lock))
@@ -1173,6 +1178,10 @@ def check_anchor_fields(root: Path, path: str, anchor: dict, head_doc: dict,
         out.append(_f("exemption_start_history_broken", "error",
                       "exemption_start_history 不是数组", path))
         return out
+    # 数组 B（`epoch_origin_history`）：append-only + 末元素 == 当前 `epoch_origin`。
+    # **与 state 无关**（`retired` 键同样判）：否则删掉首项就能把重指痕迹抹平，
+    # 让锚自指重新命中 TOFU 的 `first_trust`（RFC §8 / 判序 ②）。
+    out.extend(_epoch_origin_history_findings(root, path, anchor))
     # v49/项 2：`retired` 键的 `epoch_origin` 已固化（不随历史重写重指），读侧不再
     # 判锚可达性 / 起点等值——本块（`chain_unverifiable` / `exemption_start_origin_
     # rewritten` / `exemption_start_conflict`）只对 `active` / `frozen` 生效。
@@ -1453,6 +1462,55 @@ def _anchor_entry_in_history(root: Path, path: str,
 def _anchor_value_in_history(root: Path, path: str, field: str):
     entry = _anchor_entry_in_history(root, path, field)
     return entry[1] if entry else None
+
+
+def _epoch_origin_history_findings(root: Path, path: str,
+                                   anchor: dict) -> list[dict]:
+    """数组 B 篡改检测（RFC §8 / 判序 ②，`epoch_origin_history_rewritten`）。
+
+    判据两条，**与 state 无关**（`retired` 键同样判）：
+    ① 末元素 == 当前 `epoch_origin`；
+    ② 与锁历史**紧邻前一版本**比，新数组必须是旧数组的前缀扩展
+       （`new[:len(old)] == old` 且 `len(new) >= len(old)`）。只比紧邻前一版本，
+       不放宽成「某前版本」（否则 `[] → [x] → []` 会假绿）。
+    单版本锁（首次建键，无上一版本可比）只判 ①；字段缺失属 RFC 允许的一次性
+    回填（存量键），但「历史里曾有过非空数组、当前却没有」按篡改判。
+    """
+    versions = _lock_anchor_versions(root, path)
+    history = anchor.get("epoch_origin_history")
+    origin = anchor.get("epoch_origin")
+    if not isinstance(history, list) or not history:
+        if any(isinstance(prior.get("epoch_origin_history"), list)
+               and prior["epoch_origin_history"]
+               for _commit, prior in versions):
+            return [_f("epoch_origin_history_rewritten", "error",
+                       "epoch_origin_history 被删除（锁历史里存在非空数组）", path,
+                       {"kind": "removed"})]
+        return []
+    if history[-1] != origin:
+        return [_f("epoch_origin_history_rewritten", "error",
+                   f"epoch_origin_history 末元素 {history[-1]!r} != "
+                   f"epoch_origin {origin!r}", path, {"kind": "tail_mismatch"})]
+    previous: list | None = None
+    for _commit, prior in versions:
+        prior_history = prior.get("epoch_origin_history")
+        if not isinstance(prior_history, list) or not prior_history:
+            continue
+        if previous is not None and (
+                len(prior_history) < len(previous)
+                or prior_history[:len(previous)] != previous):
+            return [_f("epoch_origin_history_rewritten", "error",
+                       "锁历史里 epoch_origin_history 不是紧邻前一版本的前缀扩展"
+                       f"（{previous!r} → {prior_history!r}）", path,
+                       {"kind": "not_prefix_extension"})]
+        previous = prior_history
+    if previous is not None and (
+            len(history) < len(previous)
+            or history[:len(previous)] != previous):
+        return [_f("epoch_origin_history_rewritten", "error",
+                   "当前 epoch_origin_history 不是锁历史末版本的前缀扩展", path,
+                   {"kind": "not_prefix_extension"})]
+    return []
 
 
 def select_seal(root: Path, anchors: dict | None, requested: str | None,

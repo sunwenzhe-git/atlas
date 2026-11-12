@@ -675,6 +675,13 @@ def test_r4_squashed_external_anchor_is_chain_unverifiable(tmp_path: Path) -> No
 def _single_commit_first_sign(tmp_path: Path, *, repoint: bool) -> Path:
     """单提交仓：封条与锁同在一个根提交，`epoch_origin == L[0]`（首签基线）。"""
     root = init_repo(tmp_path / "orig")
+    # 存量键先不带 `epoch_origin_history`（RFC 允许一次性回填）：否则第二个提交把
+    # 数组改成 `[r0]` 会被 append-only 判成篡改，无法构造「单提交仓」基线。
+    legacy = core.read_lock(root)
+    legacy["seal_anchors"][SEAL_REL].pop("epoch_origin_history", None)
+    (root / core.LOCK_NAME).write_text(
+        json.dumps(legacy, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    commit(root, core.LOCK_NAME, message="legacy lock")
     head_tree = git(root, "rev-parse", "HEAD^{tree}").stdout.strip()
     r0 = subprocess.run(
         ["git", "-C", str(root), "-c", "user.email=a@b", "-c", "user.name=a",
@@ -856,6 +863,45 @@ def test_r4_v49_moved_to_with_reanchor_is_conflict(tmp_path: Path) -> None:
                          encoding="utf-8")
     commit(root, core.LOCK_NAME, message="bad lock")
     assert "seal_move_reanchor_conflict" in codes(root)
+
+
+def test_r5_active_epoch_history_truncation_after_repoint_is_rewritten(
+        tmp_path: Path) -> None:
+    """重指后删掉 `epoch_origin_history` 首项 ⇒ 必须红，不得回到 TOFU 绿。
+
+    正例：正常重指只 append 一项（`[A, L0]`），复检仍绿。
+    反例：删首项后 `len == 1 && == L[0]` 会命中 TOFU 的 `first_trust`，重指痕迹被
+    抹平——`epoch_origin_history_rewritten` 必须把它钉住。
+    """
+    fresh = _rewrite_first_sign(tmp_path)
+    core.write_lock(fresh, core.load_manifest(fresh), require_clean=True)
+    commit(fresh, core.LOCK_NAME, message="controlled reanchor")
+    anchor = core.read_lock(fresh)["seal_anchors"][SEAL_REL]
+    assert len(anchor["epoch_origin_history"]) == 2
+    assert _error_codes(fresh) == []          # 正例：append 一次仍绿
+    lock = core.read_lock(fresh)
+    lock["seal_anchors"][SEAL_REL]["epoch_origin_history"] = \
+        anchor["epoch_origin_history"][-1:]
+    (fresh / core.LOCK_NAME).write_text(
+        json.dumps(lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    commit(fresh, core.LOCK_NAME, message="truncate epoch history")
+    assert "epoch_origin_history_rewritten" in codes(fresh)
+
+
+def test_r5_retired_epoch_history_truncation_is_rewritten(tmp_path: Path) -> None:
+    """`retired` 键同样判数组 B：删项 ⇒ `epoch_origin_history_rewritten`。"""
+    root = init_repo(tmp_path)
+    new = "product/reviews/apply/web/T-001-moved.seal.json"
+    _move_seal(root, new)
+    assert codes(root) == []                  # 正例：retired 键原样绿
+    lock = core.read_lock(root)
+    anchor = lock["seal_anchors"][SEAL_REL]
+    assert len(anchor["epoch_origin_history"]) == 1
+    anchor["epoch_origin_history"] = []
+    (root / core.LOCK_NAME).write_text(
+        json.dumps(lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    commit(root, core.LOCK_NAME, message="drop epoch history")
+    assert "epoch_origin_history_rewritten" in codes(root)
 
 
 def test_i9_anchor_review_format_is_enforced(repo: Path) -> None:
