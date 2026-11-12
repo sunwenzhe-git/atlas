@@ -70,11 +70,18 @@ SIX_COLUMNS = FOUR_COLUMNS + " | 证据状态 | 证据指针"
 
 
 def test_template_declares_prd_version_and_schema() -> None:
-    """R1：真模板带 `prd_version: 1` / `prd_schema: 1`，B 批夹具直接用真模板。"""
-    fm = core._front_matter_of(
-        (PKG_ROOT / "templates" / "prd" / "domain.md").read_text(encoding="utf-8"))
+    """R1：0.4.0 起模板直接写 `prd_schema: 2` 且 Assumptions 表自带证据两列。
+
+    写 1 起手会让每个新仓在 `prd_schema: 2` 立即要求下天天一条 WARN（评审第 4 条）。
+    """
+    text = (PKG_ROOT / "templates" / "prd" / "domain.md").read_text(encoding="utf-8")
+    fm = core._front_matter_of(text)
     assert fm["prd_version"] == "1"
-    assert fm["prd_schema"] == "1"
+    assert fm["prd_schema"] == "2"
+    header = core._assumption_table_header(text)
+    assert header is not None
+    for col in core.EVIDENCE_COLUMNS:
+        assert col in header, header
 
 
 def test_prd_schema_2_requires_evidence_columns_immediately() -> None:
@@ -152,20 +159,85 @@ def test_migrate_backfills_prd_front_matter_without_overwriting(tmp_path: Path) 
 
 def test_init_040_writes_prd_fields_into_prd_and_lock(
         tmp_path: Path, monkeypatch) -> None:
-    """V-13 延伸：0.4.0 init 的 PRD front matter 与锁 definition 都带两个字段。"""
+    """V-13 延伸：0.4.0 init 直接写 `prd_schema: 2`，PRD 与锁 definition 同步。"""
     stub_reader_version(monkeypatch, tmp_path)
     make_repo(tmp_path / "web")
     core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
 
     prd = tmp_path / "product" / "prd" / "solution-prd.md"
     fm = core._prd_front_matter(prd)
-    assert fm["prd_version"] == "1" and fm["prd_schema"] == "1"
+    assert fm["prd_version"] == "1" and fm["prd_schema"] == "2"
 
     lock = json.loads((tmp_path / core.LOCK_NAME).read_text(encoding="utf-8"))
     assert lock["definition"]["prd_version"] == 1
-    assert lock["definition"]["prd_schema"] == 1
+    assert lock["definition"]["prd_schema"] == 2
 
+    # 模板自带证据两列 ⇒ 新仓首日就 PASS（另一条是「注入点未武装」的 WARN 提醒）。
     rows = [c for c in core.check_solution(tmp_path)["checks"]
             if c["check"] == "PRD 证据列"]
-    assert len(rows) == 1 and rows[0]["status"] == "WARN", rows
-    assert "evidence_deadline_approaching" in rows[0]["detail"]
+    pass_rows = [r for r in rows if r["status"] == "PASS"]
+    assert len(pass_rows) == 1, rows
+    assert "证据状态" in pass_rows[0]["detail"]
+
+
+def test_assumption_heading_accepts_chinese_synonyms() -> None:
+    """评审第 5 条：`## 六、假设与默认值` 不能被当成「未声明」而跳过证据列判据。"""
+    for heading in ("## Assumptions", "## 六、假设与默认值", "## 默认值登记"):
+        text = (f"---\nprd_schema: 2\n---\n\n{heading}\n\n"
+                "| 假设内容 | 采用的默认值 |\n|---|---|\n| a | b |\n")
+        rows = core.prd_schema_findings(text, "demo-prd.md", date(2026, 11, 11))
+        assert rows[0][0] == "FAIL", (heading, rows)
+        assert "evidence_columns_missing" in rows[0][1]
+
+
+def test_prd_schema_too_low_judges_by_first_commit_date(
+        tmp_path: Path, monkeypatch) -> None:
+    """评审第 4 条：首次提交晚于 0.4.0 发布点却写 `prd_schema: 1` ⇒ FAIL。"""
+    monkeypatch.setattr(core, "PRD_SCHEMA_2_FROM", "2026-01-01")
+    root = make_repo(tmp_path / "repo")
+    (root / "product" / "prd").mkdir(parents=True)
+    prd = root / "product" / "prd" / "demo-prd.md"
+    prd.write_text(PRD_TEMPLATE.format(schema=1, columns=FOUR_COLUMNS), encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "prd")
+
+    detail = core.prd_schema_too_low(root, "product/prd/demo-prd.md",
+                                     prd.read_text(encoding="utf-8"))
+    assert detail and "prd_schema_too_low" in detail
+
+    # 锚点晚于首提交 ⇒ 存量 PRD 走缓冲，不判 too_low。
+    monkeypatch.setattr(core, "PRD_SCHEMA_2_FROM", "2099-01-01")
+    assert core.prd_schema_too_low(
+        root, "product/prd/demo-prd.md", prd.read_text(encoding="utf-8")) is None
+    # 未发布（None）⇒ 不判，不是 fail-open：发布前不存在「晚于发布点」的首提交。
+    monkeypatch.setattr(core, "PRD_SCHEMA_2_FROM", None)
+    assert core.prd_schema_too_low(
+        root, "product/prd/demo-prd.md", prd.read_text(encoding="utf-8")) is None
+    # 写 2 的 PRD 永不吃这条。
+    monkeypatch.setattr(core, "PRD_SCHEMA_2_FROM", "2026-01-01")
+    text2 = PRD_TEMPLATE.format(schema=2, columns=SIX_COLUMNS)
+    assert core.prd_schema_too_low(root, "product/prd/demo-prd.md", text2) is None
+
+
+def test_validate_prd_reports_evidence_columns_row(tmp_path: Path) -> None:
+    """评审第 5 条：成员侧 `validate_prd` 复用单源谓词，缺列 ⇒ 独立行 FAIL。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_vpr_evidence_test", PKG_ROOT / "validators" / "validate_prd.py")
+    vpr = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(vpr)
+
+    prd_dir = tmp_path / "product" / "prd"
+    prd_dir.mkdir(parents=True)
+    (prd_dir / "prd.md").write_text(
+        "---\ndoc: prd-global\nproduct: demo\nversion: 0.1.0\n"
+        "date: \"2026-11-11\"\nstatus: draft\n---\n\n# demo\n", encoding="utf-8")
+    (prd_dir / "demo-prd.md").write_text(
+        PRD_TEMPLATE.format(schema=2, columns=FOUR_COLUMNS), encoding="utf-8")
+
+    rows = [c for c in vpr.validate(tmp_path).checks if c["check"] == "PRD 证据列"]
+    assert len(rows) == 1, vpr.validate(tmp_path).checks
+    assert rows[0]["status"] == "FAIL"
+    assert "evidence_columns_missing" in rows[0]["detail"]
+    assert "demo-prd.md" in rows[0]["detail"]

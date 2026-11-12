@@ -29,6 +29,15 @@ if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _support.layout import LayoutError, load_layout  # noqa: E402
 
+
+def _prd_schema_findings(text: str, rel: str) -> list[tuple[str, str]]:
+    """PRD 证据列谓词（单源在 `_support/solution.py`，此处只做延迟导入的转发）。
+
+    延迟导入：`validate_prd` 在无 PRD 的仓上也要能跑，别为一条判据付出模块级副作用。
+    """
+    from _support.solution import prd_schema_findings
+    return prd_schema_findings(text, rel)
+
 FORBIDDEN = ["TODO", "待补充", "TBD", "待定", "视情况而定", "后续补充", "[FIELD:]",
              "[必填", "[条件必填"]
 EXT_RE = re.compile(r"\.[A-Za-z0-9]{1,6}$")
@@ -458,6 +467,25 @@ def validate(root: Path) -> Result:
                       "issue #47 / D176）")
         else:
             res.add("派生字段默认语义（§六）", "PASS", "")
+
+        # PRD 证据列（`RFC-20261111-03` §1.5 / E-03 / E-08）：谓词单源在
+        # `_support/solution.py::prd_schema_findings`，这里只做成员侧逐域执行——
+        # 未引用存量域的硬期限（2027-06-30）也由同一函数判，不复制第二份口径。
+        ev_fail: list[str] = []
+        ev_warn: list[str] = []
+        for d in domains:
+            for status, detail in _prd_schema_findings(
+                    d.read_text(encoding="utf-8"), d.name):
+                if status == "FAIL":
+                    ev_fail.append(detail)
+                elif status == "WARN":
+                    ev_warn.append(detail)
+        if ev_fail:
+            res.add("PRD 证据列", "FAIL", "；".join(ev_fail[:6]))
+        elif ev_warn:
+            res.add("PRD 证据列", "WARN", "；".join(ev_warn[:6]))
+        else:
+            res.add("PRD 证据列", "PASS", "")
 
     # ---- 范围形态声明 / 与 §六 表形态一致 / 最小必填集（契约 §3；结论并入参数 4）
     decl_form, decl_cover, decl_base = (DECL_FORM.search(prd_text), DECL_COVER.search(prd_text),
