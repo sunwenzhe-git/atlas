@@ -69,6 +69,16 @@ def _has_object(root: Path, sha: str) -> bool:
     return rc == 0
 
 
+def _ancestor_rc(root: Path, commit: str) -> int:
+    """`git merge-base --is-ancestor <commit> HEAD` 原始退出码。
+
+    RFC §1.1.3：0 = 仍可达（拒绝）；1 = 不可达（允许）；128 = 对象缺失（允许）；
+    其它非零 = 错误（写侧拒绝，读侧报 `chain_unverifiable`）。
+    """
+    rc, _, _ = _git(root, "merge-base", "--is-ancestor", str(commit), "HEAD")
+    return rc
+
+
 def repo_shape(root: Path) -> tuple[str | None, str]:
     """返回 `(cause, detail)`；`cause is None` 表示仓形态可信。
 
@@ -825,7 +835,12 @@ def _schema_findings(root: Path, data: dict, seal: dict, seal_path: str,
 
 def _apply_record_findings(root: Path, data: dict, seal: dict,
                            seal_path: str) -> list[dict]:
-    """§1.4：`kind=binding|backfill` 要求成员侧 `atlas-apply.md` 存在。"""
+    """§1.4：`kind=binding|backfill` 要求成员侧任务卡与 `atlas-apply.md` 存在。
+
+    三态：成员子树未 checkout ⇒ **不可验证**（WARN，不是「卡确实缺」）；
+    成员树在、封条指向的卡缺失 ⇒ `card_absent` FAIL；卡在、同目录
+    `atlas-apply.md` 缺 ⇒ `apply_record_missing` FAIL。`legacy` 不走本判据（§3.1）。
+    """
     if seal.get("kind") not in ("binding", "backfill"):
         return []
     match = SEAL_RE.match(seal_path)
@@ -836,11 +851,26 @@ def _apply_record_findings(root: Path, data: dict, seal: dict,
     card = seal.get("card") if isinstance(seal.get("card"), dict) else {}
     card_path = card.get("path")
     if member is None or not card_path:
-        return [_f("apply_record_missing", "error",
-                   "无法定位成员任务卡 / atlas-apply.md", seal_path)]
-    card_file = Path(root) / str(member["path"]) / str(card_path)
+        return [_f("apply_record_missing", "warn",
+                   "无法定位成员 / 封条未写 card.path；本项不可验证", seal_path,
+                   {"kind": "unverifiable"})]
+    member_dir = Path(root) / str(member["path"])
+    if not member_dir.is_dir():
+        return [_f("apply_record_missing", "warn",
+                   f"成员子树未 checkout（{member['path']}/）；本项不可验证",
+                   seal_path, {"kind": "member_not_checked_out"})]
+    try:
+        empty = not any(member_dir.iterdir())
+    except OSError:
+        empty = True
+    if empty:
+        # submodule / gitlink 未 init 时留下的是空目录：同样不可验证，不是「卡确实缺」。
+        return [_f("apply_record_missing", "warn",
+                   f"成员子树为空（{member['path']}/ 未 checkout）；本项不可验证",
+                   seal_path, {"kind": "member_not_checked_out"})]
+    card_file = member_dir / str(card_path)
     if not card_file.is_file():
-        return [_f("seal_card_missing", "error",
+        return [_f("card_absent", "error",
                    f"封条指向的任务卡不存在: {card_path}", seal_path)]
     apply_md = card_file.parent / "atlas-apply.md"
     if not apply_md.is_file():
@@ -848,6 +878,28 @@ def _apply_record_findings(root: Path, data: dict, seal: dict,
                    f"kind={seal.get('kind')} 的封条缺 atlas-apply.md: "
                    f"{apply_md.relative_to(root)}", seal_path)]
     return []
+
+
+def _case_map(items) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in items or []:
+        if isinstance(item, dict) and item.get("id"):
+            out[str(item["id"])] = str(item.get("sha256") or "")
+    return out
+
+
+def _old_path_last_doc(root: Path, path: str) -> dict | None:
+    """旧路径 `L_pre[-1]` 的封条文档（换路径首签的旧值来源）。"""
+    hist = seal_history(root, path)
+    if hist["error"] or not hist["L_pre"]:
+        return None
+    raw = blob_at(root, hist["L_pre"][-1], path)
+    if raw is None:
+        return None
+    try:
+        return parse_seal(raw)
+    except SealError:
+        return None
 
 
 def _e2e_findings(root: Path, data: dict, seal: dict, seal_path: str,
@@ -866,46 +918,75 @@ def _e2e_findings(root: Path, data: dict, seal: dict, seal_path: str,
             yield _f("seal_e2e_case_sha_mismatch", "error",
                      f"用例 {cid} 的 body sha 与封条不符", seal_path)
     seq = seal.get("renewal_seq")
-    prev_doc = None
-    prev_commit = seal.get("previous_seal_commit")
-    if seq and seq > 1 and prev_commit:
-        raw = blob_at(root, str(prev_commit), seal_path)
-        if raw is None:
-            # 边界封条 previous 指向不可达旧 A：回落到 L[-2]（重写后的上一枚）
-            hist = seal_history(root, seal_path)
-            if not hist["error"] and len(hist["commits"]) >= 2:
-                raw = blob_at(root, hist["commits"][-2], seal_path)
-        if raw is not None:
-            try:
-                prev_doc = parse_seal(raw)
-            except SealError:
-                prev_doc = None
+    moved = seal.get("moved_from")
+    is_move = isinstance(moved, dict) and isinstance(moved.get("path"), str)
     old_cases: dict[str, str] = {}
-    if isinstance(prev_doc, dict):
-        old_e2e = prev_doc.get("e2e") if isinstance(prev_doc.get("e2e"), dict) else {}
-        for item in old_e2e.get("cases") or []:
-            if isinstance(item, dict) and item.get("id"):
-                old_cases[str(item["id"])] = str(item.get("sha256") or "")
-    computed_changed = sorted(cid for cid, sha in current.items()
-                              if old_cases.get(cid) != sha) if seq and seq > 1 else []
-    if seq == 1 and e2e.get("previous_cases"):
-        yield _f("seal_e2e_previous_cases_mismatch", "error",
-                 "首签 previous_cases 必须为空", seal_path)
+    payload_equivalent = False
+    if is_move:
+        # 换路径首签：旧值来自**旧路径** `L_pre[-1]`，不是本路径的 previous
+        old_doc = _old_path_last_doc(root, str(moved["path"]))
+        if old_doc is None:
+            yield _f("seal_path_history_lost", "error",
+                     f"旧路径封条不可读: {moved['path']}", seal_path)
+            return
+        old_e2e = old_doc.get("e2e") if isinstance(old_doc.get("e2e"), dict) else {}
+        old_cases = _case_map(old_e2e.get("cases"))
+        payload_equivalent = (_payload_of(old_doc, MOVE_EXEMPT)
+                              == _payload_of(seal, MOVE_EXEMPT))
+    else:
+        prev_doc = None
+        prev_commit = seal.get("previous_seal_commit")
+        if seq and seq > 1 and prev_commit:
+            raw = blob_at(root, str(prev_commit), seal_path)
+            if raw is None:
+                # 边界封条 previous 指向不可达旧 A：回落到 L[-2]（重写后的上一枚）
+                hist = seal_history(root, seal_path)
+                if not hist["error"] and len(hist["commits"]) >= 2:
+                    raw = blob_at(root, hist["commits"][-2], seal_path)
+            if raw is not None:
+                try:
+                    prev_doc = parse_seal(raw)
+                except SealError:
+                    prev_doc = None
+        if isinstance(prev_doc, dict):
+            old_e2e = prev_doc.get("e2e") if isinstance(prev_doc.get("e2e"), dict) else {}
+            old_cases = _case_map(old_e2e.get("cases"))
     declared_changed = list(e2e.get("changed_case_ids") or [])
-    if sorted(declared_changed) != computed_changed:
-        yield _f("seal_e2e_changed_case_ids_mismatch", "error",
-                 f"changed_case_ids 声明 {sorted(declared_changed)} != 复算 "
-                 f"{computed_changed}", seal_path)
-    declared_prev = {}
-    for item in e2e.get("previous_cases") or []:
-        if isinstance(item, dict) and item.get("id"):
-            declared_prev[str(item["id"])] = str(item.get("sha256") or "")
-    expected_prev = {cid: old_cases[cid] for cid in computed_changed
-                     if cid in old_cases}
-    if declared_prev != expected_prev:
-        yield _f("seal_e2e_previous_cases_mismatch", "error",
-                 f"previous_cases={declared_prev} != 旧 cases 子集 {expected_prev}",
-                 seal_path)
+    declared_prev = _case_map(e2e.get("previous_cases"))
+    if is_move and payload_equivalent:
+        # 换路径 = 载荷逐字节复制（`_move_payload` 是唯一判定来源）：e2e 业务字段
+        # 是被搬过来的旧载荷，不按用例变化重算，否则合法搬路径必红。
+        pass
+    elif is_move:
+        computed_changed = sorted(cid for cid, sha in current.items()
+                                  if old_cases.get(cid) != sha)
+        if sorted(declared_changed) != computed_changed:
+            yield _f("seal_e2e_changed_case_ids_mismatch", "error",
+                     f"changed_case_ids 声明 {sorted(declared_changed)} != 复算 "
+                     f"{computed_changed}", seal_path)
+        expected_prev = {cid: old_cases[cid] for cid in computed_changed
+                         if cid in old_cases}
+        if declared_prev != expected_prev:
+            yield _f("seal_e2e_previous_cases_mismatch", "error",
+                     f"previous_cases={declared_prev} != 旧 cases 子集 "
+                     f"{expected_prev}", seal_path)
+    else:
+        computed_changed = sorted(cid for cid, sha in current.items()
+                                  if old_cases.get(cid) != sha) \
+            if seq and seq > 1 else []
+        if seq == 1 and e2e.get("previous_cases"):
+            yield _f("seal_e2e_previous_cases_mismatch", "error",
+                     "首签 previous_cases 必须为空", seal_path)
+        if sorted(declared_changed) != computed_changed:
+            yield _f("seal_e2e_changed_case_ids_mismatch", "error",
+                     f"changed_case_ids 声明 {sorted(declared_changed)} != 复算 "
+                     f"{computed_changed}", seal_path)
+        expected_prev = {cid: old_cases[cid] for cid in computed_changed
+                         if cid in old_cases}
+        if declared_prev != expected_prev:
+            yield _f("seal_e2e_previous_cases_mismatch", "error",
+                     f"previous_cases={declared_prev} != 旧 cases 子集 {expected_prev}",
+                     seal_path)
     if e2e.get("status") == "ready":
         wanted = sorted({cid for req in data.get("requirements") or []
                          for cid in req.get("case_ids") or []})
@@ -1029,19 +1110,23 @@ def check_anchor_fields(root: Path, path: str, anchor: dict, head_doc: dict,
         out.append(_f("exemption_start_history_broken", "error",
                       "exemption_start_history 不是数组", path))
         return out
-    if first_doc is not None and not chain and "reanchor" not in head_doc \
+    if first_doc is not None and "reanchor" not in head_doc \
             and "moved_from" not in head_doc:
         signed = first_doc.get("signed_at")
         if not SIGNED_AT_RE.match(str(signed or "")):
             out.append(_f("signed_at_not_canonical", "error",
                           f"L[0].signed_at 非规范形态: {signed!r}", path))
             return out
-        # T-30①：无重指时 origin 必须逐字节等于 L[0].signed_at（I7）
-        if origin is not None and origin != signed:
+        # T-30①：`exemption_start_origin` **不可变**，外部锚 = 锁历史首个含该字段的
+        # 版本里的值（v23/I-1；v24/B-2 取法）。重指后 `L[0]` 会变，不能拿它当锚，
+        # 否则「重指 + 重签」永久红且二次 `lock --update` 不自愈。
+        anchor_origin = _anchor_value_in_history(root, path,
+                                                 "exemption_start_origin")
+        if anchor_origin is not None and origin != anchor_origin:
             out.append(_f("exemption_start_origin_rewritten", "error",
-                          "exemption_start_origin 与 L[0].signed_at 不等"
+                          "exemption_start_origin 与锁历史锚不等"
                           "（历史豁免起点被改写）", path,
-                          {"kind": "not_equal_signed_at"}))
+                          {"kind": "rewritten"}))
             return out
         if started != signed:
             out.append(_f("exemption_start_conflict", "error",
@@ -1093,12 +1178,16 @@ def check_anchor_fields(root: Path, path: str, anchor: dict, head_doc: dict,
 
 
 def compute_anchor(root: Path, path: str, prior: dict | None,
-                   head_doc: dict | None, head_commit: str | None) -> dict:
+                   head_doc: dict | None, head_commit: str | None,
+                   *, all_prior: dict | None = None) -> dict:
     """`lock --update` 写单个键的值（§1.1.3 第 3 条 / ⑦，受控重指）。
 
     已有值一律保留（只刷新 `renewal_seq` / `n`；`retired` / `frozen` 全保留）。
     新键：`epoch_origin = L[0]`、`exemption_start_* = L[0].signed_at`、
     `first_seen_origin = 封条 first_seen_at`。
+
+    `all_prior` 是**同一次 `--update` 的锁内全量键**（不传才回落磁盘锁）：
+    换路径继承必须读本次快照，不能读到上一次写盘的旧锁。
     """
     hist = seal_history(root, path)
     if hist["error"] or not hist["commits"]:
@@ -1106,6 +1195,7 @@ def compute_anchor(root: Path, path: str, prior: dict | None,
     L = hist["commits"]
     seq = (head_doc or {}).get("renewal_seq")
     prior = prior if isinstance(prior, dict) else None
+    others = all_prior if isinstance(all_prior, dict) else _lock_anchors(root)
     state = (prior or {}).get("state") or "active"
     if state in ("retired", "frozen") and prior is not None:
         anchor = dict(prior)
@@ -1130,13 +1220,13 @@ def compute_anchor(root: Path, path: str, prior: dict | None,
         }
         moved = (head_doc or {}).get("moved_from")
         if isinstance(moved, dict) and moved.get("path"):
-            old_anchor = _lock_anchors(root).get(str(moved["path"]))
+            old_anchor = others.get(str(moved["path"]))
             if not isinstance(old_anchor, dict):
                 raise SealError(
                     "seal_path_history_lost: moved_from 链首键缺失 "
                     f"{moved['path']}")
-            for key in ("exemption_start_origin", "exemption_start_history",
-                        "first_seen_origin"):
+            for key in ("exemption_start_origin", "exemption_started_at",
+                        "exemption_start_history", "first_seen_origin"):
                 if key in old_anchor:
                     anchor[key] = copy.deepcopy(old_anchor[key])
         return anchor
@@ -1156,16 +1246,29 @@ def compute_anchor(root: Path, path: str, prior: dict | None,
             anchor["epoch_origin_history"] = history
         if not anchor.get("anchor_review"):
             anchor["anchor_review"] = reanchor.get("review")
-    # 受控重指（S-45）：首签 + active + 从未 reanchor + 旧锚不可达。
+    # 受控重指（S-45）：首签 + active + 锁历史从未 reanchor + 旧锚不在 HEAD 历史。
     # §1.1.3 第 3 条：不设次数上限（I8），由「从未 reanchor」保证不可绕过。
+    origin_commit = str(anchor.get("epoch_origin") or "")
+    ancestor_rc = _ancestor_rc(root, origin_commit) if origin_commit else 1
+    if ancestor_rc not in (0, 1, 128):
+        raise SealError(
+            f"{path}: merge-base --is-ancestor {origin_commit[:12]} HEAD 失败"
+            f"（rc={ancestor_rc}）")
     if (reanchor is None and seq == 1 and anchor.get("state") == "active"
-            and not anchor.get("anchor_review")
+            and not _anchor_value_in_history(root, path, "anchor_review")
             and anchor.get("epoch_origin") != L[0]
-            and not _has_object(root, str(anchor.get("epoch_origin")))):
+            and ancestor_rc in (1, 128)):
+        new_started = (head_doc or {}).get("signed_at")
+        old_started = anchor.get("exemption_started_at")
+        history = list(anchor.get("exemption_start_history") or [])
+        if (old_started and isinstance(new_started, str)
+                and new_started != old_started):
+            history.append({"from": old_started, "to": new_started,
+                            "commit": head_commit or _rev_parse(root, "HEAD")})
+        anchor["exemption_started_at"] = new_started or old_started
+        anchor["exemption_start_history"] = history
         anchor["epoch_origin"] = L[0]
         anchor["epoch_origin_history"].append(L[0])
-        anchor["exemption_started_at"] = \
-            (head_doc or {}).get("signed_at", anchor.get("exemption_started_at"))
     if anchor.get("exemption_start_origin") is None:
         anchor["exemption_start_origin"] = anchor.get("exemption_started_at")
     if anchor.get("exemption_started_at") is None:
@@ -1175,14 +1278,16 @@ def compute_anchor(root: Path, path: str, prior: dict | None,
     if anchor.get("first_seen_origin") is None:
         anchor["first_seen_origin"] = (head_doc or {}).get("first_seen_at")
     # B5：换路径新键必须继承链首键的豁免起点，不得重置 90 天窗口。
+    # 已有历史（本路径做过 reanchor）时不再回灌旧键，否则会把重指结果冲掉。
     moved = (head_doc or {}).get("moved_from")
-    if isinstance(moved, dict) and moved.get("path"):
-        old_anchor = _lock_anchors(root).get(str(moved["path"]))
+    if (isinstance(moved, dict) and moved.get("path")
+            and not anchor.get("exemption_start_history")):
+        old_anchor = others.get(str(moved["path"]))
         if not isinstance(old_anchor, dict):
             raise SealError(
                 f"seal_path_history_lost: moved_from 链首键缺失 {moved['path']}")
-        for key in ("exemption_start_origin", "exemption_start_history",
-                    "first_seen_origin"):
+        for key in ("exemption_start_origin", "exemption_started_at",
+                    "exemption_start_history", "first_seen_origin"):
             if key in old_anchor:
                 anchor[key] = copy.deepcopy(old_anchor[key])
     return anchor
@@ -1212,6 +1317,40 @@ def _lock_anchors(root: Path) -> dict:
     anchors = doc.get("seal_anchors")
     return {str(k): v for k, v in anchors.items()
             if isinstance(v, dict)} if isinstance(anchors, dict) else {}
+
+
+def _lock_anchor_versions(root: Path, path: str) -> list[dict]:
+    """锁文件全历史里该封条路径的锚（提交正序；不可解析 / 无该键的版本跳过）。"""
+    rc, out, _ = _git(root, "log", "-m", "--full-history", "--reverse",
+                      "--format=%H", "HEAD", "--", "atlas.solution.lock.json")
+    if rc != 0:
+        return []
+    versions: list[dict] = []
+    seen: set[str] = set()
+    for commit in out.split():
+        if commit in seen:
+            continue
+        seen.add(commit)
+        raw = blob_at(root, commit, "atlas.solution.lock.json")
+        if raw is None:
+            continue
+        try:
+            doc = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            continue
+        anchors = doc.get("seal_anchors") if isinstance(doc, dict) else None
+        anchor = anchors.get(path) if isinstance(anchors, dict) else None
+        if isinstance(anchor, dict):
+            versions.append(anchor)
+    return versions
+
+
+def _anchor_value_in_history(root: Path, path: str, field: str):
+    """外部锚：锁历史中**首个同时含该字段**的版本里该字段的值（无 ⇒ `None`）。"""
+    for anchor in _lock_anchor_versions(root, path):
+        if field in anchor:
+            return anchor[field]
+    return None
 
 
 def select_seal(root: Path, anchors: dict | None, requested: str | None,
@@ -1298,7 +1437,7 @@ def build_seal_payload(root: Path, data: dict, seal_path: str, *,
         # B4：已迁出的封条在后续续签里必须继续携带 moved_from
         moved_from = dict(old_doc["moved_from"])
     if explicit_move and old_doc is not None:
-        # 换路径首签：除豁免字段外必须与旧路径最后封条逐字节相同
+        # 换路径首签：除豁免字段外必须与旧路径最后封条逐字节相同。
         payload = {k: copy.deepcopy(v) for k, v in old_doc.items()
                    if not k.startswith("__")}
         payload["renewal_seq"] = 1
@@ -1306,6 +1445,16 @@ def build_seal_payload(root: Path, data: dict, seal_path: str, *,
         payload["previous_seal_sha256"] = None
         payload["signed_at"] = signed_at
         payload["moved_from"] = moved_from
+        if reasons:
+            payload["reasons"] = list(reasons)
+            # 换路径 + 业务改动（reasons 非空）：e2e / upstream 必须按当前树复算，
+            # 不能整段沿用旧载荷——否则合法改动会被 `upstream_stale` /
+            # `seal_e2e_case_sha_mismatch` 判红（读侧以 `_move_payload` 为准）。
+            current_cases = [{"id": cid, "sha256": _case_sha(root, assets_root, cid)}
+                             for cid in sorted(set(case_ids or []))]
+            payload["e2e"] = _e2e_payload(data, current_cases, e2e_status, gap,
+                                          base_e2e, old_doc, None, first=False)
+            payload["upstream"] = _upstream_entries(root, data, assets_root)
         return payload
     projection = {
         "acceptance_acs": sorted(set(acceptance_acs or [])),
@@ -1335,9 +1484,9 @@ def build_seal_payload(root: Path, data: dict, seal_path: str, *,
                                "owner": e2e["gap"].get("owner") or owner}
     if moved_from is not None:
         payload["moved_from"] = moved_from
-    # B4：reanchor 对象必须被后续续签原样继承，否则 epoch_origin 守卫失效
-    if old_doc is not None and isinstance(old_doc.get("reanchor"), dict) \
-            and moved_from is None:
+    # B4：reanchor 对象必须被后续续签原样继承，否则 epoch_origin 守卫失效。
+    # 换路径后的续签同样要保留（`moved_from` 与 `reanchor` 可同时存在）。
+    if old_doc is not None and isinstance(old_doc.get("reanchor"), dict):
         payload["reanchor"] = old_doc["reanchor"]
     if reasons:
         payload["reasons"] = list(reasons)
@@ -1374,9 +1523,13 @@ def _e2e_payload(data: dict, cases: list[dict], status: str,
     previous = ([{"id": cid, "sha256": old_cases[cid]}
                  for cid in changed if cid in old_cases]
                 if previous_cases is None else list(previous_cases))
+    # 读侧（`_e2e_findings`）按 manifest 全集复算 selector；写侧必须同口径，
+    # 否则「合法只绑子集」的封条会被判 `seal_e2e_selector_mismatch`。
+    wanted = sorted({cid for req in data.get("requirements") or []
+                     for cid in req.get("case_ids") or []})
     return {
         "status": status,
-        "selector_sha256": selector_sha256(list(current)),
+        "selector_sha256": selector_sha256(wanted),
         "cases": cases,
         "links": _case_links(data, list(current)),
         "changed_case_ids": changed,

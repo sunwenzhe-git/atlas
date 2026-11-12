@@ -99,10 +99,9 @@ def _gate_preconditions(root: Path) -> dict[str, tuple[str, str]]:
         "validate_task_card": (
             ".trellis",
             "前置未声明（未就绪，非失败）：无 .trellis/（成员仓未接入任务卡）"),
-        # 封条归父仓；无锁 ⇒ 尚未接验收资产域（C 批，validator 自身对无封条报 N/A）
-        "validate_apply_record": (
-            "atlas.solution.lock.json",
-            "前置未声明（未就绪，非失败）：无 atlas.solution.lock.json（父仓未 lock）"),
+        # 封条归父仓：**不设前置**。无锁但有封条必须由 validator 自己报红
+        # （`seal_anchor_path_unmapped`），有锁无封条由它自报 N/A——前置 SKIP 会把
+        # 「删锁保留封条」整段跳过（B1 假绿）。
     }
 
 GEN_NOT_READY = 3

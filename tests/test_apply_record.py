@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -145,6 +146,11 @@ def findings(root: Path) -> list[dict]:
 
 def codes(root: Path) -> list[str]:
     return [item["code"] for item in findings(root)]
+
+
+def _error_codes(root: Path) -> list[str]:
+    return [item["code"] for item in findings(root)
+            if item["severity"] == "error"]
 
 
 @pytest.fixture()
@@ -539,8 +545,9 @@ def test_i3_missing_apply_record_fails(repo: Path) -> None:
 
 
 def test_k14_missing_card_file_fails(repo: Path) -> None:
+    """父仓：封条在、卡缺失 ⇒ `card_absent` FAIL（成员侧同一形态只 WARN）。"""
     (repo / "web" / CARD).unlink()
-    assert "seal_card_missing" in _validator_codes(repo)
+    assert "card_absent" in _validator_codes(repo)
 
 
 def test_i2_e2e_changed_cases_are_diffed(repo: Path) -> None:
@@ -598,3 +605,204 @@ def test_i9_anchor_review_format_is_enforced(repo: Path) -> None:
     with pytest.raises(core.SolutionError, match="REVIEW"):
         core.lock_payload(repo, core.load_manifest(repo),
                           assets_root="other", anchor_review="not-a-review")
+
+
+def _move_seal(root: Path, new: str, patch: dict | None = None,
+               **kwargs) -> dict:
+    """换路径首签：写新封条 + 删旧路径 + 写锁（返回新键）。"""
+    moved = seal.build_seal_payload(
+        root, core.load_manifest(root), new, assets_root="product",
+        kind="binding", card_path=CARD, acceptance_acs=["AC-SOLUTION-001"],
+        e2e_status="ready", case_ids=[CASE_ID], moved_from={"path": SEAL_REL},
+        **kwargs)
+    if patch:
+        moved.update(patch)
+    write_doc(root, moved, new)
+    git(root, "rm", "-q", SEAL_REL)
+    commit_all(root, message="move seal")
+    core.write_lock(root, core.load_manifest(root), require_clean=True, seal=new)
+    commit(root, core.LOCK_NAME, message="lock moved")
+    return moved
+
+
+def test_c_moved_from_after_renewal_keeps_exemption_window(tmp_path: Path) -> None:
+    """先续签一次再 move：`exemption_started_at` 必须随键继承，不得按新 L[0] 重算。"""
+    root = init_repo(tmp_path)
+    first = core.read_lock(root)["seal_anchors"][SEAL_REL]["exemption_start_origin"]
+    # 续签时重签一个**不同**的 signed_at：move 会逐字节沿用它，成为新路径的 L[0].signed_at
+    renew_mutate(root, lambda p: p.update(signed_at="2027-01-01T00:00:00Z"))
+    core.write_lock(root, core.load_manifest(root), require_clean=True)
+    commit(root, core.LOCK_NAME, message="lock renewed")
+    assert codes(root) == []
+    new = "product/reviews/apply/web/T-001-moved.seal.json"
+    _move_seal(root, new)
+    anchor = core.read_lock(root)["seal_anchors"][new]
+    assert anchor["exemption_started_at"] == first
+    assert codes(root) == []
+    # 换路径后的正常续签仍绿
+    renew_path(root, new)
+    core.write_lock(root, core.load_manifest(root), require_clean=True, seal=new)
+    commit(root, core.LOCK_NAME, message="renew moved")
+    assert codes(root) == []
+
+
+def test_i2_case_change_then_move_recomputes_from_old_path(tmp_path: Path) -> None:
+    """用例变化后 move：按旧路径 `L_pre[-1]` 复算 changed，声明齐备 ⇒ 绿。"""
+    root = init_repo(tmp_path)
+    old_sha = next(c["sha256"] for c in read_doc(root)["e2e"]["cases"]
+                   if c["id"] == CASE_ID)
+    case = root / "product" / "e2e" / "cases" / f"{CASE_ID}.md"
+    case.write_text("## E2E-LOGIN-001\n\n```atlas-case\nid: E2E-LOGIN-001\n"
+                    "step: 2\n```\n", encoding="utf-8")
+    commit(root, f"product/e2e/cases/{CASE_ID}.md", message="case change")
+    new = "product/reviews/apply/web/T-001-moved.seal.json"
+    moved = seal.build_seal_payload(
+        root, core.load_manifest(root), new, assets_root="product",
+        kind="binding", card_path=CARD, acceptance_acs=["AC-SOLUTION-001"],
+        e2e_status="ready", case_ids=[CASE_ID],
+        moved_from={"path": SEAL_REL}, reasons=["case-change"])
+    # 写侧按当前树复算：changed / previous / upstream 不得整段沿用旧载荷
+    assert moved["e2e"]["changed_case_ids"] == [CASE_ID]
+    assert moved["e2e"]["previous_cases"] == [{"id": CASE_ID, "sha256": old_sha}]
+    assert {u["role"] for u in moved["upstream"]} >= {"e2e-case"}
+    write_doc(root, moved, new)
+    git(root, "rm", "-q", SEAL_REL)
+    commit_all(root, message="move with case change")
+    core.write_lock(root, core.load_manifest(root), require_clean=True, seal=new)
+    commit(root, core.LOCK_NAME, message="lock moved")
+    assert codes(root) == []
+
+
+def test_i7_reanchor_is_inherited_alongside_moved_from(repo: Path) -> None:
+    """先 move 后 reanchor 再续签：`reanchor` 与 `moved_from` 必须同时保留。"""
+    new = "product/reviews/apply/web/T-001-moved.seal.json"
+    reanchor = {"from_a": "0" * 40, "from_b": "1" * 40,
+                "review": "REVIEW-20261112-01",
+                "signed_at": "2027-01-01T00:00:00Z"}
+    _move_seal(repo, new, patch={"reanchor": reanchor})
+    payload = seal.build_seal_payload(
+        repo, core.load_manifest(repo), new, assets_root="product",
+        kind="binding", card_path=CARD, acceptance_acs=["AC-SOLUTION-001"],
+        e2e_status="ready", case_ids=[CASE_ID])
+    assert payload["reanchor"] == reanchor
+    assert payload["moved_from"]["path"] == SEAL_REL
+    assert payload["renewal_seq"] == 2
+
+
+def test_i2_case_change_then_move_without_reasons_is_rejected(
+        tmp_path: Path) -> None:
+    """用例变了却把旧载荷原样搬过去（不写 reasons）⇒ 分片 sha 必红。"""
+    root = init_repo(tmp_path)
+    case = root / "product" / "e2e" / "cases" / f"{CASE_ID}.md"
+    case.write_text("## E2E-LOGIN-001\n\n```atlas-case\nid: E2E-LOGIN-001\n"
+                    "step: 2\n```\n", encoding="utf-8")
+    commit(root, f"product/e2e/cases/{CASE_ID}.md", message="case change")
+    new = "product/reviews/apply/web/T-001-moved.seal.json"
+    _move_seal(root, new)
+    assert "seal_e2e_case_sha_mismatch" in codes(root)
+
+
+def _rewrite_first_sign(tmp_path: Path) -> Path:
+    """首签 rebase：新孤立历史 + 重签首签；旧历史留在本地但不可达（rc=1）。"""
+    original = init_repo(tmp_path / "orig")
+    old_first = git(original, "log", "--diff-filter=A", "--format=%H",
+                    "--reverse", "--", SEAL_REL).stdout.split()[0]
+    # 保留旧历史为一条 ref，供 fresh 拉取**对象**（不合并进 HEAD）
+    git(original, "branch", "old-history", "HEAD")
+    git(original, "checkout", "-q", "--orphan", "rewritten")
+    doc = read_doc(original)
+    doc["signed_at"] = "2027-01-01T00:00:00Z"
+    write_doc(original, doc)
+    git(original, "add", "-A")
+    git(original, "-c", "user.email=a@b", "-c", "user.name=a",
+        "commit", "-qm", "rewritten root")
+    git(original, "branch", "-M", "main")
+    fresh = tmp_path / "fresh"
+    subprocess.run(["git", "clone", "-q", "file://" + str(original), str(fresh)],
+                   check=True)
+    git(fresh, "fetch", "-q", "origin", "old-history")
+    assert git(fresh, "cat-file", "-e", old_first, check=False).returncode == 0
+    assert git(fresh, "merge-base", "--is-ancestor", old_first, "HEAD",
+               check=False).returncode == 1
+    return fresh
+
+
+def test_i3_first_sign_rebase_with_unreachable_origin_can_reanchor(
+        tmp_path: Path) -> None:
+    """旧对象仍在本地但已不可达（rc=1）⇒ 受控重指放行，且重指后重签仍绿。"""
+    fresh = _rewrite_first_sign(tmp_path)
+    before = core.read_lock(fresh)["seal_anchors"][SEAL_REL]
+    core.write_lock(fresh, core.load_manifest(fresh), require_clean=True)
+    commit(fresh, core.LOCK_NAME, message="controlled reanchor")
+    after = core.read_lock(fresh)["seal_anchors"][SEAL_REL]
+    assert after["epoch_origin"] != before["epoch_origin"]
+    assert after["exemption_start_origin"] == before["exemption_start_origin"]
+    assert after["exemption_started_at"] == "2027-01-01T00:00:00Z"
+    assert after["exemption_start_history"] == [{
+        "from": before["exemption_started_at"],
+        "to": "2027-01-01T00:00:00Z",
+        "commit": git(fresh, "rev-parse", "HEAD~1").stdout.strip()}]
+    assert _error_codes(fresh) == []
+    # 重指后重签（普通续签）：不得回落到「origin != L[0].signed_at」的永久红
+    renew(fresh)
+    core.write_lock(fresh, core.load_manifest(fresh), require_clean=True)
+    commit(fresh, core.LOCK_NAME, message="re-sign after reanchor")
+    assert _error_codes(fresh) == []
+
+
+def test_i3_first_sign_rebase_with_reachable_origin_is_rejected(repo: Path) -> None:
+    """旧根仍可达（rc=0）⇒ 不得受控重指，`reanchor_record_missing` 保留。"""
+    head = git(repo, "rev-parse", "HEAD").stdout.strip()
+    lock = core.read_lock(repo)
+    lock["seal_anchors"][SEAL_REL]["epoch_origin"] = head
+    lock["seal_anchors"][SEAL_REL]["epoch_origin_history"] = [head]
+    (repo / core.LOCK_NAME).write_text(
+        json.dumps(lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    commit(repo, core.LOCK_NAME, message="origin at head")
+    core.write_lock(repo, core.load_manifest(repo), require_clean=True)
+    commit(repo, core.LOCK_NAME, message="lock again")
+    assert core.read_lock(repo)["seal_anchors"][SEAL_REL]["epoch_origin"] == head
+    assert "reanchor_record_missing" in codes(repo)
+
+
+def test_k14_legacy_seal_skips_card_checks(repo: Path) -> None:
+    """legacy 不走卡 / apply record 判据（白名单期）。"""
+    renew_mutate(repo, lambda p: p.update(kind="legacy"))
+    core.write_lock(repo, core.load_manifest(repo), require_clean=True)
+    commit(repo, core.LOCK_NAME, message="lock legacy")
+    (repo / "web" / CARD).unlink()
+    (repo / "web" / CARD).parent.joinpath("atlas-apply.md").unlink()
+    assert codes(repo) == []
+
+
+def test_i3_apply_record_unverifiable_when_member_not_checked_out(
+        repo: Path) -> None:
+    """成员子树未 checkout ⇒ 不可验证（WARN），不得误判 `card_absent` FAIL。"""
+    (repo / "web").rename(repo / "web-not-checked-out")
+    errors, warnings, _, _ = validator.collect_errors(repo)
+    assert "apply_record_missing" in [w["code"] for w in warnings]
+    assert "apply_record_missing" not in [e["code"] for e in errors]
+    assert "card_absent" not in [e["code"] for e in errors]
+
+
+def test_b1_atlas_check_dispatcher_does_not_skip_apply_record(repo: Path) -> None:
+    """真跑 `scripts/atlas_check.py`：删锁但保留封条不得被前置 SKIP 掉。"""
+    validators = repo / ".atlas" / "validators"
+    if validators.exists():
+        shutil.rmtree(validators)
+    validators.symlink_to(PKG / "validators", target_is_directory=True)
+    check = PKG / "scripts" / "atlas_check.py"
+
+    def row_of() -> dict:
+        res = subprocess.run(
+            [sys.executable, str(check), "--root", ".", "--fast", "--json"],
+            cwd=str(repo), capture_output=True, text=True)
+        rows = json.loads(res.stdout)["rows"]
+        return next(r for r in rows if r["name"] == "validate_apply_record")
+
+    assert row_of()["status"] == "ok"
+    (repo / core.LOCK_NAME).unlink()
+    commit_all(repo, message="drop lock")
+    row = row_of()
+    assert row["status"] == "FAIL", row
+    assert "seal_anchor_path_unmapped" in row["detail"]

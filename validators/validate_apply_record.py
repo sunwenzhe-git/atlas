@@ -45,20 +45,28 @@ def collect_errors(root: Path) -> tuple[list[dict], list[dict], list[str], int]:
     def absorb(item: dict, default_path: str | None = None) -> None:
         row = {"code": item["code"], "message": item["message"],
                "path": item.get("path") or default_path}
-        key = (row["code"], row["path"], row["message"])
+        if item.get("detail") is not None:
+            row["detail"] = item["detail"]
+        # 去重键 = (code, path)：detail 是区分成因的字段，不能把同码同路径的
+        # 不同成因压成一条，也不该让 message 文本参与去重（消息会随文案漂移）。
+        key = (row["code"], row["path"])
         if key in seen:
             return
         seen.add(key)
         (errors if item["severity"] == "error" else warnings).append(row)
 
-    # B1：先走仓级 analyze（含锁缺失 / 键缺失 / 状态机 / 链），再补单封条 schema。
+    # B1：先走仓级 analyze（含锁缺失 / 键缺失 / 状态机 / 链），再补**未被其覆盖**的单封条
+    # schema。有锁内键的路径已由 analyze 的 analyze_state 全判过（schema + 链），
+    # 这里再跑一遍只会产出同码同路径的重复项。
     for item in seal.analyze(root, data, lock, roots,
                              bind_from=solution.SEAL_UPSTREAM_BIND_FROM):
         absorb(item)
     for path in paths:
+        if path in by_path:
+            continue
         path_root = seal.SEAL_RE.match(path).group("root") if seal.SEAL_RE.match(path) else roots[0]
         findings = seal.validate_seal_record(
-            root, data, path, by_path.get(path), path_root,
+            root, data, path, None, path_root,
             bind_from=solution.SEAL_UPSTREAM_BIND_FROM)
         for item in findings:
             absorb(item, path)

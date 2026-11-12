@@ -223,7 +223,8 @@ def test_k_confirmed_schema1_after_deadline_is_fail(tmp_path: Path) -> None:
     assert "confirmed_columns_missing" in [e["code"] for e in errors]
 
 
-def test_i6_card_absent_fails_without_local_flag(tmp_path: Path) -> None:
+def test_i6_card_absent_is_warn_on_member_side(tmp_path: Path) -> None:
+    """成员侧不读父仓封条 ⇒ 无卡只能 WARN；FAIL 由父仓 `card_absent` 承担。"""
     tmp_path.mkdir(parents=True, exist_ok=True)
     git(tmp_path, "init", "-q")
     (tmp_path / ".trellis").mkdir()
@@ -232,12 +233,39 @@ def test_i6_card_absent_fails_without_local_flag(tmp_path: Path) -> None:
     git(tmp_path, "-c", "user.email=a@b", "-c", "user.name=a",
         "commit", "-qm", "empty trellis")
     errors, warnings = card.validate(tmp_path, today=PASS_DATE)
-    assert "card_absent" in [e["code"] for e in errors]
-    assert "card_absent" not in [w["code"] for w in warnings]
-    errors2, warnings2 = card.validate(tmp_path, today=PASS_DATE,
-                                       allow_card_absent=True)
-    assert errors2 == []
-    assert "card_absent" in [w["code"] for w in warnings2]
+    assert errors == []
+    assert [w["code"] for w in warnings] == ["card_absent"]
+    res = subprocess.run([sys.executable, str(PKG / "validators" / "validate_task_card.py"),
+                          "--root", str(tmp_path)], capture_output=True, text=True)
+    assert res.returncode == 0, res.stdout
+    assert "[WARN] card_absent" in res.stdout
+
+
+def test_i6_no_seal_no_card_is_green(tmp_path: Path) -> None:
+    """无封条无卡 ⇒ member 侧全绿（WARN 不改退出码）。"""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    git(tmp_path, "init", "-q")
+    (tmp_path / ".trellis").mkdir()
+    (tmp_path / ".trellis" / "README.md").write_text("x\n", encoding="utf-8")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "-c", "user.email=a@b", "-c", "user.name=a",
+        "commit", "-qm", "empty trellis")
+    res = subprocess.run([sys.executable, str(PKG / "validators" / "validate_task_card.py"),
+                          "--root", str(tmp_path)], capture_output=True, text=True)
+    assert res.returncode == 0, res.stdout
+    assert "[FAIL]" not in res.stdout
+
+
+def test_i6_review_marker_only_counts_inside_confirmed_section(tmp_path: Path) -> None:
+    """围栏里 / 注释里 / 无关章节里的 `confirmed_review:` 不得压掉降级未评审。"""
+    marker = "confirmed_review: REVIEW-20261112-01\n"
+    bodies = ("```text\n" + marker + "```\n",
+              "<!--\n" + marker + "-->\n",
+              "\n## 七、Notes\n\n" + marker)
+    for index, body in enumerate(bodies):
+        root = new_repo(tmp_path / f"case{index}", confirmed=(
+            CONFIRMED_HEAD + "| 灰度 | 10% | unverified |  |\n\n" + body))
+        assert "confirmed_downgrade_unreviewed" in codes(root), body
 
 
 def test_delivery_gate_cli_exits_1_on_untracked_card(tmp_path: Path) -> None:

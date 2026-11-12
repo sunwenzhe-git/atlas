@@ -1533,7 +1533,7 @@ def _seal_anchors_for_write(root: Path, data: dict, existing: dict | None,
         except _SEAL.SealError as exc:
             raise SolutionError(f"{path}: {exc}") from exc
         result[path] = _SEAL.compute_anchor(
-            root, path, prior.get(path), head_doc, None)
+            root, path, prior.get(path), head_doc, None, all_prior=result)
         moved_from = head_doc.get("moved_from")
         if isinstance(moved_from, dict) and moved_from.get("path"):
             old_path = moved_from["path"]

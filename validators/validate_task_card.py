@@ -146,10 +146,40 @@ def _table_after_heading(text: str, needles: tuple[str, ...]) -> list[list[str]]
     return table or None
 
 
-def _review_markers(text: str) -> list[str]:
-    """Confirmed 小节里的 `confirmed_review:` 行内标记（RFC 四列表之外的标记）。"""
+def _section_text(text: str, needles: tuple[str, ...]) -> str | None:
+    """标题（含任一 needle）起、到下一个同级或更高级标题止的小节正文。"""
+    lines = text.splitlines()
+    start = None
+    level = 0
+    for index, line in enumerate(lines):
+        if not line.lstrip().startswith("#"):
+            continue
+        if any(n in line for n in needles):
+            start = index + 1
+            level = len(line) - len(line.lstrip("#"))
+            break
+    if start is None:
+        return None
+    end = len(lines)
+    for index in range(start, len(lines)):
+        stripped = lines[index].lstrip()
+        if stripped.startswith("#"):
+            if len(stripped) - len(stripped.lstrip("#")) <= level:
+                end = index
+                break
+    return "\n".join(lines[start:end])
+
+
+def _review_markers(section: str | None) -> list[str]:
+    """**Confirmed 小节内**的 `confirmed_review:` 行内标记（去围栏 / 去 HTML 注释后）。
+
+    只认小节：写在围栏里、HTML 注释里或无关章节（如 Notes）里的标记不得压掉
+    `confirmed_downgrade_unreviewed`。
+    """
+    if not section:
+        return []
     return [m.group(1) for m in re.finditer(
-        r"confirmed_review:\s*(REVIEW-\d{8}-\d{2})", text)]
+        r"confirmed_review:\s*(REVIEW-\d{8}-\d{2})", _strip_ignored(section))]
 
 
 def confirmed_findings(text: str, schema: int, today: date) -> tuple[list[dict], list[dict]]:
@@ -176,7 +206,7 @@ def confirmed_findings(text: str, schema: int, today: date) -> tuple[list[dict],
                 "message": f"Confirmed 表头缺 证据指针：{header}"}
         (errors if schema == 2 or deadline_over else warnings).append(item)
         return errors, warnings
-    markers = _review_markers(text)
+    markers = _review_markers(_section_text(text, ("Confirmed", "确认口径")))
     marker_i = 0
     for row_no, row in enumerate(table[1:], 1):
         if len(row) <= max(state_idx, pointer_idx):
@@ -217,8 +247,7 @@ def _parse_none_fields(raw: str) -> dict:
     return {k: v.strip() for k, v in KV_RE.findall(inner)}
 
 
-def validate(root: Path, today: date | None = None,
-             allow_card_absent: bool = False) -> tuple[list[dict], list[dict]]:
+def validate(root: Path, today: date | None = None) -> tuple[list[dict], list[dict]]:
     today = today or date.today()
     errors: list[dict] = []
     warnings: list[dict] = []
@@ -229,9 +258,10 @@ def validate(root: Path, today: date | None = None,
     for path in sorted(root.glob(".trellis/tasks/archive/*/*/prd.md")):
         cards.append((path, "archived"))
     if not cards:
-        item = {"code": "card_absent",
-                "message": "无任务卡（.trellis/tasks/*/prd.md 与 archive 均缺失）"}
-        (warnings if allow_card_absent else errors).append(item)
+        # 成员侧不读父仓封条，无法区分「尚未建卡」与「有封条却缺卡」；
+        # 后者由父仓 `validate_apply_record`（`card_absent`）判 FAIL，这里只 WARN。
+        warnings.append({"code": "card_absent",
+                         "message": "无任务卡（.trellis/tasks/*/prd.md 与 archive 均缺失）"})
         return errors, warnings
     for path, status in cards:
         rel = str(path.relative_to(root))
@@ -287,15 +317,13 @@ def validate(root: Path, today: date | None = None,
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", default=".")
-    ap.add_argument("--allow-card-absent", action="store_true",
-                    help="本地开发：无卡只 WARN（CI 禁用）")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
     root = Path(args.root).resolve()
     if not (root / ".trellis").is_dir():
         print("[N/A] 无 .trellis（成员仓未接入任务卡）")
         return 0
-    errors, warnings = validate(root, allow_card_absent=args.allow_card_absent)
+    errors, warnings = validate(root)
     for item in errors:
         print(f"[FAIL] {item['code']}: {item['message']}")
     for item in warnings:
