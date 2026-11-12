@@ -951,6 +951,16 @@ def _case_map(items) -> dict[str, str]:
     return out
 
 
+def _link_map(items) -> dict[str, tuple[str, ...]]:
+    """`e2e.links[]` → `{case_id: 排序后的 AC 元组}`（link-change 复算）。"""
+    out: dict[str, tuple[str, ...]] = {}
+    for item in items or []:
+        if isinstance(item, dict) and item.get("case_id"):
+            out[str(item["case_id"])] = tuple(
+                sorted(str(ac) for ac in item.get("acs") or []))
+    return out
+
+
 def _old_path_last_doc(root: Path, path: str) -> dict | None:
     """旧路径 `L_pre[-1]` 的封条文档（换路径首签的旧值来源）。"""
     hist = seal_history(root, path)
@@ -1050,6 +1060,24 @@ def _e2e_findings(root: Path, data: dict, seal: dict, seal_path: str,
             yield _f("seal_e2e_previous_cases_mismatch", "error",
                      f"previous_cases={declared_prev} != 旧 cases 子集 {expected_prev}",
                      seal_path)
+        # §3.4 / T-08 / T-09 / T-12：普通续签的 reasons 必须与实际变化集合一致。
+        # 缺对应项 ⇒ missing（每类各报一条）；写了但无变化 ⇒ superfluous（防全量重签）。
+        # 换路径首签走 `seal_move_payload_mismatch`，本组两码不参与。
+        if seq and seq > 1 and isinstance(prev_doc, dict):
+            reasons = [str(r) for r in (seal.get("reasons") or [])]
+            link_changed = _link_map(e2e.get("links")) != _link_map(
+                old_e2e.get("links"))
+            for kind, reason, changed in (
+                    ("case_change", "case-change", bool(computed_changed)),
+                    ("link_change", "link-change", link_changed)):
+                if changed and reason not in reasons:
+                    yield _f("seal_renewal_reason_missing", "error",
+                             f"{kind} 已发生，但 reasons 缺 {reason}",
+                             seal_path, {"kind": kind})
+                elif not changed and reason in reasons:
+                    yield _f("seal_renewal_reason_superfluous", "error",
+                             f"reasons 含 {reason}，但对应变化不存在",
+                             seal_path, {"reason": reason})
     if e2e.get("status") == "ready":
         wanted = sorted({cid for req in data.get("requirements") or []
                          for cid in req.get("case_ids") or []})

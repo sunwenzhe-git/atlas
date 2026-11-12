@@ -129,12 +129,13 @@ def renew_path(root: Path, path: str, **overrides) -> dict:
     return payload
 
 
-def renew_mutate(root: Path, mutate) -> dict:
+def renew_mutate(root: Path, mutate, **overrides) -> dict:
     payload = seal.build_seal_payload(
         root, core.load_manifest(root), SEAL_REL, assets_root="product",
         kind="binding", card_path=CARD,
         acceptance_acs=["AC-SOLUTION-001"], e2e_status="ready",
         case_ids=[CASE_ID], owner="@a")
+    payload.update(overrides)
     mutate(payload)
     write_doc(root, payload)
     commit(root, SEAL_REL, message="renew mutated")
@@ -562,7 +563,7 @@ def test_i2_e2e_changed_cases_are_diffed(repo: Path) -> None:
         "## E2E-LOGIN-001\n\n```atlas-case\nid: E2E-LOGIN-001\nstep: 2\n```\n",
         encoding="utf-8")
     commit(repo, f"product/e2e/cases/{CASE_ID}.md", message="case change")
-    payload = renew(repo)
+    payload = renew(repo, reasons=["case-change"])
     assert payload["e2e"]["changed_case_ids"] == [CASE_ID]
     assert payload["e2e"]["previous_cases"][0]["id"] == CASE_ID
     assert payload["e2e"]["previous_cases"][0]["sha256"]
@@ -1137,6 +1138,7 @@ def test_t32_write_side_accepts_in_range_and_read_side_green(repo: Path) -> None
     res = subprocess.run(
         [sys.executable, str(SEAL_SCRIPT), "--root", str(repo), "--seal", SEAL_REL,
          "--acceptance-acs", "AC-SOLUTION-001", "--e2e-status", "not_ready",
+         "--case", CASE_ID,
          "--gap-reason", "验收资产缺", "--gap-owner", "@a",
          "--gap-due", due], capture_output=True, text=True)
     assert res.returncode == 0, res.stderr
@@ -1239,3 +1241,85 @@ def test_u07_typo_in_apply_md_passes(repo: Path) -> None:
     git(repo / "web", "-c", "user.email=a@b", "-c", "user.name=a",
         "commit", "-qm", "typo")
     assert codes(repo) == []
+
+
+# ---------------------------------------------------------------- T-08 / T-09 / T-12
+
+def _change_case_file(root: Path) -> None:
+    case_file = root / "product" / "e2e" / "cases" / f"{CASE_ID}.md"
+    case_file.write_text(
+        "## E2E-LOGIN-001\n\n```atlas-case\nid: E2E-LOGIN-001\nstep: 2\n```\n",
+        encoding="utf-8")
+    commit(root, f"product/e2e/cases/{CASE_ID}.md", message="case change")
+
+
+def _change_link(payload: dict) -> None:
+    payload["e2e"]["links"] = [{"case_id": CASE_ID,
+                                "acs": ["AC-SOLUTION-002"]}]
+
+
+def _reason_findings(root: Path, code: str) -> list[dict]:
+    return [item for item in findings(root) if item["code"] == code]
+
+
+def _lock_and_green(root: Path) -> None:
+    core.write_lock(root, core.load_manifest(root), require_clean=True)
+    commit(root, core.LOCK_NAME, message="lock")
+    assert codes(root) == []
+
+
+def test_t08_case_change_without_reason_fails(repo: Path) -> None:
+    _change_case_file(repo)
+    assert "reasons" not in renew(repo)
+    hits = _reason_findings(repo, "seal_renewal_reason_missing")
+    assert len(hits) == 1 and hits[0]["detail"]["kind"] == "case_change"
+
+
+def test_t08_case_change_with_reason_passes(repo: Path) -> None:
+    _change_case_file(repo)
+    renew(repo, reasons=["case-change"])
+    _lock_and_green(repo)
+    assert _reason_findings(repo, "seal_renewal_reason_superfluous") == []
+
+
+def test_t09_link_change_without_reason_fails(repo: Path) -> None:
+    renew_mutate(repo, _change_link)
+    hits = _reason_findings(repo, "seal_renewal_reason_missing")
+    assert len(hits) == 1 and hits[0]["detail"]["kind"] == "link_change"
+
+
+def test_t09_link_change_with_reason_passes(repo: Path) -> None:
+    renew_mutate(repo, _change_link, reasons=["link-change"])
+    _lock_and_green(repo)
+    assert _reason_findings(repo, "seal_renewal_reason_superfluous") == []
+
+
+def test_t12_case_and_link_need_both_reasons(repo: Path) -> None:
+    _change_case_file(repo)
+    renew_mutate(repo, _change_link, reasons=["case-change"])
+    hits = _reason_findings(repo, "seal_renewal_reason_missing")
+    # 只报缺的 link-change，不因 case 已写而重复报 case_change
+    assert len(hits) == 1 and hits[0]["detail"]["kind"] == "link_change"
+
+
+def test_t12_case_and_link_with_both_reasons_passes(repo: Path) -> None:
+    _change_case_file(repo)
+    renew_mutate(repo, _change_link,
+                 reasons=["case-change", "link-change"])
+    _lock_and_green(repo)
+
+
+def test_t09_superfluous_reasons_fail(repo: Path) -> None:
+    renew_mutate(repo, lambda payload: None,
+                 reasons=["case-change", "link-change"])
+    hits = _reason_findings(repo, "seal_renewal_reason_superfluous")
+    assert len(hits) == 2
+    assert {item["detail"]["reason"] for item in hits} == {
+        "case-change", "link-change"}
+
+
+def test_t09_no_reason_when_nothing_changes_passes(repo: Path) -> None:
+    renew(repo)
+    _lock_and_green(repo)
+    assert _reason_findings(repo, "seal_renewal_reason_missing") == []
+    assert _reason_findings(repo, "seal_renewal_reason_superfluous") == []
