@@ -1,7 +1,7 @@
 # RFC-20261111-03：验收资产契约（#51 / #52 / #53 / #54 / #55 / #59）
 
 - 日期：2026-11-11
-- 状态：**v48（D 批实现反馈 · 三项最小修订；行数 `2538`；基线提交 `411c971`；2026-11-12）**
+- 状态：**v50（C 批实现反馈 · 续签 reasons 两码补名；行数 `2548`；基线提交 `411c971`；2026-11-12）**
 - 冻结约定：**自 v39 起，只有 C 批（封条写侧、续签链、`seal reanchor`、E2E 封条、记录绑定）与 B 批的实现反馈可改本文件**；规则层新增争议一律进 C 批；**B-0 期间不再改本文档**。
 - 基线：`411c971`（A 批已提交；`9cdb1a1` 为 A 批前基线，`package.json` = `0.2.0-beta.33`）
 - 覆盖：GitHub `sunwenzhe-git/atlas` 六个同域 issue
@@ -915,7 +915,7 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 
 | # | 缺口 | 原因（原句为什么不可执行） | 改法 | 落点 |
 |---|---|---|---|---|
-| 1 | C-01…C-10 无独立 code | C-xx 是反包编号，实现却原样写进 `errors[].code`，消费方拿到码表不存在的码 | 每个 C 项给真码：`crosswalk_ac_unmapped` / `member_prd_unresolved` / `member_ac_missing` / `requirement_missing` / `duplicate_row` / `waiver_due_exceeded` / `ac_link_mismatch`；C-08 正例无码；C-10 沿用 `crosswalk_orphan_member_ac` | §5.2 码表、§7 C 行 |
+| 1 | C-01…C-10 无独立 code | C-xx 是反包编号，实现却原样写进 `errors[].code`，消费方拿到码表不存在的码 | 每个 C 项给真码：`crosswalk_ac_unmapped` / `crosswalk_member_prd_unresolved` / `crosswalk_member_ac_missing` / `crosswalk_requirement_missing` / `crosswalk_duplicate_row` / `crosswalk_waiver_due_exceeded` / `crosswalk_ac_link_mismatch`；C-08 正例无码；C-10 沿用 `crosswalk_orphan_member_ac` | §5.2 码表、§7 C 行 |
 | 2 | C-06 不可判 | 锁里只有 `waiver_baseline_digest` 摘要，反推不出集合，生产路径永远判不了 | **并入 `waiver_baseline_drift`**：集合变 ⇒ 摘要变，不新增锁字段、不重算历史；C-06 不再独立判、不产码 | §7 C-06、§2.1 reader 供数 |
 | 3 | C-09 缺输入面 | `MemberPrdReader` 只给 `ac_ids`，判不了「映射到错误方案 AC」 | reader 契约加 **`ac_links(path) -> list[{member_ac, linked_solution_ac}]`**；C-09 用 `crosswalk_ac_link_mismatch` | §2.1、§5.2 码表 |
 | 4 | §五-b 错误归属矛盾 | §6 写「`AC-CONTRACT-1` 形态错 ⇒ parse 的 `ac_format`」，但 §五-b 不经 crosswalk parser | 改 `contract_ac_format` + `detail.kind = ac_contract_format`，删掉指向 parser 的表述 | §6 D 夹具、码表 |
@@ -923,7 +923,7 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 
 **v46 自查**：① C-01…C-09 各有真码（C-08 正例、C-06 合并除外），码表与 §7 对号；② C-06 不再依赖不可得的集合；③ `ac_links` 进 reader 协议；④ §五-b 形态错归 `contract_ac_*`；⑤ `member_domain_mismatch` 单一判据面。其余未动。**不宣称评审通过。**
 
-## 1. 域模型（v48）
+## 1. 域模型（v50）
 
 ### 1.1 定义源：显式、受约束、可复算、需求摘要
 
@@ -1195,7 +1195,8 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
        2. **新建键**：仅当该路径在 HEAD 有封条且键不存在（首次 `lock --update`）；`state = active`，`epoch_origin = L[0]`（无 `reanchor`）或该路径唯一那枚 `R0`（`L` 中唯一满足 `renewal_seq == reanchor.base_seq` 的提交）；`renewal_seq` / `n` 取该路径 HEAD 封条；`anchor_review = R0.reanchor.review` 或 `null`；**`epoch_origin_history = [epoch_origin]`（v16/I-3：建键即写下初值，否则规则 3 的「从一条变两条」不可判）**；**`exemption_start_origin` 与 `exemption_started_at` 同值写入**：二者都 = 该路径 `L[0]` 首签封条的 `signed_at`，逐字节相等（v18/重要 1；v22/I-6 起 origin 的已有值不改写、started_at 可由 reanchor 重指）；**`exemption_start_history = []`**（建键即空数组）；**`first_seen_origin = 该路径 HEAD 封条载荷的 first_seen_at`**（v23/I-1：建键写死，due 上界只从它算）；v18/重要 1：封条字节被链规则钉住、可复算；`git show -s --format=%cI <L[0]>` 只作 WARN/INFO——committer date 可被 amend / rebase / `GIT_COMMITTER_DATE` 改写，不可证）；带 `moved_from` 的新键不适用本式，必须递归继承链首键的值（规则 4）**。**封条提交与建键提交必须成对（v14/I-5）**：`epoch_origin = L[0]` 里的 `L[0]` 是**提交 SHA**，在「加封条的那个提交」里不可知（提交前算不出自己的 SHA，写进去就是自指）。因此：① **禁止在同一个提交里既新增封条又建键**；② 顺序固定为「先提交封条」→「在该提交上跑 `lock --update`」→「独立提交锁」；③ 中间态（HEAD 有封条、锁里还没键）**必然**报 `seal_anchor_path_unmapped`，这是**预期红**，不是缺陷——CI 只判 PR 头（或显式判「封条提交 + 建键提交」这一对），不得为了消红把两步并成一个提交；④ 建键提交里 `L[0]` 已确定，`epoch_origin` 才可写。**本地口径（v15/N-3）**：在两个提交之间看到 `seal_anchor_path_unmapped` 属预期；采纳仓若有 pre-push 逐提交跑 `check`，应**跳过该中间提交**（或只在 PR 头跑），不得因此要求把两步合并。
        3. **已存在键**：保留 `epoch_origin` 与 `anchor_review`，只刷新 `renewal_seq` / `n`；不得从 `L[0]` 重算（重写后 `L[0]` 会变成可达新 SHA，合法 fresh clone reanchor 会被 `reanchor_not_allowed` 误杀）。**`n` 按 state 取（v17/I-5）**：`active` ⇒ `len(L)`；`retired` ⇒ `len(L_pre)`（§1.1.3 第 5 条给的取值，**不是** `len(L)`——`retired` 的 `L` 末尾有删除提交，算进去会让 `n` 每次删除后都变）；`frozen` ⇒ `frozen_at` 前缀的长度。**HEAD 无封条时（`retired` 且旧文件已删 / `frozen` 且 `frozen_at` 前有删）`renewal_seq` 保留锁内原值，不得写 `0` / `null`**（v17/I-5：这两个值会让链规则 1 的 `renewal_seq == len(L)` 误红，也会被误读成「从未签发」）。**该状态专属字段原样保留（v15/I-3）**：`state`、`moved_to`、`frozen_at` 等一律不改——`lock --update` 不是状态迁移命令，遇到已 `frozen` 的键不得写回 `active`、也不得清掉 `frozen_at`；遇到 `retired` 不得改写、也不得清掉 `moved_to`（S-47a / S-47b）。**`exemption_started_at` 对 `lock --update` 只读不写（v16/N-2；v22/I-6）**：已存在键一律沿用原值，缺该字段（v15 及更早的锁）⇒ 一次性写入该路径 `L[0]` 那枚首签封条的 `signed_at`（**逐字节**，可从 git 复算；`%cI` 只作 WARN/INFO，见 §8；**归一化口径（v19/次要 4；v21/次要 3 拆码）：统一 `YYYY-MM-DDTHH:MM:SSZ`，UTC、`Z` 后缀、无小数秒；`+00:00` 或带小数秒 ⇒ `exemption_start_signed_at_not_canonical` FAIL（独立码，不与封条 `signed_at_not_canonical` 混用），不做语义换算**）。**`lock --update` 此后不再改它；唯一允许改它的是 `seal reanchor`（同步重指 + 同一写入里 append `exemption_start_history`）**。**`exemption_start_origin` / `exemption_start_history` / `first_seen_origin` 的补写（v23/I-1/I-2）**：缺 `exemption_start_origin` 的存量键 ⇒ 一次性写入当前 `exemption_started_at` 的值（二者在建键时同值，不能重取封条时间）；缺 `exemption_start_history` ⇒ 初始化为 `[]`；缺 `first_seen_origin` ⇒ 一次性写入当前封条载荷的 `first_seen_at`；**已有值一律不改写**（origin / first_seen_origin 只回填、不改写；history 只由 `seal reanchor` append）。**`epoch_origin_history` 的补写（v16/I-3）**：缺该字段的存量键 ⇒ 先按 `[当前 epoch_origin]` 初始化，再按下面的重指规则决定是否 append；已有该字段 ⇒ 只 append、不删、不重排、不排序。
           **首签分支 rebase 的受控重指（v15/I-1；v16/I-4 给可判法）**：`lock --update` 允许重指 `epoch_origin`，但**必须同时满足**四条：① `state == active`；② **锁历史里该键从未出现过非 `null` 的 `anchor_review`**（不是读当前锁的快照——扫 `git log -m --full-history HEAD -- atlas.solution.lock.json` 的每个版本，任一版本该键的 `anchor_review` 非空即不满足；v16/I-4）；③ **HEAD 封条**的 `renewal_seq == 1`（读 HEAD 文件，不读锁里的 `renewal_seq` 快照；v16/I-4）；④ 旧 `epoch_origin` **不在当前 HEAD 历史里**。④ 的退出码必须分清：`git merge-base --is-ancestor <old> HEAD` 返回 **0 = 可达（不可重指）**、**1 = 不可达（可重指）**、**128 = 对象缺失或不合法（可重指，rebase 后旧对象常已被 gc）**；**其它非零一律按错误退出，不得当成「否」**。重指必须 append `epoch_origin_history[]`：旧值永不删除，一次 `lock --update` 最多 append 一条，数组末元素即当前 `epoch_origin`。**不设次数上限（v17/B-2）**：四条条件已经保证「从未重锚 + 只有首签」，重复 rebase 只是换 SHA、没有载荷可洗；再加 `len <= 2` 会把「单封条路径 rebase 两次」变成死结（重指被拒、`N == 1` 的 reanchor 判 `reanchor_invalid`、键不能删、封条不能重置）。`epoch_origin_history` 只作**审计留痕**，长度断言（`len == 1 + 重指次数`、末元素 == 当前 `epoch_origin`、无重复）保留为**篡改检测**（判序 ②，码 `epoch_origin_history_rewritten`），**不再当门**。**重指次数的计数口径（v18/次要 2）**：= 锁文件历史**逐版本比较** `epoch_origin` 发生变化的次数（相邻两版该键的 `epoch_origin` 不同即 +1），**不得用数组自身长度反推**。**任一条件不满足仍按规则 1 报 `reanchor_record_missing`**，不得因为「看起来像 rebase」就放宽。这样首签 rebase 有可执行的自助出口，而不是「禁止 rebase」这种 PR 上无法用机器门守的规矩。
-       4. **路径移动（R12-1/R12-4；S-31/S-35/S-36；v17/I-1/I-6 补继承与 `signed_at` 复制）**：新路径**新增**键（`state = active`，`epoch_origin = 新路径 L[0]`、`anchor_review = null`）；旧键改为 `state: retired` 并写 `moved_to: <新路径>`。**新键的 `exemption_started_at` 必须沿 `moved_from` 递归到链首、与链首键的值相等**，**`exemption_start_origin` 与 `exemption_start_history` 也一并从链首键逐字节复制**，**`first_seen_origin` 同此**（v23/I-1：due 上界也必须随换路径继承，不得重取当前封条载荷的 `first_seen_at`——否则换路径就成了「重置 90 天窗口」的出口）（v22/I-6：不得重取封条时间、不得把 history 重置为空数组——那样会让「换路径」变成清洗审计链的出口）（v18/次要 3：中途缺键先按 ① 报 `seal_anchor_path_unmapped`，不另判 `exemption_start_conflict`；「链首键不存在」只作 `exemption_start_conflict` 的 `detail`，不得回落到封条时间——旧封条每续签一次 `signed_at` 就后移，回落等于把豁免起点往后挪）；**新封条的 `signed_at` 必须逐字节等于 `L_pre[-1].signed_at`**（同一 canonical 形态：`YYYY-MM-DDTHH:MM:SSZ`、UTC、`Z`、无小数秒；v19/次要 4）（换路径不是重签，规则 6 的豁免集里已没有 `signed_at`；写侧由 `seal sign --move-from <旧路径>` 复制，不许取 `now()`）。**旧文件可以删除**，但该删除提交必须被新封条的 `moved_from` 覆盖（`moved_from.path == 旧路径` 且 `moved_from.sha256 == 旧路径在迁出前最后一枚封条的字节`），且 `moved_from.path` 必须 ∈ `U`。**没有 `moved_from` 的删除 ⇒ `seal_path_history_lost` FAIL**；旧路径 `L` 里的 `D` **照常计入**，由第 5 条给归属（不是不计算）。`retired` 之后：禁止该路径任何新续签、新 reanchor、以及改 `e2e.cases[]` / `owner`，违反 ⇒ `seal_path_retired_write` FAIL（不是「跳过」）。新路径的首签与建键**同样必须分成两个提交**（第 2 条 v14/I-5 的成对要求对首次签发和换路径签发一视同仁）。
+          **单提交仓的 TOFU 基线（v49/项 3）**：`epoch_origin == L[0]`（锚自指）**本身不是红**。判据分两态，实现者不得合并：① **首次信任**——锁历史里该键 `epoch_origin_history` 长度 == 1、其值 == `L[0]`、`anchor_review == null`，且封条**不带** `reanchor` ⇒ 首次建立时不存在「被改写的历史」，锚自指是事实，**按 TOFU 接受、不报 `chain_unverifiable`**（否则任何正常首签都永久红）；② **重指必须独立锚**——本次或历史存在 repoint（`epoch_origin_history` 长度 > 1，或 `anchor_review != null`，或封条带 `reanchor`）而锚仍自指 ⇒ **fail-closed 报 `chain_unverifiable`**。一句话：**「首次信任」与「重指必须独立锚」是两件事**——前者是基线事实，后者是防重写的前提。
+       4. **路径移动（R12-1/R12-4；S-31/S-35/S-36；v17/I-1/I-6 补继承与 `signed_at` 复制）**：新路径**新增**键（`state = active`，`epoch_origin = 新路径 L[0]`、`anchor_review = null`）；旧键改为 `state: retired` 并写 `moved_to: <新路径>`。**新键的 `exemption_started_at` 必须沿 `moved_from` 递归到链首、与链首键的值相等**，**`exemption_start_origin` 与 `exemption_start_history` 也一并从链首键逐字节复制**，**`first_seen_origin` 同此**（v23/I-1：due 上界也必须随换路径继承，不得重取当前封条载荷的 `first_seen_at`——否则换路径就成了「重置 90 天窗口」的出口）（v22/I-6：不得重取封条时间、不得把 history 重置为空数组——那样会让「换路径」变成清洗审计链的出口）（v18/次要 3：中途缺键先按 ① 报 `seal_anchor_path_unmapped`，不另判 `exemption_start_conflict`；「链首键不存在」只作 `exemption_start_conflict` 的 `detail`，不得回落到封条时间——旧封条每续签一次 `signed_at` 就后移，回落等于把豁免起点往后挪）；**新封条的 `signed_at` 必须逐字节等于 `L_pre[-1].signed_at`**（同一 canonical 形态：`YYYY-MM-DDTHH:MM:SSZ`、UTC、`Z`、无小数秒；v19/次要 4）（换路径不是重签，规则 6 的豁免集里已没有 `signed_at`；写侧由 `seal sign --move-from <旧路径>` 复制，不许取 `now()`）。**旧文件可以删除**，但该删除提交必须被新封条的 `moved_from` 覆盖（`moved_from.path == 旧路径` 且 `moved_from.sha256 == 旧路径在迁出前最后一枚封条的字节`），且 `moved_from.path` 必须 ∈ `U`。**没有 `moved_from` 的删除 ⇒ `seal_path_history_lost` FAIL**；旧路径 `L` 里的 `D` **照常计入**，由第 5 条给归属（不是不计算）。`retired` 之后：禁止该路径任何新续签、新 reanchor、以及改 `e2e.cases[]` / `owner`，违反 ⇒ `seal_path_retired_write` FAIL（不是「跳过」）。新路径的首签与建键**同样必须分成两个提交**（第 2 条 v14/I-5 的成对要求对首次签发和换路径签发一视同仁）。**与 `reanchor` 的组合、`retired` 键的锚处置见 §2.5（v49/项 1/2）。**
        5. **状态机（唯一状态字段，三个状态都有判据，R12-1/R12-4）**：
           - `active`：**HEAD 必须存在该路径封条**，且无 `moved_to` / `frozen_at`；按规则 0–10 全链校验，`D>0` ⇒ `seal_history_reset`（不变）。文件在而 state 非 `active`、或 state 为 `active` 而 HEAD 无文件，都报 `seal_anchor_path_state_mismatch`。
           - `retired`：该路径已被 `moved_to` 指向的新路径取代；**HEAD 可以有旧文件（S-31）也可以没有（S-36 的合法形态）**。判据三条，缺一即 `seal_path_history_lost`：① `moved_to` 必填且指向一个存在的键；② 该目标路径的 HEAD 封条必须有 `moved_from.path == 本路径` 且 `moved_from.sha256 == sha256(本路径迁出前最后一枚封条字节, CRLF→LF)`；③ **迁出前那段链仍要复算**：令 `L_pre` = 本路径 `L` 中删除提交**之前**的提交序列——取值写死（v14/N-1）：`idx = max{i | L[i] 的 name-status 含 D}`（判命令 `git show --format= --name-status --no-renames <c> -- <S>`，逐 `c ∈ L` 求），`L_pre = L[0:idx]`；若 `L` 里没有任何 `D`，则 `L_pre = L`。`L_pre` 必须满足规则 0–7（`A`/`D` 按 `L_pre` 计），且 `moved_from.sha256` 必须等于 `L_pre[-1]` 那枚封条的字节。删除提交本身**不计入 `L_pre`**，但它必须**有且仅有一个**且被 `moved_from` 覆盖；`L` 里出现第二个 `D` ⇒ `seal_path_history_lost`（旧路径被删了两次 = 删+重建，不允许借 `retired` 洗白）。`retired` 之后禁止该路径任何新续签、新 `reanchor`、以及改 `e2e.cases[]` / `owner` ⇒ `seal_path_retired_write`。
@@ -1610,6 +1611,12 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 
 **判据**：U-01…U-08。
 
+**路径移动与 `reanchor` 的组合（v49/项 1/项 2 · 定稿，非开放问题）**
+
+- **同一封条上 `moved_to` 与 `reanchor` 互斥**：`moved_to` 由 `lock --update` 在旧路径封条上写（§1.1.3 第 4 条），`reanchor` 由 `seal reanchor --review` 写；两者同时出现在**同一封条**⇒ 写侧（`lock --update` / `seal reanchor`）**拒绝并 exit 2、不写任何文件**；读侧见到同存 ⇒ **FAIL `seal_move_reanchor_conflict`**（exit 1）。新路径的**新封条**可以带自己的 `reanchor`（记的是新路径自己的历史），不属于冲突。
+- **旧键转 `retired` 后锚固化**：`epoch_origin` **保持原值、不随历史重写重指**（§1.1.3 第 3 条已禁重算）；`epoch_origin_history` 只 append、不删。读侧对 `retired` 键**不再判锚可达性**（不因旧路径树已被重写而报 `chain_unverifiable`），只判：历史 append-only、`moved_to` 指向的新键存在且 `state == active`。`reanchor_record_missing` 只对 **`active` / `frozen`** 键判。
+- **受控重指不覆盖 `retired` 键**（v49/项 2 唯一口径）：§1.1.3 的受控重指四条件本就要求 `state == active`，因此 `retired` 键的 `epoch_origin` 一律保持原值、读侧按上一条放宽；`frozen` 同理不重指。**不设「读侧放宽到不判锚」的全局开关**——放宽只作用于非 `active` 键。
+
 ### 2.6 #59 定义源无法区分「路径错」与「另一份合法 PRD」
 
 **#59 的保证（R2）**
@@ -2007,7 +2014,7 @@ D  = L 中状态字母含 D 的「提交数」
 
 - 一次重签同时改 case 与 link：`reasons` 必须**同时**含 `case-change` 与 `link-change`；缺任一 ⇒ FAIL。
 - 首签 `reasons=[]`；重签必须非空，且与实际变化集合相等。
-- `reasons` 是集合：多写一个没有对应变化的 reason ⇒ FAIL（防止「全量重签」洗掉证据）。
+- `reasons` 是集合：多写一个没有对应变化的 reason ⇒ FAIL `seal_renewal_reason_superfluous`（`detail.reason` 记多余项；防止「全量重签」洗掉证据）。
 
 ## 5. 兼容与迁移
 
@@ -2109,7 +2116,10 @@ D  = L 中状态字母含 D 的「提交数」
     | `lock_unparsable` | **⓪-0**：当前锁在解析层失败——非 JSON 对象 / `schema_version` 类型或取值不对 / `members`、`contracts` 缺失或非 list-of-dict / 任一 `.root` 结构性或词法性错误；**失败即短路**，`errors[]` 只有该码 | §3.2 ⓪-0 | **1** / `errors[]` | 否 |
     | `lock_history_unparsable` | **⓪-1**：锁的任一历史版本解析失败（对象在、字节坏）；**失败即短路**、不参与降级。**`non_blob` 属本码外延**（路径存在但类型是 tree / symlink / gitlink）：它不是「没有该路径」，不得当 `absent` 跳过（v35/次要 2） | §3.2 ⓪-1、§1.1.3 ⑦ | **1** / `errors[]` | 否 |
     | `chain_unverifiable` | **第 0 步 / ⓪-1**：`detail.cause ∈ {shallow, partial}`（仓形态不可信）或 `history_unreadable`（`git log` 不可读）；⓪ 层一律 hard FAIL，**字段名是 `cause` 不是 `kind`**（v32/I-3） | §3.2 第 0 步 / ⓪-1 | **1** / `errors[]` | 否（⓪ 层不降级；`definition.commit` 的对象缺失另有 `definition_commit_unverifiable` + `downgrades[]`） |
-    | `signed_at_not_canonical` | 封条的 `signed_at` 不是 `YYYY-MM-DDTHH:MM:SSZ`（UTC、`Z` 后缀、无小数秒）；`+00:00`、`.123Z`、缺 `Z`、非 UTC 一律命中 | §3.2、T-28/T-29 | 1 / `errors[]` | 否 |
+    | `seal_move_reanchor_conflict` | **同一封条同时带 `moved_to` 与 `reanchor`**（`retired` 旧键与重锚组合被禁止，v49/项 1）：写侧（`lock --update` / `seal reanchor`）拒绝并 exit 2、不写任何文件；读侧命中即 FAIL。**只作用于同一条封条**——新路径的新封条可带自己的 `reanchor` | §2.5、§1.1.3 第 4 条 | 1 / `errors[]` | 否 |
+| `seal_renewal_reason_missing` | **同路径普通续签**（`renewal_seq > 1`）时，新旧投影比对发现 `e2e.cases[]` 变化（`detail.kind = case_change`）或索引 `关联AC` 集合变化（`link_change`），而新封条 `reasons[]` 未含对应项；**两个 kind 都缺则各报一条，不合并**。**不重叠**：换路径首签（`renewal_seq = 1` + `moved_from`）走 `seal_move_payload_mismatch`，不报本码 | §3.4、T-08/T-12 | 1 / `errors[]` | 否 |
+| `seal_renewal_reason_superfluous` | `reasons[]` 含 `case-change` / `link-change`，但对应实际变化不存在（防「全量重签」洗证据）；`detail.reason` 记多余项 | §3.4 | 1 / `errors[]` | 否 |
+| `signed_at_not_canonical` | 封条的 `signed_at` 不是 `YYYY-MM-DDTHH:MM:SSZ`（UTC、`Z` 后缀、无小数秒）；`+00:00`、`.123Z`、缺 `Z`、非 UTC 一律命中 | §3.2、T-28/T-29 | 1 / `errors[]` | 否 |
     | `review_reused` | 同一个 `REVIEW-ID` 被用于两个不同决策（改根 + 改 cutover）；同决策链内复用不算 | §5.1「review 是自述」 | 1 / `errors[]` | 否 |
     | `acceptance_cutover_unreviewed` | **门槛码**：`acceptance_cutover` 晚于包级默认而 review 为空 ⇒ FAIL（`detail.kind = "review_missing"`）；值 > 默认 + 90 天 ⇒ 同码（`beyond_default_plus_90d`）。**与 `acceptance_cutover_review_malformed` 互斥**：判序**先空后形态**——空值归本码（且仅晚于默认时），非空坏形态归 `malformed`，同一字段只出一个码（v36/重要 1）。**实现状态**：该谓词当前未落地（`_check_acceptance_cutover` 只有 `missing` / `mismatch`），必须与 `malformed` 同批实现，否则 V-20⑥ 永远绿 | §1.1.3、§5.1、V-20⑥ | **1** / `errors[]` | 否 |
     | `acceptance_cutover_review_malformed` | **读侧**：清单里的 `acceptance_cutover_review` 非空但形态不是 `REVIEW-\d{8}-\d{2}`（v35/重要 1）。**不走 exit 2**——否则一份坏值会让整份报告消失、用户看不到别的错误；进 `errors[]`、exit 1。**写侧**（`init` / `migrate` 收到 `--anchor-review`）形态不符属**用法错误**：exit 2、不写任何文件；**与 `acceptance_cutover_unreviewed` 互斥**：空值归上一行、非空坏形态归本码（先空后形态，v36/重要 1） | §1.1.3 清单字段、§5.2 第 8 条、V-23d | **1** / `errors[]`（读侧）；写侧 exit 2 无报告 | 否 |
@@ -2343,11 +2353,11 @@ D  = L 中状态字母含 D 的「提交数」
 | T-05 | `case_ids` 与封条集合不等 | FAIL |
 | T-06 | 分片围栏体改 | FAIL stale |
 | T-07 | 索引状态回写 | PASS |
-| T-08 | 索引 `关联AC` 改、shard 不变、reason 缺失 | FAIL |
+| T-08 | 索引 `关联AC` 改、shard 不变、reason 缺失 | FAIL `seal_renewal_reason_missing`（`detail.kind = link_change`） |
 | T-09 | 索引 `关联AC` 改、reason=link-change | PASS |
 | T-10 | 孤儿封条（任务已删未 archive） | FAIL |
 | T-11 | archived 封条 | 不判新鲜度 |
-| T-12 | case + link 同改，reasons 只写一个 | FAIL |
+| T-12 | case + link 同改，reasons 只写一个 | FAIL `seal_renewal_reason_missing`；**两个 kind 各报一条**（`case_change` / `link_change`），不合并 |
 | T-13 | `previous_cases[]` 与旧封条不符 | FAIL |
 | T-14 | `renewal_seq != N`（无 `reanchor`）/ 不等于 reanchor 公式（有 `reanchor`）/ 普通续签的 `previous_seal_commit != L[-2]` / `previous_seal_sha256` 不符；**边界封条（`seq == base_seq`）的 `previous_seal_sha256` 不为 `null`** | FAIL；reanchor 提交自身按 `previous_seal_commit == reanchor.from_a` 判，后续续签无豁免（S-23；v10/次要 2 补 null 断言） |
 | T-15 | reanchor 提交的载荷与 `L[-2]` 不等（除 `renewal_seq`/`previous_seal_commit`/`previous_seal_sha256`/`reanchor`/`signed_at` **五字段**，且 `previous_seal_sha256` 必须为 `null`） | `reanchor_payload_mismatch` FAIL（S-24；v10 五字段） |
@@ -2525,7 +2535,7 @@ D  = L 中状态字母含 D 的「提交数」
 原有开放问题：
 
 1. `关联AC` 同列多值（`、`/`,`）是否够；是否需要单独的链接表。
-2. **`crosswalk_orphan_member_ac` 是否升 FAIL（v42/横切）**：D 批默认只 WARN（默认配置下不报，见 C-10）；#51 的「双向对账」另一半（成员 AC → 方案）仍无人判。选项：(a) 保持可选 WARN；(b) D 批首版即 FAIL，给 90 天迁移；(c) 只对「成员 PRD 已被 `prd-domain` 绑定的仓」FAIL。**待拍板**，未定前默认 (a)。
+2. **`crosswalk_orphan_member_ac` 不升 FAIL（v50 已拍板：选 (a)）**：保持**可选 WARN、默认静默**（默认配置下不报，见 C-10）。**理由**：绑定（`prd-domain`）只证明「这份 PRD 属于本方案」，不证明「里面每条 AC 都要有方案 AC 对应」；成员 PRD 必然有纯本地补充 AC，直接判会成片误报；(c) 要真上得先补「这条是内部 AC、不参与对账」的显式声明位，等于再改一次 crosswalk schema，属独立一轮设计。**残余风险**：#51 的「双向对账」实际只落了单向（方案 AC → 成员 AC）；成员 AC → 方案 AC 这半边默认无人判，孤儿成员 AC 可静默存在——**关闭 #51 时这条必须写进关单，不许含糊过去**。**后续**：(c) 留给 **0.5.0**，届时连同「内部 AC」声明位一起设计。
 3. `atlas apply archive` 的归档条件：是否要求「所有 AC 有 E2E 状态或显式 n/a」。
 4. `min_atlas` 的强制点：只靠 `install.sh --update`，还是必须 CI 比对。
 
