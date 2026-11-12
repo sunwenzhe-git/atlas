@@ -502,8 +502,36 @@ def _run_checks(
     return res
 
 
+def _check_solution_crosswalk(root: Path, res: "Result") -> None:
+    """父仓 crosswalk / §五-b 契约 AC / 证据列（D 批，§2.1）。
+
+    只在 solution 清单存在时适用；成员仓单独运行本校验器 ⇒ 无清单、保持 N/A 语义。
+    """
+    if not (Path(root) / "atlas.solution.yaml").is_file():
+        return
+    try:
+        solution = load_module("solution")
+        data = solution.load_manifest(root)
+        findings = solution._crosswalk_and_contract_checks(Path(root), data)
+    except Exception as exc:  # noqa: BLE001 - 对账不可用必须显式出声
+        res.add("跨仓 AC crosswalk", "FAIL",
+                f"检查不可用: {type(exc).__name__}: {exc}")
+        return
+    fails = [f for f in findings if f["severity"] == "error"]
+    warns = [f for f in findings if f["severity"] != "error"]
+    if fails:
+        res.add("跨仓 AC crosswalk", "FAIL",
+                "；".join(f["message"] for f in fails[:6]))
+    elif warns:
+        res.add("跨仓 AC crosswalk", "WARN",
+                "；".join(f["message"] for f in warns[:6]))
+    else:
+        res.add("跨仓 AC crosswalk", "PASS", "crosswalk / 契约 AC 判据通过")
+
+
 def validate_ac_alignment(root: Path) -> Result:
     res = Result()
+    _check_solution_crosswalk(root, res)
     try:
         lay = load_layout(root)
     except LayoutError as exc:

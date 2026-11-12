@@ -178,7 +178,8 @@ def ac_source_status(root: Path, data: dict, assets_root: str | None = None) -> 
     prd = _ac_prd(root, assets_root)
     defs = _ac_defs(root, assets_root)
     refs = [(req, ac) for req in data.get("requirements") or []
-            for ac in req.get("acs") or []]
+            for ac in req.get("acs") or []
+            if not str(ac).startswith("AC-CONTRACT-")]
     if not refs:
         return {"state": "ok", "prd": str(prd), "findings": []}
     if not defs:

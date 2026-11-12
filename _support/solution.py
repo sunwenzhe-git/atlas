@@ -2898,6 +2898,221 @@ def _layer0_lock(root: Path):
     return lock, None, infos, chain_issue
 
 
+# ---------------------------------------------------------------- D 批：crosswalk + 契约 AC
+
+CROSSWALK_FILE = "ac-crosswalk.md"
+CROSSWALK_WAIVERS_FILE = "ac-crosswalk-waivers.md"
+_AC_TOKEN_RE = re.compile(r"^AC-[A-Z0-9]+-\d{3}$")
+_SOLUTION_AC_RE = re.compile(r"^AC-SOLUTION-\d{3}$")
+
+
+def _md_tables(text: str) -> list[tuple[list[str], list[tuple[int, list[str]]]]]:
+    """所有 Markdown 表：`(表头, [(行号, 单元格)])`；表头与单元格去反引号。"""
+    lines = text.splitlines()
+    out: list[tuple[list[str], list[tuple[int, list[str]]]]] = []
+    i = 0
+    while i < len(lines):
+        header = _table_header_at(lines, i)
+        if header is None:
+            i += 1
+            continue
+        header = [c.strip().strip("`").strip() for c in header]
+        rows: list[tuple[int, list[str]]] = []
+        j = i + 2
+        while j < len(lines) and lines[j].strip().startswith("|"):
+            cells = [c.strip().strip("`").strip()
+                     for c in lines[j].strip().strip("|").split("|")]
+            if cells and all(re.fullmatch(r":?-{3,}:?", c) for c in cells if c != ""):
+                j += 1
+                continue
+            rows.append((j + 1, cells))
+            j += 1
+        out.append((header, rows))
+        i = max(j, i + 1)
+    return out
+
+
+def _load_crosswalk_waivers(path: Path) -> list[dict]:
+    """`ac-crosswalk-waivers.md` 的 `| 需求 | owner | due | review |` 行；缺失 ⇒ []。"""
+    if not path.is_file():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    for header, rows in _md_tables(text):
+        if "需求" not in header:
+            continue
+        out: list[dict] = []
+        for _line, cells in rows:
+            if len(cells) != len(header):
+                continue
+            item = dict(zip(header, cells))
+            out.append({"requirement": item.get("需求", ""),
+                        "owner": item.get("owner", ""),
+                        "due": item.get("due", ""),
+                        "review": item.get("review", "")})
+        return out
+    return []
+
+
+class _SolutionPrdReader:
+    """父仓侧 `MemberPrdReader`（§2.1）。
+
+    v47 不变式：`ac_ids(path) == {x.member_ac for x in ac_links(path)}`（同一全集，
+    不得两套真源）。`ac_links` 只取成员 AC 表（表头首列 `AC ID`），排除 §五-b 契约 AC 表；
+    该行缺 `关联AC` ⇒ `linked_solution_ac = null`（该行仍出现在 `ac_ids` 内）。
+    `waivers` 来自 `ac-crosswalk-waivers.md`；C-06 已并入 `waiver_baseline_drift`，本读取面不供数。
+    """
+
+    def __init__(self, root: Path, data: dict) -> None:
+        self.root = root
+        self.assets_root = _assets_root(root)
+        self._members = {str(m.get("name")): str(m.get("path") or "")
+                         for m in data.get("members") or []}
+        self.waivers = _load_crosswalk_waivers(
+            root / self.assets_root / "prd" / CROSSWALK_WAIVERS_FILE)
+
+    def paths(self, member: str) -> list[str]:
+        base_rel = self._members.get(member)
+        if not base_rel:
+            return []
+        base = self.root / base_rel / self.assets_root / "prd"
+        if not base.is_dir():
+            return []
+        return sorted(str(p.relative_to(self.root)) for p in base.glob("*-prd.md"))
+
+    def exists(self, path: str) -> bool:
+        return (self.root / path).is_file()
+
+    def front_matter(self, path: str) -> dict:
+        fm = _prd_front_matter(self.root / path)
+        return {"domain": fm.get("domain", ""), "prd_schema": fm.get("prd_schema", "")}
+
+    def ac_links(self, path: str) -> list[dict]:
+        file = self.root / path
+        if not file.is_file():
+            return []
+        out: list[dict] = []
+        for header, rows in _md_tables(file.read_text(encoding="utf-8")):
+            if not header or header[0] not in ("AC ID", "AC"):
+                continue
+            link_col = header.index("关联AC") if "关联AC" in header else None
+            for _line, cells in rows:
+                if not cells or not _AC_TOKEN_RE.match(cells[0]):
+                    continue
+                linked = None
+                if link_col is not None and len(cells) > link_col:
+                    tokens = [t for t in re.split(r"[、,，\s]+", cells[link_col])
+                              if _AC_TOKEN_RE.match(t)]
+                    linked = tokens or None
+                out.append({"member_ac": cells[0], "linked_solution_ac": linked})
+        return out
+
+    def ac_ids(self, path: str) -> set[str]:
+        return {item["member_ac"] for item in self.ac_links(path)}
+
+
+def _evidence_columns_findings(root: Path, data: dict,
+                               table) -> list[dict]:
+    """被 `requirements[].acs` 引用到的成员 PRD：缺证据两列 ⇒ `evidence_columns_missing`。"""
+    out: list[dict] = []
+    member_paths = {str(m.get("name")): str(m.get("path") or "")
+                    for m in data.get("members") or []}
+    referenced = {(str(ac_id), str(req.get("member") or ""))
+                  for req in data.get("requirements") or []
+                  for ac_id in req.get("acs") or []}
+    seen: set[str] = set()
+    for row in table.rows:
+        if (row.solution_ac, row.member) not in referenced:
+            continue
+        base = member_paths.get(row.member)
+        if not base:
+            continue
+        prd_rel = f"{base}/{row.prd}"
+        if prd_rel in seen:
+            continue
+        seen.add(prd_rel)
+        prd_file = root / prd_rel
+        if not prd_file.is_file():
+            continue
+        header = _assumption_table_header(prd_file.read_text(encoding="utf-8"))
+        if header is None:
+            continue
+        missing = [c for c in EVIDENCE_COLUMNS if c not in header]
+        if missing:
+            out.append({"code": "evidence_columns_missing", "severity": "error",
+                        "message": f"evidence_columns_missing: 被引用成员 PRD "
+                                   f"{prd_rel} 缺 {' / '.join(missing)} 两列之一",
+                        "path": prd_rel})
+    return out
+
+
+def _crosswalk_and_contract_checks(root: Path, data: dict) -> list[dict]:
+    """D 批父仓半边：§五-b 契约 AC + crosswalk 检查族 + 被引用成员 PRD 的证据列。
+
+    两条短路互斥（§2.1）：文件缺失 / 不可读 ⇒ 只报 `crosswalk_unresolvable`；
+    能读但坏行 ⇒ 只报 `crosswalk_parse_error`（`detail.kind` 取五项闭集之一）。
+    两者都抑制 C-01…C-11（含 C-09）。
+    """
+    ac = _load_sibling("ac_crosswalk", "_atlas_ac_crosswalk")
+    out: list[dict] = []
+
+    definition = data.get("definition") or {}
+    def_rel = str(definition.get("path") or "")
+    if def_rel:
+        prd_file = root / def_rel
+        if prd_file.is_file():
+            text = prd_file.read_text(encoding="utf-8")
+            out.extend(f.as_dict()
+                       for f in ac._contract_ac_findings(text, data, def_rel))
+
+    rel = f"{_assets_root(root)}/prd/{CROSSWALK_FILE}"
+    path = root / rel
+    requirements = data.get("requirements") or []
+    # §2.1 迁移：**按需求判**——只有出现 `AC-SOLUTION-*` 引用的需求才需要 crosswalk；
+    # 零需求 / 只引用契约 AC 的清单不因缺表被红（否则 `init` 刚写出的仓必然 FAIL）。
+    needs_crosswalk = any(
+        _SOLUTION_AC_RE.match(str(ac))
+        for req in requirements for ac in req.get("acs") or [])
+    if not needs_crosswalk:
+        return out
+    text = None
+    if path.is_file():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            text = None
+    if text is None:
+        out.append({"code": "crosswalk_unresolvable", "severity": "error",
+                    "message": f"crosswalk_unresolvable: {rel} 缺失或不可读；"
+                               "C-01…C-11 整表抑制",
+                    "path": rel})
+        if requirements:
+            out.append({"code": "evidence_columns_unbound", "severity": "error",
+                        "message": f"evidence_columns_unbound: 无法定位 crosswalk"
+                                   f"（{rel}），被引用成员 PRD 的证据列不可判",
+                        "path": rel})
+        return out
+    try:
+        table = ac.parse_crosswalk(text)
+    except ac.CrosswalkParseError as exc:
+        out.append({"code": "crosswalk_parse_error", "severity": "error",
+                    "message": f"crosswalk_parse_error: {rel} {exc}；"
+                               "C-01…C-11 整表抑制",
+                    "path": rel, "detail": {"kind": exc.code, "line": exc.line}})
+        if requirements:
+            out.append({"code": "evidence_columns_unbound", "severity": "error",
+                        "message": f"evidence_columns_unbound: crosswalk 不可解析"
+                                   f"（{rel}），被引用成员 PRD 的证据列不可判",
+                        "path": rel})
+        return out
+    reader = _SolutionPrdReader(root, data)
+    out.extend(f.as_dict() for f in ac.crosswalk_findings(table, data, reader))
+    out.extend(_evidence_columns_findings(root, data, table))
+    return out
+
+
 def check_solution(root: Path, strict: bool = False,
                    allow_dangling_acs: bool = False,
                    lenient: bool = False,
@@ -3111,6 +3326,15 @@ def check_solution(root: Path, strict: bool = False,
                 add("PRD 证据列", "FAIL", too_low)
             for status, detail in prd_schema_findings(prd_text, rel):
                 add("PRD 证据列", status, detail)
+    # D 批：crosswalk 检查族 + §五-b 契约 AC + 被引用成员 PRD 的证据列（§1.5 第 7 条、§2.1）。
+    for item in _crosswalk_and_contract_checks(root, data):
+        status = "FAIL" if item["severity"] == "error" else "WARN"
+        add("跨仓 crosswalk", status, item["message"])
+        row = {"code": item["code"], "message": item["message"],
+               "path": item.get("path")}
+        if item.get("detail") is not None:
+            row["detail"] = item["detail"]
+        (errors if item["severity"] == "error" else warnings).append(row)
     for c in contracts_now:
         missing = [side for side in ("producer_sha256", "consumer_sha256")
                    if c[side] == "missing"]

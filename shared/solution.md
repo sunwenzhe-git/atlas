@@ -45,7 +45,7 @@
 | `contracts[].producer` / `consumer` | 否 | 必须是 members 名称 |
 | `contracts[].producer_path` / `consumer_path` | 否 | 相对各自成员仓的文件路径 |
 | `requirements[].id` | 否 | 父级需求 ID；与 `member` 组合唯一 |
-| `requirements[].acs` | 否 | 父级 AC ID，顿号/逗号分隔；必须是 `solution-prd.md` AC 表的定义行 |
+| `requirements[].acs` | 否 | 父级 AC ID，顿号/逗号分隔；必须是定义源 PRD 的 AC 定义行——方案 AC 写 `AC-SOLUTION-*`（§五 表），字段契约写 `AC-CONTRACT-*`（§五-b 表）；契约 AC 不参与方案 AC 定义校验 |
 | `requirements[].member` | 否 | 必须是 members 名称 |
 | `requirements[].task_slug` | 否 | Trellis slug；不含路径分隔符 / `..` / `MM-DD-` 前缀；创建后冻结 |
 | `requirements[].scope` | 否 | 单行本地 scope；含 `#` 时必须加引号；只在成员任务 `solution.md` 中展开 |

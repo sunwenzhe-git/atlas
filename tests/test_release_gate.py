@@ -41,6 +41,38 @@ def tag_utc_date(ref: str) -> str:
     return datetime.fromisoformat(out).astimezone(timezone.utc).date().isoformat()
 
 
+def test_seal_upstream_bind_constant_matches_first_d_tag() -> None:
+    """D-48：`SEAL_UPSTREAM_BIND_FROM` == D 批首个 tag 的 UTC 日期。
+
+    与 D-40 同构：非 tag 环境 / 常量未武装 ⇒ skip；武装后只认「引入该常量值
+    的提交被最早一个 tag 包含」的日期——后期 tag 不会误判。
+    """
+    if os.environ.get("GITHUB_REF_TYPE") != "tag":
+        pytest.skip("未在发布 tag 上运行（GITHUB_REF_TYPE != tag）")
+    if core.SEAL_UPSTREAM_BIND_FROM is None:
+        pytest.skip("SEAL_UPSTREAM_BIND_FROM 未武装（D 批发版时必须填首个 tag 的 UTC 日期）")
+    log = subprocess.run(
+        ["git", "-C", str(PKG_ROOT), "log", "--format=%H", "-S",
+         'SEAL_UPSTREAM_BIND_FROM: str | None = "', "--", "_support/solution.py"],
+        capture_output=True, text=True)
+    commits = [c for c in log.stdout.split() if c] if log.returncode == 0 else []
+    if not commits:
+        pytest.skip("找不到写入常量值的提交（浅克隆？）")
+    introducing = commits[-1]  # newest-first ⇒ 最后一条是最早写入该值的提交
+    tags = subprocess.run(
+        ["git", "-C", str(PKG_ROOT), "tag", "--contains", introducing,
+         "--sort=creatordate"],
+        capture_output=True, text=True)
+    names = [t for t in tags.stdout.split() if t] if tags.returncode == 0 else []
+    if not names:
+        pytest.skip(f"引入常量的提交 {introducing[:12]} 尚未被任何 tag 包含")
+    first = names[0]
+    expected = tag_utc_date(first)
+    assert core.SEAL_UPSTREAM_BIND_FROM == expected, (
+        f"SEAL_UPSTREAM_BIND_FROM={core.SEAL_UPSTREAM_BIND_FROM!r} 与 D 批首个 tag "
+        f"{first} 的 UTC 日期 {expected!r} 不一致")
+
+
 def test_prd_schema_constant_matches_release_tag() -> None:
     ref_type = os.environ.get("GITHUB_REF_TYPE")
     ref_name = os.environ.get("GITHUB_REF_NAME", "")

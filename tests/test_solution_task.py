@@ -304,3 +304,20 @@ def test_scope_hash_is_round_tripped(tmp_path: Path) -> None:
     ], members=("a",))
     loaded = core.load_manifest(tmp_path)
     assert loaded["requirements"][0]["scope"] == "同步 # 备注"
+
+
+def test_contract_ac_reference_skips_ac_missing(tmp_path: Path) -> None:
+    """§1.5 ⑦：`AC-CONTRACT-*` 不进 `ac_missing`；只有契约 AC 引用时无需方案 PRD 定义行。"""
+    (tmp_path / "product" / "prd").mkdir(parents=True)
+    (tmp_path / "product" / "prd" / "solution-prd.md").write_text(
+        "| AC ID | 场景 | 回指规则 |\n|---|---|---|\n"
+        "| `AC-SOLUTION-001` | Given | SOL-R-001 |\n", encoding="utf-8")
+    data = {"requirements": [{"id": "REQ-001", "member": "web",
+                              "acs": ["AC-CONTRACT-001"]}]}
+    status = task_core.ac_source_status(tmp_path, data)
+    assert status["state"] == "ok"
+    assert status["findings"] == []
+    # 对照（防恒真假绿）：缺定义的方案 AC 仍要报 ac_missing。
+    data["requirements"][0]["acs"] = ["AC-SOLUTION-002"]
+    assert [f["code"] for f in task_core.ac_source_status(
+        tmp_path, data)["findings"]] == ["ac_missing"]
