@@ -1,7 +1,7 @@
 # RFC-20261111-03：验收资产契约（#51 / #52 / #53 / #54 / #55 / #59）
 
 - 日期：2026-11-11
-- 状态：**v47（D 批实现反馈 · 五项口径修订 + 两行收口；行数 `2538`；基线提交 `411c971`；2026-11-12）**
+- 状态：**v48（D 批实现反馈 · 三项最小修订；行数 `2538`；基线提交 `411c971`；2026-11-12）**
 - 冻结约定：**自 v39 起，只有 C 批（封条写侧、续签链、`seal reanchor`、E2E 封条、记录绑定）与 B 批的实现反馈可改本文件**；规则层新增争议一律进 C 批；**B-0 期间不再改本文档**。
 - 基线：`411c971`（A 批已提交；`9cdb1a1` 为 A 批前基线，`package.json` = `0.2.0-beta.33`）
 - 覆盖：GitHub `sunwenzhe-git/atlas` 六个同域 issue
@@ -835,7 +835,7 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 
 | # | 缺口 | v41 改法 | 落点（节号 / 行号） |
 |---|---|---|---|
-| 1 | crosswalk 解析器归属未定，易被塞进 2600+ 行的 `_support/solution.py` | 独立模块 `_support/ac_crosswalk.py`；公开面 `parse_crosswalk`（纯函数）与 `crosswalk_findings`（产 C-01…C-08），路径 helper `resolve_crosswalk_path` 供封条 role 用；调用方 = `check_solution` / `validate_ac_alignment`（D）与封条 upstream（仅路径）；**D 批交付，C 不 import** | §2.1、§6 D（L2128） |
+| 1 | crosswalk 解析器归属未定，易被塞进 2600+ 行的 `_support/solution.py` | 独立模块 `_support/ac_crosswalk.py`；公开面 `parse_crosswalk`（纯函数）与 `crosswalk_findings`（产 C-01…C-08），路径解析为**模块内私有 helper**（v48/项 3，不对外）；公开面只有 `parse_crosswalk` 与 `crosswalk_findings`；调用方 = `check_solution` / `validate_ac_alignment`（D），封条 upstream 自行拼路径（C）；**D 批交付，C 不 import** | §2.1、§6 D（L2128） |
 | 2 | §1.3.2「成员 AC 也必须是 crosswalk 像」与 §1.3「只对源 PRD 已定义 AC 判」自相矛盾，C 夹具只列了集合判据 | 裁定 **C 批卡门只判 `⊆ requirements[].acs`**，crosswalk 像 / 孤儿 AC 整体归 D；改正两处口径并在 §6 C 夹具写明边界 | §1.3.2、§1.3 判据、§6 C（L2114） |
 | 3 | 封条 `prd-domain` / `ac-crosswalk` 何时开始绑未定，且「有成员 AC / 有映射时是」会让 C 依赖未落地的解析器 | **C 批只按文件存在性做字节绑定、不做语义校验；文件不存在 ⇒ role 缺席、不拒签**；与「有映射时是」的关系写清（那两句归 D） | §2.5 |
 | 4 | 锁内 `requirements_digest` / `waiver_baseline_digest` 没写首次判定、不可变与 canonical 口径 | 首次判据 = **锁里尚无该键**（**已被 v42 取代**：改为「键不存在或 `null`」+ 三路径 + `manifest_digest_removed` / `manifest_rollback`）；同一序列化器 + golden vector（`waiver` 向量 `f1da37a3…`）；已写入后只复算比对、**不得静默改写**；`waiver_baseline_drift` 判据仍归 D（**v42 移入 C**） | §1.1 8-b（L1207） |
@@ -854,7 +854,7 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 | 阻断 2 | 「键不存在即首次」可被删键绕过 | 接受 | 三路径分开：升级走首次、换锁（历史有非 null）⇒ `manifest_digest_removed`、回滚（`prd_version` 递减 / digest 回旧值）⇒ `manifest_rollback`；读侧键缺失行为写死 | §1.1 8-b、§5.2 码表 |
 | 阻断 3 | `crosswalk_findings` 签名产不出 C-01…C-08 | 接受 | 补 `reader: MemberPrdReader`（`paths` / `exists` / `front_matter` / `ac_ids`）；`CrosswalkParseError.code` 闭集五项；**重复键归 findings（C-05）**，parse 不抛；文件缺失由调用方判 `crosswalk_unresolvable` | §2.1 |
 | 阻断 4 | 契约 AC 引用面与卡门右集互斥，E-04 不可达 | 接受（方案 a） | `AC-CONTRACT-*` **纳入 `requirements[].acs` 合法值域**；列出三处允许引用面，禁止进成员 AC 位置；`shared/solution.md:48` 随 D 同步 | §1.5 第 7 条 |
-| 重要 1 | C 批仍有成员 PRD 路径依赖 | 接受 | `prd-domain` 用 `members[].path` + `prd/*-prd.md` **glob 全绑**（只列路径）；`resolve_crosswalk_path` 不产成员列表 | §2.5 |
+| 重要 1 | C 批仍有成员 PRD 路径依赖 | 接受 | `prd-domain` 用 `members[].path` + `prd/*-prd.md` **glob 全绑**（只列路径）；路径 helper（v48 降为私有）不产成员列表 | §2.5 |
 | 重要 2 | 「缺席不拒签」致 D 批追溯翻红 | 接受 | `upstream[]` 只落已绑定 role；D 批推导期望 role，缺项 ⇒ `seal_upstream_unbound` WARN，至 **D 批首版 + 90d** FAIL；出口 = 续签补绑（v43 已修正 `min` 反向） | §2.5、码表 |
 | 重要 3 | `waiver_baseline_drift` 留 D，C 读侧无码 | 接受 | **移入 C**（纯摘要比对、不依赖 crosswalk），C 读侧差异直接 FAIL | §1.1 8-b、码表 |
 | 重要 4 | Confirmed 可重贴标签降级 | 接受 | 降级 / `assumed↔unverified` 互转须 `REVIEW-ID`，否则 `confirmed_downgrade_unreviewed` FAIL；定义 `assumed`=有默认值来源、`unverified`=无来源 | §1.5 第 8 条 |
@@ -923,7 +923,7 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 
 **v46 自查**：① C-01…C-09 各有真码（C-08 正例、C-06 合并除外），码表与 §7 对号；② C-06 不再依赖不可得的集合；③ `ac_links` 进 reader 协议；④ §五-b 形态错归 `contract_ac_*`；⑤ `member_domain_mismatch` 单一判据面。其余未动。**不宣称评审通过。**
 
-## 1. 域模型（v47）
+## 1. 域模型（v48）
 
 ### 1.1 定义源：显式、受约束、可复算、需求摘要
 
@@ -1531,9 +1531,9 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 - **公开面两类入口**：
   1. 解析入口 `parse_crosswalk(text) -> CrosswalkTable`：**纯函数**，零 Git / 零文件系统；坏行 ⇒ `CrosswalkParseError(code, line)`。
   2. findings 入口 `crosswalk_findings(table, manifest, reader: MemberPrdReader) -> list[Finding]`：`reader` 提供 `paths(member) -> list[Path]`、`exists(path)`、`front_matter(path) -> {domain, prd_schema}`、`ac_ids(path) -> set[str]`、**`ac_links(path) -> list[{member_ac, linked_solution_ac}]`**（v46/项 3，C-09 用），另有 `waivers: list[WaiverRow]`（来自 `ac-crosswalk-waivers.md`；文件缺失 ⇒ `[]`）——C-07 由它供数（C-06 已并入 `waiver_baseline_drift`，v46/项 2）。产 C-01…C-11 所需的 `(code, row)`，**不打印、不 exit**。**不变式（v47）**：`ac_ids(path) = {x.member_ac for x in ac_links(path)}`（同一全集，不得两套真源）；成员 AC 行缺 `关联AC` ⇒ `linked_solution_ac = null`（该行仍出现在 `ac_links` 与 `ac_ids`）；**C-03 命中行不再判 C-09**（同一行只出一个码）。
-     - **四类失败形态归属（v42/阻断 3）**：① crosswalk 文件缺失 ⇒ 调用方（`check_solution`）在 parse 前判 `crosswalk_unresolvable`（C-01）；② 表头 / 列数 / AC 形态 / 路径形态 / 成员名错 ⇒ `parse_crosswalk` 抛 `CrosswalkParseError`，`code` 闭集 = `header_missing | column_count | ac_format | prd_path | member_field_empty`（**纯词法**；`member_unknown` 需 manifest，移出 parse，归 findings C-11）；③ **唯一键重复归 findings（C-05）**，parse 不抛（同一行为只一个归属）；④ 成员 PRD 缺失 / 多 PRD 无法定位 / 成员 AC 不存在 / **`成员`、`成员域`、AC 前缀、`domain` 四者任一不一致（见 §1.3）** ⇒ findings 用 `reader` 判（C-02 / C-03 / C-11）。
-  - 路径 helper `resolve_crosswalk_path(root) -> Path` 供封条 upstream 的 `ac-crosswalk` role 用；**只解析路径，不解析内容**。
-- **调用方**：父仓 `check_solution`（D 批，parse + findings）；`validate_ac_alignment`（D 批，findings）；封条 upstream 解析只调 `resolve_crosswalk_path`（C 批，见 §2.5）。**C 批不 import 本模块**。
+     - **四类失败形态归属（v42/阻断 3）**：① crosswalk 文件缺失 ⇒ 调用方（`check_solution`）在 parse 前判 `crosswalk_unresolvable`；**触发条件（v48/项 1）：仅当 `requirements[].acs` 中出现 `AC-SOLUTION-*` 引用时才要求 crosswalk 存在**；纯 `AC-CONTRACT-*` 不算，零方案 AC 的清单（含 `init` 刚写出的零需求清单）⇒ 本码**不适用**（不判，既不是 PASS 也不是 SKIP，不计覆盖率）；② 表头 / 列数 / AC 形态 / 路径形态 / 成员名错 ⇒ `parse_crosswalk` 抛 `CrosswalkParseError`，`code` 闭集 = `header_missing | column_count | ac_format | prd_path | member_field_empty`（**纯词法**；`member_unknown` 需 manifest，移出 parse，归 findings C-11）；③ **唯一键重复归 findings（C-05）**，parse 不抛（同一行为只一个归属）；④ 成员 PRD 缺失 / 多 PRD 无法定位 / 成员 AC 不存在 / **`成员`、`成员域`、AC 前缀、`domain` 四者任一不一致（见 §1.3）** ⇒ findings 用 `reader` 判（C-02 / C-03 / C-11）。
+  - 路径解析**降为模块内私有 helper**（v48/项 3，不对外）：只供 `crosswalk_findings` 默认定位使用，不解析内容；**公开面仍只有上面两个入口**。
+- **调用方**：父仓 `check_solution`（D 批，parse + findings）；`validate_ac_alignment`（D 批，findings）；封条 upstream 的 `ac-crosswalk` 路径由调用方按 `<assets_root>/prd/ac-crosswalk.md` **直接拼接**（C 批，见 §2.5），不经本模块公开面。**C 批不 import 本模块**。
 - **批次**：D 批交付；文件表加 `_support/ac_crosswalk.py` 与 `tests/test_ac_crosswalk.py`。
 
 **孤儿成员 AC（v41 裁定，C-03 边界）**：C-03 只判「crosswalk 显式行列出的成员 AC 是否存在于成员 PRD」，**未列进 crosswalk 的成员 AC 不判**。理由：成员 PRD 的 AC 集合是成员仓自有资产，父仓无法区分「应映射却漏了」与「成员内部 AC」；要判必须解析成员 PRD，依赖本模块（D 批）。因此 #51 的「双向对账」在 **crosswalk 检查族（D 批）**降级为**单向（仅显式映射对）**；D 批提供可选 `crosswalk_orphan_member_ac` **WARN**（默认不 FAIL），是否升为 FAIL 留在 §9。
@@ -1603,7 +1603,7 @@ B-0 锁 1 → B 升 2 写一句；承认模板 `prd_schema: 1`（B）到 2（D�
 - role → path 由同一个 helper 解析，供 `seal` 与 `validate_apply_record` 共用；不允许封条里写任意路径。
 - `version` 可写不判；绑定字节。不绑 `atlas-apply.md`。
 - **C 批边界（v41）**：`prd-domain` 与 `ac-crosswalk` 只做**文件存在性 + 字节绑定**，不做语义校验（不解析 crosswalk、不比对成员 AC）；文件不存在 ⇒ 该 role **缺席**，**不拒签**。
-- **C 批成员 PRD 路径推导（v42/重要 1）**：`prd-domain` 用 `members[].path` + `<assets_root>/prd/*-prd.md` **glob 全绑**（只列路径、不读内容），**不需要 crosswalk 表**；`resolve_crosswalk_path` 只给 `ac-crosswalk` 文件路径，不产成员 PRD 列表。这是路径推导，不是解析，倒挂确实解除。
+- **C 批成员 PRD 路径推导（v42/重要 1）**：`prd-domain` 用 `members[].path` + `<assets_root>/prd/*-prd.md` **glob 全绑**（只列路径、不读内容），**不需要 crosswalk 表**；`ac-crosswalk` 的路径由调用方按固定相对路径拼接（v48/项 3：模块内 helper 私有），不产成员 PRD 列表。这是路径推导，不是解析，倒挂确实解除。
 - **D 批首次 check 的追溯处理（v42/重要 2）**：`upstream[]` **只含已绑定 role**，缺席不落盘（不写 `absent` 项）。D 批上线后按清单推导期望 role（`prd-domain` / `ac-crosswalk`）与封条 `upstream[]` 比对：缺项 ⇒ `seal_upstream_unbound` **WARN**；至 **D 批首版 + 90d**（模块常量 `SEAL_UPSTREAM_BIND_FROM`，随 D 批写入 `_support/solution.py`，仿 `PRD_SCHEMA_2_FROM`；**不用 `acceptance_cutover`**，否则默认 `2027-03-31` 早于 D 上线时窗口已过期、上线当天全 FAIL）仍缺 ⇒ **FAIL**。**`state = frozen` 的封条只降级为永久 WARN**（v44/阻断 1，选方案 (c)）：不阻断、不随 `--strict` 升级；理由：frozen 不可改写，全文无 `unfreeze` 命令，续签重写字节会被 `seal_frozen_modified` 判红 ⇒ 不能要求补绑。**可见性**：每次 `check` 必进 `warnings[]`，摘要行打印 `seal_upstream_unbound(frozen=N)`，并按 §3.2 计入 `warnings[]` 排序；解冻入口不在本 RFC 新增（留给 C 批之后的实现反馈）。
 - **常量发版门（v44/阻断 1）**：`SEAL_UPSTREAM_BIND_FROM` 必须等于 **D 批首个 tag 的 UTC 日期**（`git for-each-ref --format='%(creatordate:short)' refs/tags/<first-D-tag>`），由与 D-40 同构的夹具断言；写晚 ⇒ 窗口永不到期，判 FAIL。与上表「有成员 AC 时是 / 有映射时是」的关系：那两句是 **D 批**的语义判据；C 批退化为存在性，故 C 不依赖 `_support/ac_crosswalk.py`，倒挂解除。
 - 成员 PRD 缺席：**签发时（C 批）** `prd-domain` 计为缺席、**不拒签**，封条照签；**D 批起**（crosswalk 落地后）若该成员有映射行而 PRD 缺席 ⇒ 拒绝签发。**校验时**成员工作区缺席 ⇒ `upstream_unresolvable` 默认 FAIL（与 §3.3 的 `member_workspace_absent` 同口径），不静默跳过、不当 PASS。
@@ -2127,7 +2127,7 @@ D  = L 中状态字母含 D 的「提交数」
     | `contract_ac_undefined` | **D 批（E-04）**：任务卡 / 封条投影 / `requirements[].acs` 引用 `AC-CONTRACT-*`，但 §五-b 表无该行（v41） | §1.5 第 7 条、E-04 | 1 / `errors[]` | 否 |
     | `contract_ac_orphan` | **D 批**：§五-b 行的 `关联AC` 不在同 PRD §五 AC 表（v41） | §1.5 第 7 条 | 1 / `errors[]` | 否 |
     | `contract_ac_in_member_slot` | **D 批（v43/阻断 3）**：`AC-CONTRACT-*` 出现在 `成员AC` / 成员 PRD 的 AC 表（契约 AC 不得占成员 AC 位置） | §1.5 第 7 条 | 1 / `errors[]` | 否 |
-    | `crosswalk_unresolvable` | **D 批（v43/阻断 4）**：`<assets_root>/prd/ac-crosswalk.md` 缺失 / 不可读；**抑制 C-01…C-11**（含 C-09；只报本码），不可降级 | §2.1 | 1 / `errors[]` | 否 |
+    | `crosswalk_unresolvable` | **D 批（v43/阻断 4；v48/项 1 收条件）**：`requirements[].acs` 出现 `AC-SOLUTION-*` 时，`<assets_root>/prd/ac-crosswalk.md` 缺失 / 不可读；**零方案 AC ⇒ 本码不适用**（不判、非 PASS 非 SKIP）；**抑制 C-01…C-11**（含 C-09；只报本码），不可降级 | §2.1 | 1 / `errors[]` | 否 |
     | `crosswalk_parse_error` | **D 批（v44/重要 8；v45 补抑制）**：crosswalk 能读但坏行；`detail.kind ∈ {header_missing, column_count, ac_format, prd_path, member_field_empty}`；**抑制 `C-01…C-11`（含 C-09；只报本码）**；不可降级；与 `crosswalk_unresolvable`（缺失/不可读）互斥 | §2.1 | 1 / `errors[]` | 否 |
     | `member_domain_mismatch` | **D 批（v43；v46/项 5 定唯一判据面）**：crosswalk `成员` / `成员域` / 成员 AC 前缀 / 成员 PRD front matter `domain` **四者任一不一致** | §1.3、§2.1、C-11 | 1 / `errors[]` | 否 |
     | `crosswalk_ac_unmapped` | **D 批（v46/项 1；C-01）**：方案 AC 无 crosswalk 行（`AC-CONTRACT-*` 除外） | §2.1、C-01 | 1 / `errors[]` | 否 |
@@ -2235,8 +2235,8 @@ D  = L 中状态字母含 D 的「提交数」
 
 ### 批次 D：#51 crosswalk + #53 证据/契约 AC + 期限执行点
 
-- 文件：**`_support/ac_crosswalk.py`（新，v41：`parse_crosswalk` / `crosswalk_findings` / `resolve_crosswalk_path`，见 §2.1）**、`tests/test_ac_crosswalk.py`（新）、`_support/solution.py`（`check_solution` 读 crosswalk、waiver、证据列；**父仓按 crosswalk 扫被引用成员 PRD、缺列报 `evidence_columns_unbound` 的那半边只在这里，v17 明确归 D**）、`_support/solution_task.py`（`task_status`）、`templates/prd/domain.md`（**仅** §五-b 契约表；`prd_schema: 2` 与证据两列已随 B 落地，**D 不再升版本**；`prd_version` 已随 B）、`templates/prd/ac-crosswalk.md`（新）、`validators/validate_prd.py`（只留**成员侧**证据列期限判据的接线；成员侧 `prd_schema` 谓词已在 B 落地）、`validators/validate_ac_alignment.py`、`shared/solution.md`、`tests/test_prd_contract_ac.py`、`tests/test_solution_task.py`。
-- 夹具：成员多 PRD 定位（I1）；`(方案AC,成员)` 无需求行；重复三元组；需求级豁免；后加需求不可豁免；（`waiver_baseline_digest` 漂移已移 C，v43/重要 3）`verified` 无指针；被引用域缺列（父仓 FAIL `evidence_columns_unbound`）；**`成员AC = AC-CONTRACT-001` ⇒ `contract_ac_in_member_slot` FAIL；成员 PRD AC 表出现契约 AC ⇒ 同码（D-46）**；**父仓按 crosswalk 扫被引用 PRD、crosswalk 缺失 ⇒ `evidence_columns_unbound`（v17：这半边依赖 crosswalk 落地，不能出现在 B 的清单里）**；`prd_schema: 2` 新 PRD 缺列（立即 FAIL）；`prd_schema: 1` 存量未引用域缺列（2027-06-30 含前 WARN；07-01 起成员 `validate_prd` FAIL）；成员单独 `atlas check` 证据列 N/A；**§五-b 契约 AC（v42/重要 7）**：正例（六列齐全、`AC-CONTRACT-001` 被 `requirements[].acs` 引用、`关联AC` 有效）；反例（缺 `契约AC` 表头 ⇒ `contract_ac_table_missing`；引用未定义 ⇒ `contract_ac_undefined`；`关联AC` 悬空 ⇒ `contract_ac_orphan`；重复 `契约AC`；编号 `AC-CONTRACT-1` 形态错 ⇒ `contract_ac_format`，`detail.kind = ac_contract_format`；**§五-b 不经 crosswalk parser**，v46/项 4）。
+- 文件：**`_support/ac_crosswalk.py`（新，v41：公开面仅 `parse_crosswalk` / `crosswalk_findings`；路径解析为私有 helper，v48/项 3）**、`tests/test_ac_crosswalk.py`（新）、`_support/solution.py`（`check_solution` 读 crosswalk、waiver、证据列；**父仓按 crosswalk 扫被引用成员 PRD、缺列报 `evidence_columns_missing` 的那半边只在这里，v17 明确归 D**）、`_support/solution_task.py`（`task_status`）、`templates/prd/domain.md`（**仅** §五-b 契约表；`prd_schema: 2` 与证据两列已随 B 落地，**D 不再升版本**；`prd_version` 已随 B）、`templates/prd/ac-crosswalk.md`（新）、`validators/validate_prd.py`（只留**成员侧**证据列期限判据的接线；成员侧 `prd_schema` 谓词已在 B 落地）、`validators/validate_ac_alignment.py`、`shared/solution.md`、`tests/test_prd_contract_ac.py`、`tests/test_solution_task.py`。
+- 夹具：成员多 PRD 定位（I1）；`(方案AC,成员)` 无需求行；重复三元组；需求级豁免；后加需求不可豁免；（`waiver_baseline_digest` 漂移已移 C，v43/重要 3）`verified` 无指针；被引用域缺列（父仓 FAIL `evidence_columns_missing`；v48/项 2 与 §1.5 第 12 条对齐）；**`成员AC = AC-CONTRACT-001` ⇒ `contract_ac_in_member_slot` FAIL；成员 PRD AC 表出现契约 AC ⇒ 同码（D-46）**；**父仓按 crosswalk 扫被引用 PRD、crosswalk 缺失 ⇒ `evidence_columns_unbound`（v17：这半边依赖 crosswalk 落地，不能出现在 B 的清单里）**；`prd_schema: 2` 新 PRD 缺列（立即 FAIL）；`prd_schema: 1` 存量未引用域缺列（2027-06-30 含前 WARN；07-01 起成员 `validate_prd` FAIL）；成员单独 `atlas check` 证据列 N/A；**§五-b 契约 AC（v42/重要 7）**：正例（六列齐全、`AC-CONTRACT-001` 被 `requirements[].acs` 引用、`关联AC` 有效）；反例（缺 `契约AC` 表头 ⇒ `contract_ac_table_missing`；引用未定义 ⇒ `contract_ac_undefined`；`关联AC` 悬空 ⇒ `contract_ac_orphan`；重复 `契约AC`；编号 `AC-CONTRACT-1` 形态错 ⇒ `contract_ac_format`，`detail.kind = ac_contract_format`；**§五-b 不经 crosswalk parser**，v46/项 4）。
 - 依赖：B；D 必须在 B 后。**批次内依赖（v17/§1.5 第 2 条）**：`evidence_columns_unbound` 的父仓半边**只能**在 crosswalk 落地后实现；B 批只交付成员侧 `validators/validate_prd.py` 的同一谓词，不得以「父仓证据列已实现」的姿态记入 B 的验收。
 
 串行：**A → B-0 → B → C → D**。任何两会话不得同时写 `_support/solution.py` 或 `shared/solution.md`。
@@ -2309,7 +2309,7 @@ D  = L 中状态字母含 D 的「提交数」
 | D-42 | 锁 `prd_version` 从 5 回退到 3（其余不动） | `manifest_rollback` FAIL，`detail.prd_version = {3, 5}`；若同时缺键，**只报本码**（抑制 `manifest_digest_removed`，v43） |
 | D-43 | D 批 `SEAL_UPSTREAM_BIND_FROM` 起 90 天后，C 期封条缺 `prd-domain` / `ac-crosswalk` | `seal_upstream_unbound` FAIL；`state=frozen` 豁免；窗口内只 WARN（v43） |
 | D-44 | Confirmed 行 `unverified` 无 `confirmed_review:` / 有则 PASS | `confirmed_downgrade_unreviewed` FAIL / PASS（v43：当前行判，不读历史） |
-| D-45 | crosswalk 文件缺失 / 不可读 | `crosswalk_unresolvable` FAIL，**抑制 C-01…C-11（含 C-09）**（v44） |
+| D-45 | `requirements[].acs` 含 `AC-SOLUTION-*` 且 crosswalk 文件缺失 / 不可读 | `crosswalk_unresolvable` FAIL，**抑制 C-01…C-11（含 C-09）**（v44）；**零方案 AC ⇒ 本码不适用**（不判、非 PASS 非 SKIP，v48/项 1） |
 | D-46 | `成员AC = AC-CONTRACT-001`；成员 PRD AC 表出现契约 AC | `contract_ac_in_member_slot` FAIL（v44/重要 5） |
 | D-47 | crosswalk 能读但坏行（表头 / 列数 / AC 形态 / 路径 / 成员字段空 五类） | `crosswalk_parse_error` FAIL，`detail.kind` 取五值之一；**抑制 `C-01…C-11`（含 C-09；只报本码）**；**不是** `crosswalk_unresolvable`（v45） |
 | D-48 | **常量发版门（v44/阻断 1）**：`SEAL_UPSTREAM_BIND_FROM` ≠ D 批首个 tag 的 UTC 日期 | FAIL（与 D-40 同构；写晚 ⇒ 追溯窗口永不到期） |
