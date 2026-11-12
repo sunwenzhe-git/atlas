@@ -6,6 +6,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -84,10 +85,15 @@ def init_repo(tmp: Path) -> Path:
                        "scope": ["AC-SOLUTION-001"]}])
     (tmp / "product" / "e2e" / "cases").mkdir(parents=True, exist_ok=True)
     (tmp / "product" / "e2e" / "cases" / f"{CASE_ID}.md").write_text(
-        "```atlas-case\nid: E2E-LOGIN-001\n```\n", encoding="utf-8")
-    (tmp / "product" / "e2e" / "e2e-index.md").write_text(
-        "# index\n\n| ID | 需求 |\n|---|---|\n| E2E-LOGIN-001 | R1 |\n",
+        "## E2E-LOGIN-001\n\n```atlas-case\nid: E2E-LOGIN-001\n```\n",
         encoding="utf-8")
+    (tmp / "product" / "e2e" / "e2e-index.md").write_text(
+        "# index\n\n## E2E-LOGIN-001\n\n| ID | 需求 |\n|---|---|\n"
+        "| E2E-LOGIN-001 | R1 |\n", encoding="utf-8")
+    card = tmp / "web" / CARD
+    card.parent.mkdir(parents=True, exist_ok=True)
+    card.write_text("atlas-acceptance: AC-SOLUTION-001\n", encoding="utf-8")
+    (card.parent / "atlas-apply.md").write_text("# apply\n", encoding="utf-8")
     commit(tmp, ".", message="assets")
     data = core.load_manifest(tmp)
     payload = seal.build_seal_payload(
@@ -102,14 +108,18 @@ def init_repo(tmp: Path) -> Path:
 
 
 def renew(root: Path, **overrides) -> dict:
+    return renew_path(root, SEAL_REL, **overrides)
+
+
+def renew_path(root: Path, path: str, **overrides) -> dict:
     payload = seal.build_seal_payload(
-        root, core.load_manifest(root), SEAL_REL, assets_root="product",
+        root, core.load_manifest(root), path, assets_root="product",
         kind="binding", card_path=CARD,
         acceptance_acs=["AC-SOLUTION-001"], e2e_status="ready",
         case_ids=[CASE_ID], owner="@a")
     payload.update(overrides)
-    write_doc(root, payload)
-    commit(root, SEAL_REL, message="renew")
+    write_doc(root, payload, path)
+    commit(root, path, message="renew")
     return payload
 
 
@@ -332,6 +342,10 @@ def test_c_reanchor_writer_advances_epoch(tmp_path: Path) -> None:
     subprocess.run(["git", "clone", "-q", "file://" + str(rewritten), str(fresh)],
                    check=True)
     assert git(fresh, "cat-file", "-e", old_a, check=False).returncode != 0
+    card = fresh / "web" / CARD
+    card.parent.mkdir(parents=True, exist_ok=True)
+    card.write_text("atlas-acceptance: AC-SOLUTION-001\n", encoding="utf-8")
+    (card.parent / "atlas-apply.md").write_text("# apply\n", encoding="utf-8")
     core.write_lock(fresh, core.load_manifest(fresh), require_clean=True)
     commit(fresh, core.LOCK_NAME, message="lock after rewrite")
     result = core.reanchor_seal(fresh, SEAL_REL, "REVIEW-20261112-01", old_a)
@@ -344,13 +358,25 @@ def test_c_reanchor_writer_advances_epoch(tmp_path: Path) -> None:
     lock_doc = core.read_lock(fresh)
     assert lock_doc["seal_anchors"][SEAL_REL]["exemption_start_history"]
     commit(fresh, SEAL_REL, core.LOCK_NAME, message="reanchor R")
+    record = git(fresh, "rev-parse", "HEAD").stdout.strip()
     core.write_lock(fresh, core.load_manifest(fresh), require_clean=True)
     commit(fresh, core.LOCK_NAME, message="R2")
     anchor = core.read_lock(fresh)["seal_anchors"][SEAL_REL]
-    assert anchor["epoch_origin"] == git(fresh, "rev-list", "--max-parents=0",
-                                         "HEAD").stdout.split()[0]
+    assert anchor["epoch_origin"] == record
     assert anchor["anchor_review"] == "REVIEW-20261112-01"
     assert codes(fresh) == []
+    # B4：reanchor 后的正常续签必须仍绿
+    renew(fresh)
+    core.write_lock(fresh, core.load_manifest(fresh), require_clean=True)
+    commit(fresh, core.LOCK_NAME, message="renew after reanchor")
+    assert codes(fresh) == []
+    # B2：删 reanchor + 回退 renewal_seq 必须红（epoch_origin=R0 守卫）
+    doc = read_doc(fresh)
+    doc.pop("reanchor")
+    doc["renewal_seq"] = seal.seal_history(fresh, SEAL_REL)["N"] + 1
+    write_doc(fresh, doc)
+    commit(fresh, SEAL_REL, message="tamper reanchor")
+    assert "reanchor_record_missing" in codes(fresh)
 
 
 def test_c_reanchor_rejects_reachable_from_a(repo: Path) -> None:
@@ -368,12 +394,12 @@ def test_c_reanchor_requires_synced_anchor(repo: Path) -> None:
 def test_c_moved_from_first_sign(repo: Path) -> None:
     old = SEAL_REL
     new = "product/reviews/apply/web/T-001-moved.seal.json"
+    old_anchor = core.read_lock(repo)["seal_anchors"][old]
     doc = read_doc(repo)
     moved = seal.build_seal_payload(
         repo, core.load_manifest(repo), new, assets_root="product",
         kind="binding", card_path=CARD, acceptance_acs=["AC-SOLUTION-001"],
-        e2e_status="ready", case_ids=[CASE_ID], moved_from={"path": old},
-        reasons=["task-renamed"], previous_cases=[{"id": CASE_ID}])
+        e2e_status="ready", case_ids=[CASE_ID], moved_from={"path": old})
     assert moved["renewal_seq"] == 1
     assert moved["previous_seal_commit"] is None
     assert moved["signed_at"] == doc["signed_at"]
@@ -388,6 +414,19 @@ def test_c_moved_from_first_sign(repo: Path) -> None:
     assert anchors[old]["state"] == "retired"
     assert anchors[old]["moved_to"] == new
     assert anchors[new]["state"] == "active"
+    # B5：新键继承链首豁免起点，不得重置窗口
+    assert anchors[new]["exemption_start_origin"] == \
+        old_anchor["exemption_start_origin"]
+    assert anchors[new]["exemption_start_history"] == \
+        old_anchor["exemption_start_history"]
+    assert anchors[new]["first_seen_origin"] == old_anchor["first_seen_origin"]
+    assert codes(repo) == []
+    # B4：迁出后的正常续签必须继续携带 moved_from 且仍绿
+    renew_path(repo, new)
+    core.write_lock(repo, core.load_manifest(repo), require_clean=True,
+                    seal=new)
+    commit(repo, core.LOCK_NAME, message="renew moved")
+    assert "moved_from" in read_doc(repo, new)
     assert codes(repo) == []
 
 
@@ -397,8 +436,7 @@ def test_c_moved_from_sha_mismatch(repo: Path) -> None:
     moved = seal.build_seal_payload(
         repo, core.load_manifest(repo), new, assets_root="product",
         kind="binding", e2e_status="ready", case_ids=[CASE_ID],
-        moved_from={"path": old, "sha256": "0" * 64},
-        reasons=["task-renamed"], previous_cases=[{"id": CASE_ID}])
+        moved_from={"path": old, "sha256": "0" * 64})
     write_doc(repo, moved, new)
     git(repo, "rm", "-q", old)
     commit_all(repo, message="move seal")
@@ -414,8 +452,7 @@ def test_c_retired_write_is_detected(repo: Path) -> None:
     moved = seal.build_seal_payload(
         repo, core.load_manifest(repo), new, assets_root="product",
         kind="binding", e2e_status="ready", case_ids=[CASE_ID],
-        moved_from={"path": old}, reasons=["task-renamed"],
-        previous_cases=[{"id": CASE_ID}])
+        moved_from={"path": old})
     write_doc(repo, moved, new)
     git(repo, "rm", "-q", old)
     commit_all(repo, message="move seal")
@@ -439,14 +476,19 @@ def test_c_validator_cli_reports_and_n_a(repo: Path) -> None:
 
 def test_c_apply_seal_cli_writes_seconds_signature(repo: Path) -> None:
     new = "product/reviews/apply/web/T-003.seal.json"
+    before = datetime.now(timezone.utc)
     res = subprocess.run(
         [sys.executable, str(SEAL_SCRIPT), "--root", str(repo), "--seal", new,
          "--acceptance-acs", "AC-SOLUTION-001", "--e2e-status", "ready",
          "--case", CASE_ID, "--json"],
         capture_output=True, text=True)
+    after = datetime.now(timezone.utc)
     assert res.returncode == 0, res.stderr
     doc = json.loads((repo / new).read_text(encoding="utf-8"))
     assert seal.SIGNED_AT_RE.match(doc["signed_at"])
+    signed = datetime.strptime(doc["signed_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=timezone.utc)
+    assert before - timedelta(seconds=5) <= signed <= after + timedelta(seconds=5)
     assert doc["renewal_seq"] == 1
     assert {u["role"] for u in doc["upstream"]} >= {"manifest", "prd-global"}
 
@@ -462,3 +504,97 @@ def test_c_seal_cli_exit_codes(repo: Path) -> None:
          "freeze", "--seal", SEAL_REL, "--at", head, "--json"],
         capture_output=True, text=True)
     assert res.returncode == 0, res.stderr
+
+
+def _validator_codes(root: Path) -> list[str]:
+    errors, _, _, _ = validator.collect_errors(root)
+    return [e["code"] for e in errors]
+
+
+def test_b1_deleted_anchor_key_fails_at_delivery_gate(repo: Path) -> None:
+    lock = core.read_lock(repo)
+    lock["seal_anchors"] = {}
+    (repo / core.LOCK_NAME).write_text(
+        json.dumps(lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    commit(repo, core.LOCK_NAME, message="drop anchor key")
+    assert "seal_anchor_path_unmapped" in _validator_codes(repo)
+    res = subprocess.run(
+        [sys.executable, str(PKG / "validators" / "validate_apply_record.py"),
+         "--root", str(repo)], capture_output=True, text=True)
+    assert res.returncode == 1
+    assert "seal_anchor_path_unmapped" in res.stdout
+
+
+def test_b1_missing_lock_with_seal_is_not_n_a(repo: Path) -> None:
+    (repo / core.LOCK_NAME).unlink()
+    commit_all(repo, message="drop lock")
+    errors, _, paths, count = validator.collect_errors(repo)
+    assert count == 1 and paths
+    assert "seal_anchor_path_unmapped" in [e["code"] for e in errors]
+
+
+def test_i3_missing_apply_record_fails(repo: Path) -> None:
+    (repo / "web" / CARD).parent.joinpath("atlas-apply.md").unlink()
+    assert "apply_record_missing" in _validator_codes(repo)
+
+
+def test_k14_missing_card_file_fails(repo: Path) -> None:
+    (repo / "web" / CARD).unlink()
+    assert "seal_card_missing" in _validator_codes(repo)
+
+
+def test_i2_e2e_changed_cases_are_diffed(repo: Path) -> None:
+    case_file = repo / "product" / "e2e" / "cases" / f"{CASE_ID}.md"
+    case_file.write_text(
+        "## E2E-LOGIN-001\n\n```atlas-case\nid: E2E-LOGIN-001\nstep: 2\n```\n",
+        encoding="utf-8")
+    commit(repo, f"product/e2e/cases/{CASE_ID}.md", message="case change")
+    payload = renew(repo)
+    assert payload["e2e"]["changed_case_ids"] == [CASE_ID]
+    assert payload["e2e"]["previous_cases"][0]["id"] == CASE_ID
+    assert payload["e2e"]["previous_cases"][0]["sha256"]
+    core.write_lock(repo, core.load_manifest(repo), require_clean=True)
+    commit(repo, core.LOCK_NAME, message="lock")
+    assert codes(repo) == []
+
+
+def test_i2_changed_case_ids_tamper_fails(repo: Path) -> None:
+    renew_mutate(repo, lambda p: p["e2e"].update(changed_case_ids=["bogus"]))
+    assert "seal_e2e_changed_case_ids_mismatch" in codes(repo)
+
+
+def test_i2_ready_requires_case_block_in_index(repo: Path) -> None:
+    (repo / "product" / "e2e" / "e2e-index.md").write_text(
+        "# index\n", encoding="utf-8")
+    commit(repo, "product/e2e/e2e-index.md", message="drop block")
+    assert "seal_e2e_case_missing" in codes(repo)
+
+
+def test_i1_frozen_after_delete_is_history_reset(repo: Path) -> None:
+    doc = read_doc(repo)
+    git(repo, "rm", "-q", SEAL_REL)
+    commit_all(repo, message="delete")
+    write_doc(repo, doc)
+    commit_all(repo, message="recreate")
+    head = last_seal_commit(repo)
+    core.freeze_seal(repo, SEAL_REL, head)
+    commit(repo, core.LOCK_NAME, message="freeze after reset")
+    assert "seal_history_reset" in codes(repo)
+
+
+def test_i7_origin_rewritten_is_detected(repo: Path) -> None:
+    lock = core.read_lock(repo)
+    anchor = lock["seal_anchors"][SEAL_REL]
+    anchor["exemption_start_origin"] = "2020-01-01T00:00:00Z"
+    anchor["exemption_started_at"] = anchor["exemption_start_origin"]
+    (repo / core.LOCK_NAME).write_text(
+        json.dumps(lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    commit(repo, core.LOCK_NAME, message="rewrite origin")
+    assert "exemption_start_origin_rewritten" in codes(repo)
+
+
+def test_i9_anchor_review_format_is_enforced(repo: Path) -> None:
+    (repo / "other").mkdir()
+    with pytest.raises(core.SolutionError, match="REVIEW"):
+        core.lock_payload(repo, core.load_manifest(repo),
+                          assets_root="other", anchor_review="not-a-review")

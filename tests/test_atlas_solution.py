@@ -1641,14 +1641,14 @@ def test_b_assets_root_history_append_only_keeps_existing_elements_verbatim(
     assert list(after["assets_root_history"][0]) == list(old[0])
 
     core.write_lock(root, data, assets_root="product/domains",
-                    anchor_review="R-2026-002")
+                    anchor_review="REVIEW-20260303-01")
     appended = _lock_bytes(root)
     assert appended["assets_root_history"][:2] == old
     assert appended["layout_assets_root"] == "product/domains"
     head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
                           check=True, capture_output=True, text=True).stdout.strip()
     assert appended["assets_root_history"][-1] == {
-        "root": "product/domains", "review": "R-2026-002", "commit": head}
+        "root": "product/domains", "review": "REVIEW-20260303-01", "commit": head}
 
 
 def test_b_assets_root_change_needs_review_and_config_edit_does_not_append(

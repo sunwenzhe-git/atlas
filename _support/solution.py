@@ -1307,7 +1307,7 @@ def _root_history_fields(root: Path, lock: dict | None, assets_root: str | None,
     if assets_root is None or validate_assets_root(root, assets_root) == last:
         # 当前根未变 ⇒ 幂等：不 append、不碰既有元素，layout 原样返回。
         return layout, list(history)
-    review = (anchor_review or "").strip()
+    review = validate_anchor_review(anchor_review)
     if not review:
         raise SolutionError(
             "改资产根必须同时给评审号：assets_root 变化时需 --anchor-review "

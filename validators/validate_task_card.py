@@ -146,11 +146,14 @@ def _table_after_heading(text: str, needles: tuple[str, ...]) -> list[list[str]]
     return table or None
 
 
-def confirmed_findings(text: str, schema: int, today: date) -> tuple[list[dict], list[dict]]:
-    """Confirmed 表：缺表/缺列按 `prd_schema` 分层；逐行证据状态判据。
+def _review_markers(text: str) -> list[str]:
+    """Confirmed 小节里的 `confirmed_review:` 行内标记（RFC 四列表之外的标记）。"""
+    return [m.group(1) for m in re.finditer(
+        r"confirmed_review:\s*(REVIEW-\d{8}-\d{2})", text)]
 
-    返回 `(errors, warnings)`。
-    """
+
+def confirmed_findings(text: str, schema: int, today: date) -> tuple[list[dict], list[dict]]:
+    """Confirmed 表：四列（确认项 / 口径 / 证据状态 / 证据指针）+ 行内标记。"""
     errors: list[dict] = []
     warnings: list[dict] = []
     table = _table_after_heading(text, ("Confirmed", "确认口径"))
@@ -168,18 +171,24 @@ def confirmed_findings(text: str, schema: int, today: date) -> tuple[list[dict],
         return errors, warnings
     state_idx = next(i for i, c in enumerate(header) if "证据状态" in c)
     pointer_idx = next((i for i, c in enumerate(header) if "证据指针" in c), None)
-    review_idx = next((i for i, c in enumerate(header)
-                       if "confirmed_review" in c or "评审" in c), None)
+    if pointer_idx is None:
+        item = {"code": "confirmed_columns_missing",
+                "message": f"Confirmed 表头缺 证据指针：{header}"}
+        (errors if schema == 2 or deadline_over else warnings).append(item)
+        return errors, warnings
+    markers = _review_markers(text)
+    marker_i = 0
     for row_no, row in enumerate(table[1:], 1):
-        if len(row) <= state_idx:
+        if len(row) <= max(state_idx, pointer_idx):
             errors.append({"code": "confirmed_columns_missing",
                            "message": f"Confirmed 第 {row_no} 行缺列"})
             continue
         state = row[state_idx].strip()
-        pointer = row[pointer_idx].strip() if pointer_idx is not None and \
-            pointer_idx < len(row) else ""
-        review = row[review_idx].strip() if review_idx is not None and \
-            review_idx < len(row) else ""
+        pointer = row[pointer_idx].strip()
+        # 行内标记：优先同行任意单元格，其次按顺序取小节内 `confirmed_review:` 行
+        inline = next((m.group(1) for cell in row for m in
+                       [re.search(r"confirmed_review:\s*(REVIEW-\d{8}-\d{2})", cell)]
+                       if m), "")
         if state not in ("verified", "assumed", "unverified"):
             errors.append({"code": "confirmed_evidence_missing",
                            "message": f"Confirmed 第 {row_no} 行证据状态非法: {state!r}"})
@@ -188,11 +197,17 @@ def confirmed_findings(text: str, schema: int, today: date) -> tuple[list[dict],
             errors.append({"code": "confirmed_evidence_missing",
                            "message": f"Confirmed 第 {row_no} 行 {state} 缺证据指针"})
         if state == "unverified":
-            if not REVIEW_RE.match(review):
-                errors.append({"code": "confirmed_downgrade_unreviewed",
-                               "message": f"Confirmed 第 {row_no} 行 unverified 缺合法 "
-                                          f"confirmed_review（得到 {review!r}）"})
-            # 带 review 时不再报 confirmed_unverified（互斥，避免双报）
+            if not inline and marker_i < len(markers):
+                inline = markers[marker_i]
+                marker_i += 1
+            if inline:
+                continue  # 带 confirmed_review: ⇒ 不再报 confirmed_unverified
+            errors.append({"code": "confirmed_downgrade_unreviewed",
+                           "message": f"Confirmed 第 {row_no} 行 unverified 缺合法 "
+                                      "confirmed_review:"})
+            warnings.append({"code": "confirmed_unverified",
+                             "message": f"Confirmed 第 {row_no} 行证据状态为 "
+                                        "unverified"})
     return errors, warnings
 
 
@@ -214,8 +229,9 @@ def validate(root: Path, today: date | None = None,
     for path in sorted(root.glob(".trellis/tasks/archive/*/*/prd.md")):
         cards.append((path, "archived"))
     if not cards:
-        warnings.append({"code": "card_absent",
-                         "message": "无任务卡（.trellis/tasks/*/prd.md）"})
+        item = {"code": "card_absent",
+                "message": "无任务卡（.trellis/tasks/*/prd.md 与 archive 均缺失）"}
+        (warnings if allow_card_absent else errors).append(item)
         return errors, warnings
     for path, status in cards:
         rel = str(path.relative_to(root))

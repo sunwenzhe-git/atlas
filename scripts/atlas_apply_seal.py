@@ -105,8 +105,7 @@ def main(argv: list[str] | None = None) -> int:
             card_path=args.card, acceptance_acs=acs,
             e2e_status=args.e2e_status, case_ids=args.case, gap=gap,
             owner=args.owner, first_seen_at=args.first_seen_at,
-            moved_from=moved_from, reasons=args.reason,
-            previous_cases=[{"id": c} for c in args.previous_case])
+            moved_from=moved_from, reasons=args.reason)
         target = root / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n",

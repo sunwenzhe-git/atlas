@@ -20,7 +20,7 @@ from _support.siblings import load_module  # noqa: E402
 def collect_errors(root: Path) -> tuple[list[dict], list[dict], list[str], int]:
     solution = load_module("solution")
     seal = load_module("solution_seal")
-    if not solution.manifest_path(root).is_file() or solution.read_lock(root) is None:
+    if not solution.manifest_path(root).is_file():
         return [], [], [], 0
     data = solution.load_manifest(root)
     lock = solution.read_lock(root)
@@ -40,15 +40,28 @@ def collect_errors(root: Path) -> tuple[list[dict], list[dict], list[str], int]:
                if isinstance(v, dict)} if isinstance(anchors, dict) else {}
     errors: list[dict] = []
     warnings: list[dict] = []
+    seen: set[tuple] = set()
+
+    def absorb(item: dict, default_path: str | None = None) -> None:
+        row = {"code": item["code"], "message": item["message"],
+               "path": item.get("path") or default_path}
+        key = (row["code"], row["path"], row["message"])
+        if key in seen:
+            return
+        seen.add(key)
+        (errors if item["severity"] == "error" else warnings).append(row)
+
+    # B1：先走仓级 analyze（含锁缺失 / 键缺失 / 状态机 / 链），再补单封条 schema。
+    for item in seal.analyze(root, data, lock, roots,
+                             bind_from=solution.SEAL_UPSTREAM_BIND_FROM):
+        absorb(item)
     for path in paths:
         path_root = seal.SEAL_RE.match(path).group("root") if seal.SEAL_RE.match(path) else roots[0]
         findings = seal.validate_seal_record(
             root, data, path, by_path.get(path), path_root,
             bind_from=solution.SEAL_UPSTREAM_BIND_FROM)
         for item in findings:
-            row = {"code": item["code"], "message": item["message"],
-                   "path": item.get("path") or path}
-            (errors if item["severity"] == "error" else warnings).append(row)
+            absorb(item, path)
     return errors, warnings, paths, len(paths)
 
 

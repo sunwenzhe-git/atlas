@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import subprocess
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -43,9 +44,9 @@ def write(root: Path, rel: str, text: str) -> Path:
 
 MINIMAL_CONFIRMED = (
     "## 六、Confirmed\n\n"
-    "| 确认项 | 口径 | 证据状态 | 证据指针 | confirmed_review |\n"
-    "|---|---|---|---|---|\n"
-    "| 范围 | 本卡 | verified | PRD@1#AC-SOLUTION-001 | - |\n")
+    "| 确认项 | 口径 | 证据状态 | 证据指针 |\n"
+    "|---|---|---|---|\n"
+    "| 范围 | 本卡 | verified | PRD@1#AC-SOLUTION-001 |\n")
 
 
 def new_repo(tmp: Path, *, schema: int = 2, acceptance: str | None = None,
@@ -152,40 +153,48 @@ def test_k_archive_card_hit(tmp_path: Path) -> None:
 
 
 CONFIRMED_HEAD = ("## 六、Confirmed\n\n"
-                  "| 确认项 | 口径 | 证据状态 | 证据指针 | confirmed_review |\n"
-                  "|---|---|---|---|---|\n")
+                  "| 确认项 | 口径 | 证据状态 | 证据指针 |\n"
+                  "|---|---|---|---|\n")
 
 
 def test_k_confirmed_verified_requires_pointer(tmp_path: Path) -> None:
     root = new_repo(tmp_path, confirmed=(
-        CONFIRMED_HEAD + "| 超时 | 30s | verified |  | - |\n"))
+        CONFIRMED_HEAD + "| 超时 | 30s | verified |  |\n"))
     assert "confirmed_evidence_missing" in codes(root)
 
 
 def test_k_confirmed_verified_with_pointer_passes(tmp_path: Path) -> None:
     root = new_repo(tmp_path, confirmed=(
-        CONFIRMED_HEAD + "| 超时 | 30s | verified | 网关@1.2#cfg.timeout | - |\n"))
+        CONFIRMED_HEAD + "| 超时 | 30s | verified | 网关@1.2#cfg.timeout |\n"))
     assert codes(root) == []
 
 
 def test_k_confirmed_assumed_needs_only_pointer(tmp_path: Path) -> None:
     root = new_repo(tmp_path, confirmed=(
-        CONFIRMED_HEAD + "| 并发 | 100 | assumed | 默认值@v1#max | - |\n"))
+        CONFIRMED_HEAD + "| 并发 | 100 | assumed | 默认值@v1#max |\n"))
     assert codes(root) == []
 
 
 def test_k_confirmed_unverified_requires_review(tmp_path: Path) -> None:
     root = new_repo(tmp_path, confirmed=(
-        CONFIRMED_HEAD + "| 灰度 | 10% | unverified |  |  |\n"))
-    assert "confirmed_downgrade_unreviewed" in codes(root)
+        CONFIRMED_HEAD + "| 灰度 | 10% | unverified |  |\n"))
+    t = codes(root)
+    assert "confirmed_downgrade_unreviewed" in t
+    assert "confirmed_unverified" in _warnings(root)
 
 
 def test_k_confirmed_unverified_with_review_is_single_report(tmp_path: Path) -> None:
     root = new_repo(tmp_path, confirmed=(
-        CONFIRMED_HEAD + "| 灰度 | 10% | unverified |  | REVIEW-20261112-01 |\n"))
-    errors, _ = card.validate(root, today=PASS_DATE)
+        CONFIRMED_HEAD + "| 灰度 | 10% | unverified |  |\n\n"
+        "confirmed_review: REVIEW-20261112-01\n"))
+    errors, warnings = card.validate(root, today=PASS_DATE)
     assert errors == []
-    assert "confirmed_unverified" not in [e["code"] for e in errors]
+    assert "confirmed_unverified" not in [w["code"] for w in warnings]
+
+
+def _warnings(root: Path) -> list[str]:
+    _, warnings = card.validate(root, today=PASS_DATE)
+    return [w["code"] for w in warnings]
 
 
 def test_k_confirmed_columns_missing_schema2(tmp_path: Path) -> None:
@@ -212,3 +221,32 @@ def test_k_confirmed_schema1_after_deadline_is_fail(tmp_path: Path) -> None:
         "commit", "-qm", "schema1")
     errors, _ = card.validate(root, today=date(2027, 7, 1))
     assert "confirmed_columns_missing" in [e["code"] for e in errors]
+
+
+def test_i6_card_absent_fails_without_local_flag(tmp_path: Path) -> None:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    git(tmp_path, "init", "-q")
+    (tmp_path / ".trellis").mkdir()
+    (tmp_path / ".trellis" / "README.md").write_text("x\n", encoding="utf-8")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "-c", "user.email=a@b", "-c", "user.name=a",
+        "commit", "-qm", "empty trellis")
+    errors, warnings = card.validate(tmp_path, today=PASS_DATE)
+    assert "card_absent" in [e["code"] for e in errors]
+    assert "card_absent" not in [w["code"] for w in warnings]
+    errors2, warnings2 = card.validate(tmp_path, today=PASS_DATE,
+                                       allow_card_absent=True)
+    assert errors2 == []
+    assert "card_absent" in [w["code"] for w in warnings2]
+
+
+def test_delivery_gate_cli_exits_1_on_untracked_card(tmp_path: Path) -> None:
+    root = new_repo(tmp_path)
+    write(root, ".trellis/tasks/02-y/prd.md",
+          "atlas-acceptance: AC-SOLUTION-001\n\n" + MINIMAL_CONFIRMED)
+    write(root, ".trellis/tasks/02-y/solution.md", "- acs: AC-SOLUTION-001\n")
+    res = subprocess.run(
+        [sys.executable, str(PKG / "validators" / "validate_task_card.py"),
+         "--root", str(root)], capture_output=True, text=True)
+    assert res.returncode == 1
+    assert "card_untracked" in res.stdout
