@@ -1196,17 +1196,17 @@ def test_b0_migrate_heals_v2_without_definition(
     assert loaded["version"] == 2 and loaded["definition"]["domain"] == "solution"
 
 
-def test_b0_migrate_rejects_non_default_prd_without_writing(tmp_path: Path) -> None:
-    """V-12：非默认 `-prd.md` ⇒ 拒绝、提示 B 批，且不写任何文件。"""
+def test_b0_migrate_accepts_single_non_default_prd(tmp_path: Path) -> None:
+    """B 批 §4.1：单一非默认 `-prd.md` 自动探测通过（B-0 的 V-12 拒绝已放宽）。"""
     make_repo(tmp_path / "web")
     core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
     prd_dir = tmp_path / "product" / "prd"
     (prd_dir / "solution-prd.md").rename(prd_dir / "demo-prd.md")
-    path = tmp_path / core.MANIFEST_NAME
-    before = path.read_bytes()
-    with pytest.raises(core.SolutionError, match="B 批后支持任意"):
-        core.migrate_manifest(tmp_path)
-    assert path.read_bytes() == before
+    result = core.migrate_manifest(tmp_path)
+    assert "definition" in result["added"]
+    (tmp_path / ".atlas").mkdir(exist_ok=True)
+    (tmp_path / ".atlas" / "VERSION").write_text("0.3.0\n", encoding="utf-8")
+    assert core.load_manifest(tmp_path)["definition"]["path"] == "product/prd/demo-prd.md"
 
 
 def test_b0_migrate_rejects_missing_definition_path(tmp_path: Path) -> None:
@@ -2038,6 +2038,56 @@ def test_b_acceptance_cutover_manifest_side_missing_fails(
     assert "单侧缺失" in rows[0]["detail"] and "清单" in rows[0]["detail"]
 
 
+def _review_reused_rows(result) -> list[dict]:
+    return [c for c in result["checks"] if c["check"] == "评审号复用"]
+
+
+def _root_change_lock(review: str) -> str:
+    return json.dumps({
+        "schema_version": 2, "locked_at": "2026-11-11T00:00:00+00:00",
+        "definition": {"commit": "deadbeef"},
+        "acceptance_cutover": "2027-03-31",
+        "assets_root_history": [{"root": "product", "review": review,
+                                 "commit": None}],
+        "members": [], "contracts": []})
+
+
+def test_b_review_reused_across_root_and_cutover_fails(
+        tmp_path: Path, monkeypatch) -> None:
+    """S-54-B0：同一 REVIEW-ID 既用于改根又用于改切点 ⇒ `review_reused` FAIL。"""
+    root = _v1_manifest_root(tmp_path, monkeypatch)
+    text = (root / core.MANIFEST_NAME).read_text(encoding="utf-8")
+    (root / core.MANIFEST_NAME).write_text(text.replace(
+        "mode: federated\n",
+        "mode: federated\nacceptance_cutover_review: REVIEW-20261111-01\n", 1),
+        encoding="utf-8")
+    (root / core.LOCK_NAME).write_text(
+        _root_change_lock("REVIEW-20261111-01"), encoding="utf-8")
+
+    report = core.check_solution(root)
+    assert "review_reused" in [e["code"] for e in report["errors"]]
+    rows = _review_reused_rows(report)
+    assert len(rows) == 1 and rows[0]["status"] == "FAIL"
+    assert "REVIEW-20261111-01" in rows[0]["detail"]
+
+
+def test_b_review_ids_differ_is_pass(tmp_path: Path, monkeypatch) -> None:
+    """两个决策类别用不同 REVIEW-ID ⇒ 不报 `review_reused`。"""
+    root = _v1_manifest_root(tmp_path, monkeypatch)
+    text = (root / core.MANIFEST_NAME).read_text(encoding="utf-8")
+    (root / core.MANIFEST_NAME).write_text(text.replace(
+        "mode: federated\n",
+        "mode: federated\nacceptance_cutover_review: REVIEW-20261112-02\n", 1),
+        encoding="utf-8")
+    (root / core.LOCK_NAME).write_text(
+        _root_change_lock("REVIEW-20261111-01"), encoding="utf-8")
+
+    report = core.check_solution(root)
+    assert "review_reused" not in [e["code"] for e in report["errors"]]
+    rows = _review_reused_rows(report)
+    assert len(rows) == 1 and rows[0]["status"] == "PASS"
+
+
 def test_b_migrate_leaves_disk_untouched_when_prd_not_utf8(
         tmp_path: Path, monkeypatch) -> None:
     """PRD 非 UTF-8 ⇒ 两份新内容都没落盘（旧实现会先改清单再 exit 2）。"""
@@ -2446,6 +2496,75 @@ def test_b_lock_info_codes_are_mutually_exclusive(tmp_path: Path) -> None:
     assert codes == ["lock_history_empty"], codes
 
 
+_AUTH_PRD = ('---\ndomain: "auth"\ndate: "2026-11-12"\n---\n\n'
+             "# auth\n\n| AC ID | 描述 |\n|---|---|\n| AC-AUTH-001 | 登录 |\n")
+
+
+def test_b_definition_path_accepts_single_non_default_prd(tmp_path: Path) -> None:
+    """B 批 §4.1：单份非默认名 `auth-prd.md` 可被自动探测并写进 definition。"""
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+    (root / "product" / "prd" / "solution-prd.md").unlink()
+    (root / "product" / "prd" / "auth-prd.md").write_text(_AUTH_PRD, encoding="utf-8")
+
+    core.migrate_manifest(root, to=2)
+    (root / ".atlas").mkdir(exist_ok=True)
+    (root / ".atlas" / "VERSION").write_text("0.3.0\n", encoding="utf-8")
+    data = core.load_manifest(root)
+    assert data["definition"]["path"] == "product/prd/auth-prd.md"
+    assert data["definition"]["domain"] == "auth"
+
+
+def test_b_definition_path_multiple_candidates_need_flag(tmp_path: Path) -> None:
+    """多份候选且未给 `--definition-path` ⇒ 拒绝并列出候选；给了才落盘。"""
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+    (root / "product" / "prd" / "auth-prd.md").write_text(_AUTH_PRD, encoding="utf-8")
+    before = (root / core.MANIFEST_NAME).read_bytes()
+
+    with pytest.raises(core.SolutionError) as exc:
+        core.migrate_manifest(root, to=2)
+    msg = str(exc.value)
+    assert "多个域级 PRD" in msg and "auth-prd.md" in msg
+    assert "--definition-path" in msg
+    assert (root / core.MANIFEST_NAME).read_bytes() == before
+
+    core.migrate_manifest(root, to=2, definition_path="product/prd/auth-prd.md")
+    (root / ".atlas").mkdir(exist_ok=True)
+    (root / ".atlas" / "VERSION").write_text("0.3.0\n", encoding="utf-8")
+    assert core.load_manifest(root)["definition"]["path"] == \
+        "product/prd/auth-prd.md"
+
+
+def test_b_definition_path_rejects_outside_prd_dir(tmp_path: Path) -> None:
+    """definition.path 必须落在 `<assets_root>/prd/` 且以 `-prd.md` 结尾。"""
+    root = make_repo(tmp_path / "root")
+    make_repo(root / "web")
+    core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
+    path = root / core.MANIFEST_NAME
+    good = path.read_text(encoding="utf-8")
+
+    def write_with(bad: str) -> None:
+        block = f"definition:\n  domain: auth\n  path: {bad}\n"
+        path.write_text(
+            re.sub(r"^(mode: federated\s*)$", lambda m: m.group(1) + "\n" + block,
+                   good, count=1, flags=re.M),
+            encoding="utf-8")
+
+    for bad in ("product/auth-prd.md", "docs/auth-prd.md",
+                "product/prd/auth.md"):
+        write_with(bad)
+        with pytest.raises(core.SolutionError, match="definition_path_unsupported"):
+            core.load_manifest(root)
+
+    # `..` 在更早的相对路径层就被拒（不是 definition_path_unsupported）。
+    write_with("product/prd/../auth-prd.md")
+    with pytest.raises(core.SolutionError, match="拒绝绝对路径与"):
+        core.load_manifest(root)
+
+
 def test_b_internal_error_is_exit2_with_json_and_full_not_run(
         tmp_path: Path, monkeypatch, capsys) -> None:
     """RFC §3.2 第 4 层：未知异常 ⇒ exit 2 + 合法 JSON + `not_run[]` 完整六项。"""
@@ -2562,3 +2681,136 @@ def test_b_shallow_repo_is_chain_unverifiable_hard_fail(
         rows = [c for c in report["checks"] if "chain_unverifiable" in c["detail"]]
         assert len(rows) == 1, report["checks"]
         assert rows[0]["status"] == "FAIL", (allow, rows[0])
+
+
+def test_b_requirements_digest_matches_golden_vector() -> None:
+    """RFC §1.1 第 8 条 golden vector：换序列化器/换排序 ⇒ 必红。"""
+    data = {"requirements": [{
+        "id": "REQ-001", "member": "backend",
+        "acs": ["AC-SOLUTION-001", "AC-AUTH-012"],
+        "case_ids": ["E2E-AUTH-001"],
+    }]}
+    assert core.requirements_digest(data) == (
+        "45ef0f9a94ee9f118f5254caf69fdb4b14667483b8f7023cfb90ffe3386afdd1")
+
+
+def test_b_waiver_baseline_digest_matches_golden_vector() -> None:
+    """§1.1 8-b golden vector：输入顺序不影响摘要（码位升序）。"""
+    assert core.waiver_baseline_digest(["REQ-002", "REQ-001"]) == (
+        "f1da37a34aac137ff962018a1d6295ca20057c682576bad646e06ac950dde527")
+
+
+def test_b_lock_writes_digests_and_freezes_waiver_baseline(
+        tmp_path: Path, monkeypatch) -> None:
+    """首锁写实际 requirements 摘要、waiver 写 null；null→值只在首次非空集合。"""
+    stub_reader_version(monkeypatch, tmp_path, "0.4.0")
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
+    data = core.load_manifest(tmp_path)
+    core.write_lock(tmp_path, data)
+
+    lock = _lock_bytes(tmp_path)
+    assert lock["requirements_digest"] == core.requirements_digest(data)
+    # 首锁不拿空集占位（v43/重要 1）：null = 尚未建立基线。
+    assert lock["waiver_baseline_digest"] is None
+    assert "waiver_baseline_digest" in lock
+
+    # 需求变了：已有 requirements_digest 原样保留（漂移归 `manifest_drift`）。
+    data2 = dict(data)
+    data2["requirements"] = data["requirements"] + [{
+        "id": "REQ-009", "member": "web", "acs": ["AC-SOLUTION-009"],
+        "case_ids": [], "cross_repo_e2e": None,
+    }]
+    assert core.requirements_digest(data2) != lock["requirements_digest"]
+    assert core.lock_payload(tmp_path, data2)["requirements_digest"] == \
+        lock["requirements_digest"]
+
+    # 首次观察到非空可豁免集合 ⇒ null → 值（唯一合法写入点）。
+    waiver = tmp_path / "product" / "prd" / "ac-crosswalk-waivers.md"
+    waiver.write_text(
+        "| 需求 | owner | due | review |\n|---|---|---|---|\n"
+        "| REQ-001 | @a | 2027-01-01 | REVIEW-20261111-01 |\n", encoding="utf-8")
+    first = core.lock_payload(tmp_path, data2)
+    assert first["waiver_baseline_digest"] == core.waiver_baseline_digest(["REQ-001"])
+    core.write_lock(tmp_path, data2)
+
+    # 集合再变：不得静默改写（保留旧基线，差异交 C 批 `waiver_baseline_drift`）。
+    waiver.write_text(
+        "| 需求 | owner | due | review |\n|---|---|---|---|\n"
+        "| REQ-001 | @a | 2027-01-01 | REVIEW-20261111-01 |\n"
+        "| REQ-002 | @a | 2027-01-01 | REVIEW-20261112-02 |\n", encoding="utf-8")
+    again = core.lock_payload(tmp_path, data2)
+    assert again["waiver_baseline_digest"] == core.waiver_baseline_digest(["REQ-001"])
+
+
+def _commit_lock(root: Path) -> None:
+    if not (root / ".git").exists():
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    git(root, "add", core.LOCK_NAME)
+    git(root, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "lock")
+
+
+def test_b_manifest_digest_removed_when_history_had_value(
+        tmp_path: Path, monkeypatch) -> None:
+    """B-0：锁历史含非 null 摘要、当前锁改成 null ⇒ `manifest_digest_removed`。"""
+    stub_reader_version(monkeypatch, tmp_path, "0.4.0")
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
+    data = core.load_manifest(tmp_path)
+    core.write_lock(tmp_path, data)
+    _commit_lock(tmp_path)
+
+    payload = _lock_bytes(tmp_path)
+    payload["requirements_digest"] = None
+    _write_lock_json(tmp_path, payload)
+    report = core.check_solution(tmp_path)
+    assert "manifest_digest_removed" in [e["code"] for e in report["errors"]]
+    err = next(e for e in report["errors"] if e["code"] == "manifest_digest_removed")
+    assert err["detail"]["field"] == "requirements_digest"
+
+
+def test_b_manifest_rollback_suppresses_digest_removed(
+        tmp_path: Path, monkeypatch) -> None:
+    """B-0：`prd_version` 递减直判回滚，且抑制另两码（同一运行只报一个）。"""
+    stub_reader_version(monkeypatch, tmp_path, "0.4.0")
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
+    data = core.load_manifest(tmp_path)
+    core.write_lock(tmp_path, data)
+
+    payload = _lock_bytes(tmp_path)
+    payload["definition"] = dict(payload["definition"], prd_version=5)
+    _write_lock_json(tmp_path, payload)
+    _commit_lock(tmp_path)
+
+    payload["definition"] = dict(payload["definition"], prd_version=3)
+    payload["requirements_digest"] = None
+    payload["waiver_baseline_digest"] = None
+    _write_lock_json(tmp_path, payload)
+    report = core.check_solution(tmp_path)
+    codes = [e["code"] for e in report["errors"]]
+    assert "manifest_rollback" in codes
+    assert "manifest_digest_removed" not in codes
+    err = next(e for e in report["errors"] if e["code"] == "manifest_rollback")
+    assert err["detail"]["prd_version"] == {"current": 3, "max": 5}
+
+
+def test_b_waiver_baseline_drift_read_side(tmp_path: Path, monkeypatch) -> None:
+    """C 码读侧就位：基线非 null 且集合重算不等 ⇒ `waiver_baseline_drift`；
+    `null` 基线不判（尚未建立），缺豁免文件按空集。"""
+    stub_reader_version(monkeypatch, tmp_path, "0.4.0")
+    make_repo(tmp_path / "web")
+    core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
+    data = core.load_manifest(tmp_path)
+    core.write_lock(tmp_path, data)
+
+    payload = _lock_bytes(tmp_path)
+    payload["waiver_baseline_digest"] = core.waiver_baseline_digest(["REQ-001"])
+    _write_lock_json(tmp_path, payload)
+    report = core.check_solution(tmp_path)
+    assert "waiver_baseline_drift" in [e["code"] for e in report["errors"]]
+
+    payload["waiver_baseline_digest"] = None
+    _write_lock_json(tmp_path, payload)
+    report = core.check_solution(tmp_path)
+    assert "waiver_baseline_drift" not in [e["code"] for e in report["errors"]]

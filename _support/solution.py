@@ -27,6 +27,7 @@ import re
 import shlex
 import subprocess
 import sys
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
@@ -490,8 +491,26 @@ def _manifest_version(raw, root: Path | None = None) -> int:
     return int(value)
 
 
+def _definition_path(root: Path, raw) -> str:
+    """`definition.path` 校验：任意 `<assets_root>/prd/<名>-prd.md`（B 批 §4.1）。
+
+    路径先走 `_safe_rel`（禁绝对 / `..` / 保留首段），再限目录与后缀；
+    不要求文件名是 `solution-prd.md`——域名级 PRD 可以叫 `auth-prd.md` 等。
+    """
+    assets = _assets_root(Path(root))
+    prefix = f"{assets}/prd/"
+    rel = _safe_rel(str(raw or "").strip(), "definition.path")
+    rest = rel[len(prefix):] if rel.startswith(prefix) else ""
+    if (not rest or "/" in rest or not rest.endswith("-prd.md")
+            or rest == "-prd.md"):
+        raise SolutionError(
+            f"definition_path_unsupported: definition.path 必须是 "
+            f"{prefix}<名>-prd.md（当前: {rel}）")
+    return rel
+
+
 def _manifest_definition(raw, root: Path) -> dict | None:
-    """`definition` 归一：null ⇒ None；否则只收 domain / path，path 限 B-0 白名单。"""
+    """`definition` 归一：null ⇒ None；否则只收 domain / path。"""
     if raw is None:
         return None
     if not isinstance(raw, dict):
@@ -500,12 +519,7 @@ def _manifest_definition(raw, root: Path) -> dict | None:
     path = str(raw.get("path") or "").strip()
     if not domain or not path:
         raise SolutionError("definition.domain / definition.path 都不能为空")
-    expected = f"{_assets_root(Path(root))}/prd/solution-prd.md"
-    if path != expected:
-        raise SolutionError(
-            f"definition_path_unsupported: B-0 只接受 {expected}（当前: {path}）；"
-            "B 批后支持任意 `-prd.md`")
-    return {"domain": domain, "path": path}
+    return {"domain": domain, "path": _definition_path(root, path)}
 
 
 def validate_manifest(data: dict, root: Path, phase1: bool = True) -> dict:
@@ -1029,13 +1043,31 @@ def _positive_int(raw: str, field: str) -> int:
     return value
 
 
-def _assumption_table_header(text: str) -> list[str] | None:
-    """取 Assumptions 节内第一张表的表头单元格；无节 / 无表 ⇒ None。
+_ASSUMPTION_HEADER_CELLS = ("假设内容", "采用的默认值")
 
-    节名收中文同义词（`假设` / `默认值`）：模板之外的实际写法常见 `## 六、假设与默认值`，
-    只认 `Assumptions` 会把整节当成未声明而跳过证据列判据。
+
+def _table_header_at(lines: list[str], index: int) -> list[str] | None:
+    """`index` 行是表头（下一行是分隔行）⇒ 返回单元格；否则 None。"""
+    line = lines[index].strip()
+    if not (line.startswith("|") and line.endswith("|")):
+        return None
+    nxt = lines[index + 1].strip() if index + 1 < len(lines) else ""
+    if not re.fullmatch(r"\|[\s:|-]+\|", nxt):
+        return None
+    return [c.strip() for c in line.strip("|").split("|")]
+
+
+def _assumption_table_header(text: str) -> list[str] | None:
+    """Assumptions 表头：**先按表头命中**（`假设内容` / `采用的默认值`），再回退标题。
+
+    冻结基线要求按表头定位：标题不叫 `Assumptions` / `假设` / `默认值` 的合法表
+    也必须被识别（旧实现只认标题会整表漏判）。回退路径保留旧标题口径。
     """
     lines = text.splitlines()
+    for i in range(len(lines)):
+        header = _table_header_at(lines, i)
+        if header and any(c in _ASSUMPTION_HEADER_CELLS for c in header):
+            return header
     start = None
     for i, line in enumerate(lines):
         if re.match(r"^#{2,3}\s.*(Assumptions|假设|默认值)", line):
@@ -1043,12 +1075,12 @@ def _assumption_table_header(text: str) -> list[str] | None:
             break
     if start is None:
         return None
-    for line in lines[start:]:
-        if re.match(r"^#{1,3}\s", line):
+    for i in range(start, len(lines)):
+        if re.match(r"^#{1,3}\s", lines[i]):
             return None
-        s = line.strip()
-        if s.startswith("|") and s.endswith("|"):
-            return [c.strip() for c in s.strip("|").split("|")]
+        header = _table_header_at(lines, i)
+        if header:
+            return header
     return None
 
 
@@ -1293,6 +1325,90 @@ def _existing_lock_for_write(root: Path) -> dict | None:
     return lock
 
 
+def _canonical_bytes(value) -> bytes:
+    """RFC §1.1 第 8 条：唯一序列化器（NFC 已在调用方做）。"""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False).encode("utf-8")
+
+
+def _nfc(raw) -> str:
+    return unicodedata.normalize("NFC", str(raw or ""))
+
+
+def requirements_digest(data: dict) -> str:
+    """`requirements[]` 的 canonical 摘要（RFC §1.1 第 8 条，golden vector 见 §6）。
+
+    每项只取 `id / member / acs / case_ids / cross_repo_e2e` 五键；字符串 NFC；
+    `acs` / `case_ids` 去重后按码位升序；缺失列表 = `[]`、`cross_repo_e2e` 缺失 = null；
+    对象按键升序、整体按 `(id, member)` 升序；sha256 小写十六进制。
+    """
+    items = []
+    for req in data.get("requirements") or []:
+        cross = req.get("cross_repo_e2e")
+        items.append({
+            "acs": sorted({_nfc(a) for a in req.get("acs") or []}),
+            "case_ids": sorted({_nfc(c) for c in req.get("case_ids") or []}),
+            "cross_repo_e2e": _nfc(cross) if cross else None,
+            "id": _nfc(req.get("id")),
+            "member": _nfc(req.get("member")),
+        })
+    items.sort(key=lambda item: (item["id"], item["member"]))
+    return hashlib.sha256(_canonical_bytes(items)).hexdigest()
+
+
+def waiver_baseline_digest(requirement_ids) -> str:
+    """「可豁免需求 ID 集合」摘要：JSON 字符串数组、NFC、码位升序、sha256。"""
+    ids = sorted({_nfc(rid) for rid in requirement_ids if _nfc(rid)})
+    return hashlib.sha256(_canonical_bytes(ids)).hexdigest()
+
+
+def _waiver_requirement_ids(root: Path) -> list[str]:
+    """读 `<assets_root>/prd/ac-crosswalk-waivers.md` 的「需求」列（缺席 ⇒ 空集）。
+
+    只做**写侧**取集合：格式 / owner / due 的判据归 D 批 crosswalk，不在此提前判。
+    """
+    path = Path(root) / _assets_root(Path(root)) / "prd" / "ac-crosswalk-waivers.md"
+    if not path.is_file():
+        return []
+    header_seen = False
+    ids: list[str] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip().startswith("|"):
+            if header_seen:
+                break
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if not header_seen:
+            if "需求" in cells:
+                header_seen = True
+            continue
+        if all(re.fullmatch(r":?-{3,}:?", c) for c in cells if c):
+            continue
+        if cells and cells[0] not in ("需求", ""):
+            ids.append(cells[0])
+    return ids
+
+
+def _digest_in_lock_history(root: Path, field: str) -> bool:
+    """锁历史任一版本是否含该键的**非 null** 值（老锁升级 vs 换锁的分界）。
+
+    根不是 git 仓 / `git log` 失败 ⇒ 视为无历史（链本身由 `chain_unverifiable` 管），
+    不能让写锁在非 git 目录里直接崩。
+    """
+    try:
+        history = list(iter_lock_history(root))
+    except ChainUnverifiable:
+        return False
+    for _commit, text in history:
+        try:
+            doc = json.loads(text)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(doc, dict) and doc.get(field) is not None:
+            return True
+    return False
+
+
 def lock_payload(root: Path, data: dict, assets_root: str | None = None,
                  anchor_review: str | None = None) -> dict:
     members: list[dict] = []
@@ -1335,10 +1451,37 @@ def lock_payload(root: Path, data: dict, assets_root: str | None = None,
         # 切点评审号：非空才写同名键（空不写 `null`，否则等于给「未评审」发键）。
         if data.get("acceptance_cutover_review"):
             payload["acceptance_cutover_review"] = data["acceptance_cutover_review"]
+        existing = _existing_lock_for_write(root)
+        # §1.1 8-b（v45）：首次判据 = 键不存在**或值为 null**。只有「老锁升级」
+        # （锁历史从未含非 null 值）才允许首次写入；历史有非 null 而当前缺失/null
+        # 属「换锁」，写侧不重定基线（读侧 `manifest_digest_removed` FAIL）。
+        cur_req = existing.get("requirements_digest") if existing else None
+        if cur_req is not None:
+            payload["requirements_digest"] = cur_req
+        elif existing and _digest_in_lock_history(root, "requirements_digest"):
+            payload["requirements_digest"] = None
+        else:
+            payload["requirements_digest"] = requirements_digest(data)
+        # `waiver_baseline_digest` 三态：null = 尚未建立基线；[] = 已建立且为空集；
+        # 值 = 已建立。首锁写 null（不省略键）；null → 值的唯一合法写入点 =
+        # 首次观察到**非空**可豁免集合的那次 `lock --update`。
+        waiver_ids = _waiver_requirement_ids(root)
+        baseline = existing.get("waiver_baseline_digest") if existing else None
+        if existing is None:
+            payload["waiver_baseline_digest"] = None
+        elif baseline is not None:
+            # 已建立基线：不得静默改写；差异交 C 批 `waiver_baseline_drift` 判。
+            payload["waiver_baseline_digest"] = baseline
+        elif _digest_in_lock_history(root, "waiver_baseline_digest"):
+            payload["waiver_baseline_digest"] = None
+        elif waiver_ids:
+            payload["waiver_baseline_digest"] = waiver_baseline_digest(waiver_ids)
+        else:
+            payload["waiver_baseline_digest"] = None
         # 根字段的写侧只做「首写」或「尾追加」（见 `_root_history_fields`）：
         # `assets_root_changed` / `assets_root_history_rewritten` 的判据侧随 v17 落地。
         layout_root, root_history = _root_history_fields(
-            root, _existing_lock_for_write(root), assets_root, anchor_review)
+            root, existing, assets_root, anchor_review)
         payload["layout_assets_root"] = layout_root
         payload["assets_root_history"] = root_history
     return payload
@@ -1763,7 +1906,9 @@ def _single_prd_path(root: Path, assets_root: str) -> str:
     if not cands:
         raise SolutionError(f"未找到域级 PRD（{assets_root}/prd/*-prd.md）；无法补 definition")
     if len(cands) > 1:
-        raise SolutionError("发现多个域级 PRD，无法确定唯一源：" + "、".join(cands))
+        raise SolutionError(
+            "发现多个域级 PRD，无法确定唯一源：" + "、".join(cands)
+            + "；请用 --definition-path 指定其中一个")
     return f"{assets_root}/prd/{cands[0]}"
 
 
@@ -1879,15 +2024,11 @@ def migrate_manifest(root: Path, to: int = 2,
     text = path.read_text(encoding="utf-8")
     data = parse_manifest_text(text)
     version = _manifest_version(data.get("version"))
-    default_path = f"{_assets_root(root)}/prd/solution-prd.md"
     definition = data.get("definition") or None
     added: list[str] = []
     if definition is None:
         chosen = (definition_path or "").strip() or _single_prd_path(root, _assets_root(root))
-        if chosen != default_path:
-            raise SolutionError(
-                f"B-0 只支持 {default_path}；B 批后支持任意 `-prd.md`（当前: {chosen}）；"
-                "未写入任何文件")
+        chosen = _definition_path(root, chosen)
         if not (root / chosen).is_file():
             raise SolutionError(
                 f"--definition-path 指向的文件不存在: {chosen}；未写入任何文件")
@@ -2312,6 +2453,101 @@ def load_lock_strict(root: Path, text: str, *, current: bool) -> dict:
     return doc
 
 
+def _check_review_reused(data: dict, lock: dict | None, add, errors: list) -> None:
+    """S-54-B0：同一 REVIEW-ID 跨两个决策类别复用 ⇒ `review_reused` FAIL。
+
+    类别一：`assets_root_history[].review`（改根决策）；类别二：
+    清单 `acceptance_cutover_review`（改切点决策）。同类别内重复不算
+    （同一决策链可能追加多项），只有「改根且改切点共用同一个评审号」才拦。
+    不依赖 C 批的 `lock --update --assets-root`：只用清单与首锁字段构造。
+    """
+    review = str(data.get("acceptance_cutover_review") or "").strip()
+    if not review:
+        return
+    history = (lock or {}).get("assets_root_history") or []
+    if not isinstance(history, list):
+        return
+    reused = [f"assets_root_history[{i}]" for i, item in enumerate(history)
+              if isinstance(item, dict)
+              and str(item.get("review") or "").strip() == review]
+    if not reused:
+        add("评审号复用", "PASS", "改根评审号与验收切点评审号不重复")
+        return
+    detail = (f"review_reused: {review} 同时出现在 {', '.join(reused)}（改根决策）与 "
+              "清单 acceptance_cutover_review（改切点决策）；两个决策类别不得共用"
+              "同一评审号，换一个 REVIEW-ID 后重跑 lock --update")
+    add("评审号复用", "FAIL", detail)
+    errors.append({"code": "review_reused", "message": detail, "path": MANIFEST_NAME})
+
+
+_DIGEST_FIELDS = ("requirements_digest", "waiver_baseline_digest")
+
+
+def _check_manifest_digests(root: Path, lock: dict | None, add, errors: list) -> None:
+    """锁摘要单调性（§1.1 8-b / 码表 2124-2126）。
+
+    判序（v43/重要 2）：`manifest_rollback` **优先**，命中后抑制另两码。
+    - `manifest_rollback`（B-0）：仅当前 `definition.prd_version` < 锁历史最大值；
+    - `manifest_digest_removed`（B-0）：历史含非 null、当前缺失/null；
+    - `waiver_baseline_drift`（C）：基线非 null 且与当前集合重算值不等（`null` 不判）。
+    """
+    if not isinstance(lock, dict):
+        return
+    history: list[dict] = []
+    try:
+        raw_history = list(iter_lock_history(root))
+    except ChainUnverifiable:
+        raw_history = []
+    for _commit, text in raw_history:
+        try:
+            doc = json.loads(text)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(doc, dict):
+            history.append(doc)
+    current_def = lock.get("definition")
+    current_def = current_def if isinstance(current_def, dict) else {}
+    current_version = current_def.get("prd_version")
+    seen_versions = [d["definition"].get("prd_version") for d in history
+                     if isinstance(d.get("definition"), dict)]
+    seen_versions = [v for v in seen_versions
+                     if isinstance(v, int) and not isinstance(v, bool)]
+    if (isinstance(current_version, int) and not isinstance(current_version, bool)
+            and seen_versions and current_version < max(seen_versions)):
+        top = max(seen_versions)
+        detail = (f"manifest_rollback: 当前锁 definition.prd_version={current_version} "
+                  f"小于锁历史最大值 {top}；回滚锁提交不能重置单调身份"
+                  "（内容回滚不另判）")
+        add("锁摘要单调性", "FAIL", detail)
+        errors.append({"code": "manifest_rollback", "message": detail,
+                       "path": LOCK_NAME,
+                       "detail": {"prd_version": {"current": current_version,
+                                                  "max": top}}})
+        return
+    removed = [field for field in _DIGEST_FIELDS
+               if lock.get(field) is None
+               and any(d.get(field) is not None for d in history)]
+    if removed:
+        detail = ("manifest_digest_removed: 锁历史曾写入 " + " / ".join(removed)
+                  + "，当前锁缺该键或为 null；删键不能重定基线")
+        add("锁摘要单调性", "FAIL", detail)
+        errors.append({"code": "manifest_digest_removed", "message": detail,
+                       "path": LOCK_NAME, "detail": {"field": removed[0]}})
+        return
+    baseline = lock.get("waiver_baseline_digest")
+    if baseline is not None:
+        current = waiver_baseline_digest(_waiver_requirement_ids(root))
+        if baseline != current:
+            detail = ("waiver_baseline_drift: 锁内 waiver_baseline_digest 与当前可豁免"
+                      "集合重算值不一致；基线写入后不可变")
+            add("锁摘要单调性", "FAIL", detail)
+            errors.append({"code": "waiver_baseline_drift", "message": detail,
+                           "path": LOCK_NAME,
+                           "detail": {"field": "waiver_baseline_digest"}})
+            return
+    add("锁摘要单调性", "PASS", "摘要键与锁历史 / 当前可豁免集合一致")
+
+
 def _check_definition_lock(root: Path, data: dict, lock: dict | None, add,
                            allow_unverifiable: bool = False,
                            downgrades: list[dict] | None = None) -> None:
@@ -2650,6 +2886,8 @@ def check_solution(root: Path, strict: bool = False,
     _check_definition_lock(root, data, lock, add,
                            allow_unverifiable=allow_unverifiable_chain,
                            downgrades=downgrades)
+    # 锁摘要单调性（B-0：rollback / digest_removed；C：waiver_baseline_drift）。
+    _check_manifest_digests(root, lock, add, errors)
     _check_acceptance_cutover(data, lock, add)
     # 切点评审门槛（RFC v19/阻断 2，V-20⑥）：判序**先空后形态**，两码互斥。
     # 空值只对「晚于默认切点」报 `unreviewed`，绝不能落到 `malformed`；
@@ -2677,6 +2915,8 @@ def check_solution(root: Path, strict: bool = False,
         add("acceptance_cutover 评审号", "FAIL", detail)
         errors.append({"code": "acceptance_cutover_review_malformed",
                        "message": detail, "path": MANIFEST_NAME})
+    # S-54-B0：改根与改切点共用同一 REVIEW-ID ⇒ 两个决策类别串味。
+    _check_review_reused(data, lock, add, errors)
     # 注入点武装检查：读者已 ≥0.4.0 但 `PRD_SCHEMA_2_FROM` 仍为 None ⇒ 该判据永不触发，
     # 必须可见（发版门另有一条「tag 日期与常量一致」）。
     reader = reader_version(root)
@@ -2731,14 +2971,16 @@ def check_solution(root: Path, strict: bool = False,
         if s.get("unknown"):
             add(prefix, "WARN", "成员未知键：" + "、".join(s["unknown"]))
 
+    # 定义源可以是任意 `<assets_root>/prd/<名>-prd.md`（B 批 §4.1）；只认清单里的 path。
+    prd_rel = str((data.get("definition") or {}).get("path")
+                  or f"{_assets_root(root)}/prd/solution-prd.md")
     for rel in (".atlas", f"{_assets_root(root)}/stack-profile.yaml",
-                f"{_assets_root(root)}/prd/prd.md",
-                f"{_assets_root(root)}/prd/solution-prd.md"):
+                f"{_assets_root(root)}/prd/prd.md", prd_rel):
         if not (root / rel).exists():
             add(f"solution 资产 {rel}", "WARN", "缺失")
-    prd = root / _assets_root(root) / "prd" / "solution-prd.md"
+    prd = root / prd_rel
     if prd.is_file() and "[必填" in prd.read_text(encoding="utf-8", errors="replace"):
-        add("solution-prd.md", "WARN", "仍是模板骨架（含 [必填] 占位），需补齐完整域 PRD")
+        add(Path(prd_rel).name, "WARN", "仍是模板骨架（含 [必填] 占位），需补齐完整域 PRD")
     profile = root / _assets_root(root) / "stack-profile.yaml"
     if profile.is_file():
         profile_text = profile.read_text(encoding="utf-8", errors="replace")

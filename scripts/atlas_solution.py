@@ -185,7 +185,8 @@ def build_parser(version: str | None = None) -> argparse.ArgumentParser:
     p_migrate.add_argument("--to", type=int, choices=[2], default=None,
                            help="目标清单 schema 版本（B-0 只支持 2）")
     p_migrate.add_argument("--definition-path", default=None,
-                           help="定义源路径（B-0 只接受 <assets_root>/prd/solution-prd.md）")
+                           help="定义源路径（<assets_root>/prd/<名>-prd.md；"
+                                "多份候选时必须指定）")
     p_migrate.add_argument("--check-members", action="store_true",
                            help="只读：逐成员打印卡片 git add -f 命令（active 与 archive）")
     p_migrate.add_argument("--cutover", default=None,

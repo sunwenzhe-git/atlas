@@ -241,3 +241,55 @@ def test_validate_prd_reports_evidence_columns_row(tmp_path: Path) -> None:
     assert rows[0]["status"] == "FAIL"
     assert "evidence_columns_missing" in rows[0]["detail"]
     assert "demo-prd.md" in rows[0]["detail"]
+
+
+def test_assumption_table_detected_by_header_without_matching_heading() -> None:
+    """表头命中优先：标题不叫 Assumptions/假设/默认值，也要认这张表。"""
+    text = (
+        "---\nprd_schema: 2\n---\n\n"
+        "## 九、边界条件\n\n"
+        "| 假设内容 | 采用的默认值 | 证据状态 | 证据指针 |\n"
+        "|---|---|---|---|\n"
+        "| 时区按 UTC | 是 | 已证 | docs/x.md |\n")
+    header = core._assumption_table_header(text)
+    assert header is not None
+    assert "假设内容" in header
+    assert core.prd_schema_findings(text, "demo-prd.md", date(2026, 11, 11))[0][0] == "PASS"
+
+
+def test_assumption_table_heading_fallback_still_works() -> None:
+    """回退路径：旧标题 + 旧四列表头（无假设内容列）仍被认出。"""
+    text = PRD_TEMPLATE.format(schema=2, columns=FOUR_COLUMNS)
+    header = core._assumption_table_header(text)
+    assert header is not None and "假设内容" in header
+
+
+def test_validate_prd_wires_prd_schema_too_low(tmp_path: Path, monkeypatch) -> None:
+    """成员侧 `validate_prd` 真的执行 `prd_schema_too_low`（按首次提交时间）。"""
+    import importlib
+    import importlib.util
+
+    sol = importlib.import_module("_support.solution")
+    monkeypatch.setattr(sol, "PRD_SCHEMA_2_FROM", "2000-01-01")
+
+    root = make_repo(tmp_path / "repo")
+    prd_dir = root / "product" / "prd"
+    prd_dir.mkdir(parents=True)
+    (prd_dir / "prd.md").write_text(
+        "---\ndoc: prd-global\nproduct: demo\nversion: 0.1.0\n"
+        "date: \"2026-11-11\"\nstatus: draft\n---\n\n# demo\n", encoding="utf-8")
+    (prd_dir / "demo-prd.md").write_text(
+        PRD_TEMPLATE.format(schema=1, columns=SIX_COLUMNS), encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "prd")
+
+    spec = importlib.util.spec_from_file_location(
+        "_vpr_too_low_test", PKG_ROOT / "validators" / "validate_prd.py")
+    vpr = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(vpr)
+
+    rows = [c for c in vpr.validate(root).checks if c["check"] == "PRD schema 档位"]
+    assert len(rows) == 1, vpr.validate(root).checks
+    assert rows[0]["status"] == "FAIL"
+    assert "prd_schema_too_low" in rows[0]["detail"]
+    assert "demo-prd.md" in rows[0]["detail"]

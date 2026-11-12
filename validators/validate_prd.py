@@ -38,6 +38,12 @@ def _prd_schema_findings(text: str, rel: str) -> list[tuple[str, str]]:
     from _support.solution import prd_schema_findings
     return prd_schema_findings(text, rel)
 
+
+def _prd_schema_too_low(root: Path, rel: str, text: str) -> str | None:
+    """`prd_schema_too_low`：按首次提交时间判 1 是否过期（单源转发）。"""
+    from _support.solution import prd_schema_too_low
+    return prd_schema_too_low(root, rel, text)
+
 FORBIDDEN = ["TODO", "待补充", "TBD", "待定", "视情况而定", "后续补充", "[FIELD:]",
              "[必填", "[条件必填"]
 EXT_RE = re.compile(r"\.[A-Za-z0-9]{1,6}$")
@@ -486,6 +492,18 @@ def validate(root: Path) -> Result:
             res.add("PRD 证据列", "WARN", "；".join(ev_warn[:6]))
         else:
             res.add("PRD 证据列", "PASS", "")
+
+        # `prd_schema_too_low`（RFC §1.5 / E-03）：0.4.0 发布点**之后**首次提交的
+        # PRD 仍写 `prd_schema: 1` ⇒ FAIL（想靠存量缓冲绕证据列）。时间取 git
+        # `--diff-filter=A`，锚点常量未武装（None）时不判，两处口径都复用单源。
+        too_low = []
+        for d in domains:
+            msg = _prd_schema_too_low(
+                root, d.relative_to(root).as_posix(), d.read_text(encoding="utf-8"))
+            if msg:
+                too_low.append(msg)
+        if too_low:
+            res.add("PRD schema 档位", "FAIL", "；".join(too_low[:6]))
 
     # ---- 范围形态声明 / 与 §六 表形态一致 / 最小必填集（契约 §3；结论并入参数 4）
     decl_form, decl_cover, decl_base = (DECL_FORM.search(prd_text), DECL_COVER.search(prd_text),
