@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -235,10 +236,32 @@ def test_parent_multi_value_ac_illegal_token_fails(tmp_path: Path) -> None:
 
 # ---------------------------------------------------------------- 用例第二落点（#54）
 
+def make_v2(root: Path) -> None:
+    """把 init 产出的 v1 清单升到 v2（版本门：0.4.0 读者只收 v2）。
+
+    只做文本层面的最小补充，不重排既有块——本文件测的是 #54 的第二落点，不是迁移。
+    """
+    path = root / core.MANIFEST_NAME
+    text = path.read_text(encoding="utf-8")
+    if not re.search(r"^version:\s*1\s*$", text, re.M):
+        return
+    text = re.sub(r"^version:\s*1\s*$", "version: 2", text, count=1, flags=re.M)
+    text = text.replace(
+        "mode: federated\n",
+        "mode: federated\ndefinition:\n  domain: solution\n"
+        "  path: product/prd/solution-prd.md\nacceptance_cutover: 2027-03-31\n", 1)
+    path.write_text(text, encoding="utf-8")
+
+
 def set_reader_version(root: Path, version: str) -> None:
-    """RFC §5.3：`reader_version` 读 `<root>/.atlas/VERSION`（B-0 的 semver 注入点）。"""
+    """RFC §5.3：`reader_version` 读 `<root>/.atlas/VERSION`（B-0 的 semver 注入点）。
+
+    reader ≥0.4.0 时清单必须是 v2，否则 `load_manifest` 会被版本门硬拒（清单门）。
+    """
     (root / ".atlas").mkdir(exist_ok=True)
     (root / ".atlas" / "VERSION").write_text(version + "\n", encoding="utf-8")
+    if version and not core.semver_lt(version, (0, 4, 0)):
+        make_v2(root)
 
 
 def test_parent_second_landing_fails_for_task_dir_case_outside_index(tmp_path: Path) -> None:
@@ -336,6 +359,7 @@ def test_reader_version_ignores_checked_repo_package_json(tmp_path: Path,
     (tmp_path / ".atlas").mkdir()
     (tmp_path / ".atlas" / "package.json").write_text(
         '{"version": "0.4.0"}', encoding="utf-8")
+    make_v2(tmp_path)  # reader 0.4.0 ⇒ 清单必须是 v2，否则清单门先红
     fail = v_index.validate(tmp_path)
     assert levels(fail)["用例第二落点"] == "FAIL", fail
 
