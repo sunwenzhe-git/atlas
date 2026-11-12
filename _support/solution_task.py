@@ -144,12 +144,18 @@ def _ensure_context(member: Path, task_dir: Path, rel: str) -> None:
                             f"{(c.stderr or c.stdout)[-300:]}")
 
 
-def _ac_prd(root: Path, assets_root: str) -> Path:
+def _ac_prd(root: Path, data: dict, assets_root: str | None = None) -> Path:
+    """AC 定义源：清单 `definition.path` 优先，v1 清单回落默认名。"""
+    definition = data.get("definition") or {}
+    rel = str(definition.get("path") or "")
+    if rel:
+        return Path(root) / rel
+    assets_root = assets_root if assets_root is not None else _assets_root(root)
     return Path(root) / assets_root / "prd" / "solution-prd.md"
 
 
-def _ac_defs(root: Path, assets_root: str) -> set[str]:
-    prd = _ac_prd(root, assets_root)
+def _ac_defs(root: Path, data: dict, assets_root: str | None = None) -> set[str]:
+    prd = _ac_prd(root, data, assets_root)
     if not prd.is_file():
         return set()
     defs: set[str] = set()
@@ -175,8 +181,8 @@ def ac_source_status(root: Path, data: dict, assets_root: str | None = None) -> 
     """
     root = Path(root).resolve()
     assets_root = assets_root if assets_root is not None else _assets_root(root)
-    prd = _ac_prd(root, assets_root)
-    defs = _ac_defs(root, assets_root)
+    prd = _ac_prd(root, data, assets_root)
+    defs = _ac_defs(root, data, assets_root)
     refs = [(req, ac) for req in data.get("requirements") or []
             for ac in req.get("acs") or []
             if not str(ac).startswith("AC-CONTRACT-")]
@@ -240,7 +246,7 @@ def task_findings(root: Path, data: dict, requirement: str | None = None) -> lis
 def _pointer(root: Path, member: Path, data: dict, req: dict, assets_root: str) -> str:
     member_name = req["member"]
     manifest = os.path.relpath(Path(root) / "atlas.solution.yaml", member)
-    prd = os.path.relpath(Path(root) / assets_root / "prd" / "solution-prd.md", member)
+    prd = os.path.relpath(_ac_prd(root, data, assets_root), member)
     contracts = [
         c["id"] for c in data.get("contracts") or []
         if c.get("producer") == member_name or c.get("consumer") == member_name
@@ -316,7 +322,7 @@ def create_tasks(root: Path, data: dict, requirement: str,
     root = Path(root).resolve()
     assets_root = _assets_root(root)
     reqs = _select(data, requirement, members)
-    defs = _ac_defs(root, assets_root)
+    defs = _ac_defs(root, data, assets_root)
     by_name = {m["name"]: m for m in data["members"]}
     plans: list[dict] = []
     for req in reqs:
@@ -403,7 +409,7 @@ def task_status(root: Path, data: dict, requirement: str | None = None) -> dict:
     root = Path(root).resolve()
     assets_root = _assets_root(root)
     source = ac_source_status(root, data, assets_root)
-    defs = _ac_defs(root, assets_root)
+    defs = _ac_defs(root, data, assets_root)
     by_name = {m["name"]: m for m in data["members"]}
     reqs = data.get("requirements") or []
     if requirement:

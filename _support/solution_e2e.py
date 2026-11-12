@@ -340,14 +340,23 @@ def _domain_ready(index_text: str, domain: str) -> bool:
     return False
 
 
-def _ac_coverage(root: Path | None, index: dict) -> dict:
+def _ac_prd_path(root: Path, data: dict | None) -> Path:
+    """AC 定义源：清单 `definition.path` 优先，v1 清单回落默认名。"""
+    definition = (data or {}).get("definition") or {}
+    rel = str(definition.get("path") or "")
+    if rel:
+        return Path(root) / rel
+    return load_module("layout").load_layout(Path(root)).prd_dir / "solution-prd.md"
+
+
+def _ac_coverage(root: Path | None, index: dict, data: dict | None = None) -> dict:
     """父仓 AC 反向覆盖（RFC §3.6）：`ac_total` / `attached` / `zero_attached[]`。
 
     `state=not_ready`（骨架 `未实现` / `覆盖就绪: 否`）不参与 `verdict`。
     """
     if root is None or not index.get("present") or not index.get("ok"):
         return dict(_AC_COVERAGE_EMPTY)
-    prd = load_module("layout").load_layout(Path(root)).prd_dir / "solution-prd.md"
+    prd = _ac_prd_path(Path(root), data)
     if not prd.is_file():
         return dict(_AC_COVERAGE_EMPTY)
     try:
@@ -536,7 +545,7 @@ def status(data: dict, index: dict, requirement: str | None = None,
         result = select(data, rid, index)
         rows.append({"requirement": rid, **result})
 
-    coverage = _ac_coverage(root, index)
+    coverage = _ac_coverage(root, index, data)
     members: list[dict] = []
     parent_cases: list[dict] = []
     provenance: dict = {"parent": {"head": None, "app_hash": None}, "members": []}

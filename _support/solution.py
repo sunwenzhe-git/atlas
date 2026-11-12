@@ -1414,6 +1414,92 @@ def _digest_in_lock_history(root: Path, field: str) -> bool:
     return False
 
 
+def _definition_identity(lock: dict | None) -> dict:
+    """取锁里 `definition` 的输出身份（RFC §2.6 命令承载）。"""
+    definition = (lock or {}).get("definition")
+    if not isinstance(definition, dict):
+        return {}
+    return {
+        "path": definition.get("path"),
+        "prd_version": definition.get("prd_version"),
+        "prd_date": definition.get("prd_date"),
+        "sha256": str(definition.get("sha256") or "")[:8],
+    }
+
+
+def definition_change_summary(before: dict | None, after: dict | None) -> dict:
+    """`lock --update` 的 old→new 输出契约（RFC §2.6）。
+
+    变更字段按 `path / prd_version / prd_date / sha256` 逐个比较；
+    `review_required` 只在**路径或版本**变化时为真——CLI 据此多打一行 `[REVIEW]`。
+    """
+    old = _definition_identity(before)
+    new = _definition_identity(after)
+    present = bool(old or new)
+    keys = ("path", "prd_version", "prd_date", "sha256")
+    changed = [key for key in keys if old.get(key) != new.get(key)]
+    return {"present": present, "before": old, "after": new, "changed": changed,
+            "review_required": bool({"path", "prd_version"} & set(changed))}
+
+
+def render_definition_change(summary: dict, review_id: str | None = None) -> list[str]:
+    """把 `definition_change_summary` 渲染成 CLI 的 old→new 行。"""
+    if not summary.get("present"):
+        return []
+    before, after = summary.get("before") or {}, summary.get("after") or {}
+    lines = [f"  definition.{key}: {before.get(key) if before.get(key) is not None else '—'}"
+             f" → {after.get(key) if after.get(key) is not None else '—'}"
+             for key in ("path", "prd_version", "prd_date", "sha256")]
+    if summary.get("review_required"):
+        lines.append(f"  [REVIEW] {(review_id or '').strip() or '<REVIEW-ID>'}")
+    return lines
+
+
+def _reject_silent_definition_change(existing: dict | None, fields: dict | None,
+                                     anchor_review: str | None) -> None:
+    """写侧拒绝三种静默吸收（RFC §2.6 命令承载 / §7 D-03、D-04、D-30 / §8 规则 1）。
+
+    - D-03：版本未升而内容变化（同版本换 blob）⇒ 拒绝；
+    - D-05：版本递减 / 日期倒退 ⇒ 拒绝（评审也不能放行）；
+    - D-04 / D-30：路径、版本、日期或摘要变化必须带 `--anchor-review` 评审号；
+      错误信息写清「补什么」，不自己发明字段。
+    """
+    if not fields:
+        return
+    old = (existing or {}).get("definition")
+    if not isinstance(old, dict):
+        return
+    old_version = old.get("prd_version")
+    new_version = fields.get("prd_version")
+    version_known = (isinstance(old_version, int) and not isinstance(old_version, bool)
+                     and isinstance(new_version, int) and not isinstance(new_version, bool))
+    if version_known and new_version < old_version:
+        raise SolutionError(
+            f"manifest_rollback: PRD prd_version 从 {old_version} 回退到 {new_version}；"
+            "lock --update 拒绝版本递减（RFC §7 D-05）")
+    old_date = str(old.get("prd_date") or "")
+    new_date = str(fields.get("prd_date") or "")
+    if old_date and new_date and new_date < old_date:
+        raise SolutionError(
+            f"prd_date_backward: PRD prd_date 从 {old_date} 回退到 {new_date}；"
+            "lock --update 拒绝日期倒退（RFC §7 D-05）")
+    changed = [key for key in ("path", "prd_version", "prd_date", "sha256")
+               if old.get(key) != fields.get(key)]
+    if not changed:
+        return
+    if "sha256" in changed and version_known and new_version == old_version:
+        raise SolutionError(
+            f"definition_source_replaced: {fields.get('path')} 的内容已变，但 "
+            f"prd_version 仍为 {old_version}；同域副本替换会被静默吸收。"
+            "先抬 PRD front matter 的 prd_version 再 lock --update（RFC §7 D-03）")
+    review = validate_anchor_review(anchor_review)
+    if not review:
+        raise SolutionError(
+            "定义源变更（" + "/".join(changed) + "）必须带评审号："
+            "--anchor-review <REVIEW-ID>；路径变更还须在 PR 描述里单独标记"
+            "（RFC §2.6 规则 1/3、§7 D-04/D-30）")
+
+
 def lock_payload(root: Path, data: dict, assets_root: str | None = None,
                  anchor_review: str | None = None,
                  seal: str | None = None) -> dict:
@@ -1447,6 +1533,9 @@ def lock_payload(root: Path, data: dict, assets_root: str | None = None,
         "contracts": contract_states(root, data),
     }
     if data.get("version") == 2:
+        existing = _existing_lock_for_write(root)
+        # 写侧拒绝静默吸收：路径/版本/日期/摘要变化必须带评审，版本未升而内容变直接拒。
+        _reject_silent_definition_change(existing, definition_fields, anchor_review)
         payload["definition"] = definition_fields
         # `acceptance_cutover` 从**首次** `lock --update`（PRD 已入库）起才进锁。
         # `init` 的首锁 `definition.commit == null`，若同时写非 null cutover，
@@ -1457,7 +1546,6 @@ def lock_payload(root: Path, data: dict, assets_root: str | None = None,
         # 切点评审号：非空才写同名键（空不写 `null`，否则等于给「未评审」发键）。
         if data.get("acceptance_cutover_review"):
             payload["acceptance_cutover_review"] = data["acceptance_cutover_review"]
-        existing = _existing_lock_for_write(root)
         # §1.1 8-b（v45）：首次判据 = 键不存在**或值为 null**。只有「老锁升级」
         # （锁历史从未含非 null 值）才允许首次写入；历史有非 null 而当前缺失/null
         # 属「换锁」，写侧不重定基线（读侧 `manifest_digest_removed` FAIL）。
@@ -2715,6 +2803,31 @@ def _check_manifest_digests(root: Path, lock: dict | None, add, errors: list) ->
     add("锁摘要单调性", "PASS", "摘要键与锁历史 / 当前可豁免集合一致")
 
 
+def _definition_display(root: Path, definition: dict, locked: dict | None) -> str:
+    """`定义源:` 行的输出契约（RFC §2.6）：`<path> @v<prd_version> <prd_date> <sha8>`。
+
+    锁在则用锁内身份；锁不在（或锁里没有摘要）则按当前 PRD 复算。两者不一致
+    由 `定义源 commit` / `manifest_rollback` 另判，这里只负责把身份打出来。
+    """
+    rel = str(definition.get("path") or "")
+    info = locked if isinstance(locked, dict) and locked.get("path") == rel else {}
+    version = info.get("prd_version")
+    prd_date = info.get("prd_date")
+    sha = info.get("sha256")
+    if not sha:
+        fm = _prd_front_matter(root / rel)
+        if version is None:
+            version = fm.get("prd_version") or 1
+        prd_date = prd_date or fm.get("date")
+        try:
+            raw = (root / rel).read_bytes()
+            sha = hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
+        except OSError:
+            sha = ""
+    v = f"v{version}" if version not in (None, "") else "v—"
+    return f"{rel} @{v} {prd_date or '—'} {str(sha or '')[:8] or '—'}"
+
+
 def _check_definition_lock(root: Path, data: dict, lock: dict | None, add,
                            allow_unverifiable: bool = False,
                            downgrades: list[dict] | None = None) -> None:
@@ -2737,7 +2850,8 @@ def _check_definition_lock(root: Path, data: dict, lock: dict | None, add,
                 "或为 null；用 0.3.x 跑 migrate --to 2 补齐 definition，再 lock --update")
         return
     rel = definition["path"]
-    add("定义源", "PASS", f"{rel}（domain={definition.get('domain')}）")
+    locked_def = lock.get("definition") if isinstance(lock, dict) else None
+    add("定义源", "PASS", _definition_display(root, definition, locked_def))
     # 浅克隆 / partial clone：链与提交对象都不可证 ⇒ `chain_unverifiable` **hard FAIL**。
     # 这一支**不在** `--allow-unverifiable-chain` 的降级清单里（该开关只降「清单
     # `definition.commit` 指向的提交对象本地缺失」一支，见下方 `allow_unverifiable`）。
@@ -2806,9 +2920,19 @@ def _check_definition_lock(root: Path, data: dict, lock: dict | None, add,
         return
     want_sha = str(locked.get("sha256") or "")
     sha = hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
+    fm = _front_matter_of(raw.decode("utf-8", errors="replace"))
+    fm_version = str(fm.get("prd_version") or "1").strip()
+    lock_version = locked.get("prd_version")
+    version_diff = (isinstance(lock_version, int) and not isinstance(lock_version, bool)
+                    and fm_version != str(lock_version))
     if (locked.get("blob") and locked["blob"] != blob) or (want_sha and want_sha != sha):
         add("定义源 commit", "FAIL",
             f"definition_source_mismatch: {commit[:12]}:{rel} 的 blob/sha256 与锁不一致")
+    elif version_diff:
+        # D-08：front matter `prd_version` 与锁不符 ⇒ 同一个 mismatch 码（RFC §7）。
+        add("定义源 commit", "FAIL",
+            f"definition_source_mismatch: {commit[:12]}:{rel} 的 front matter "
+            f"prd_version={fm_version} 与锁 prd_version={lock_version} 不符")
     else:
         add("定义源 commit", "PASS", f"{rel} @ {commit[:12]}")
     dirty = _definition_dirty(root, data)
@@ -3528,7 +3652,7 @@ def fix_acs(root: Path, data: dict, apply: bool = False) -> dict:
     source = task_core.ac_source_status(root, data, assets_root)
     if source["state"] == "source_unavailable":
         raise FixRefused(source["findings"][0]["detail"])
-    defs = task_core._ac_defs(root, assets_root)
+    defs = task_core._ac_defs(root, data, assets_root)
 
     path = manifest_path(root)
     lines = path.read_bytes().decode("utf-8").splitlines(keepends=True)
