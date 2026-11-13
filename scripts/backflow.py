@@ -34,9 +34,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-# 与 install.sh 第 1 步的 `for pkg_dir in …` 逐项一致（出厂测试守恒；新增包面目录两处同改）。
+# 与 install.py 第 1 步的 pkg_dirs 白名单逐项一致（装配单源；RFC-20261114-01 起不含
+# 出厂测试目录 tests/——两侧同无即守恒；新增包面目录两处同改）。
 BACKFLOW_DIRS = ("shared", "rings", "apply", "scripts", "templates",
-                 "adapters", "validators", "patches", "tests", "_support", "extensions")
+                 "adapters", "validators", "patches", "_support", "extensions")
 SKIP_NAMES = {"__pycache__", ".pytest_cache", ".DS_Store"}
 SKIP_SUFFIXES = (".pyc",)
 

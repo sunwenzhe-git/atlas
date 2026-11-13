@@ -225,6 +225,11 @@ def test_f30_assembly_cover_in_sync_with_install_sh() -> None:
     # ① install.py pkg_dir 清单里的每一笔必须都在摘要白名单
     missing = pkg_dirs - cover - {"LICENSE"}
     assert not missing, f"install.py 拷贝了 {missing}，pkg_digest 未覆盖（摘要盲区）"
+    # ①b（RFC-20261114-01 评审 M1 补反向）摘要白名单不得含 pkg_dirs 之外的装配目录——
+    #   摘要口径只遍历装配集（pkg_digest 自述不变量）；skills/* 走 [2/6] 拷贝集是唯一合法超出。
+    #   防「摘了 pkg_dirs 摘不掉 cover」的静默死重：白名单里的目录被摘 ⇒ 本钉红。
+    extra = cover - pkg_dirs - {"skills"}
+    assert not extra, f"pkg_digest 覆盖 {extra}，install.py 已不装配（摘要口径死重）"
     # ② skills/* 是 [2/6] 拷贝集（不在 pkg_dir 循环）⇒ 必须也在白名单
     assert "skills/" in install_txt and "skills" in cover
     # ③ 非装配文件不进摘要：临时 math clone 中仅 docs 改动 ⇒ digest 不变

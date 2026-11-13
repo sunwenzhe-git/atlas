@@ -51,13 +51,13 @@ def test_diff_three_states(tmp_path: Path) -> None:
     copy_root, src_root = _mk_tree(
         tmp_path,
         {"scripts/a.py": "new\n", "validators/b.py": "same\n", "scripts/c.py": "copy\n",
-         "tests/__pycache__/x.pyc": "bin"},
-        {"validators/b.py": "same\n", "scripts/c.py": "src\n", "tests/d.py": "src-only\n"},
+         "patches/__pycache__/x.pyc": "bin"},
+        {"validators/b.py": "same\n", "scripts/c.py": "src\n", "patches/d.py": "src-only\n"},
     )
     d = diff_trees(copy_root, src_root)
     assert d["new"] == ["scripts/a.py"], d
     assert d["diff"] == ["scripts/c.py"], d
-    assert d["source_only"] == ["tests/d.py"], d
+    assert d["source_only"] == ["patches/d.py"], d
 
 
 def test_apply_refused_on_source_only(tmp_path: Path) -> None:
@@ -65,13 +65,13 @@ def test_apply_refused_on_source_only(tmp_path: Path) -> None:
     copy_root, src_root = _mk_tree(
         tmp_path,
         {"scripts/a.py": "new\n"},
-        {"tests/d.py": "src-only\n"},
+        {"patches/d.py": "src-only\n"},
     )
     code, text = apply_fn(copy_root, src_root, force=False)
     assert code == 2, text
     assert "拒绝执行" in text
     assert not (src_root / "scripts" / "a.py").exists()   # 拒绝即不动
-    assert (src_root / "tests" / "d.py").exists()          # 源包原样保留
+    assert (src_root / "patches" / "d.py").exists()          # 源包原样保留
 
 
 def test_apply_copies_and_preserves_exec_bit(tmp_path: Path) -> None:
@@ -98,12 +98,12 @@ def test_force_overrides_refusal(tmp_path: Path) -> None:
     copy_root, src_root = _mk_tree(
         tmp_path,
         {"scripts/a.py": "new\n"},
-        {"tests/d.py": "src-only\n"},
+        {"patches/d.py": "src-only\n"},
     )
     code, text = apply_fn(copy_root, src_root, force=True)
     assert code == 0, text
     assert (src_root / "scripts" / "a.py").exists()
-    assert (src_root / "tests" / "d.py").exists()          # 越过 ≠ 删除源包独有件
+    assert (src_root / "patches" / "d.py").exists()          # 越过 ≠ 删除源包独有件
 
 
 def test_drift_check_detects_write(tmp_path: Path) -> None:

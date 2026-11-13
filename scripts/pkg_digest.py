@@ -42,16 +42,66 @@ atlas_check 重算**两侧同错** ⇒ 恒等 ⇒ 「装配版本」门在任何
 from __future__ import annotations
 
 import hashlib
+import json
+import shutil
 import sys
 from pathlib import Path
 
 SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", ".venv", "node_modules"}
 SKIP_SUFFIXES = (".pyc", ".DS_Store")
-# 装配集白名单（F30）：与 install.sh 的 pkg_dir 循环 + [2]/[3] 步拷集 对齐；
+# 装配集白名单（F30）：与 install.py 的 pkg_dirs 白名单 + [2]/[6] 步拷集 对齐；
 # 目前口径 = 这些目录外的 CHANGELOG/README/docs/package.json 等不进摘要。
+# RFC-20261114-01：不含出厂测试目录 tests/（出厂测试回归源包验收面）。
 ASSEMBLY_COVER_DIRS = ("shared", "rings", "apply", "scripts", "templates", "adapters",
-                       "validators", "patches", "tests", "_support", "skills", "extensions")
+                       "validators", "patches", "_support", "skills", "extensions")
 ASSEMBLY_COVER_FILES = ("LICENSE",)
+
+# 缓存类豁免（与 SKIP_DIRS/SKIP_SUFFIXES 同口径）：清理基线闸不把运行态产物当采纳方内容。
+_CLEANUP_SKIP_DIRS = {"__pycache__", ".pytest_cache"}
+_CLEANUP_SKIP_SUFFIXES = (".pyc", ".DS_Store")
+
+
+def factory_tests_residual(atlas_dest: Path, manifest_path: Path) -> list[str]:
+    """`.atlas/tests` 下**出厂基线之外**的文件清单（根相对 POSIX 路径）。
+
+    RFC-20261114-01 基线闸：装配集已不含出厂测试目录，历史装配残留的 `.atlas/tests`
+    在装配/更新时应清理；但「对齐测试目录在场即跑」的语义会邀请采纳方往该目录种
+    自己的内容，rm 不可逆 ⇒ 只有全部命中 `.atlas/MANIFEST.json` 登记的 sha256
+    （纯出厂残留）才允许整删；任何基线外 / hash 不符文件出现在返回列表里 ⇒
+    调用方必须响亮拒绝（--force 越过）。缓存类（__pycache__ / .pyc / .DS_Store）
+    豁免不算采纳方内容。无 tests 目录 ⇒ 空列表（幂等 no-op）。
+    """
+    tests_dir = atlas_dest / "tests"
+    if not tests_dir.is_dir():
+        return []
+    baseline: dict[str, str] = {}
+    if manifest_path.is_file():
+        try:
+            baseline = (json.loads(manifest_path.read_text(encoding="utf-8"))
+                        .get("files") or {})
+        except (ValueError, OSError):
+            baseline = {}
+    foreign: list[str] = []
+    for p in sorted(tests_dir.rglob("*")):
+        if not p.is_file():
+            continue
+        parts = set(p.relative_to(atlas_dest).parts)
+        if parts & _CLEANUP_SKIP_DIRS or p.name.endswith(_CLEANUP_SKIP_SUFFIXES):
+            continue
+        rel = p.relative_to(atlas_dest).as_posix()
+        expected = baseline.get(rel)
+        if expected is None:
+            foreign.append(f"{rel}（基线外）")
+        elif hashlib.sha256(p.read_bytes()).hexdigest() != expected:
+            foreign.append(f"{rel}（hash 不符）")
+    return foreign
+
+
+def cleanup_factory_tests(atlas_dest: Path) -> None:
+    """整目录删除 `.atlas/tests`（调用方已通过 `factory_tests_residual` 基线闸）。"""
+    if not (atlas_dest / "tests").exists():
+        return
+    shutil.rmtree(atlas_dest / "tests")
 
 
 class EmptyAssembly(ValueError):

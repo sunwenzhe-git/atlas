@@ -55,7 +55,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 ### 1. CLI 与装配
 
 - `bin/atlas.js`(485 行):命令面 = `init / update / upgrade / check / solution / review / eval / console / report / version`。`init` 先探测 Trellis(POSIX `which` / Windows `where`;`.trellis/` 缺失时自动 `trellis init`)再调装配器;平台探测拆在 `bin/platform.js`(bash 只认 Git Bash 不回落 WSL 中继壳;Python 按平台探测 `py -3`/`python`/`python3` 并校验 3.10+)。
-- `install.py`(944 行):装配单源(`install.sh` 58 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ tests/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`,落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 66 条 `c()` 自检声明。
+- `install.py`(981 行):装配单源(`install.sh` 59 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`(RFC-20261114-01 起不含出厂测试目录,历史残留经 MANIFEST 基线闸清理),落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 66 条 `c()` 自检声明。
 - `patches/`(4 族):`workflow-plan-apply`(apply 挂进 Trellis 工作流)、`project-wiring`(AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.adapter-out/` / pi 扩展五触点)、`workflow-root-cause`、`workflow-skill-routing`。锚点式版本化补丁,可重放。
 - 对账:`scripts/pkg_digest.py`(摘要算法单点)+ `scripts/backflow.py`(副本⇔源包三态回灌,SOURCE_ONLY 拒绝护栏)。
 
@@ -104,8 +104,8 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 | 量 | 值 | 出处 |
 |---|---|---|
 | 校验器 | 12(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py:52` |
-| 编排门行 | 9 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 / 消融残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:966`) |
-| 出厂测试文件 | 76 | `tests/` |
+| 编排门行 | 9 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 / 消融残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:92`) |
+| 出厂测试文件 | 77 | `tests/` |
 | skills | 7(含 frontend-design) | `skills/` |
 | 环 | 3(structure / prd / e2e;原型环 E1 已退役) | `rings/` |
 | 共享契约 | 9 份 | `shared/` |

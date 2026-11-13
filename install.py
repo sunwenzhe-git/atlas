@@ -8,8 +8,10 @@
 
 装配行为：
   1. 整包装配到 <目标>/.atlas/（shared / rings / apply / templates / adapters /
-     validators / patches / tests / _support / extensions）。.atlas/ 属包产物：白名单子目录默认刷新，
-     `.atlas/runs/`（运行态：E2E 汇总 / check 事件 / write-claims）保留不删。
+     validators / patches / _support / extensions；RFC-20261114-01 起不含出厂测试目录 tests/，
+     出厂测试回归源包验收面）。.atlas/ 属包产物：白名单子目录默认刷新，
+     `.atlas/runs/`（运行态：E2E 汇总 / check 事件 / write-claims）保留不删；
+     历史装配残留的 .atlas/tests 经 MANIFEST 基线闸后清理。
   2. 每个 skills/atlas-*/ 以一个瘦桩 SKILL.md 装到各平台 skill 目录。
   3. 清理历史遗留的单入口 skill（<平台>/skills/atlas）。
   4. 建资产根骨架（默认 product/；已有内容永不覆盖）。
@@ -564,7 +566,7 @@ def main() -> None:
     say("[1/6] 装配 atlas 包到 .atlas/")
     atlas_dest = os.path.join(TARGET, ".atlas")
     pkg_dirs = ["shared", "rings", "apply", "scripts", "templates",
-                "adapters", "validators", "patches", "tests", "_support", "extensions"]
+                "adapters", "validators", "patches", "_support", "extensions"]
     for d in pkg_dirs:
         run(f"rm -rf {atlas_dest}/{d}",
             action=lambda d=d: rm_rf(Path(atlas_dest) / d))
@@ -576,6 +578,41 @@ def main() -> None:
             run(f"cp -R {SCRIPT_DIR}/{d} {atlas_dest}/{d}",
                 action=lambda d=d: cp_r(Path(SCRIPT_DIR) / d, Path(atlas_dest) / d))
             say(f"      -> .atlas/{d}")
+
+    # RFC-20261114-01：装配集不含出厂测试目录；历史装配残留清理（读**旧** MANIFEST 基线闸，
+    # 必须在新基线落盘之前——新 MANIFEST 已无 tests 条目，事后无从对账）。
+    # 基线闸在 dry-run 下同样执行（零落盘不保证零拒绝口径）。
+    sys.path.insert(0, os.path.join(SCRIPT_DIR, "scripts"))
+    try:
+        from pkg_digest import cleanup_factory_tests as _cleanup_factory_tests, \
+            factory_tests_residual as _factory_tests_residual  # noqa: E402
+    except Exception as _exc:  # noqa: BLE001 —— 清理是安全增强，工具不可用 ⇒ WARN 保留现场
+        _cleanup_factory_tests = _factory_tests_residual = None
+        say(f"  [WARN] 出厂残留清理工具不可用（{ _exc }），跳过 .atlas/tests 清理。")
+    if _factory_tests_residual is not None:
+        _foreign = _factory_tests_residual(Path(atlas_dest), Path(atlas_dest, "MANIFEST.json"))
+        if _foreign:
+            say("错误：.atlas/tests 存在出厂基线之外的内容，拒绝清理（--force 越过）：")
+            for _rel in _foreign[:10]:
+                say(f"       - {_rel}")
+            if len(_foreign) > 10:
+                say(f"       - …共 {len(_foreign)} 项")
+            if not FORCE:
+                die(2)
+            say("  [WARN] --force：放弃清理保护，删除全部 .atlas/tests（覆盖自负）。")
+        run("rm -rf <dest>/.atlas/tests（历史装配残留清理，RFC-20261114-01）",
+            action=lambda: _cleanup_factory_tests(Path(atlas_dest)))
+    if _foreign:
+        say("错误：.atlas/tests 存在出厂基线之外的内容，拒绝清理（--force 越过）：")
+        for _rel in _foreign[:10]:
+            say(f"       - {_rel}")
+        if len(_foreign) > 10:
+            say(f"       - …共 {len(_foreign)} 项")
+        if not FORCE:
+            die(2)
+        say("  [WARN] --force：放弃清理保护，删除全部 .atlas/tests（覆盖自负）。")
+    run("rm -rf <dest>/.atlas/tests（历史装配残留清理，RFC-20261114-01）",
+        action=lambda: _cleanup_factory_tests(Path(atlas_dest)))
 
     if os.path.isfile(os.path.join(SCRIPT_DIR, "LICENSE")):
         run(f"cp {SCRIPT_DIR}/LICENSE {atlas_dest}/LICENSE",

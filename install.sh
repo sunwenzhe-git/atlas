@@ -8,7 +8,8 @@
 #
 # 装配行为：
 #   1. 整包装配到 <目标>/.atlas/（shared / rings / apply / templates / adapters /
-#      validators / patches / tests / _support / extensions）。.atlas/ 属包产物：白名单子目录默认刷新，
+#      validators / patches / _support / extensions；RFC-20261114-01 起不含出厂测试目录）。
+#      .atlas/ 属包产物：白名单子目录默认刷新，
 #      `.atlas/runs/`（运行态：E2E 汇总 / check 事件 / write-claims）保留不删。
 #   2. 每个 skills/atlas-*/ 以一个瘦桩 SKILL.md 装到各平台 skill 目录。
 #   3. 清理历史遗留的单入口 skill（<平台>/skills/atlas）。

@@ -266,16 +266,18 @@ def check_factory(root: Path, rows: Row, py: str) -> None:
     if not tests.is_dir():
         # F53（2026-10-16，issue #17 残余；RFC-20261016-02 D91）：目录不在场 = 包装配没有可跑对象
         # = 「未走到这一步」，不是测试失败 —— 三态先例：`_GATE_PRECONDITIONS` / `GEN_NOT_READY`。
-        # 触发面：存量装配（npm 旧发行版不发布 tests/ ⇒ install.sh 拷贝空操作）、源包开发态
-        #（仓根本无 .atlas/）、装配损坏（路径被文件占用，is_dir 同样不成立）。否则 pytest 收集
-        # 失败 exit 4 ⇒ 恒红，而 --fast 一跑就 OK —— 两相反结论并存，红被训练成噪声。
+        # 触发面：新发行版装配态（RFC-20261114-01 起装配集不含出厂测试目录，出厂测试回归源包
+        # 验收面——这是本行最常驻的合法态）、旧发行版装配态（npm 旧版不发布 tests/）、源包
+        # 开发态（仓根本无 .atlas/）、装配损坏（路径被文件占用，is_dir 同样不成立）。否则
+        # pytest 收集失败 exit 4 ⇒ 恒红，而 --fast 一跑就 OK —— 两相反结论并存，红被训练成噪声。
         # 文案两层（评审 M-1/m-2/m-3）：判据面（连实测路径；「或不是目录」覆盖文件形态，
-        # 不对在场者谎称「未找到」）+ 出路（可执行的动作词）。
+        # 不对在场者谎称「未找到」）+ 出路（可执行的动作词；RFC-20261114-01 评审 M2：摘除后
+        # 「重装跑齐」是死路，出路改述为「无跑齐义务 + 历史残留随更新移除」）。
         rows.add("对齐测试(.atlas/tests)", "SKIP",
                  f"前置未声明（未就绪，非失败）：{tests} 不存在或不是目录 —— "
-                 "装配集不含包出厂测试目录（旧发行版装配态 / 源包开发态 / 装配损坏）。"
-                 "包自检在源包跑（pytest tests）；项目侧跑齐 = 重装取新发行版装配"
-                 "（install.sh / atlas upgrade，需解释器可跑 pytest）")
+                 "装配集不含包出厂测试目录（新发行版装配态 / 旧发行版装配态 / 源包开发态 / 装配损坏）。"
+                 "包自检在源包跑（pytest tests）；项目侧无跑齐义务；历史装配态经 "
+                 "atlas upgrade / install.sh 更新后本目录随之移除，本行恒为合法 SKIP")
         return
     started = time.perf_counter()
     code, out = run([py, "-m", "pytest", ".atlas/tests", "-q", "--no-header"], root, timeout=900)
