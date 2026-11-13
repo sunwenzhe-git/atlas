@@ -34,7 +34,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 | # | 子系统 | 一句话职责 | 入口 | L1 页 |
 |---|---|---|---|---|
-| 0 | 共享内核 | 全包单源的解析/复用实现,禁止就地复制 | `_support/`(15 件) | — |
+| 0 | 共享内核 | 全包单源的解析/复用实现,禁止就地复制 | `_support/`(17 件) | — |
 | 1 | CLI 与装配 | 把 atlas 装进目标仓库并保持副本与源包对账 | `bin/atlas.js`、`install.py` | [cli.md](cli.md) |
 | 2 | 共享契约层 | 规则与执行期程序契约的单一落点(frontend-reuse 非门、非真相源) | `shared/`(9 份)、`templates/` | — |
 | 3 | 结构抽取适配器 | 从业务代码确定性抽取路由/API/模型/测试事实 | `adapters/`、`scripts/refresh_structure.py` | [adapters.md](adapters.md) |
@@ -42,7 +42,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 | 5 | 三环资产引擎 | structure / prd / e2e 三环的环内规程契约 | `rings/*/reference.md`、`skills/atlas-*` | — |
 | 6 | apply 跨环编排 | 唯一编排件:需求 → 资产增量的四模式 | `apply/reference.md` | [apply.md](apply.md) |
 | 7 | E2E 生成与控制台 | 用例分片 → Playwright 脚本 + 慢动作评审台 | `scripts/gen_e2e_scripts.py`、`scripts/e2e_console.py` | [e2egen.md](e2egen.md) |
-| 8 | 门禁与校验 | 10 校验器 + 编排器 + 门册 + 变异证明 | `scripts/atlas_check.py`、`validators/` | [gates.md](gates.md) |
+| 8 | 门禁与校验 | 12 校验器 + 编排器 + 门册 + 变异证明 | `scripts/atlas_check.py`、`validators/` | [gates.md](gates.md) |
 | 9 | 评审与收口 | 独立审查产物链 + 收口触发派生 | `shared/independent-review.md`、`scripts/closeout_derive.py` | [review.md](review.md) |
 | 10 | 运营面 | 每日巡检 / 自感知上报 / 发版 | `duty-review/`、`scripts/atlas_report.py` | — |
 
@@ -103,13 +103,13 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 | 量 | 值 | 出处 |
 |---|---|---|
-| 校验器 | 10(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py:52` |
-| 编排门行 | 9 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 / 消融残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:951`) |
-| 出厂测试文件 | 62 | `tests/` |
+| 校验器 | 12(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py:52` |
+| 编排门行 | 9 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 / 消融残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:966`) |
+| 出厂测试文件 | 74 | `tests/` |
 | skills | 7(含 frontend-design) | `skills/` |
 | 环 | 3(structure / prd / e2e;原型环 E1 已退役) | `rings/` |
 | 共享契约 | 9 份 | `shared/` |
-| 共享内核 | 15 件 | `_support/` |
+| 共享内核 | 17 件 | `_support/` |
 | install.py 自检声明 | 66 条 | `install.py` |
 | 最大单件 | `scripts/gen_e2e_scripts.py` 2734 行 | — |
 

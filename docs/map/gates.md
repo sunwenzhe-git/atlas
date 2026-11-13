@@ -1,7 +1,7 @@
 # L1 · 门禁与校验子系统
 
 > 子系统 #8 / 上级地图:[index.md](index.md) / 锚定版本:v0.2.0-beta.7(2026-10-24)
-> 一句话:**「每道机器门都要真的会咬」的执行体系**——10 个校验器 + 1 个编排器 + 1 本门册总账 + 变异证明协议 + 62 个出厂测试文件。判据分散在各校验器实现,编排器只聚合不改判。
+> 一句话:**「每道机器门都要真的会咬」的执行体系**——12 个校验器 + 1 个编排器 + 1 本门册总账 + 变异证明协议 + 74 个出厂测试文件。判据分散在各校验器实现,编排器只聚合不改判。
 
 ## 设计三律(门册元规则,`shared/gates.md:3-9`)
 
@@ -13,11 +13,11 @@
 
 | 文件 | 角色 |
 |---|---|
-| `scripts/atlas_check.py`(1052 行) | 统一检查入口 / 编排器(**只聚合,不改判据**) |
-| `validators/`(10 器) | 判据本体,每器一行输出 |
-| `shared/gates.md`(178 行) | 门登记总账:六列(门 / 对账平面 / 查什么 / **不查什么** / 预算 / 假绿测试等级);§4.1 另有无门约束登记(不参与门计数) |
+| `scripts/atlas_check.py`(1058 行) | 统一检查入口 / 编排器(**只聚合,不改判据**) |
+| `validators/`(12 器) | 判据本体,每器一行输出 |
+| `shared/gates.md`(186 行) | 门登记总账:六列(门 / 对账平面 / 查什么 / **不查什么** / 预算 / 假绿测试等级);§4.1 另有无门约束登记(不参与门计数) |
 | `scripts/mutation_proof.py`(155 行) | 变异证明工具:把缺陷放回去看门红不红,还原须逐字节一致 + 报告须含注入 diff |
-| `tests/`(62 文件) | 出厂测试套件(`check-all.py --only atlas` 全绿为出厂条件) |
+| `tests/`(74 文件) | 出厂测试套件(`check-all.py --only atlas` 全绿为出厂条件) |
 
 ## 编排器 atlas_check 的结构
 
@@ -27,24 +27,24 @@
 
 `SKIP` = 未走到 / 前置未声明(**不是通过也不是失败**,必须带原因)≠ `WARN`(过期/提醒,不置红)≠ `FAIL`(硬阻断)≠ `ok`。生成物门三态:未就绪(SKIP)≠ 生成物过期(WARN)≠ 生成失败(FAIL)。
 
-### 门行全景(`main()`,`scripts/atlas_check.py:951`)
+### 门行全景(`main()`,`scripts/atlas_check.py:966`)
 
 | 门行 | 实现 | 一句话判据 |
 |---|---|---|
-| 10 个 validate_* | `check_validators` :203 | 逐器调用,一门一行;前置文件缺失 ⇒ SKIP(`_gate_preconditions` :68 定义 7 器的三态前置) |
-| 对齐测试(.atlas/tests) | `check_factory` :244 | 装配副本跑 pytest;目录不存在 = 装配未含测试(F53 三形态 SKIP) |
-| 生成物最新 | `check_generated` :275 | gen_e2e_scripts 干跑 diff;exit 3 = not_ready SKIP |
-| 审查报告形态 | `check_review_report` :356 | 最新 E2E 审查报告复算(validate_review_report 单源) |
-| 执行串行 | `check_serial_execution` :246 | 运行器配置必须 `workers: 1` + `fullyParallel: false`(D115) |
-| 结构漂移 | `check_drift` :373 | 只读 `.adapter-out/_drift.json` 标记,不做二次判定 |
-| 装配版本 | `check_version` :435 | `.atlas/VERSION` 摘要戳 + `.atlas/MANIFEST.json` 逐文件基线 ⇔ 当前源包重算(D145);历史坏戳单列根因级 WARN |
-| 写面残留 | `check_write_claims` :559 | glob 未释放 claim ⇒ WARN 指名(提醒面,不是门禁) |
-| 消融残留 | `check_ablation_residue` :623 | 项目外 active/marker/manifest ⇔ 当前项目;健康 active=ok+剩余,异常=WARN,永不 FAIL;只读不还原 |
-| E2E 真跑 | `check_e2e` :649 | 单段执行:TCP 探活 → e2e.reset → 运行器可解析性判据 → 浏览器就绪探针 → 真跑;结果 JSON 供控制台/失败留证 |
+| 12 个 validate_* | `check_validators` :217 | 逐器调用,一门一行;前置文件缺失 ⇒ SKIP(`_gate_preconditions` :70 定义 7 器的三态前置) |
+| 对齐测试(.atlas/tests) | `check_factory` :264 | 装配副本跑 pytest;目录不存在 = 装配未含测试(F53 三形态 SKIP) |
+| 生成物最新 | `check_generated` :320 | gen_e2e_scripts 干跑 diff;exit 3 = not_ready SKIP |
+| 审查报告形态 | `check_review_report` :376 | 最新 E2E 审查报告复算(validate_review_report 单源) |
+| 执行串行 | `check_serial_execution` :290 | 运行器配置必须 `workers: 1` + `fullyParallel: false`(D115) |
+| 结构漂移 | `check_drift` :426 | 只读 `.adapter-out/_drift.json` 标记,不做二次判定 |
+| 装配版本 | `check_version` :488 | `.atlas/VERSION` 摘要戳 + `.atlas/MANIFEST.json` 逐文件基线 ⇔ 当前源包重算(D145);历史坏戳单列根因级 WARN |
+| 写面残留 | `check_write_claims` :612 | glob 未释放 claim ⇒ WARN 指名(提醒面,不是门禁) |
+| 消融残留 | `check_ablation_residue` :642 | 项目外 active/marker/manifest ⇔ 当前项目;健康 active=ok+剩余,异常=WARN,永不 FAIL;只读不还原 |
+| E2E 真跑 | `check_e2e` :733 | 单段执行:TCP 探活 → e2e.reset → 运行器可解析性判据 → 浏览器就绪探针 → 真跑;结果 JSON 供控制台/失败留证 |
 
 **辅助机制**:失败详情落 `.atlas/runs/last-check-error.log`(全绿轮自动清);每轮观测事件追加 `.atlas/runs/check-events.jsonl`(门名/状态/耗时,**观测面不参与判定**);成功真跑写 `.atlas/runs/e2e-summary.json`(带 git_head/dirty 溯源)。
 
-## 10 个校验器(判据本体)
+## 12 个校验器(判据本体)
 
 | 校验器 | 对账平面 | 核心判据 |
 |---|---|---|
