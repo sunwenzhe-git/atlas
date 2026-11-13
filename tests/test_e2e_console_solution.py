@@ -31,11 +31,13 @@ RUN_PROV = {
     "app_hash": "app-old",
     "shared_hash": "sh111",
     "cases": {"E2E-001": {"script": "scripts/demo.spec.ts", "block": "b1", "rest": "r1"}},
+    "case": {"E2E-001": "case-old"},
 }
 
 
-def current(app_hash: str = "app-old") -> dict:
-    return dict(RUN_PROV, app_hash=app_hash, solution_root=True)
+def current(app_hash: str = "app-old", case_hash: str = "case-old") -> dict:
+    return dict(RUN_PROV, app_hash=app_hash,
+                case={"E2E-001": case_hash}, solution_root=True)
 
 
 # ---------------------------------------------------------------- 单仓等价
@@ -77,24 +79,27 @@ def test_submit_current_values_do_not_create_fp() -> None:
     assert state["state"] == "stale"
 
 
-def test_runtime_prov_fresh_then_app_change_stale() -> None:
+def test_runtime_prov_fresh_then_app_change_stays_fresh_until_content_changes() -> None:
+    """D198：应用代码变化不再作废已审；只有用例内容（fp.case）真变才 stale。"""
     snap = cons._compact({"ok": True, "prov": RUN_PROV,
                           "reviewed": {"pass": True}}, prov=current(), cid="E2E-001")
     assert snap["prov"]["fp"]["app"] == "app-old"
     assert cons.case_review_state("E2E-001", snap, current("app-old"))["state"] == "fresh"
-    stale = cons.case_review_state("E2E-001", snap, current("app-new"))
+    assert cons.case_review_state("E2E-001", snap, current("app-new"))["state"] == "fresh"
+    stale = cons.case_review_state("E2E-001", snap, current("app-new", "case-new"))
     assert stale["state"] == "stale"
-    assert "应用代码变动" in stale["reason"]
+    assert "用例内容变动" in stale["reason"]
 
 
 def test_re_sign_without_rerun_is_still_stale() -> None:
-    """跑完（app-old）后应用改成 new，只重签不重跑 ⇒ fp.app 仍是 old ⇒ stale。"""
-    run_prov = dict(RUN_PROV, app_hash="app-old")
+    """跑完（内容 old）后用例内容改成 new，只重签不重跑 ⇒ fp.case 仍是 old ⇒ stale。"""
+    run_prov = dict(RUN_PROV, app_hash="app-old", case={"E2E-001": "case-old"})
     draft = {"ok": True, "prov": run_prov, "reviewed": {"pass": True}}
-    snap = cons._compact(draft, prov=current("app-new"), cid="E2E-001")
-    # 提交时即使把当前 app_hash 传给 _compact，也不能覆盖运行期的 app-old。
-    assert snap["prov"]["fp"]["app"] == "app-old"
-    assert cons.case_review_state("E2E-001", snap, current("app-new"))["state"] == "stale"
+    snap = cons._compact(draft, prov=current("app-old", "case-new"), cid="E2E-001")
+    # 提交时即使把当前指纹传给 _compact，也不能覆盖运行期的旧内容指纹。
+    assert snap["prov"]["fp"]["case"] == "case-old"
+    assert cons.case_review_state("E2E-001", snap,
+                                  current("app-old", "case-new"))["state"] == "stale"
 
 
 # ---------------------------------------------------------------- 运行期 prov 回传 / 父仓识别
@@ -147,13 +152,15 @@ def test_parent_app_hash_aggregates_all_members(tmp_path: Path) -> None:
     assert cons.app_fingerprint(tmp_path / "web") == web_before
 
 
-def test_member_change_makes_all_parent_cases_stale(tmp_path: Path) -> None:
+def test_member_app_change_keeps_all_parent_cases_fresh(tmp_path: Path) -> None:
+    """D198：成员应用代码变化不再作废父仓已审；只有用例内容变化才按条 stale。"""
     make_parent_with_members(tmp_path)
     old = cons.app_fingerprint(tmp_path)
     run_prov = {"head_sha": "h", "scripts_hash": "s", "git_dirty": False,
                 "actor_type": "human", "app_hash": old, "shared_hash": "sh",
                 "cases": {"E2E-A": {"script": "a.ts", "block": "b1", "rest": "r1"},
-                          "E2E-B": {"script": "b.ts", "block": "b2", "rest": "r2"}}}
+                          "E2E-B": {"script": "b.ts", "block": "b2", "rest": "r2"}},
+                "case": {"E2E-A": "case-a", "E2E-B": "case-b"}}
     (tmp_path / "api" / "app.txt").write_text("v2\n", encoding="utf-8")
     new = cons.app_fingerprint(tmp_path)
     assert new != old
@@ -161,8 +168,7 @@ def test_member_change_makes_all_parent_cases_stale(tmp_path: Path) -> None:
     for cid in ("E2E-A", "E2E-B"):
         snap = cons._compact({"ok": True, "prov": run_prov,
                               "reviewed": {"pass": True}}, prov=run_prov, cid=cid)
-        # 依赖 B 的与不依赖 B 的父仓用例都不豁免。
-        assert cons.case_review_state(cid, snap, current)["state"] == "stale"
+        assert cons.case_review_state(cid, snap, current)["state"] == "fresh"
 
 
 def test_member_a_local_case_stays_fresh_when_member_b_changes(tmp_path: Path) -> None:
