@@ -850,6 +850,11 @@ def test_probe_browser_three_states(monkeypatch) -> None:
     """
     cons = load("e2e_console", "scripts/e2e_console.py")
     kr = cons.pw_runner
+    # 密闭化（2026-11-14 发版门实证）：①②③ 钉的是「缓存判据」分支，前提 = 通道环境**缺席**；
+    # 环境里已设 `ATLAS_PLAYWRIGHT_CHANNEL`（如发版跑给真跑回归配的系统通道）会让 ② 的
+    # 「路径不存在 ⇒ 拒」被 ④ 的旁路分支提前吃掉 ⇒ 钉子随机器环境变色。delenv 固定缺席态
+    # （monkeypatch 自动还原，④ 的 setenv 不受影响）。
+    monkeypatch.delenv(kr.CHANNEL_ENV, raising=False)
     with tempfile.TemporaryDirectory() as td:
         scripts = Path(td)
         marker = scripts / "chromium-marker"
