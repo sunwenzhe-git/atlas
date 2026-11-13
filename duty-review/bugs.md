@@ -50,6 +50,7 @@
 - #17 `.atlas/tests` 缺失 ⇒ 包自检门恒红（旧发行版装配态 / 源包开发态两态恒红，红灯训练成噪声）—— 已修 `d7d8699`（D86 三表同步 + D91 前置 SKIP，M76），全量绿
 - #21 `--dry-run` 真写装配版本戳 + 干跑首装残留 `.atlas/` 卡真首装 —— 已修 beta.20 批 `2913c4e`（D92/F54 挂 DRY_RUN 闸，M77），全量绿
 - #22 `.atlas/` 整目录未跟踪被 porcelain 折叠 ⇒ 守卫恒拒，`--force` 仪式化 —— 已修同批（D93/F55 状态列分两桶 + 双摘要可见化，M78），全量绿
+- issue #63 装配态对齐门不可用双根：① 3 条 B-0 安装器集成测试（V-06 拒升 / `main()` 写前拒 / `package.json` 落点）漏挂装配态 skipif ⇒ 副本态 `FileNotFoundError` 恒红——**即使时间无限门也过不去**，超时只是第二层；② 预算 900s 静默余量仅 1.68×（实测 535s；负载日 ~3× 撞顶）且超时只回 `"TIMEOUT"` 无诊断面，fixture 外层 900s 还小于门内预算 ⇒ 外层先杀、真跑门从未触达；③ D194（beta.35）产物落点移出仓后 fixture 注红批仍断言仓内 `runs/.atlas-run` ⇒ trace 断言恒空（beta.35 发版排除 playground ⇒ 咬合迟到一批）—— 已修（skipif 补挂双侧实测；超时诊断钉 M-63a/M-63b；预算 1800s / fixture 外层 2400s，**判据面变更随方案上报待追认**；fixture 断言改 D194 evidence 落点带时间窗；分片另案 RFC）〔日期 2026-11-14｜状态 已修·待复验｜族 装配态守卫｜证 issue #63 + `test_factory_timeout_row_is_diagnosable`〕
 - v3 靶场安装副本版本漂移（2026-10-17 发现）：`.atlas/scripts/gen_e2e_scripts.py` 停在 10-16 手工补丁态（有 `.first()`/force 修复、无 beta.21 D96 的 `native` 开关）⇒ 用例里写 `native` 被**静默吸收**（不生效也不报错——D96 ③ 值域封闭判据未随行）。当日已手工移植 `step_force_arg`（备份 `.bak-2026-10-17`）；正式解法 = `install.sh --update` 重装配到最新发行版，等你批。安装副本漂移的通病教训：**契约新语法落到旧副本 = 静默失效**，重装配前对 .atlas/scripts 与 beta 源做版本对照。
 
 ## 图谱通道（已知边界，非缺陷——防误重报）

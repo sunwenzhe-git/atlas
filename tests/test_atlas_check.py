@@ -155,6 +155,46 @@ def test_f53_factory_gate_still_fails_on_red_tests() -> None:
         assert any(f["name"] == "对齐测试(.atlas/tests)" for f in payload["failures"])
 
 
+def test_factory_timeout_row_is_diagnosable(monkeypatch) -> None:
+    """issue #63：对齐门超时不得静默——旧形态 900s 只回 "TIMEOUT" 三个词，卡在哪个
+    文件/百分比完全不可见。判据不变（超时依旧 FAIL 且进 failures，反面钉同
+    `test_f53_factory_gate_still_fails_on_red_tests`）；本钉只咬诊断面：
+
+      ① `run()` 超时分支必须回传**已捕获的部分输出**（进程被杀前 stdout 已被
+         communicate 持续排空——部分输出是现成的，此前被丢弃）；
+      ② 超时行 detail 必须带预算值（`>Ns`）与最后进度（空输出时显式 `(无输出)`）。
+
+    变异 M-63a：run() 摘掉部分输出回传（退回 `return 124, "TIMEOUT"`）⇒ ①红；
+    M-63b：check_factory 摘掉超时分支（落回通用 summary 解析）⇒ ②红。
+    """
+    spec = importlib.util.spec_from_file_location("atlas_check_timeout", CK)
+    ac = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ac)
+
+    # ① 部分输出：先 flush 打印后长睡，超时杀掉时已打印内容必须可见
+    code, out = ac.run([sys.executable, "-c",
+                        "print('progress-marker', flush=True); import time; time.sleep(30)"],
+                       Path("."), timeout=2)
+    assert code == 124, (code, out)
+    assert "progress-marker" in out, out
+
+    # ② 超时行：预算值 + 最后进度（pytest 未及输出 ⇒ (无输出) 占位，两形态都可诊断）
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        tests = root / ".atlas" / "tests"
+        tests.mkdir(parents=True)
+        (tests / "test_slow.py").write_text(
+            "def test_slow():\n    import time; time.sleep(30)\n", encoding="utf-8")
+        monkeypatch.setattr(ac, "FACTORY_TIMEOUT_S", 2)
+        rows = ac.Row()
+        ac.check_factory(root, rows, sys.executable)
+        row = rows.rows[0]
+        assert row["status"] == "FAIL", row
+        assert "超时截断" in row["detail"] and ">2s" in row["detail"], row["detail"]
+        assert "最后进度" in row["detail"], row["detail"]
+        assert rows.failures and rows.failures[0]["code"] == 124, rows.failures
+
+
 def test_atlas_check_fails_when_a_gate_fails() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)

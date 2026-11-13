@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import functools
 import http.server
 from pathlib import Path
@@ -102,8 +103,12 @@ def _clean_batches(root: Path) -> None:
 
 
 def _run(root: Path, *extra: str) -> subprocess.CompletedProcess:
+    # 外层预算（issue #63，2026-11-13 提值，随对齐门预算 900→1800 同批上报待追认）：
+    # 整链 = pre + check（对齐门 ≤1800s + E2E 真跑）+ backfill。旧外层 900s 曾**小于**
+    # 门内预算：负载日对齐门装不进 900s，外层先杀——issue #63「900s 无输出不退出」
+    # 的第二层根因（真跑门未触达的直接原因）。外层必须 ≥ 门内上限 + E2E 段，取 2400s。
     return subprocess.run([sys.executable, str(VERIFY), "--root", str(root), *extra],
-                          capture_output=True, text=True, timeout=900)
+                          capture_output=True, text=True, timeout=2400)
 
 
 def _archive(root: Path) -> Path | None:
@@ -144,17 +149,30 @@ def test_playground_full_green_batch_and_short_circuit(playground) -> None:
 
 def test_playground_red_batch_keeps_evidence_and_skips_archive(playground) -> None:
     """真跑级咬合③(D150 实录同款):注红(产品态破坏)⇒ run FAIL + trace 留证 + **不落档**;
-    恢复后复绿重落档。注红 = 取证动作,red 不计缺陷判据(D148 注红条款)。"""
+    恢复后复绿重落档。注红 = 取证动作,red 不计缺陷判据(D148 注红条款)。
+
+    trace 落点 = D194(2026-11-12)后的仓外运行面:`/tmp/atlas-e2e/<basename>/evidence/`
+    (生成配置 DEFAULT_RUN_DIR 的父目录;config 的 global teardown 把失败构件归档进
+    evidence/ 并记 index.json)。旧断言(runs/.atlas-run)是 beta.23 D108 时代的仓内落点,
+    D194 后恒空——beta.35 发版全量回归排除 playground ⇒ 本咬合迟到一批(issue #63 复跑咬出)。
+    断言带**起跑时间窗**(mtime ≥ 注红前):防机器上同名仓的历史证据把本断言喂成假绿。
+    """
     root = playground
     _clean_batches(root)
+    stamp = time.time()                                      # 注红前起算的证据时间窗
     site = root / "site" / "index.html"
     original = site.read_text(encoding="utf-8")
     try:
         site.write_text(original.replace("验收靶场", "验收耙场"), encoding="utf-8")
         r = _run(root)
         assert r.returncode == 1, (r.stdout[-600:], r.stderr[-400:])
-        traces = list((root / "product/e2e/scripts/.atlas-run").rglob("trace.zip"))
-        assert traces, "失败批必须留 D108 证据(trace)"
+        # 与生成配置的 DEFAULT_RUN_DIR 字面同源（`/tmp/atlas-e2e/<basename>/current`）——
+        # 不走 tempfile.gettempdir()（macOS 解析到 /var/folders，与配置的 /tmp 不是一处）。
+        run_parent = Path("/tmp/atlas-e2e") / root.name
+        traces = [p for p in (run_parent / "evidence").rglob("trace.zip")
+                  if p.stat().st_mtime >= stamp - 5]
+        assert traces, (f"失败批必须留 D108 证据(trace);D194 落点 {run_parent}/evidence/ 无本批构件",
+                        sorted(p.name for p in run_parent.rglob("*"))[:20] if run_parent.is_dir() else "目录不存在")
         assert _archive(root) is None                            # 失败批不落档
     finally:
         site.write_text(original, encoding="utf-8")

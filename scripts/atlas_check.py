@@ -65,6 +65,13 @@ VALIDATORS = (
     "validate_apply_record",
 )  # E1：validate_prototype 随原型环退役；§B120：stack_profile / structure 纳入；#182：design_exemptions 纳入；§5.8：e2e_mocks 纳入；B209-1（3507 BT）：validate_ac_alignment 纳入；2026-10-13：validate_adr 纳入（架构决策资产门）；2026-10-14：validate_ledger 随知识库/台账子系统退役（AC 号唯一判据归位 validate_prd）；2026-10-23：validate_walkthrough 纳入（M1 走查锁，RFC-20261022-01）；2026-11-12：task_card / apply_record 纳入（RFC-20261111-03 C 批）
 
+# 对齐测试门的预算（issue #63，2026-11-13 定标）：装配副本全量出厂测试实测 535s
+# （76 文件 / 1750 项，静默机器）、681s（1 个并行会话同机跑同款全量）；发版日 ~3× 负载
+# 推算 ~1600s。900s（静默余量仅 1.68×）即 issue #63 撞顶形态——提值 1800（≈3.4× 静默
+# 余量，覆盖 3 套件并发）。**判据面变更，已随方案上报待追认**；超时依旧 FAIL（判据不变）。
+# RFC-20261114-01 摘 tests/ 后新装配态走 F53 SKIP，本预算只在存量装配生效；分片另案。
+FACTORY_TIMEOUT_S = 1800
+
 # §B120：三态前置 —— 前置未声明 ⇒ SKIP（不是通过，且必须带原因）；标记存在才真正跑。
 # 路径随 `atlas.config.yaml` 的资产根解析；配置缺失 ⇒ 默认 product/。
 def _gate_preconditions(root: Path) -> dict[str, tuple[str, str]]:
@@ -169,8 +176,21 @@ def run(cmd: list[str] | str, cwd: Path, timeout: int = 1800, shell: bool = Fals
         p = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True,
                            timeout=timeout, shell=shell)
         return p.returncode, (p.stdout or "") + (p.stderr or "")
-    except subprocess.TimeoutExpired:
-        return 124, "TIMEOUT"
+    except subprocess.TimeoutExpired as exc:
+        # 超时不是静默截断（issue #63：900s 只回 "TIMEOUT" 无诊断面）：带上已捕获的
+        # 部分输出（pytest -q 的进度点能看到卡在哪个文件/百分比）与预算值。
+        # 判据不变——超时依旧 124 / FAIL，只是 FAIL 行必须可诊断。
+        # exc.stdout/stderr 的 str/bytes 形态在 text=True 下也不保证一致（实测混出），
+        # 逐段归一化后再拼接。
+        parts = []
+        for piece in (exc.stdout, exc.stderr):
+            if not piece:
+                continue
+            if isinstance(piece, bytes):
+                piece = piece.decode("utf-8", errors="replace")
+            parts.append(piece)
+        out = "".join(parts)
+        return 124, f"TIMEOUT(>{timeout}s) 部分输出：\n{out}" if out.strip() else f"TIMEOUT(>{timeout}s)"
     except FileNotFoundError as e:
         return 127, str(e)
 
@@ -280,8 +300,19 @@ def check_factory(root: Path, rows: Row, py: str) -> None:
                  "atlas upgrade / install.sh 更新后本目录随之移除，本行恒为合法 SKIP")
         return
     started = time.perf_counter()
-    code, out = run([py, "-m", "pytest", ".atlas/tests", "-q", "--no-header"], root, timeout=900)
+    code, out = run([py, "-m", "pytest", ".atlas/tests", "-q", "--no-header"], root,
+                    timeout=FACTORY_TIMEOUT_S)
     duration_ms = _elapsed_ms(started)
+    if code == 124:
+        # 超时行专有诊断（issue #63）：预算值 + 最后进度行进 detail；full_output 已带
+        # 部分输出（run() 超时分支）。判据不变：超时依旧 FAIL。
+        last = out.strip().splitlines()[-1:][0] if out.strip() else ""
+        rows.add("对齐测试(.atlas/tests)", "FAIL",
+                 f"超时截断（>{FACTORY_TIMEOUT_S}s，实跑 {duration_ms // 1000}s）："
+                 f"最后进度 {last[:120] or '(无输出)'}",
+                 command=f"{py} -m pytest .atlas/tests -q --no-header",
+                 full_output=out, code=code, duration_ms=duration_ms)
+        return
     m = re.findall(r"(\d+) (passed|failed)", out)
     summary = " ".join(f"{n} {k}" for n, k in m) or out.strip().splitlines()[-1:][0] if out.strip() else ""
     rows.add("对齐测试(.atlas/tests)", "ok" if code == 0 else "FAIL", summary[:160],

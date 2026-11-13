@@ -1382,6 +1382,8 @@ def test_b0_u09_lenient_allows_lock_only_clone_and_rejects_seal(tmp_path: Path) 
     assert res.stderr.splitlines()[0] == "[FAIL] --lenient 仅限无封条"
 
 
+@pytest.mark.skipif(not (PKG_ROOT / "install.py").is_file(),
+                    reason="副本态（.atlas/）无 install.py；安装器集成只在源包测试")
 def test_b0_v06_install_update_refuses_v1_with_040_package(tmp_path: Path) -> None:
     """V-06：仓内 v1 + 来包 ≥0.4.0 ⇒ `install --update` 拒绝刷新并打印迁移命令。"""
     import shutil
@@ -1441,6 +1443,8 @@ def test_b0_v06_install_update_refuses_v1_with_040_package(tmp_path: Path) -> No
     assert refuse is False
 
 
+@pytest.mark.skipif(not (PKG_ROOT / "install.py").is_file(),
+                    reason="副本态（.atlas/）无 install.py；安装器集成只在源包测试")
 def test_b0_install_update_main_refuses_before_overwriting(tmp_path: Path,
                                                            monkeypatch, capsys) -> None:
     """评审重要 5：`main()` 的接线——`--update` 在覆盖 `.atlas` **之前**就拒绝。
@@ -1483,6 +1487,8 @@ def test_b0_install_update_main_refuses_before_overwriting(tmp_path: Path,
     assert not (target / ".atlas" / "package.json").exists()
 
 
+@pytest.mark.skipif(not (PKG_ROOT / "install.py").is_file(),
+                    reason="副本态（.atlas/）无 install.py；安装器集成只在源包测试")
 def test_b0_install_assembles_package_json_for_reader_version(
         tmp_path: Path, monkeypatch) -> None:
     """复核 3：成功装配必须真落下 `.atlas/package.json`（`reader_version` 第 2 级来源）。

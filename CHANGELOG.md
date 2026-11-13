@@ -4,6 +4,17 @@
 
 ---
 
+## [Unreleased]
+
+### 🔧 修复：playground 真跑门不可用（issue #63）
+
+* **对齐测试门在装配副本恒红的真根因**：`tests/test_atlas_solution.py` 的 3 条 B-0 安装器集成测试（V-06 拒升 / `main()` 写前拒 / `package.json` 落点）直接引用源包根的 `install.py`，漏挂装配态守卫 ⇒ 装配副本里 `FileNotFoundError` 恒红——即使时间无限，装配态对齐门也过不去。补挂同文件既有先例的 `skipif`（源包态照跑、装配态如实 SKIP），双侧实测（源包 3 passed / 装配 3 skipped）。
+* **超时静默截断改为可诊断**：`atlas_check.run()` 超时不再只回 `"TIMEOUT"`，回传已捕获的部分输出与预算值；对齐门超时行专有文案 = 预算值 + 实跑秒数 + 最后进度行。判据不变（超时依旧 FAIL 进 failures），钉 = `test_factory_timeout_row_is_diagnosable`（M-63a/M-63b）。
+* **对齐门预算提值 900s → 1800s**（判据面变更，随方案上报待追认）：装配副本全量出厂测试实测 535s（静默）/ 681s（1 并行会话负载）/ 发版日 ~3× 推算 ~1600s，900s 余量仅 1.68× 即 issue #63 撞顶形态；`FACTORY_TIMEOUT_S` 常量化。结构性出路（按文件分片）另案 RFC。
+* **真跑回归外层预算 900s → 2400s**：旧外层小于门内预算——负载日对齐门装不进 900s 时外层先杀，是 issue #63「900s 无输出不退出」的第二层根因（真跑门未触达的直接原因）。外层必须 ≥ 门内上限 + E2E 段。
+* **fixture 注红批 trace 断言跟进 D194 落点**：D194（beta.35）把运行产物移出仓（`/tmp/atlas-e2e/<basename>/`：`current/` 为运行目录、失败构件由 config 的 global teardown 归档 `evidence/`），fixture 仍断言仓内 `runs/.atlas-run` ⇒ 恒空——beta.35 发版全量回归排除 playground，这层咬合迟到一批，issue #63 复跑咬出。断言改指 D194 落点并带注红时间窗（防同名仓历史证据喂出假绿）。
+* **实测定标**（2026-11-13，装配副本 76 文件 / 1750 项）：串行全量 535s（3 failed / 1686 passed / 61 skipped——3 失败即上述漏守卫）；单文件耗时分布前二 = `test_apply_record` 245.7s（76 测试 × 嵌套 git init/commit 子进程密集）/ `test_atlas_solution` 111.5s，前 10 文件占 78%。
+
 ## [v0.2.0-beta.35] - 2026-11-13
 
 ### 🧪 E2E 环：`read` 运行时取数原语 + 存在类数据纪律（D191）
