@@ -91,7 +91,7 @@ ablation restore ablate-tests-20261113: completed_hash_only hash_verified=True
 * **职责转移**：采纳仓失去「出厂测试在装配副本上直接跑」的对齐面。该职责由既有「装配版本」行（指纹）+ MANIFEST 逐文件对账承接；行为级漂移由真跑门承接。出厂测试防「源包工具回归」，与采纳仓无关。
 * **golden 装配集**：装配集内容一变必须 `--record` 重录（harness 纪律），验收口令 `harness.py --check --installer install.py` 全绿。
 * **脚本耗时**：采纳仓默认门从分钟级（含出厂测试 pytest）降为秒级（对齐测试行 SKIP）；源仓出厂测试耗时不变（`FACTORY_TIMEOUT_S = 1800`）。
-* **顺带发现（另案报备，不在本提案范围）**：消融实测中「装配版本」行在装配刚完成后即 WARN（装配指纹 `f2d3b6be…` → 当前 `e81f47a5…`，改 4 文件 = `scripts/atlas_check.py`、`shared/gates.md`、`tests/test_atlas_check.py`、`tests/test_atlas_solution.py`）——疑似 `.atlas/VERSION` 摘要算法与 atlas_check 重算算法口径不一致（如缓存类文件排除面差异），另案核实。
+* **顺带发现（已定案，非缺陷）**：消融实测中「装配版本」行在装配刚完成后即 WARN（装配指纹 `f2d3b6be…` → 当前 `e81f47a5…`，改 4 文件）——落刀后对提交树（bfc8563）fresh 装配复验，装配版本行 `ok`（`8e0e93b5…`，204 文件基线齐）⇒ 该 WARN 是并行会话 issue #63 批在装配后改动那 4 个文件的**真实漂移信号**，机制工作正常，无需另案。
 
 ---
 
@@ -127,8 +127,8 @@ harness.py --check --installer install.py   # golden 全绿（重录后）
 ```
 
 * **消融实测记录**：见 §1.2（J1/J2/J3 全过，隔离场 `/tmp/atlas-ablation-field`，ablation 事务 begin→restore `hash_verified=True`）。
-* **测试结果**：落刀后回填 `XXX passed, 0 failed`
-* **自检结论**：落刀后回填
+* **测试结果**：回填于落刀批（锚类失败已修：docs/map 七处数字/符号锚 + gates.md 计数；全量 pytest 最终态见批注提交记录）
+* **自检结论**：装配场三场复验全过——① fresh 装配零 tests / MANIFEST 零 tests 条目 / 对齐测试行 SKIP 新文案（四 token 齐）；② 存量场 --update 残留 77 文件 → 0；③ 基线闸拒绝场 exit 2 逐字指名 `tests/my_integration_test.py（基线外）`、--force 越过 exit 0 + WARN。golden `--record` 已跑全绿（9 场景），产物未随本批（工作区含并行会话 #63 批未提交改动，待干净树重录——装配集一变就 --record 纪律由后续批承接）
 
 ### 4.5 留出验证（系统性修复必填；`RFC-20261026-03`）
 

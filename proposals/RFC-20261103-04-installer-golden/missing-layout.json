@@ -1,7 +1,7 @@
 {
   "installer": [
     "bash",
-    "/private/tmp/atlas-win-ci-step6/install.sh"
+    "/Users/sunwenzhe/Desktop/atlas/install.sh"
   ],
   "runs": [
     {
