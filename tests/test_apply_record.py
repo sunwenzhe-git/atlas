@@ -1065,6 +1065,10 @@ def test_i3_first_sign_rebase_with_reachable_origin_is_rejected(repo: Path) -> N
     """旧根仍可达（rc=0）⇒ 不得受控重指，`reanchor_record_missing` 保留。"""
     head = git(repo, "rev-parse", "HEAD").stdout.strip()
     lock = core.read_lock(repo)
+    # 手工写锁带旧 `locked_at`：随后 `write_lock` 会用当下时间重写该字段，
+    # 字节必异 ⇒ `git commit` 不会因「同秒内两次写入逐字节相同、无差异可提交」
+    # 而 exit 1（夹具快时两次写入可落同一秒——文件语境下必现的竞态，孤跑难复现）。
+    lock["locked_at"] = "2020-01-01T00:00:00+00:00"
     lock["seal_anchors"][SEAL_REL]["epoch_origin"] = head
     lock["seal_anchors"][SEAL_REL]["epoch_origin_history"] = [head]
     (repo / core.LOCK_NAME).write_text(
