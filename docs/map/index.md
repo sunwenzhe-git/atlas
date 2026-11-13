@@ -34,7 +34,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 | # | 子系统 | 一句话职责 | 入口 | L1 页 |
 |---|---|---|---|---|
-| 0 | 共享内核 | 全包单源的解析/复用实现,禁止就地复制 | `_support/`(17 件) | — |
+| 0 | 共享内核 | 全包单源的解析/复用实现,禁止就地复制 | `_support/`(19 件) | — |
 | 1 | CLI 与装配 | 把 atlas 装进目标仓库并保持副本与源包对账 | `bin/atlas.js`、`install.py` | [cli.md](cli.md) |
 | 2 | 共享契约层 | 规则与执行期程序契约的单一落点(frontend-reuse 非门、非真相源) | `shared/`(9 份)、`templates/` | — |
 | 3 | 结构抽取适配器 | 从业务代码确定性抽取路由/API/模型/测试事实 | `adapters/`、`scripts/refresh_structure.py` | [adapters.md](adapters.md) |
@@ -54,7 +54,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 ### 1. CLI 与装配
 
-- `bin/atlas.js`(463 行):命令面 = `init / update / upgrade / check / solution / review / eval / console / report / version`。`init` 先探测 Trellis(POSIX `which` / Windows `where`;`.trellis/` 缺失时自动 `trellis init`)再调装配器;平台探测拆在 `bin/platform.js`(bash 只认 Git Bash 不回落 WSL 中继壳;Python 按平台探测 `py -3`/`python`/`python3` 并校验 3.10+)。
+- `bin/atlas.js`(485 行):命令面 = `init / update / upgrade / check / solution / review / eval / console / report / version`。`init` 先探测 Trellis(POSIX `which` / Windows `where`;`.trellis/` 缺失时自动 `trellis init`)再调装配器;平台探测拆在 `bin/platform.js`(bash 只认 Git Bash 不回落 WSL 中继壳;Python 按平台探测 `py -3`/`python`/`python3` 并校验 3.10+)。
 - `install.py`(944 行):装配单源(`install.sh` 58 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ tests/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`,落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 66 条 `c()` 自检声明。
 - `patches/`(4 族):`workflow-plan-apply`(apply 挂进 Trellis 工作流)、`project-wiring`(AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.adapter-out/` / pi 扩展五触点)、`workflow-root-cause`、`workflow-skill-routing`。锚点式版本化补丁,可重放。
 - 对账:`scripts/pkg_digest.py`(摘要算法单点)+ `scripts/backflow.py`(副本⇔源包三态回灌,SOURCE_ONLY 拒绝护栏)。
@@ -79,9 +79,9 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 ### 7. E2E 生成与控制台
 
-- `scripts/gen_e2e_scripts.py`(2734 行,全仓最大单件):用例分片(中文 DSL)编译为 Playwright `.spec.ts`。动词值域封闭(`click/hover/type/dispatch/…`,第三词即中止——治旧副本静默吸收陌生动词);登录形态三态(real/fabricated/none);独立审查有 Critical 拒绝写盘;前置未声明 ⇒ exit 3 `not_ready`。
+- `scripts/gen_e2e_scripts.py`(3410 行,全仓最大单件):用例分片(中文 DSL)编译为 Playwright `.spec.ts`。动词值域封闭(`click/hover/type/dispatch/…`,第三词即中止——治旧副本静默吸收陌生动词);登录形态三态(real/fabricated/none);独立审查有 Critical 拒绝写盘;前置未声明 ⇒ exit 3 `not_ready`。
 - `scripts/gen_testid_stub.py`:老页面 testid 实然盘点薄桩(adopt 开户交尾件;缺失由 validate_testids 自愈)。
-- `scripts/e2e_console.py`(1975 行):纯标准库 SSE 评审控制台(默认 `127.0.0.1:4190`),500ms 慢动作回放、逐用例三值走查、提交即解锁人工 Review、逐用例内容指纹(fp: test 块/同文件共享段/共享脚本/应用代码)防旧账本挂新执行;超时软杀(SIGTERM→grace→SIGKILL);父仓模式评审新鲜度绑定 run-time provenance(RFC-20261108-02)。
+- `scripts/e2e_console.py`(2324 行):纯标准库 SSE 评审控制台(默认 `127.0.0.1:4190`),500ms 慢动作回放、逐用例三值走查、提交即解锁人工 Review、评审新鲜度绑**用例内容指纹**(`fp.case` = `atlas-case` 块归一化哈希,spec 重生成 / `.atlas` 重放不算变更;旧账本按块迁移,D198)防旧账本挂新执行;超时软杀(SIGTERM→grace→SIGKILL);父仓模式评审新鲜度绑定 run-time provenance(RFC-20261108-02)。
 - 生成物(落 `<e2e>/scripts/`,与 `playwright.config.ts` 同目录):`atlas-evidence-teardown.ts`(`globalTeardown` → `_support/evidence_archive.py --phase post-run`,只复制不判定)、`.atlas-trace-policy.json`(逐用例 `request_assertion`,进 `scripts_hash`)。
 - 配套内核:`_support/pw_runner.py`(运行器可解析性判据 + 全局兜底 + 浏览器就绪探针)、`_support/url_merge.py`(base query 转发)、`_support/case_block.py` / `case_id.py` / `manual_block.py`。
 
@@ -105,13 +105,13 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 |---|---|---|
 | 校验器 | 12(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py:52` |
 | 编排门行 | 9 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 / 消融残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:966`) |
-| 出厂测试文件 | 74 | `tests/` |
+| 出厂测试文件 | 76 | `tests/` |
 | skills | 7(含 frontend-design) | `skills/` |
 | 环 | 3(structure / prd / e2e;原型环 E1 已退役) | `rings/` |
 | 共享契约 | 9 份 | `shared/` |
-| 共享内核 | 17 件 | `_support/` |
+| 共享内核 | 19 件 | `_support/` |
 | install.py 自检声明 | 66 条 | `install.py` |
-| 最大单件 | `scripts/gen_e2e_scripts.py` 2734 行 | — |
+| 最大单件 | `scripts/gen_e2e_scripts.py` 3410 行 | — |
 
 ## L1 铺设计划(2026-10-25 定稿)
 

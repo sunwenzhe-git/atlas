@@ -19,7 +19,8 @@
   ② 回写索引 `e2e-index.md` 的 `状态` 一列（先给预览、确认后写）。
 * 不提交 ⇒ 服务端什么都不知道（这是「乙」的取舍：账本简洁，但过程只在页面里）。
 * **来源（单一靶场，E1）**：`app`（真实应用，`e2e.app_base_url`）。索引回写：通过 → `green`、失败 → `red`（`prototype-pass` 为 E0 历史终态，不再产生；旧账本里 `source=prototype` 的事件仍可读）。
-  `e2e.app_base_url` 为 `null` 时「真实应用」不可执行——契约要求向用户索取，不猜默认。
+  `e2e.app_base_url` 为 `null` 时「真实应用」不可执行——成员仓契约要求向用户索取，不猜默认。
+  **solution 根 / 父仓无实体页面**：不展示该索取提示、不参与真实应用执行判定（`read_sources().app.applicable=false`）。
 
 执行语义：
 
@@ -27,7 +28,14 @@
   -c playwright.config.ts <file>:<line> --headed`；慢动作经 `ATLAS_SLOWMO` 注入生成配置的
   `launchOptions.slowMo`（Playwright `test` CLI 无 `--slowmo` 旗标，2026-10-14 F11）；
   「跑完留窗 + 结果哨兵」由生成物 `atlas-hold.ts` 承载——契约 `rings/e2e/reference.md` §10.1）；
-* **并发 = 1**（同时只跑一条，其余按钮禁用）；单条 wall-clock 超时到点 kill 并如实报「超时」；
+* **并发 = 1**（同时只跑一条，其余按钮禁用）；自动关窗模式（无头）单条 wall-clock 超时到点
+  kill 并如实报「超时」；**持窗模式只提示、绝不 kill**（见下条硬性要求）；
+* **持窗到下一条起跑（硬性要求，2026-11-12，取代 2026-11-11「只手动关」）**：持窗模式下用例
+  跑完浏览器窗口**必须保持打开**，wall-clock `--timeout` 到点也**不得主动 kill**（只提示一次，
+  继续等待）；**起跑下一条用例时必须先收掉之前保留的窗口**——这是唯一允许的自动结束时点
+  （`Runner._collect_held_windows()`）；其余结束途径 = 用户手动关窗，或显式点控制台
+  「关闭浏览器窗口」（`/api/close-window`）。不提供「跑完自动关」开关（`--auto-close` 已移除，
+  跑完即关仍禁止）。无头（`--no-head`）本就没有窗口，不在此约束内。
 * **留窗不被运行器超时掐断**（2026-10-21，D126）：持窗模式给 playwright 传 `--timeout=0`——
   其默认 30s test timeout **计入 fixture teardown**，会把「等人工关窗」判超时并在约 30s 处
   强制关窗（现场：执行完毕后浏览器仍自动关闭）；控制台的 `--timeout` 是唯一超时真相源；
@@ -102,6 +110,10 @@ pw_runner = load_module("pw_runner")
 evidence_archive = load_module("evidence_archive")
 # 宿主注入型 base query（issue #27 / D104）：单源 `_support/url_merge.py`。
 url_merge = load_module("url_merge")
+# 登录态预检（RFC-20261112-01 v1 / D）：形态识别、过期分治、probe、指纹与哈希校验的单源内核。
+auth_state = load_module("auth_state")
+# 运行期输出目录（仓库外、每次 run 独立；D194）：结构上消除仓内受限写与并发互清。
+run_workspace = load_module("run_workspace")
 
 
 # ---------------------------------------------------------------- 代码提交与生成脚本指纹（D128）
@@ -225,8 +237,8 @@ def repo_git_dirty(root: Path) -> bool | None:
 
 
 # D128 #31：运行期产物目录 / 后缀闭集单源——`scripts_hash` 与 `script_file_map` 共用，
-# 避免两处清单再次漂移。`.atlas-run/`（真实运行目录：`results.json`、`.last-run.json`、trace 等）
-# 整体是运行产物，不参与指纹。
+# 避免两处清单再次漂移。`.atlas-run/`（直跑运行目录：`results.json`、`.last-run.json`、trace 等；
+# 控制台 run 自 D194 起落在仓库外）整体是运行产物，不参与指纹。
 _RUNTIME_PATH_PARTS = ("test-results", "playwright-report", ".atlas-auth", "node_modules",
                        ".atlas-run", ".atlas-evidence")
 _RUNTIME_SUFFIXES = (".trace", ".png", ".webm", ".last-run.json")
@@ -504,13 +516,48 @@ def app_fingerprint(root: Path) -> str | None:
     return _sha16("\n".join(entries))
 
 
+def case_content_hashes(root: Path) -> dict[str, str]:
+    """逐用例**内容指纹**（D198，2026-11-12）：`{用例ID: sha16(归一化 atlas-case 块)}`。
+
+    绑定对象 = 用例真相源 `product/e2e/cases/*.md` 的 `atlas-case` 块（`step` / `expected` /
+    `testid` / `precondition` / `mock` / 覆盖维度…），**不是**生成出的 `.spec.ts`：
+    `.atlas` 重放、生成器升级、spec 重新生成都不改变它 ⇒ 已审用例不得被判待审。
+    归一化：逐行剥 `#` 后行内注释、折叠空白、丢空行；`_file` / `_body`（含注释原文）不参与。
+    """
+    try:
+        mod = load_validator(root)
+        blocks, _pages = mod.gather_shards(load_layout(root).e2e_dir / "cases")
+    except (LayoutError, OSError):
+        return {}
+    strip = load_module("stack_profile").strip_inline_comment
+    out: dict[str, str] = {}
+    for cid, block in blocks.items():
+        norm: dict = {}
+        for key, val in block.items():
+            if key.startswith("_"):
+                continue
+            if isinstance(val, list):
+                items = [re.sub(r"\s+", " ", strip(str(x)).strip()) for x in val]
+                norm[key] = [x for x in items if x]
+            else:
+                norm[key] = re.sub(r"\s+", " ", strip(str(val)).strip())
+        out[cid] = _sha16(json.dumps(norm, ensure_ascii=False, sort_keys=True,
+                                     separators=(",", ":")))
+    return out
+
+
 def review_fingerprint(root: Path) -> dict:
-    """`case_review_state` 复算用的当前指纹面（不进 `provenance` 的前端负载）。"""
+    """`case_review_state` 复算用的当前指纹面（不进 `provenance` 的前端负载）。
+
+    D198：新增 `case`（用例内容指纹，评审新鲜度的**唯一权威**）；`cases`（生成物脚本块）
+    仅保留给旧账本迁移期做保守兜底。
+    """
     _shared, shared_hash, _fallback = shared_script_hashes(root)
     return {
         "scripts": script_file_hashes(root),
         "shared_hash": shared_hash,
         "cases": case_fingerprints(load_layout(root).e2e_scripts_dir),
+        "case": case_content_hashes(root),
     }
 
 
@@ -552,7 +599,13 @@ def case_review_state(cid: str, snap: dict, current: dict | None) -> dict:
       ③ 共享脚本（`fp.shared`）变了 ⇒ 全部作废；
       ④ 应用代码（`fp.app`）变了 ⇒ 全部作废；
       ⑤ 用例换了脚本文件 / 当前脚本里找不到 ⇒ 作废。
-    旧条目（无 `fp`）沿用 D128 的 HEAD + 全局脚本散列比较（fail-closed，重提交后升级）。
+    D198（2026-11-12）：新条目以**用例内容指纹** `fp.case`（真相源 `cases/*.md` 的
+    `atlas-case` 块归一化哈希）为唯一权威 —— `.atlas` 重放 / 生成器升级 / spec 重生成
+    都不再使已审用例失效；只有 `step`/`expected`/`testid` 等内容的真实变化才 stale。
+    旧条目（无 `fp.case`）走迁移：当前能解析出内容指纹 ⇒ 直接沿用已审（旧账本无法还原评审
+    时的 md 内容，块差异可能只是生成器升级；重跑/提交后自动写入 `fp.case`）；解析不到该用例
+    时退回比生成物块 `block`/`rest`（忽略 `shared`/`app`）。
+    更旧条目（无 `fp`）沿用 D128 的 HEAD + 全局脚本散列比较（fail-closed，重提交后升级）。
     """
     reviewed = snap.get("reviewed") or {}
     if not reviewed.get("pass"):
@@ -572,6 +625,28 @@ def case_review_state(cid: str, snap: dict, current: dict | None) -> dict:
     fp = prov.get("fp")
     if isinstance(fp, dict):
         mismatches = []
+        # D198：内容指纹优先 —— 只要 `atlas-case` 块（step/expected/testid…）没变，
+        # 生成物重生成 / 共享脚本变化 / 应用代码变化都不作废已审状态。
+        if fp.get("case"):
+            cur_case = (current.get("case") or {}).get(cid)
+            if not cur_case:
+                return {"state": "stale",
+                        "reason": "用例分片里找不到该用例（内容指纹缺失）", "prov": prov}
+            if cur_case != fp["case"]:
+                return {"state": "stale",
+                        "reason": "用例内容变动（step/expected/testid 等）", "prov": prov}
+            res = {"state": "fresh", "prov": prov}
+            if prov.get("git_dirty"):
+                res["warning"] = "提交时工作区有未提交改动（dirty），提交后请先落库"
+            return res
+        # 旧账本迁移：无内容指纹时，若当前能解析出该用例的内容指纹 ⇒ 直接沿用已审
+        # （旧账本无法还原评审时的 md 内容；块差异可能只是生成器升级造成的，不能据此
+        #  要求重审）。本次起的新评审都会写入 `fp.case`，之后只认内容。
+        if (current.get("case") or {}).get(cid):
+            res = {"state": "fresh", "prov": prov}
+            if prov.get("git_dirty"):
+                res["warning"] = "提交时工作区有未提交改动（dirty），提交后请先落库"
+            return res
         cur = (current.get("cases") or {}).get(cid)
         script = fp.get("script")
         if script:
@@ -584,10 +659,6 @@ def case_review_state(cid: str, snap: dict, current: dict | None) -> dict:
                     mismatches.append(f"用例脚本变动({script})")
                 if cur.get("rest") != fp.get("rest"):
                     mismatches.append(f"同文件共享代码变动({script})")
-        if fp.get("shared") and current.get("shared_hash") and fp["shared"] != current["shared_hash"]:
-            mismatches.append("共享脚本变动")
-        if fp.get("app") and current.get("app_hash") and fp["app"] != current["app_hash"]:
-            mismatches.append("应用代码变动")
         if mismatches:
             return {"state": "stale", "reason": "；".join(mismatches), "prov": prov}
         res = {"state": "fresh", "prov": prov}
@@ -689,12 +760,23 @@ def _e2e_section(prof: dict) -> dict:
 
 
 def read_sources(root: Path) -> dict:
-    """唯一来源（靶场，E1 单段）与它的 baseURL。地址的唯一来源是 stack-profile.yaml。"""
+    """唯一来源（靶场，E1 单段）与它的 baseURL。地址的唯一来源是 stack-profile.yaml。
+
+    `applicable=False` = 本源**无实体页面**（solution 根 / 父仓）：不展示「缺 app_base_url
+    索取」提示，也不参与真实应用执行判定。成员仓缺 `app_base_url` 时仍如实提示、不猜默认。
+    """
     profile = load_layout(root).stack_profile
     prof = load_profile_parser(root).parse_profile(profile.read_text(encoding="utf-8"))
     app = _e2e_section(prof).get("app_base_url")
+    if _is_solution_root(root):
+        return {
+            "app": {"label": "真实应用", "base_url": app, "configured": True,
+                    "applicable": False,
+                    "why": "本源无实体页面（solution 根 / 父仓），不参与真实应用执行"},
+        }
     return {
         "app": {"label": "真实应用", "base_url": app, "configured": bool(app),
+                "applicable": True,
                 "why": "真实应用（e2e.app_base_url）为 null ⇒ 契约要求向用户索取，不猜默认" if not app
                        else "真实应用（e2e.app_base_url）"},
     }
@@ -907,30 +989,79 @@ def member_snapshots(root: Path, parent_port: int = 4190) -> dict:
 
 
 MEMBER_CONSOLE_TIMEOUT = 10.0
+# 失败冷却：页面每次刷新都会走一次「无监听则拉起」的兜底检查，冷却避免刷屏式重复拉起。
+MEMBER_CONSOLE_RETRY_COOLDOWN = 30.0
+NO_SPAWN_NOTE = "--no-spawn：自动拉起已关闭，按页面命令手动启动成员控制台"
+TERMINAL_APP = "Terminal"
+
+
+class SpawnError(RuntimeError):
+    """自动拉起失败（带可读原因，不静默）。"""
+
+
+def member_console_argv(mroot: Path, port: int) -> list[str]:
+    """成员控制台 argv（与页面「手动启动命令」同一份参数口径）。"""
+    return [sys.executable or "python3", str(Path(__file__).resolve()),
+            "--root", str(mroot), "--port", str(port), "--host", "127.0.0.1",
+            "--no-spawn"]  # 子进程不再递归拉起；防御 solution 嵌套
+
+
+def member_console_shell_command(mroot: Path, port: int, log: Path, pidfile: Path) -> str:
+    """Terminal 里执行的一行命令：先记 PID，再 exec 成控制台进程。
+
+    脱离口径（2026-11-12）：命令交给 Terminal.app 的 shell 执行 ⇒ 进程父级是 Terminal，
+    父控制台所在会话被回收时不会连带被杀（本机实测 nohup / setsid / PPID=1 都会在
+    5–10 秒内被 SIGKILL，只有 Terminal 托管能真正活下来）。
+    """
+    argv = member_console_argv(mroot, port)
+    return (f"cd {shlex.quote(str(mroot))} && "
+            f"echo $$ > {shlex.quote(str(pidfile))}; "
+            f"exec {' '.join(shlex.quote(x) for x in argv)} "
+            f">> {shlex.quote(str(log))} 2>&1")
+
+
+def _applescript_escape(text: str) -> str:
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def terminal_spawn_command(shell_cmd: str, app: str = TERMINAL_APP) -> str:
+    """把 shell 命令包成 AppleScript：`Terminal → do script`（不 activate，不抢焦点）。"""
+    return f'tell application "{app}" to do script "{_applescript_escape(shell_cmd)}"'
 
 
 class MemberConsoles:
     """solution 根下自动拉起成员控制台（2026-11-10，方案 B：自动拉起、不代理执行）。
 
-    边界：只起进程、只探端口、只在退出时回收**自己拉起的**那些。不新增 HTTP 路由、
-    不转发执行与提交、不写成员任何文件——成员账本仍由成员进程写。
+    边界：只起进程、只探端口、不转发执行与提交、不写成员任何文件——成员账本仍由成员
+    进程写。**脱离口径（2026-11-12）**：拉起一律经 Terminal.app 托管，父控制台所在
+    会话被回收时成员进程继续存活；因此父控制台退出时**不再回收**自己拉起的成员
+    （复用的外部实例本来就不碰）。
 
-    端口占用（不杀、不抢）：能响应的成员控制台 ⇒ 复用（`owned=False`，退出不回收）；
-    端口被其它进程占着 ⇒ 跳过该成员并在页面披露原因；端口空闲 ⇒ 起子进程，
-    `MEMBER_CONSOLE_TIMEOUT` 内未就绪如实报失败并附日志尾部。
+    端口占用（不杀、不抢）：能响应的成员控制台 ⇒ 复用；端口被其它进程占着 ⇒ 跳过该
+    成员并在页面披露原因；端口空闲 ⇒ 经 Terminal 拉起，`MEMBER_CONSOLE_TIMEOUT` 内
+    未就绪如实报失败并附日志尾部。
 
-    状态闭集：`ready` / `reused` / `starting` / `failed` / `skipped` / `disabled`。
+    拉起时机：父控制台启动时逐个拉起；页面访问（`/api/cases`）与成员行入口点击
+    （`/api/member-open`）时再做一次「无监听则拉起、已有监听则复用」的兜底。
+
+    状态闭集：`ready` / `reused` / `starting` / `failed` / `skipped` / `disabled` / `no_index`。
     """
 
-    def __init__(self, root: Path, port: int, enabled: bool = True):
+    def __init__(self, root: Path, port: int, enabled: bool = True,
+                 spawner=None, ready_timeout: float = MEMBER_CONSOLE_TIMEOUT):
         self.root = Path(root)
         self.port = port
         self.enabled = enabled
+        # 可注入替换（单测）：签名 (name, mroot, port) -> handle dict；默认走 Terminal。
+        self.spawner = spawner
+        self.ready_timeout = float(ready_timeout)
         self._lock = threading.Lock()
-        self._procs: dict[str, subprocess.Popen] = {}
-        self._owned: dict[str, subprocess.Popen] = {}
+        self._targets: dict[str, dict] = {}
+        self._handles: dict[str, dict] = {}
         self._info: dict[str, dict] = {}
         self._threads: list[threading.Thread] = []
+        self._inflight: set[str] = set()
+        self._last_attempt: dict[str, float] = {}
         self._stopping = False
 
     # ---- 对外
@@ -939,6 +1070,7 @@ class MemberConsoles:
             return
         states = states or {}
         for tgt in targets:
+            self._targets[tgt["name"]] = tgt
             member_state = states.get(tgt["name"], "ok")
             if member_state != "ok":
                 # 没有可用本地 E2E 索引的成员不占进程（起来也是空列表 + 报错页）。
@@ -946,51 +1078,75 @@ class MemberConsoles:
                           f"无本地 E2E 索引（{member_state}），未启动控制台")
                 continue
             if not self.enabled:
-                self._set(tgt["name"], "disabled",
-                          "--no-spawn：自动拉起已关闭，按页面命令手动启动成员控制台")
+                self._set(tgt["name"], "disabled", NO_SPAWN_NOTE)
                 continue
-            th = threading.Thread(target=self._start_one, args=(tgt,),
-                                  name=f"member-console-{tgt['name']}", daemon=True)
-            th.start()
-            self._threads.append(th)
+            self._kick(tgt)
+
+    def ensure(self, name: str, wait: bool = False) -> dict:
+        """「无监听则拉起、已有监听则复用」的兜底入口（页面访问 / 成员行点击共用）。
+
+        `wait=True` 时最多等 `ready_timeout + 5s`，供 `/api/member-open` 跳转使用；
+        `wait=False` 只投递异步拉起，页面轮询即可看到 `starting → ready`。
+        """
+        tgt = self._targets.get(name)
+        if tgt is None:
+            tgt = next((t for t in member_targets(self.root, self.port)
+                        if t["name"] == name), None)
+            if tgt is not None:
+                self._targets[name] = tgt
+        if tgt is None:
+            return {"console_state": "skipped", "console_note": f"未知成员：{name}",
+                    "console_log": None}
+        if not self.enabled:
+            self._set(name, "disabled", NO_SPAWN_NOTE)
+            return self.snapshot(name)
+        snap = self.snapshot(name)
+        if snap.get("console_state") in ("ready", "reused"):
+            return snap
+        with self._lock:
+            inflight = name in self._inflight
+            last = self._last_attempt.get(name)
+        th = None
+        if not inflight:
+            if (last is not None
+                    and time.monotonic() - last < MEMBER_CONSOLE_RETRY_COOLDOWN
+                    and snap.get("console_state") == "failed"):
+                return snap  # 冷却期内不反复拉起；把上次的可读原因原样留给页面
+            th = self._kick(tgt)
+        if wait:
+            if th is not None:
+                th.join(self.ready_timeout + 5.0)
+            else:
+                deadline = time.monotonic() + self.ready_timeout + 5.0
+                while time.monotonic() < deadline:
+                    if self.snapshot(name).get("console_state") != "starting":
+                        break
+                    time.sleep(0.2)
+        return self.snapshot(name)
 
     def snapshot(self, name: str) -> dict:
         with self._lock:
             info = dict(self._info.get(name) or {})
         if not info:
-            info = {"console_state": "disabled",
-                    "console_note": "--no-spawn：自动拉起已关闭，按页面命令手动启动成员控制台"}
+            if self.enabled:
+                info = {"console_state": "starting",
+                        "console_note": "尚未拉起：页面访问或点击成员入口时会自动启动",
+                        "console_log": None}
+            else:
+                info = {"console_state": "disabled", "console_note": NO_SPAWN_NOTE,
+                        "console_log": None}
         info.setdefault("console_log", None)
         return info
 
     def stop(self) -> None:
-        """只回收自己拉起的子进程；复用的外部实例一根手指都不碰。"""
+        """父控制台退出：**不回收** Terminal 托管的成员控制台。
+
+        「拉起后真正脱离、不随父会话回收而死」是硬要求；父退出时顺手杀子进程会把
+        原来的问题换条路径重现。复用的外部实例本来就不碰。需要停止请到对应
+        Terminal 窗口 Ctrl-C（或换端口重开）。
+        """
         with self._lock:
-            if self._stopping:
-                return
             self._stopping = True
-            owned = list(self._owned.items())
-        for _name, proc in owned:
-            if proc.poll() is None:
-                try:
-                    proc.terminate()
-                except OSError:
-                    pass
-        deadline = time.monotonic() + 5.0
-        for name, proc in owned:
-            try:
-                proc.wait(timeout=max(0.05, deadline - time.monotonic()))
-            except subprocess.TimeoutExpired:
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
-                try:
-                    proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    pass
-            with self._lock:
-                self._owned.pop(name, None)
 
     # ---- 内部
     def _set(self, name: str, state: str, note: str, log: Path | None = None) -> None:
@@ -998,66 +1154,124 @@ class MemberConsoles:
             self._info[name] = {"console_state": state, "console_note": note,
                                 "console_log": str(log) if log else None}
 
+    def _kick(self, tgt: dict) -> threading.Thread | None:
+        """投递一次异步拉起；同名已在拉起中 ⇒ 返回 None（不重复拉）。"""
+        name = tgt["name"]
+        with self._lock:
+            if name in self._inflight:
+                return None
+            self._inflight.add(name)
+            self._last_attempt[name] = time.monotonic()
+        th = threading.Thread(target=self._start_one, args=(tgt,),
+                              name=f"member-console-{name}", daemon=True)
+        th.start()
+        self._threads.append(th)
+        return th
+
     def _start_one(self, tgt: dict) -> None:
         name, mroot, port = tgt["name"], Path(tgt["root"]), int(tgt["port"])
-        if not mroot.is_dir():
-            self._set(name, "skipped", f"成员路径不存在，不拉起：{tgt['path']}")
-            return
-        probe = self._probe(port)
-        if probe == "member":
-            self._set(name, "reused",
-                      f"端口 {port} 上已有成员控制台在响应，直接复用（非本进程拉起，退出不回收）")
-            return
-        if probe == "other":
-            self._set(name, "skipped",
-                      f"端口 {port} 已被占用（有响应，但不是可用的成员控制台——可能是旧版本或"
-                      f"别的进程），不抢占、不杀；换父仓端口可避开")
-            return
-        self._set(name, "starting", f"正在拉起成员控制台（端口 {port}）…")
         try:
-            proc, log = self._spawn(name, mroot, port)
-        except OSError as exc:
-            self._set(name, "failed", f"拉起失败：{type(exc).__name__}: {exc}")
-            return
-        with self._lock:
-            self._procs[name] = proc
-            self._owned[name] = proc
-        deadline = time.monotonic() + MEMBER_CONSOLE_TIMEOUT
-        while time.monotonic() < deadline:
-            code = proc.poll()
-            if code is not None:
-                with self._lock:
-                    self._owned.pop(name, None)
-                self._set(name, "failed",
-                          f"成员控制台启动即退出（exit={code}）。日志尾部：{self._tail(log)}", log)
+            if not mroot.is_dir():
+                self._set(name, "skipped", f"成员路径不存在，不拉起：{tgt['path']}")
                 return
-            if self._probe(port) == "member":
-                self._set(name, "ready", f"已就绪（PID {proc.pid}，端口 {port}）", log)
+            probe = self._probe(port)
+            if probe == "member":
+                self._set(name, "reused",
+                          f"端口 {port} 上已有成员控制台在响应，直接复用"
+                          f"（非本进程拉起，不重启、不杀、退出不回收）")
                 return
-            time.sleep(0.2)
-        try:
-            proc.kill()
-            proc.wait(timeout=3)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-        with self._lock:
-            self._owned.pop(name, None)
-        self._set(name, "failed",
-                  f"{MEMBER_CONSOLE_TIMEOUT:.0f}s 内未就绪（端口 {port}）。"
-                  f"日志尾部：{self._tail(log)}", log)
+            if probe == "other":
+                self._set(name, "skipped",
+                          f"端口 {port} 已被占用（有响应，但不是可用的成员控制台——可能是旧版本或"
+                          f"别的进程），不抢占、不杀；换父仓端口可避开")
+                return
+            self._set(name, "starting",
+                      f"正在拉起成员控制台（端口 {port}，Terminal.app 托管）…")
+            try:
+                handle = self._spawn(name, mroot, port)
+            except SpawnError as exc:
+                self._set(name, "failed", f"拉起失败：{exc}")
+                return
+            except OSError as exc:
+                self._set(name, "failed", f"拉起失败：{type(exc).__name__}: {exc}")
+                return
+            with self._lock:
+                self._handles[name] = handle
+            log = Path(handle["log"])
+            deadline = time.monotonic() + self.ready_timeout
+            while time.monotonic() < deadline:
+                if self._probe(port) == "member":
+                    pid = self._read_pid(handle) or handle.get("pid")
+                    via = ("Terminal.app 托管，父会话退出不影响"
+                           if handle.get("via") == "terminal" else "子进程托管")
+                    self._set(name, "ready",
+                              f"已就绪（PID {pid}，端口 {port}，{via}）", log)
+                    return
+                pid = self._read_pid(handle) or handle.get("pid")
+                if pid and not self._pid_alive(pid):
+                    self._set(name, "failed",
+                              f"成员控制台启动即退出（PID {pid}）。日志尾部：{self._tail(log)}",
+                              log)
+                    return
+                time.sleep(0.2)
+            self._set(name, "failed",
+                      f"{self.ready_timeout:.0f}s 内未就绪（端口 {port}）。"
+                      f"日志尾部：{self._tail(log)}", log)
+        finally:
+            with self._lock:
+                self._inflight.discard(name)
 
-    def _spawn(self, name: str, mroot: Path, port: int) -> tuple[subprocess.Popen, Path]:
+    def _spawn(self, name: str, mroot: Path, port: int) -> dict:
+        """拉起成员控制台；默认经 Terminal.app 托管（真正脱离父会话）。
+
+        返回 handle：`{via, pid, log, pidfile, shell_cmd}`。失败一律抛 `SpawnError`，
+        带上 osascript 的原始错误行——页面直接展示，不静默。
+        """
+        if self.spawner is not None:
+            return self.spawner(name, mroot, port)
+        return self._spawn_terminal(name, mroot, port)
+
+    def _spawn_terminal(self, name: str, mroot: Path, port: int) -> dict:
         safe = re.sub(r"[^0-9A-Za-z_.-]", "_", name)
         log = Path(tempfile.gettempdir()) / f"atlas-console-{port}-{safe}.log"
-        argv = [sys.executable or "python3", str(Path(__file__).resolve()),
-                "--root", str(mroot), "--port", str(port), "--host", "127.0.0.1",
-                "--no-spawn"]  # 子进程不再递归拉起；防御 solution 嵌套
-        with open(log, "ab") as fh:
-            proc = subprocess.Popen(
-                argv, cwd=str(mroot), stdin=subprocess.DEVNULL, stdout=fh,
-                stderr=subprocess.STDOUT, start_new_session=True,
-                env=dict(os.environ, ATLAS_CONSOLE_SPAWNED="1"))
-        return proc, log
+        pidfile = Path(tempfile.gettempdir()) / f"atlas-console-{port}-{safe}.pid"
+        try:
+            pidfile.unlink()
+        except OSError:
+            pass
+        shell_cmd = member_console_shell_command(mroot, port, log, pidfile)
+        try:
+            res = subprocess.run(["osascript", "-e", terminal_spawn_command(shell_cmd)],
+                                 capture_output=True, text=True, timeout=20)
+        except FileNotFoundError as exc:
+            raise SpawnError("找不到 osascript（非 macOS 或 PATH 不完整），"
+                             "请用页面「手动启动命令」拉起") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise SpawnError("osascript 调用超时（Terminal 无响应，或自动化权限被拒）") from exc
+        if res.returncode != 0:
+            detail = [ln.strip() for ln in (res.stderr or res.stdout or "").splitlines()
+                      if ln.strip()]
+            raise SpawnError(f"osascript 调用失败（exit={res.returncode}）："
+                             f"{detail[-1] if detail else '无输出'}")
+        return {"via": "terminal", "pid": self._read_pid({"pidfile": str(pidfile)}),
+                "log": str(log), "pidfile": str(pidfile), "shell_cmd": shell_cmd}
+
+    @staticmethod
+    def _read_pid(handle: dict) -> int | None:
+        try:
+            return int(Path(handle["pidfile"]).read_text(encoding="utf-8").strip())
+        except (OSError, ValueError, KeyError):
+            return None
+
+    @staticmethod
+    def _pid_alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
 
     @staticmethod
     def _probe(port: int, host: str = "127.0.0.1") -> str:
@@ -1277,6 +1491,9 @@ class Runner:
         # 只改「进程怎么退出」，不改「超时判 FAIL」；grace 只对 node 进程，worker/browser 不在控制内。
         self.kill_grace_secs = max(0.0, min(15.0, float(kill_grace_secs)))
         self._pre_archived = False  # 每批只做一次 pre-run 归档（批首、第一个用例起跑前）
+        # D194（2026-11-12）：每次 run 的仓库外独立输出目录；起跑时创建，结果/证据/归档全部落这里。
+        self.run_dir: Path | None = None
+        self.evidence_dir: Path | None = None
         # 人工 review（用户 2026-09-23 要求）：跑完**不自动关浏览器**，留给人手动关。
         # 无头/自动关模式的取舍在 `main()` 算好再传进来（Runner 只认参数，不耦合 head）。
         self.keep_open = bool(keep_open)
@@ -1287,11 +1504,21 @@ class Runner:
         self.done: dict | None = None
         self.held_case: str | None = None   # 窗口被保留中的那条用例（可手动关窗）
         self._proc: subprocess.Popen | None = None
+        # 硬性要求（2026-11-12 取代 2026-11-11「只手动关」）：持窗到下一条起跑。已结束但仍持窗的
+        # 进程集中在这里——跑完**不**kill、超时**不**kill；**起跑下一条**时由
+        # `_collect_held_windows()` 统一收掉（唯一自动结束时点）；用户也可手动关窗
+        # 或点「关闭浏览器窗口」（close_window()）提前结束它们。
+        self._held_procs: list[subprocess.Popen] = []
         # RFC-20261108-02 §3.5：运行期 provenance（起跑时快照），随 done 回传；
         # 直接调 `_run` 的测试/工具不设置 ⇒ done 不带 prov，父仓模式据此 fail-closed。
         self.run_prov: dict | None = None
 
     def start(self, case: dict, nodeid: str, slowmo: int, source: str, base_url: str) -> tuple[bool, str]:
+        # 执行前预检（RFC-20261112-01 v1 / D）：登录态按形态分治判定 + 必填 probe + 来源 / 指纹 /
+        # 哈希一致性。不可用即拒绝执行并给出可读原因（含 `atlas e2e login`），不起注定 401 的子进程。
+        verdict = auth_state.preflight(self.root)
+        if not verdict.get("ok"):
+            return False, verdict.get("reason") or "登录态预检未通过"
         # node 单轨（2026-10-12 迁移批）：运行器先行解析 + **可解析性判据**（issue #24）。
         # 判据本体 = 「生成物能不能 import 到 @playwright/test」（单源内核 `_support/pw_runner.py`）；
         # 不成立时执行器走幂等修复（仅全局兜底），且把「用了全局什么」如实播出来；修不好 ⇒ 诚实拒绝。
@@ -1309,33 +1536,68 @@ class Runner:
         with self.cond:
             if self.running:
                 return False, f"已有用例在跑（{self.case}）——本控制台并发=1"
-            self._proc_alive_kill()   # 跑下一条前，先关掉上一条保留的窗口
+            self._reap_finished()   # 先清掉已自行退出（人手动关窗）的持窗进程
             self.running = True
             self.case = case["id"]
             self.lines = []
             self.done = None
+            # 硬性要求（2026-11-12）：起跑下一条前收掉仍开着的旧窗口；日志须落在
+            # `lines = []` 之后才能进本条的新输出缓冲
+            self._collect_held_windows()
         # 运行期 provenance 在起跑前快照（`_run` 只回传，不重新计算）。
         self.run_prov = run_provenance(self.root)
         threading.Thread(target=self._run, args=(case, nodeid, slowmo, source, base_url, pw_bin, nm_dir), daemon=True).start()
         return True, ""
 
-    def _proc_alive_kill(self) -> None:
-        """持窗进程还活着就结束它（并清 held_case）。调用方须已持 cond 锁。"""
-        proc = self._proc
-        if proc is not None and proc.poll() is None:
-            self._emit("⏹ 已关闭上一条保留的浏览器窗口")
-            try:
-                proc.kill()
-            except Exception:
-                pass
-        self._proc = None
-        self.held_case = None
+    def _reap_finished(self) -> None:
+        """移除已自行退出（人手动关窗）的持窗进程；**绝不主动 kill**。调用方须已持 cond 锁。"""
+        self._held_procs = [p for p in self._held_procs if p.poll() is None]
+        if not self._held_procs:
+            self.held_case = None
+
+    def _collect_held_windows(self) -> int:
+        """硬性要求（2026-11-12）：起跑下一条用例前，收掉之前保留的全部浏览器窗口。
+
+        「持窗到下一条起跑」——这是持窗模式下**唯一**允许自动结束持窗进程的时点；
+        跑完、超时都**不得**走到这里。自行持 cond 锁（RLock 可重入：`start()` 持锁中
+        调用安全，测试直接调用也安全）；kill 后 `_watch_held` 线程会自行完成残余
+        清理（此处同步清空，双写幂等）。返回实际收掉的窗口数（0 = 无旧窗，静默不打日志）。
+        """
+        with self.cond:
+            killed = 0
+            for proc in self._held_procs:
+                if proc.poll() is None:
+                    try:
+                        proc.kill()
+                        killed += 1
+                    except Exception:
+                        pass
+            if killed:
+                had = self.held_case
+                self._held_procs = []
+                self.held_case = None
+                self.lines.append(f"↻ 起跑新用例：已收掉之前保留的浏览器窗口（{had or '上一条'}）")
+                self.cond.notify_all()
+            return killed
 
     def close_window(self) -> dict:
-        """手动关掉被保留的浏览器窗口。"""
+        """手动关掉被保留的浏览器窗口 —— 用户主动收窗的途径（跑完即关仍不存在；
+        自动收窗只有「起跑下一条」这一个时点，见 `_collect_held_windows()`）。"""
         with self.cond:
+            held = self._held_procs
+            self._held_procs = []
             had = self.held_case
-            self._proc_alive_kill()
+            self.held_case = None
+        closed = 0
+        for proc in held:
+            if proc.poll() is None:
+                try:
+                    proc.kill()
+                    closed += 1
+                except Exception:
+                    pass
+        if closed:
+            self._emit(f"⏹ 已关闭 {closed} 个保留的浏览器窗口（用户手动操作）")
         return {"ok": True, "closed": had}
 
     def _emit(self, text: str) -> None:
@@ -1400,11 +1662,25 @@ class Runner:
                     self.done = ev
                     self.cond.notify_all()
                 return
-        # 起跑前证据归档：批首、第一个用例起跑前做一次（Playwright 起跑即清空 `.atlas-run`）。
+        # 起跑前证据归档：批首、第一个用例起跑前做一次（归档**上一次** run 的仓库外产物）。
         self._archive_pre_once()
+        # D194（2026-11-12）：每次 run 使用仓库外独立输出目录（结构修复 EACCES + 并发互清）。
+        try:
+            keep = int(os.environ.get("ATLAS_RUN_KEEP", "10") or 10)
+        except ValueError:
+            keep = 10
+        self.run_dir = run_workspace.new_run_dir(self.root)
+        self.evidence_dir = run_workspace.evidence_root(self.root)
+        run_workspace.prune(self.root, keep=keep)  # 含本次 ⇒ 磁盘上恒定保留最近 keep 次
+        legacy = run_workspace.legacy_run_dir(self.root)
+        if legacy.is_dir():
+            self._emit(f"# 提示：旧仓内运行目录仍存在（不删除，可手动清理）：{legacy}\n")
         # node 单轨（3507 BO）：`file:line` 过滤 + 运行器原生 flag（--headed）；NODE_PATH 让生成物里的
         # @playwright/test 解析到项目声明的依赖目录（与 atlas_check 真跑门同一姿势）。
         cmd = [str(pw_bin), "test", "-c", "playwright.config.ts", nodeid]
+        # `--output` 覆盖配置里的 outputDir（旧生成物也能吃到结构修复）；JSON reporter 的落点由
+        # Playwright 官方环境变量 PLAYWRIGHT_JSON_OUTPUT_NAME 覆盖。
+        cmd += ["--output", str(self.run_dir)]
         if self.head:
             cmd.append("--headed")
         if self.keep_open:
@@ -1412,11 +1688,12 @@ class Runner:
             # ⇒ `atlas-hold.ts` 的留窗等待会被判超时并把浏览器关掉（实测报错：
             # Tearing down "atlasHold" exceeded the test timeout of 30000ms）。
             # 持窗模式关掉运行器自身超时，控制台的 wall-clock `--timeout` 是唯一超时真相源
-            # （到点 kill 并如实报「超时」）；自动关窗模式保留 30s 原生兜底，防孤儿进程。
+            # （持窗模式到点只提示、不 kill；自动关窗模式保留 30s 原生兜底，防孤儿进程）。
             cmd.append("--timeout=0")
         self._emit(f"# 来源 {source} → ATLAS_BASE_URL={base_url}（slowmo={slowmo}ms via ATLAS_SLOWMO）\n$ cd {scripts}\n$ {' '.join(cmd)}\n")
         t0 = time.time()
         timed_out = False
+        warned_timeout = False
         held = False
         exit_code = -1
         # 结果哨兵：持窗模式下进程会活过用例结束，所以不能靠「进程退出」判结果。
@@ -1428,7 +1705,10 @@ class Runner:
         sentinel.unlink()
         # F11（2026-10-14）：Playwright `test` CLI 无 `--slowmo` 旗标（1.64 实测 unknown
         # option）⇒ 慢动作经 `ATLAS_SLOWMO` 注入生成配置的 launchOptions.slowMo；未设 ⇒ 0。
-        env = {**os.environ, "ATLAS_BASE_URL": base_url, "ATLAS_SLOWMO": str(slowmo)}
+        env = {**os.environ, "ATLAS_BASE_URL": base_url, "ATLAS_SLOWMO": str(slowmo),
+               "ATLAS_RUN_DIR": str(self.run_dir),
+               "ATLAS_EVIDENCE_DIR": str(self.evidence_dir),
+               "PLAYWRIGHT_JSON_OUTPUT_NAME": str(self.run_dir / "results.json")}
         if nm_dir:
             env["NODE_PATH"] = str(nm_dir)
         if self.keep_open:
@@ -1454,6 +1734,16 @@ class Runner:
                     exit_code = proc.returncode
                     break
                 if time.time() - t0 > self.timeout:
+                    if self.keep_open:
+                        # 硬性要求（2026-11-12）：持窗模式跑完后绝不自动关浏览器 ⇒ 超时只提示一次，
+                        # 不 kill、不退出循环；用例/窗口等到用户手动关窗或点「关闭浏览器窗口」为止。
+                        if not warned_timeout:
+                            warned_timeout = True
+                            self._emit(
+                                f"⏱ 已超过 --timeout={self.timeout}s：持窗模式不主动结束进程，"
+                                "浏览器窗口保持打开（需要结束请手动关窗或点「关闭浏览器窗口」）")
+                        time.sleep(0.1)
+                        continue
                     self._kill()
                     timed_out = True
                     break
@@ -1471,7 +1761,8 @@ class Runner:
         if not ok:
             ev_archive = evidence_archive.archive_run_artifacts(
                 self.root, source=f"e2e_console-{case['id']}", phase="fail",
-                failed_cases=[case["id"]])
+                failed_cases=[case["id"]],
+                run_dir=self.run_dir, evidence_dir=self.evidence_dir)
             if ev_archive["status"] == "WARN":
                 self._emit(f"[证据归档] WARN {'; '.join(ev_archive['warnings'])[:300]}")
         with self.cond:
@@ -1491,30 +1782,40 @@ class Runner:
             self.running = False
             self.done = ev
             if held:
+                # 硬性要求（2026-11-12「持窗到下一条起跑」）：进程留在持窗清单里——跑完与
+                # 超时都**不**杀；下一条起跑时由 `_collect_held_windows()` 收掉，或用户
+                # 手动关窗 / 点「关闭浏览器窗口」提前结束。
+                self._held_procs.append(proc)
                 self.held_case = case["id"]
             self.cond.notify_all()
         if held:
             threading.Thread(target=self._watch_held, args=(proc,), daemon=True).start()
 
     def _watch_held(self, proc: subprocess.Popen) -> None:
-        """人手动关了窗口 ⇒ 持窗进程自然退出 ⇒ 顺手把 held_case 清掉（不让 UI 一直挂一个已失效的按钮）。"""
+        """人手动关了窗口 ⇒ 持窗进程自然退出 ⇒ 从持窗清单移除（**不** kill）。"""
         try:
             proc.wait()
         except Exception:
             pass
         with self.cond:
+            self._held_procs = [p for p in self._held_procs if p is not proc]
             if self._proc is proc:
                 self._proc = None
+            if not self._held_procs:
                 self.held_case = None
             self.cond.notify_all()
 
     def _archive_pre_once(self) -> None:
-        """批首、第一个用例起跑前归档上一批遗留证据（每 Runner 批一次）。"""
+        """批首、第一个用例起跑前归档**上一次** run 的仓库外产物（每 Runner 批一次）。"""
         if self._pre_archived:
             return
         self._pre_archived = True
+        prev = run_workspace.latest_run_dir(self.root, exclude=self.run_dir)
+        if prev is None:
+            return
         ev = evidence_archive.archive_run_artifacts(
-            self.root, source="e2e_console", phase="pre-run")
+            self.root, source="e2e_console", phase="pre-run",
+            run_dir=prev, evidence_dir=run_workspace.evidence_root(self.root))
         if ev["status"] == "WARN":
             self._emit(f"[证据归档] WARN {'; '.join(ev['warnings'])[:300]}")
 
@@ -1611,6 +1912,8 @@ def _compact(entry: dict, prov: dict | None = None, cid: str | None = None) -> d
                     "rest": cf.get("rest"),
                     "shared": run_prov.get("shared_hash"),
                     "app": run_prov.get("app_hash"),
+                    # D198：用例内容指纹（真相源 md），评审新鲜度以它为准
+                    "case": (run_prov.get("case") or {}).get(cid),
                 }
     if not out["ok"] and entry.get("tail"):
         out["tail"] = "\n".join(str(entry["tail"]).splitlines()[-80:])
@@ -1657,10 +1960,13 @@ def writeback(root: Path, draft: dict, apply: bool, source: str = "app") -> dict
 
 class App:
     def __init__(self, root: Path, port: int, slowmo: int, timeout: int, head: bool, keep_open: bool = True,
-                 kill_grace_secs: float = 5.0, members: MemberConsoles | None = None):
+                 kill_grace_secs: float = 5.0, members: MemberConsoles | None = None,
+                 host: str = "127.0.0.1"):
         self.root = root
         self.layout = load_layout(root)
         self.port = port
+        self.host = host
+        self.targets = member_targets(root, port)
         self.members = members
         self.slowmo = slowmo
         self.actor = f"{os.environ.get('USER', 'local')}·控制台"
@@ -1672,6 +1978,11 @@ class App:
         current_prov = repo_provenance(self.root)
         # 成员聚合是 pure-read（只读成员索引/账本），单根下返回空成员表。
         scope_payload = member_snapshots(self.root, self.port)
+        # 「访问父控制台 ⇒ 无监听则拉起、已有监听则复用」：只投递异步拉起，不阻塞本请求。
+        if self.members:
+            for item in scope_payload.get("members") or []:
+                if item.get("state") == "ok":
+                    self.members.ensure(item["name"])
         # 运行期状态（自动拉起的结果）只在内存里；`--no-spawn` 时为 disabled。
         for item in scope_payload.get("members") or []:
             item.update(self.members.snapshot(item["name"]) if self.members else {
@@ -1714,6 +2025,28 @@ class App:
             **scope_payload,
         }
 
+    def open_member_console(self, name: str) -> tuple[int, dict]:
+        """父 → 子跳转：确保成员控制台在跑，再给出它的 host/port。
+
+        返回 `(status, payload)`；`payload.ok=True` 时 `payload.url` 是 302 目标。
+        失败带 `console_state` 与可读原因（含 osascript / 日志尾部），不静默。
+        """
+        tgt = next((t for t in self.targets if t["name"] == name), None)
+        if tgt is None:
+            return 404, {"ok": False, "error": f"未知成员：{name}",
+                         "members": [t["name"] for t in self.targets]}
+        url = f"http://{self.host}:{int(tgt['port'])}/"
+        if self.members is None:
+            return 200, {"ok": True, "url": url, "console_state": "unknown",
+                         "console_note": "未启用自动拉起（未传入 MemberConsoles）"}
+        snap = self.members.ensure(name, wait=True)
+        state = snap.get("console_state")
+        if state in ("ready", "reused"):
+            return 200, {"ok": True, "url": url, "console_state": state,
+                         "console_note": snap.get("console_note")}
+        return 503, {"ok": False, "url": url, "console_state": state,
+                     "error": snap.get("console_note") or "成员控制台不可用"}
+
 
 class Handler(BaseHTTPRequestHandler):
     app: App
@@ -1753,6 +2086,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _redirect(self, url: str) -> None:
+        self.send_response(302)
+        self.send_header("Location", url)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length") or 0)
         if not n:
@@ -1772,6 +2112,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json(self.app.cases_payload("app"))
         elif path == "/api/stream":
             self._stream()
+        elif path == "/api/member-open":
+            qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            name = (qs.get("name") or [""])[0]
+            code, payload = self.app.open_member_console(name)
+            if payload.get("ok"):
+                self._redirect(str(payload["url"]))
+            else:
+                self._json(payload, code)
         elif path.startswith("/api/"):
             self.send_error(404)
         else:
@@ -1820,7 +2168,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         source = "app"
         src = read_sources(self.app.root).get(source)
-        if not src or not src.get("configured"):
+        if not src or src.get("applicable") is False or not src.get("configured"):
             why = (src or {}).get("why", "未知来源")
             self._json({"ok": False, "error": f"{source} 不可执行：{why}"}, 409)
             return
@@ -1908,8 +2256,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--slowmo", type=int, default=500, help="有头执行的慢动作毫秒数（可在页面上改）")
     ap.add_argument("--timeout", type=int, default=120, help="单条用例 wall-clock 超时（秒）")
     ap.add_argument("--no-head", action="store_true", help="不带有头窗口（默认有头）")
-    ap.add_argument("--auto-close", action="store_true",
-                    help="跑完自动关浏览器（默认**不关**：留窗给人手动 review；无头时恒自动关）")
+    # 硬性要求（2026-11-12）：不提供「跑完自动关」开关；窗口跑完保留，起跑下一条时才自动收掉
+    # （`_collect_held_windows()`），用户也可手动关窗或点「关闭浏览器窗口」（close_window()）。
+    # 旧 `--auto-close`（跑完即关）已移除，不得以任何形式加回。
     ap.add_argument("--kill-grace", type=float, default=5.0,
                     help="超时软杀 grace 秒数（SIGTERM 后等待；0–15，默认 5；0=立即 SIGKILL）")
     ap.add_argument("--host", default="127.0.0.1")
@@ -1949,19 +2298,19 @@ def main() -> int:
             pass
 
     app = App(root, args.port, args.slowmo, args.timeout, not args.no_head,
-              (not args.auto_close) and (not args.no_head), kill_grace_secs=args.kill_grace,
-              members=consoles)
+              not args.no_head, kill_grace_secs=args.kill_grace,
+              members=consoles, host=args.host)
     Handler.app = app
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"E2E 用例评审控制台 → http://{args.host}:{args.port}/")
     print(f"  根目录   : {root}")
     print(f"  执行     : {'有头' if app.runner.head else '无头'} · slowmo={args.slowmo}ms · 并发=1 · 超时={args.timeout}s")
-    print(f"  跑完关窗 : {'自动关' if not app.runner.keep_open else '**不关**（人工 review 用：手动关窗，或控制台点「关闭浏览器窗口」）'}")
+    print(f"  跑完关窗 : {'无窗口（--no-head，无自动关窗语义）' if not app.runner.keep_open else '**不关**；起跑下一条时自动收掉旧窗（持窗到下一条起跑，2026-11-12）；也可手动关或点「关闭浏览器窗口」'}")
     print("  落盘时机 : 点「提交」才写账本 + 回写索引（执行/勾选只存页面本地草稿）")
     if targets:
-        mode = "关闭（--no-spawn）" if args.no_spawn else "自动拉起"
+        mode = "关闭（--no-spawn）" if args.no_spawn else "自动拉起（Terminal.app 托管，父会话退出不影响）"
         print(f"  成员控制台: {mode} · {len(targets)} 个"
-              f"（端口 {args.port + 1}–{args.port + len(targets)}）· 退出/信号时只回收自己拉起的那些")
+              f"（端口 {args.port + 1}–{args.port + len(targets)}）· 已有监听则复用，不重启、不杀")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

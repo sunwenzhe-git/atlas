@@ -31,6 +31,7 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
   review    实例⑤实现代码独立审查一键编排（preview → CLI review → scope → convert → validate → closure）
   eval      消融对照跑分器（run：两 commit 对照出 ledger；gate：回归判定）
   console   启动本地 E2E 用例评审控制台 (http://127.0.0.1:4190)
+  e2e       一次性人工登录入口：atlas e2e login（写出 .atlas-auth/state.json）
   report    将流水线设计冲突或缺陷自感知上报至云端设计池
   version   查看当前版本
   help      查看帮助信息
@@ -387,6 +388,27 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
     const res = runPython([runScript, '--root', targetDir, ...passthroughArgs], {
       stdio: 'inherit',
     });
+    exitWithResult(res, 'python');
+    break;
+  }
+
+  case 'e2e': {
+    const passthroughArgs = args.slice(1);
+    const sub = passthroughArgs[0] || '';
+    if (sub !== 'login') {
+      console.error(`
+[Atlas] 用法: atlas e2e login [--root <dir>] [--timeout <秒>]
+
+  login   一次性人工登录入口：打开完整 app_base_url，人登录后 probe 通过才写
+          .atlas-auth/state.json（仅 app_login.mode=real 可用；无人值守环境不弹窗）。
+`);
+      process.exit(2);
+    }
+    const targetDir = process.cwd();
+    const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_e2e_login.py');
+    const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_e2e_login.py');
+    const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
+    const res = runPython([runScript, ...passthroughArgs.slice(1)], { stdio: 'inherit' });
     exitWithResult(res, 'python');
     break;
   }

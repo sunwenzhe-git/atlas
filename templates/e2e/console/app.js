@@ -35,7 +35,7 @@ function saveDraft() {
   try { localStorage.setItem(draftKey(), JSON.stringify(S.draft)); } catch (e) { /* 忽略配额错误 */ }
 }
 const srcCfg = () => S.sources[S.source] || {};
-const canRun = () => !!srcCfg().configured;
+const canRun = () => srcCfg().applicable !== false && !!srcCfg().configured;
 function patch(id, obj) {
   S.draft[id] = Object.assign({}, S.draft[id] || {}, obj);
   saveDraft();
@@ -88,7 +88,7 @@ async function load() {
     ? ' · 手工项清单未创建（{{ATLAS_E2E_MANUAL}} 不存在）'
     : ` · 手工项 ${S.manualCount} 条`;
   const memberNote = (S.scope === 'solution')
-    ? ` · 成员仓 ${S.members.length} 个（只读聚合，见下方独立分区）` : '';
+    ? ` · 成员仓 ${S.members.length} 个（见下方独立分区）` : '';
   S.sources = d.sources || {};
   S.cfg = { slowmo: d.slowmo, timeout: d.timeout, head: d.head };
   $('slowmo').value = d.slowmo;
@@ -99,7 +99,8 @@ async function load() {
   const provNote = prov.head_short
     ? ` · HEAD=${prov.head_short}${prov.git_dirty ? '(dirty)' : ''} · 脚本=${prov.scripts_hash || '无'} · 应用=${prov.app_hash || '无'}`
     : '';
-  $('meta').textContent = `来源 ${cfg.label || S.source}（${cfg.base_url || '未配置'}）`
+  const baseText = cfg.applicable === false ? '本源无实体页面' : (cfg.base_url || '未配置');
+  $('meta').textContent = `来源 ${cfg.label || S.source}（${baseText}）`
     + ` · ${d.head ? '执行时弹出浏览器窗口' : '无头执行（不弹窗口）'} · 一次跑一条 · 单条超时 ${d.timeout}s`
     + provNote
     + manualNote
@@ -108,7 +109,7 @@ async function load() {
   const pages = [...new Set(S.cases.map((x) => x.page))];
   $('f-page').innerHTML = '<option value="all">全部</option>' + pages.map((p) => `<option value="${p}">${p}</option>`).join('');
   if (d.problem) notify(d.problem, true);
-  else if (!cfg.configured) notify(`${cfg.why}。本来源暂不可执行；其余照旧可看用例与已提交结果。`);
+  else if (cfg.applicable !== false && !cfg.configured) notify(`${cfg.why}。本来源暂不可执行；其余照旧可看用例与已提交结果。`);
   render();
 }
 
@@ -187,6 +188,8 @@ function render() {
 /* ---------------- 成员仓只读聚合（solution 根；契约 §10.1.2 第 6 条） ----------------
  * 成员用例只在父仓「看得见」：不复制正文、不代跑、不回写成员索引/账本。
  * 复合键 uid = 成员名:用例ID：跨成员同名 ID 不覆盖，冲突在分区顶部显式列出。
+ * 成员分组只渲染头部摘要（数量/评审计数/控制台入口/启动命令/日志），
+ * 不逐条渲染用例行；`members[].cases[]` 仍由 `/api/cases` 只读返回。
  * 单根（scope=single）时整个分区隐藏，主表逐字节不变。
  */
 function renderMembers() {
@@ -200,11 +203,7 @@ function renderMembers() {
       + conflicts.map((x) => `${esc(x.case_id)}（${esc((x.members || []).join('、'))}）`).join('；')
       + ' —— 用 <code>成员名:用例ID</code> 复合键区分，不改成员本地 ID。</div>'
     : '';
-  box.innerHTML = '<div class="mhead"><b>成员仓 E2E（只读聚合）</b>'
-    + '<span class="mnote">只读：父仓不复制成员用例正文、不代跑、不回写成员索引/账本；'
-    + '控制台启动时已按「父仓端口 + 1 + 清单序号」自动拉起成员控制台（<code>--no-spawn</code> 可关），'
-    + '执行与评审在成员控制台里做。'
-    + '父仓 <code>solution-flow</code> 跨仓用例仍在上方主表。</span></div>'
+  box.innerHTML = '<div class="mhead"><b>成员仓 E2E</b></div>'
     + banner + S.members.map(memberBlock).join('');
 }
 
@@ -212,27 +211,32 @@ function memberBlock(m) {
   const counts = m.counts || {};
   const review = m.review || {};
   const ok = m.state === 'ok';
+  const noLocal = m.state === 'no_local_e2e';
   const cs = m.console_state || '';
   const live = cs === 'ready' || cs === 'reused';
   const label = {
     ready: '控制台已就绪', reused: '复用已有控制台', starting: '控制台启动中…',
     failed: '控制台启动失败', skipped: '未拉起（已跳过）', disabled: '自动拉起已关闭',
-    no_index: '无本地 E2E 索引，未启动控制台',
+    no_index: '无本地 E2E 索引 · 未启动控制台',
   }[cs] || '';
+  const entryHref = (live && m.console_url)
+    ? m.console_url
+    : `api/member-open?name=${encodeURIComponent(m.name)}`;
+  // 成员行入口：已就绪直连子控制台；未就绪/启动中走父仓兜底路由（无监听则拉起后 302）。
+  const entry = ok
+    ? `<a class="mopen" href="${esc(entryHref)}" target="_blank" rel="noopener" title="${live ? esc(m.console_url || '') : '点击后自动拉起成员控制台（无监听时）'}">打开成员控制台 ↗</a>`
+    : '';
   const head = `<div class="member-head"><span class="mname">${esc(m.name)}</span>`
     + (m.path && m.path !== m.name ? `<span class="mpath">${esc(m.path)}</span>` : '')
-    + (ok ? '' : `<span class="tag stale">${esc(m.state)}</span>`)
-    + `<span class="mcount">${ok
-      ? `${counts.total || 0} 条 · 执行通过 ${counts.green || 0} / 失败 ${counts.red || 0}`
+    + (ok || noLocal ? '' : `<span class="tag stale">${esc(m.state)}</span>`)
+    + (ok
+      ? `<span class="mcount">${counts.total || 0} 条 · 执行通过 ${counts.green || 0} / 失败 ${counts.red || 0}`
         + ` / 不可跑 ${counts.blocked || 0} / 跳过 ${counts.skipped || 0}`
         + ` · 评审 fresh ${review.fresh || 0} / stale ${review.stale || 0}`
-        + ` / unreviewed ${review.unreviewed || 0} / legacy ${review.legacy || 0}`
-      : esc(m.reason || '')}</span>`
-    + `<span class="tag readonly" title="${esc(m.run_blocked_reason || '')}">只读 · 父仓不可执行</span>`
+        + ` / unreviewed ${review.unreviewed || 0} / legacy ${review.legacy || 0}</span>`
+      : (noLocal ? '' : `<span class="mcount">${esc(m.reason || '')}</span>`))
     + (label ? `<span class="tag ${live ? 'ok' : 'stale'}" title="${esc(m.console_note || '')}">${esc(label)}</span>` : '')
-    + (live && m.console_url
-      ? `<a class="mopen" href="${esc(m.console_url)}" target="_blank" rel="noopener">打开成员控制台 ↗</a>`
-      : '')
+    + entry
     + (!live && cs !== 'no_index' && m.console_note ? `<span class="mnote">${esc(m.console_note)}</span>` : '')
     + `</div>`
     + ((ok && m.console_cmd)
@@ -242,21 +246,7 @@ function memberBlock(m) {
         + (m.console_log ? `<span class="mlog">日志：<code>${esc(m.console_log)}</code></span>` : '')
         + `</div>`
       : '');
-  const rows = (m.cases || []).map((c) => {
-    const rs = c.review_state || {};
-    const status = `${esc(c.status)}${c.reason ? ` · ${esc(c.reason)}` : ''}`;
-    return `<tr><td class="mcid">${esc(c.uid)}</td><td>${esc(c.title)}</td>`
-      + `<td>${status}</td>`
-      + `<td>${esc(rs.state || 'unreviewed')}${rs.reason ? ` · ${esc(rs.reason)}` : ''}</td>`
-      + `<td class="mshard"><code>${esc(c.shard)}</code></td></tr>`;
-  }).join('');
-  const table = rows
-    ? '<table class="mgrid"><colgroup><col class="w1"><col class="w2"><col class="w3">'
-      + '<col class="w4"><col class="w5"></colgroup>'
-      + '<thead><tr><th>复合键</th><th>用例</th><th>状态</th><th>评审</th><th>分片</th></tr></thead>'
-      + `<tbody>${rows}</tbody></table>`
-    : '';
-  return `<div class="member">${head}${table}</div>`;
+  return `<div class="member">${head}</div>`;
 }
 
 function rowHTML(c) {
@@ -335,7 +325,7 @@ function rowHTML(c) {
         : `<button class="btn btn-run" data-run="${c.id}" ${(S.busy || !canRun() || c.status === 'blocked' || c.status === 'skipped') ? 'disabled' : ''}
             title="${c.status === 'blocked' || c.status === 'skipped'
               ? esc(`[${c.status}] ${c.reason || '合法不可跑'}——不进走查面，合法性已留痕索引`)
-              : (canRun() ? '' : esc(srcCfg().why || '该来源不可执行'))}">执行</button>`}
+              : (canRun() ? '' : (srcCfg().applicable === false ? '本源无实体页面，不参与执行' : (srcCfg().why || '该来源不可执行')))}">执行</button>`}
       <span style="margin-left:6px">${pill}</span>
       ${e ? `<div class="who" title="${esc(e.ts || '')} · exit=${e.exit} · slowmo ${e.slowmo || ''}">`
         + `${esc(hhmm(e.ts))} · exit=${e.exit} · ${Math.round((e.duration_ms || 0) / 1000)}s${nodeid ? '' : ' · ⚠ 无 node id'}</div>` : ''}
@@ -425,7 +415,8 @@ function run(id) {
                     prov: d.prov,
                     reviewed: null });
         render();
-        // 跑完不关窗的状态已在右上角「关闭浏览器窗口（E2E-XXX）」按钮上可见，不再多弹一条提示。
+        // 持窗到下一条起跑（2026-11-12）：跑完窗口保留；右上角「关闭浏览器窗口（E2E-XXX）」
+        // 按钮可见即可手动提前收掉，起跑下一条时服务端会自动收掉旧窗（不再多弹一条提示）。
         if (!d.ok) {
           if (d.prep_failed) {
             notify(`${id} 前置数据准备 atlas-prepare 失败——点「输出」看准备脚本日志；与用例脚本本身无关。`, true);

@@ -51,6 +51,11 @@ e2e:
     password_field: login_pass
     token_key: session_token
     storage_key: app_session
+    probe:
+      path: /api/session
+      expect_status: 200
+      expect_content_type: application/json
+      timeout_ms: 3000
 """
 
 CASE = """# home 页面用例
@@ -303,9 +308,10 @@ def test_injected_param_carried_to_guard_and_goto() -> None:
         text = spec_of(root)
         seg = text[text.index("E2E-HOME-001"):]
         # 守卫导航（用例体首条 goto）与用例自己的 goto：都带 base ⊕ 内联参数
-        assert seg.count("await page.goto('/home?tenant=9&flag=on');") >= 2, seg[:800]
+        merged = "await atlasGoto(page, '/home?tenant=9&flag=on');"
+        assert seg.count(merged) >= 2, seg[:800]
         # 守卫紧随其后就是页面就绪锚点（而不是被 step 抢到前面）
-        i_guard = seg.index("await page.goto('/home?tenant=9&flag=on');")
+        i_guard = seg.index(merged)
         assert "atlasAwaitAnyDeclared(page," in seg[i_guard:i_guard + 200], seg[i_guard:i_guard + 200]
 
 
@@ -389,7 +395,7 @@ def test_hash_param_carried_to_guard_and_goto() -> None:
         assert run(root, "--apply").returncode == 0
         text = spec_of(root)
         seg = text[text.index("E2E-HOME-001"):]
-        merged = "await page.goto('/home?tenant=9#/detail?flag=on');"
+        merged = "await atlasGoto(page, '/home?tenant=9#/detail?flag=on');"
         assert seg.count(merged) >= 2, seg[:900]
         i_guard = seg.index(merged)
         assert "atlasAwaitAnyDeclared(page," in seg[i_guard:i_guard + 200], seg[i_guard:i_guard + 200]
@@ -613,6 +619,31 @@ def test_generates_actions_and_asserts() -> None:
         cfg = (scripts / "playwright.config.ts").read_text(encoding="utf-8")
         assert "http://127.0.0.1:8000" in cfg      # baseURL（E1 单段 = e2e.app_base_url）在运行器配置
         assert "http://127.0.0.1:8000" not in text  # 用例脚本不硬编码地址
+
+
+def test_playwright_config_emits_declared_viewport_and_color_scheme() -> None:
+    """契约 §5.4（2026-11-11）：`e2e.viewport` / `e2e.color_scheme` 声明式写入 `use`。"""
+    profile = PROFILE.replace(
+        "  app_login:\n",
+        "  viewport: 1440x900\n  color_scheme: light\n  app_login:\n", 1)
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=profile)
+        assert run(root, "--apply").returncode == 0
+        cfg = (root / "product" / "e2e" / "scripts" / "playwright.config.ts").read_text(encoding="utf-8")
+        assert "viewport: { width: 1440, height: 900 }," in cfg, cfg
+        assert "colorScheme: 'light'," in cfg, cfg
+
+
+def test_playwright_config_omits_viewport_and_color_scheme_by_default() -> None:
+    """未声明这两项时，配置不写对应键——保持 Playwright 原生默认（存量项目不变）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        cfg = (root / "product" / "e2e" / "scripts" / "playwright.config.ts").read_text(encoding="utf-8")
+        assert "viewport:" not in cfg, cfg
+        assert "colorScheme" not in cfg, cfg
 
 
 def test_zero_step_baseline_two_trip_sampling_with_panel_expansion() -> None:
@@ -932,6 +963,7 @@ ASSERT_SAMPLES = {
     "attr": "home-cta-btn data-theme dark",
     "delta": "home-title +1",
     "request": "app.updateApp Data.reqDTO.config.nodeParam.mailStatus (缺席)",
+    "api": "GET /api/x -> json records/0/tagName 标签A",
 }
 
 
@@ -1416,12 +1448,14 @@ ACTION_SAMPLES = {
     "press": "home-cta-btn Enter",
     "type": "home-title 首页",
     "hover": "home-cta-btn",
+    "read": "home-cta-btn data-cta -> 按钮标记",
     "refresh": "",
     "goto": "/home",
     "waitFor": "home-cta-btn",
     "download": "home-cta-btn *.txt",
     "upload": "home-cta-btn uploads/sample.txt",
     "dispatch": "home-cta-btn",
+    "send": "POST /api/x -> capture 编号 data.id",
 }
 
 
@@ -2055,9 +2089,10 @@ def test_base_query_reaches_all_three_navigation_sites() -> None:
                                "  - click home-cta-btn          # 点击主操作按钮"))
         assert run(root, "--apply").returncode == 0
         spec = spec_of(root)
-        assert "await page.goto('/home/?switchAgent=7202#/42');" in spec, "① step goto 未带 base query（含 hash 保真）"
-        assert "await page.goto('/home?switchAgent=7202');" in spec, "② 守卫导航未带 base query"
+        assert "await atlasGoto(page, '/home/?switchAgent=7202#/42');" in spec, "① step goto 未带 base query（含 hash 保真）"
+        assert "await atlasGoto(page, '/home?switchAgent=7202');" in spec, "② 守卫导航未带 base query"
         assert '"url":"/home?switchAgent=7202"' in spec, "③ 零步基线 data.url 未带 base query"
+        assert "await atlasGoto(page, data.url);" in spec, "③ 基线导航未经导航层校验"
 
 
 def test_base_query_absent_leaves_generation_byte_identical() -> None:
@@ -2576,6 +2611,7 @@ def test_mock_compiles_to_single_dispatch_table() -> None:
         assert "u.pathname" in spec and "e.method === method" in spec
         # mock 页基线空转显式标记
         assert "空转守卫" in spec
+        assert 'const ATLAS_MOCK_PREFIXES: string[] = ["/api/"];' in spec, "标量 api_prefix 归一化为单元素列表"
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         make(root)  # 既有夹具（无 mock、未开通道）
@@ -2601,7 +2637,7 @@ def test_mock_requires_explicit_mode_on_and_prefix() -> None:
             PROFILE + "  mock:\n    mode: on\n", encoding="utf-8")  # on 而 prefix 缺 ⇒ 默认兜底为 /
         r = run(root, "--apply")
         assert r.returncode == 0, r.stderr
-        assert 'const ATLAS_MOCK_PREFIX = "/";' in spec_of(root)
+        assert 'const ATLAS_MOCK_PREFIXES: string[] = ["/"];' in spec_of(root)
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         make_mock(root)
@@ -2623,8 +2659,241 @@ def test_mock_mode_auto_continue_passthrough() -> None:
         assert r.returncode == 0, r.stderr
         spec = spec_of(root)
         assert 'const ATLAS_MOCK_MODE = "auto";' in spec
-        assert 'const ATLAS_MOCK_PREFIX = "/";' in spec
+        assert 'const ATLAS_MOCK_PREFIXES: string[] = ["/"];' in spec
         assert "if (ATLAS_MOCK_MODE === 'auto') {\n      await route.continue();\n      return;\n    }" in spec
+
+
+def test_mock_api_prefix_normalizer_accepts_scalar_and_list() -> None:
+    """2026-11-12 回归：`api_prefix` 标量保持兼容、列表归一化为数组（解析层单源）。"""
+    gen = load_generator()
+    assert gen.normalize_mock_prefixes("/api/v1", "on") == (["/api/v1"], [])
+    assert gen.normalize_mock_prefixes(["/a", "/b"], "auto") == (["/a", "/b"], [])
+    assert gen.normalize_mock_prefixes(None, "on") == (["/"], [])
+    assert gen.normalize_mock_prefixes("/a", "off") == (None, [])
+    # 非法项：逐项点名（缺 /、含空白、非字符串、空列表）
+    _, errs = gen.normalize_mock_prefixes(["/ok", "no-slash"], "on")
+    assert any("第 2 项" in e and "未以 / 开头" in e for e in errs), errs
+    _, errs = gen.normalize_mock_prefixes(["/ok", "/a b"], "on")
+    assert any("第 2 项" in e and "含空白" in e for e in errs), errs
+    _, errs = gen.normalize_mock_prefixes(["/ok", 3], "on")
+    assert any("第 2 项" in e and "非空字符串" in e for e in errs), errs
+    assert "列表为空" in gen.normalize_mock_prefixes([], "on")[1][0]
+
+
+def test_mock_api_prefix_list_emits_multi_prefix_dispatch() -> None:
+    """2026-11-12：列表 api_prefix ⇒ `ATLAS_MOCK_PREFIXES: string[]` + 逐前缀 route 注册，
+    锚定门按「任一项命中」放行（devops 三前缀现场形态）。"""
+    case = MOCK_CASE.replace(
+        "  - GET /api/v1/jobs/1",
+        "  - GET /api/v2/probe -> fixtures/home/feed.json\n  - GET /api/v1/jobs/1")
+    profile = PROFILE + (
+        "  mock:\n    mode: on\n    api_prefix:\n"
+        "      - /api/v1\n      - /api/v2\n")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=profile, case=case)
+        fx = root / "product" / "e2e" / "fixtures" / "home"
+        fx.mkdir(parents=True, exist_ok=True)
+        for name in ("feed.json", "p.json", "e.json"):
+            (fx / name).write_text('{"items": []}\n', encoding="utf-8")
+        r = run(root, "--apply")
+        assert r.returncode == 0, r.stderr
+        spec = spec_of(root)
+        assert 'const ATLAS_MOCK_PREFIXES: string[] = ["/api/v1", "/api/v2"];' in spec
+        assert "for (const __prefix of ATLAS_MOCK_PREFIXES) {" in spec
+        assert "ATLAS_MOCK_PREFIXES.some((p) => u.pathname.startsWith(p))" in spec
+        assert "ATLAS_MOCK_PREFIXES.includes('/')" in spec
+        assert "ATLAS_MOCK_PREFIX " not in spec, "不得残留标量形态"
+
+
+def test_mock_api_prefix_list_rejects_bad_items_with_names() -> None:
+    """列表任一项不合格 ⇒ exit 2 并点名第几项（缺 /、含空白）。"""
+    for bad_block, needle in (
+        ("      - /api/v1\n      - no-slash\n", "第 2 项"),
+        ("      - /api/v1\n      - /api/v 2\n", "含空白"),
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            make_mock(root)
+            (root / "product" / "stack-profile.yaml").write_text(
+                PROFILE + "  mock:\n    mode: on\n    api_prefix:\n" + bad_block,
+                encoding="utf-8")
+            r = run(root, "--apply")
+            assert r.returncode == 2, (r.returncode, r.stdout + r.stderr)
+            assert "api_prefix" in r.stderr and needle in r.stderr, r.stderr
+
+
+def test_api_verb_parser_shapes_and_errors() -> None:
+    """D197：`api` 主动接口断言的语法与失败信息（解析层）。"""
+    gen = load_generator()
+    p = gen.parse_api_line
+    got = p("GET", "/api/x")
+    assert got["method"] == "GET" and got["path"] == "/api/x" and got["body"] is None
+    assert got["checks"] == [{"kind": "ok"}], "无 -> 时默认断言 2xx"
+    got = p("post", '/api/y body {"a": 1} -> status 201')
+    assert got["method"] == "POST" and got["body"] == {"a": 1}
+    assert got["checks"] == [{"kind": "status", "expected": 201}]
+    got = p("GET", "/api/z -> json records[2].tagName 标签A")
+    assert got["checks"][0]["kind"] == "json"
+    assert got["checks"][0]["path"] == "records[2].tagName"
+    got = p("GET", "/api/z -> json records/-1/targetDescription (缺席)")
+    assert got["checks"][0] == {"kind": "jsonAbsent", "path": "records/-1/targetDescription"}
+    got = p("GET", "/api/z -> text ok")
+    assert got["checks"] == [{"kind": "text", "expected": "ok"}]
+    for args, needle in (
+        (("FETCH", "/a"), "方法"),
+        (("GET", "api/x"), "PATH"),
+        (("GET", "/a -> status 20"), "三位"),
+        (("GET", "/a -> json"), "json-path"),
+        (("GET", "/a -> code 1"), "未知"),
+        (("GET", "/a body {bad}"), "JSON"),
+        (("GET", "/a body x"), "body"),
+    ):
+        with pytest.raises(ValueError) as ei:
+            p(*args)
+        assert needle in str(ei.value), (args, str(ei.value))
+
+
+def test_api_verb_emits_helper_and_request_call() -> None:
+    """D197：`api` 生成物 —— 复用 context.request / 登录态，失败带状态与响应片段。"""
+    case = CASE.replace(
+        "  - visible home-cta-btn        # 主操作按钮可见",
+        '  - api GET /api/x -> json records[2].tagName 标签A\n'
+        '  - api POST /api/y body {"k": 1} -> status 201')
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=case)
+        assert run(root, "--apply").returncode == 0
+        spec = spec_of(root)
+        assert "async function atlasApi(" in spec
+        assert 'const ATLAS_API_TOKEN_KEY = "app_session";' in spec, "复用 real 形态 localStorage 令牌键"
+        assert "page.context().request.fetch(" in spec
+        assert "headers['Amp-Organ-Id'] = organ;" in spec
+        assert (
+            "await atlasApi(page, \"GET\", \"/api/x\", null, "
+            "[{ kind: 'json', path: \"records[2].tagName\", expected: \"标签A\" }]);"
+        ) in spec
+        assert (
+            "await atlasApi(page, \"POST\", \"/api/y\", {\"k\": 1}, "
+            "[{ kind: 'status', expected: 201 }]);"
+        ) in spec
+        assert "响应片段：" in spec, "fail-loud 必须带实际响应片段"
+
+
+def test_api_verb_absent_keeps_generated_page_unchanged() -> None:
+    """D197 零变化承诺：页面无用例使用 `api` ⇒ 不发射 helper。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        assert "atlasApi" not in spec_of(root)
+
+
+# ── D199（2026-11-12）：`send` 动作 + testid / api path 插值 ──────────────────────
+def test_send_verb_parser_shapes_and_errors() -> None:
+    """D199：`send <METHOD> <PATH> [body <JSON>] -> capture <名> <json-path>` 的解析面。"""
+    gen = load_generator()
+    p = gen.parse_send_line
+    got = p("post", '/api/issues/add body {"title": "批次"} -> capture 编号 data.id')
+    assert got["method"] == "POST"
+    assert got["path"] == "/api/issues/add"
+    assert got["body"] == {"title": "批次"}
+    assert got["capture"] == "编号" and got["json_path"] == "data.id"
+    assert got["body_raw"] == '{"title": "批次"}'
+    got = p("GET", "/api/records/$batchNo -> capture batchNo data.batchNo")
+    assert got["path"] == "/api/records/$batchNo" and got["body"] is None
+    for args, needle in (
+        (("GET", "/a"), "capture"),                                  # 缺 -> capture
+        (("GET", "/a -> id data.id"), "capture"),                    # 不是 capture 形态
+        (("GET", "/a -> capture id"), "capture"),                    # 缺 json-path
+        (("GET", "/a -> capture id-1 data.id"), "变量名"),            # 变量名非法
+        (("FETCH", "/a -> capture id data.id"), "方法"),              # 方法白名单
+        (("GET", "a -> capture id data.id"), "PATH"),                # 路径须锚定
+        (("GET", "/a body {bad} -> capture id data.id"), "JSON"),     # body 非法
+    ):
+        with pytest.raises(ValueError) as ei:
+            p(*args)
+        assert needle in str(ei.value), (args, str(ei.value))
+
+
+def test_send_captures_value_and_interpolates_testid_and_api_path() -> None:
+    """D199：捕获值进变量表；`$名` / `${名}` 可插值进 testid、api 路径与请求体。"""
+    gen = load_generator()
+    case = {
+        "id": "E2E-SEND-001",
+        "_title": "新建批次后同步",
+        "step": [
+            "send GET /api/meta -> capture slug data.slug",
+            'send POST /api/issues/add body {"title": "批次-${slug}"} -> capture batchNo data.id',
+            "click project-list-row-checkbox-$slug[0]",
+            "fill home-title $batchNo",
+        ],
+        "expected": [
+            "api GET /api/records/${batchNo} -> json data.batchNo (缺席)",
+            "text home-title $batchNo",
+        ],
+        "testid": ["home-title"],
+    }
+    spec = gen.ts_case(case, "/")
+    assert ('const atlasVar_slug = atlasCapture(await atlasApi(page, "GET", "/api/meta", null, '
+            "[{ kind: 'ok' }]), \"data.slug\");") in spec, spec
+    assert ('const atlasVar_batchNo = atlasCapture(await atlasApi(page, "POST", '
+            '"/api/issues/add", {"title": `批次-${atlasVar_slug}`}, [{ kind: \'ok\' }]), '
+            '"data.id");') in spec, spec
+    # testid 插值：静态前缀 + 模板字面量 + `[N]` 下标仍生效
+    assert ("await page.getByTestId(`project-list-row-checkbox-${atlasVar_slug}`).nth(0)"
+            ".click({ force: true });") in spec, spec
+    assert "await page.getByTestId('home-title').first().fill(`${atlasVar_batchNo}`);" in spec, spec
+    # api path 插值：`-> json` 断言语义不变（仍按响应体求值）
+    assert ('await atlasApi(page, "GET", `/api/records/${atlasVar_batchNo}`, null, '
+            '[{ kind: \'jsonAbsent\', path: "data.batchNo" }]);') in spec, spec
+    assert "ATLAS_API_TOKEN_KEY" in gen.ts_api_helpers("")  # helper 面存在
+
+
+def test_send_capture_missing_value_is_fail_loud() -> None:
+    """D199：捕获不到值 ⇒ 可读错误带 HTTP 状态与响应片段（不静默给空串）。"""
+    gen = load_generator()
+    src = gen.ts_send_helpers()
+    assert "JSON 路径 ${path} 缺席" in src
+    assert "响应片段：${snippet}" in src
+    assert "不是标量" in src
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=CASE.replace(
+            "  - click home-cta-btn          # 点击主操作按钮",
+            "  - send POST /api/issues/add -> capture 编号 data.id"))
+        assert run(root, "--apply").returncode == 0
+        spec = spec_of(root)
+        assert "function atlasCapture(" in spec
+        assert "= atlasCapture(await atlasApi(page, \"POST\", \"/api/issues/add\", null, " \
+               "[{ kind: 'ok' }]), \"data.id\");" in spec, spec
+
+
+def test_send_unknown_var_and_dynamic_testid_decl_fail_loud() -> None:
+    """D199：未捕获先引用 / `testid:` 声明写变量 ⇒ 生成期中止并点名。"""
+    gen = load_generator()
+    base = {"id": "E2E-SEND-002", "_title": "x", "expected": ["visible home-title"],
+            "testid": ["home-title"]}
+    with pytest.raises(ValueError) as ei:
+        gen.ts_case({**base, "step": ["click row-$slug"]}, "/")
+    assert "$slug" in str(ei.value) or "slug" in str(ei.value), str(ei.value)
+    with pytest.raises(ValueError) as ei:
+        gen.ts_case({**base, "step": ["click home-title"], "testid": ["row-$slug"]}, "/")
+    assert "静态 id" in str(ei.value), str(ei.value)
+
+
+def test_no_new_verb_keeps_generated_page_bytes_identical() -> None:
+    """D199 零变化承诺：无 `send` / 无插值的页面 —— 不发射新 helper，定位器仍是字面量。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        spec = spec_of(root)
+        assert "atlasCapture" not in spec, "无 send 不得发射捕获 helper"
+        assert "atlasApi" not in spec, "无 api/send 不得发射请求 helper"
+        assert "await page.getByTestId('home-cta-btn').first().click({ force: true });" in spec
+        assert 'await expect(page.getByTestId(\'home-title\').first()).toHaveText("首页");' in spec
+
 
 
 def test_mock_grammar_anchor_fixture_fail_loud() -> None:
@@ -3137,6 +3406,10 @@ def test_setup_real_login_supports_dot_path_token_and_json_body_format() -> None
         "    token_key: data.token.access_token\n"
         "    storage_key: auth_jwt\n"
         "    body_format: json\n"
+        "    probe:\n"
+        "      path: /api/v1/me\n"
+        "      expect_json:\n"
+        "        /code: 0\n"
     )
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -3149,7 +3422,65 @@ def test_setup_real_login_supports_dot_path_token_and_json_body_format() -> None
         assert "保留已有登录态文件（如 codegen 产物），跳过覆写" in setup
 
 
-# ── issue #R4（2026-10-16）：`click` / `hover` 的 `force` 默认 + `native` 步级开关 ──────
+# ── RFC-20261112-01 §5（2026-11-12）：导航层 base query 保真 ──────────────────────────
+def _nav_guard_js(spec_text: str) -> str:
+    """抽出生成物里的 `atlasAssertBaseQuery`，去 TS 注解后交给 node 做语义验证。"""
+    m = re.search(r"function atlasAssertBaseQuery\(url: string\) \{(.*?)\n\}\n", spec_text, re.S)
+    assert m, spec_text[:500]
+    body = m.group(1).replace("let target: URL;", "let target;")
+    keys = re.search(r"const ATLAS_BASE_QUERY_KEYS: string\[\] = (\[[^\]]*\]);", spec_text)
+    assert keys, spec_text[:500]
+    helper = (
+        f"const ATLAS_BASE_QUERY_KEYS = {keys.group(1)};\n"
+        "const ATLAS_BASE_ORIGIN = new URL('http://127.0.0.1:8000/?organId=7').origin;\n"
+        f"function atlasAssertBaseQuery(url){{{body}\n}}\n"
+        "const cases = process.argv.slice(2);\n"
+        "for (const c of cases) {\n"
+        "  const [url, want] = c.split('|');\n"
+        "  let threw = false;\n"
+        "  try { atlasAssertBaseQuery(url); } catch (e) { threw = true; }\n"
+        "  if (String(threw) !== want) { console.error('MISMATCH', url, want, threw); process.exit(1); }\n"
+        "}\n"
+    )
+    return helper
+
+
+def test_nav_guard_blocks_same_origin_missing_base_query() -> None:
+    """同源缺 base query ⇒ 导航前抛错；齐全 / 跨域放行（RFC-20261112-01 §5）。"""
+    import shutil
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        prof = PROFILE.replace("app_base_url: http://127.0.0.1:8000",
+                               "app_base_url: http://127.0.0.1:8000/?organId=7")
+        make(root, profile=prof)
+        assert run(root, "--apply").returncode == 0
+        spec = spec_of(root)
+        assert 'const ATLAS_BASE_QUERY_KEYS: string[] = ["organId"];' in spec
+        assert "atlasGoto(page, data.url)" in spec
+        assert "await atlasGoto(page, '" in spec
+        node = shutil.which("node")
+        if not node:
+            pytest.skip("node 不可用")
+        helper = _nav_guard_js(spec)
+        cp = subprocess.run(
+            [node, "-e", helper, "/?organId=7|false", "/?x=1|true",
+             "http://sso.example/login|false"],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert cp.returncode == 0, cp.stderr + cp.stdout
+
+
+def test_nav_guard_absent_without_base_query_keeps_output_unchanged() -> None:
+    """base 无 query ⇒ 不发射 atlasGoto，生成物与既有口径逐字节一致（零变化承诺）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        spec = spec_of(root)
+        assert "atlasGoto" not in spec and "ATLAS_BASE_QUERY_KEYS" not in spec
+        assert "await page.goto(data.url);" in spec
+
+
 def test_click_hover_force_default_and_native_switch() -> None:
     """契约 §5.5（2026-10-16，issue #R4）：`click` / `hover` **缺省**发 `{ force: true }`
     （I4：默认路径逐字节不变）；第三位 `native` ⇒ 按运行器原生语义执行（**不**追加 force）。
@@ -3212,6 +3543,7 @@ def test_subscript_nth_index_emits_nth_locator() -> None:
             "select list-category-select[1] 科技",
             "check list-checkbox[3]",
             "dispatch list-submit-btn[1]",
+            "waitFor list-row-status[1] 已完成",
         ],
         "expected": [
             "visible list-item[1]",
@@ -3219,7 +3551,7 @@ def test_subscript_nth_index_emits_nth_locator() -> None:
             "value list-name-input[2] 文本",
             "enabled list-move-up-btn[1]",
         ],
-        "testid": ["list-move-up-btn", "list-name-input", "list-action-btn", "list-category-select", "list-checkbox", "list-submit-btn", "list-item", "list-title"],
+        "testid": ["list-move-up-btn", "list-name-input", "list-action-btn", "list-category-select", "list-checkbox", "list-submit-btn", "list-item", "list-title", "list-row-status"],
     }
     spec = gn.ts_case(case, "/list")
     assert "page.getByTestId('list-move-up-btn').nth(1).click(" in spec, spec
@@ -3228,6 +3560,8 @@ def test_subscript_nth_index_emits_nth_locator() -> None:
     assert "atlasSelect(page, 'list-category-select', \"科技\", 1)" in spec, spec
     assert "page.getByTestId('list-checkbox').nth(3).check()" in spec, spec
     assert "page.getByTestId('list-submit-btn').nth(1).dispatchEvent('click')" in spec, spec
+    # 等文本变化 + [N]：轮询到该行状态文案为终态，不得退化成固定等待
+    assert "page.getByTestId('list-row-status').nth(1)).toHaveText(\"已完成\", { timeout: ATLAS_WAIT_TIMEOUT_MS, useInnerText: true })" in spec, spec
     assert "page.getByTestId('list-item').nth(1)).toBeVisible()" in spec, spec
     assert "page.getByTestId('list-title').nth(2)).toHaveText(\"标题二\")" in spec, spec
     assert "atlasExpectValue(page, 'list-name-input', \"文本\", 2)" in spec, spec
@@ -3405,6 +3739,142 @@ def test_config_wires_teardown_relative_to_config_dir() -> None:
             cfg = _cfg(root)
             assert "globalTeardown: './atlas-evidence-teardown.ts'" in cfg, cfg[:400]
             assert "'./scripts/atlas-evidence-teardown.ts'" not in cfg, cfg[:400]
+
+
+def test_config_output_dir_follows_atlas_run_dir_env() -> None:
+    """D194 钉：`outputDir` / JSON 落点跟随 `ATLAS_RUN_DIR`，不再写死仓内 `.atlas-run`。
+
+    控制台每次起跑生成仓库外独立目录（`--output` + env）⇒ 仓内受限写与并发互清同时消失；
+    直跑（无控制台）默认落 `/tmp/atlas-e2e/<repo>/current`（仓外），见下一条改道钉。
+    """
+    with tempfile.TemporaryDirectory() as td_none, tempfile.TemporaryDirectory() as td_login:
+        for tag, profile, td in (("none", NONE_PROFILE, td_none), ("login", PROFILE, td_login)):
+            root = Path(td)
+            make(root, profile=profile)
+            assert run(root, "--apply").returncode == 0
+            cfg = _cfg(root)
+            assert "process.env.ATLAS_RUN_DIR" in cfg, f"[{tag}] {cfg[:400]}"
+            assert "outputDir: RUN_DIR" in cfg, f"[{tag}] {cfg[:400]}"
+            assert "outputFile: `${RUN_DIR}/results.json`" in cfg, f"[{tag}] {cfg[:400]}"
+            assert "outputDir: '.atlas-run'" not in cfg, f"[{tag}] 不得再写死仓内目录"
+
+
+def test_config_run_dir_defaults_outside_repo_and_guards_repo_env() -> None:
+    """D194 钉（2026-11-12）：默认落点必须在仓外，且 `ATLAS_RUN_DIR` 指回仓内会被改道。
+
+    仓内运行期目录要「先删后建」（Playwright 启动清空 outputDir、worker 建
+    `.playwright-artifacts-N`），在受限机器上必然 EACCES ⇒ 默认值与改道护栏都不得回退仓内。
+    """
+    with tempfile.TemporaryDirectory() as td_none, tempfile.TemporaryDirectory() as td_login:
+        for tag, profile, td in (("none", NONE_PROFILE, td_none), ("login", PROFILE, td_login)):
+            root = Path(td)
+            make(root, profile=profile)
+            assert run(root, "--apply").returncode == 0
+            cfg = _cfg(root)
+            assert "const DEFAULT_RUN_DIR = `/tmp/atlas-e2e/${basename(REPO_ROOT)}/current`;" in cfg, \
+                f"[{tag}] {cfg[:600]}"
+            assert "const REPO_ROOT = resolve(__dirname, '../../..');" in cfg, f"[{tag}] CJS 仓用 __dirname"
+            assert "abs.startsWith(REPO_ROOT + '/')" in cfg, f"[{tag}] 缺仓内改道护栏"
+            assert "改用仓库外" in cfg, f"[{tag}] 改道需告警"
+            assert "process.env.ATLAS_RUN_DIR = RUN_DIR;" in cfg, f"[{tag}] 归一化值需回写 env（teardown 复用）"
+            assert "|| '.atlas-run'" not in cfg, f"[{tag}] 不得再回退仓内默认"
+
+
+def test_config_run_dir_esm_uses_import_meta_for_repo_root() -> None:
+    """D194 / D123 钉：ESM 仓（package.json `type: module`）没有 `__dirname` ⇒ 用 import.meta.url。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        (root / "package.json").write_text(
+            json.dumps({"name": "esm-fixture", "type": "module"}), encoding="utf-8")
+        assert run(root, "--apply").returncode == 0
+        cfg = _cfg(root)
+        assert "const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');" in cfg, \
+            cfg[:600]
+        assert "import { fileURLToPath } from 'node:url';" in cfg, cfg[:600]
+        assert "__dirname" not in cfg, "ESM 仓不得出现 __dirname"
+
+
+def test_teardown_honors_run_and_evidence_dir_env() -> None:
+    """D194 钉：teardown 归档使用控制台注入的仓库外 run/evidence 目录。
+
+    默认值同样必须在仓外，且 env 指回仓内时改道告警（下一条行为钉实测）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        ts = (root / "product" / "e2e" / "scripts" / "atlas-evidence-teardown.ts").read_text(encoding="utf-8")
+        assert "process.env.ATLAS_RUN_DIR" in ts
+        assert "process.env.ATLAS_EVIDENCE_DIR" in ts
+        assert "'--run-dir', runDir" in ts
+        assert "'--evidence-dir', evidenceDir" in ts
+        assert "/tmp/atlas-e2e/" in ts, "默认落点必须在仓库外"
+        assert "${base}/current" in ts and "${base}/evidence" in ts
+        assert "resolve(here, '.atlas-run')" not in ts, "不得再回退仓内运行目录"
+        assert "resolve(repoRoot, '.atlas-evidence')" not in ts, "不得再回退仓内证据目录"
+        assert "Abs.startsWith" not in ts and "abs.startsWith(repoRoot + '/')" in ts
+        assert "process.env.ATLAS_EVIDENCE_DIR = evidenceDir;" in ts
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node 不在 PATH")
+def test_teardown_defaults_outside_and_reroutes_repo_env_but_keeps_injection() -> None:
+    """D194 行为钉（2026-11-12）：teardown 三种输入的实际落点。
+
+    ① 未注入 ⇒ `/tmp/atlas-e2e/<repo>/current|evidence`（仓外，绝不回退仓内）；
+    ② 注入仓内路径 ⇒ 强制改道到同一仓外默认值，并在 stderr 告警；
+    ③ 控制台注入的仓库外 per-run 目录 ⇒ **原样保留**（优先级最高，并发不互踩）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root)
+        assert run(root, "--apply").returncode == 0
+        scripts = root / "product" / "e2e" / "scripts"
+        (scripts / "atlas-evidence-teardown.mjs").write_text(
+            (scripts / "atlas-evidence-teardown.ts").read_text(encoding="utf-8"), encoding="utf-8")
+        (scripts / "teardown-driver.mjs").write_text(
+            "import td from './atlas-evidence-teardown.mjs';\nawait td();\n", encoding="utf-8")
+        args_file = root / "args.txt"
+        fake = root / "fake-python.sh"
+        fake.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > '{args_file}'\n", encoding="utf-8")
+        fake.chmod(0o755)
+        base = f"/tmp/atlas-e2e/{root.name}"
+
+        def invoke(**extra: str) -> str:
+            env = {k: v for k, v in os.environ.items()
+                   if k not in ("ATLAS_RUN_DIR", "ATLAS_EVIDENCE_DIR")}
+            env.update(ATLAS_PYTHON=str(fake), **extra)
+            p = subprocess.run([shutil.which("node"), "teardown-driver.mjs"],
+                               cwd=str(scripts), capture_output=True, text=True, timeout=120, env=env)
+            assert p.returncode == 0, (p.stdout[-400:], p.stderr[-400:])
+            return p.stderr
+
+        # ① 未注入
+        err = invoke()
+        args = args_file.read_text(encoding="utf-8").splitlines()
+        assert args[args.index("--run-dir") + 1] == f"{base}/current", args
+        assert args[args.index("--evidence-dir") + 1] == f"{base}/evidence", args
+        assert err == "", err
+
+        # ② 注入仓内路径 ⇒ 改道 + 两条告警（用 resolve 消掉 macOS /var→/private/var 软链差异）
+        inside_run = str((scripts / ".atlas-run").resolve())
+        inside_ev = str((root / ".atlas-evidence").resolve())
+        err = invoke(ATLAS_RUN_DIR=inside_run, ATLAS_EVIDENCE_DIR=inside_ev)
+        args = args_file.read_text(encoding="utf-8").splitlines()
+        assert args[args.index("--run-dir") + 1] == f"{base}/current", args
+        assert args[args.index("--evidence-dir") + 1] == f"{base}/evidence", args
+        assert "[atlas] ATLAS_RUN_DIR 指向仓内" in err, err
+        assert "[atlas] ATLAS_EVIDENCE_DIR 指向仓内" in err, err
+        repo_real = str(Path(root).resolve())
+        assert not args[args.index("--run-dir") + 1].startswith(repo_real)
+        assert not args[args.index("--evidence-dir") + 1].startswith(repo_real)
+
+        # ③ 控制台注入（仓库外 per-run）⇒ 原样保留
+        injected = f"/tmp/atlas-e2e/{root.name}/runs/20261112-abc"
+        err = invoke(ATLAS_RUN_DIR=injected, ATLAS_EVIDENCE_DIR=f"{base}/evidence")
+        args = args_file.read_text(encoding="utf-8").splitlines()
+        assert args[args.index("--run-dir") + 1] == injected, args
+        assert "[atlas] ATLAS_RUN_DIR 指向仓内" not in err, err
 
 
 def test_teardown_carrier_uses_sibling_python_and_swallows() -> None:
@@ -3823,3 +4293,128 @@ def test_fill_plain_value_unchanged() -> None:
             "  - fill home-title 新标题       # 填入新标题"))
         assert run(root, "--apply").returncode == 0
         assert 'await page.getByTestId(\'home-title\').first().fill("新标题");' in spec_of(root)
+
+
+# ── D191（2026-11-12）：`read` 运行时取数原语 + `$<名>` 变量引用 ──────────────
+
+READ_CASE = CASE.replace(
+    "  - click home-cta-btn          # 点击主操作按钮\n",
+    "  - read home-cta-btn data-cta -> 已知按钮\n"
+    "  - fill home-title \" $已知按钮 \"     # 运行时值前后各加空格（引号承载首尾空格）\n"
+    "  - press home-title Enter\n",
+).replace(
+    "  - text home-title 首页        # 页面标题文案为「首页」\n",
+    "  - after:2 contains home-title $已知按钮   # 列表面命中该值\n",
+)
+
+
+def test_read_emits_runtime_variable_and_interpolation() -> None:
+    """D191：`read` 发射 const 采样（attr 形态 getAttribute ?? ''），`$<名>` 插值为模板字面量。
+
+    顺序钉：read 常量必须先于引用它的 fill；文本形态走 innerText().trim()。
+    """
+    gn = load_generator()
+    var = gn.js_var("已知按钮")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=READ_CASE)
+        assert run(root, "--apply").returncode == 0
+        seg = spec_of(root)[text_index_of(spec_of(root), "E2E-HOME-001"):]
+        i_read = seg.index(
+            f"const {var} = (await page.getByTestId('home-cta-btn')"
+            f'.first().getAttribute("data-cta")) ?? \'\';')
+        i_fill = seg.index(f".fill(` ${{{var}}} `);")
+        assert i_read < i_fill, seg
+        # contains 期望值插值（列表面断言引用同一变量）
+        assert f"hasText: `${{{var}}}`" in seg, seg
+
+
+def text_index_of(text: str, needle: str) -> int:
+    return text.index(needle)
+
+
+def test_read_text_form_emits_inner_text_trim() -> None:
+    """D191：文本形态 `read <tid> -> <名>` 发射 `innerText().trim()`。"""
+    gn = load_generator()
+    var = gn.js_var("标题文案")
+    case = CASE.replace(
+        "  - click home-cta-btn          # 点击主操作按钮\n",
+        "  - read home-title -> 标题文案\n")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=case)
+        assert run(root, "--apply").returncode == 0
+        assert f"const {var} = (await page.getByTestId('home-title').first().innerText()).trim();" \
+            in spec_of(root), spec_of(root)[:800]
+
+
+def test_read_quoted_plain_value_preserves_spaces() -> None:
+    """D191：成对双引号值（无变量）去引号原样发射——`"a b "` ⇒ fill("a b ")；`""` ⇒ fill("")。"""
+    case = CASE.replace(
+        "  - click home-cta-btn          # 点击主操作按钮\n",
+        "  - fill home-title \"a b \"\n")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=case)
+        assert run(root, "--apply").returncode == 0
+        assert 'fill("a b ")' in spec_of(root), spec_of(root)[:600]
+
+
+def test_read_unknown_variable_aborts() -> None:
+    """D191：`$<名>` 引用未 read 的变量 ⇒ 生成器中止（先读后用），不静默发射字面量。"""
+    case = CASE.replace(
+        "  - click home-cta-btn          # 点击主操作按钮\n",
+        "  - fill home-title $未见过的值\n")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=case)
+        r = run(root, "--apply")
+        assert r.returncode != 0, r.stdout
+        assert "先读后用" in r.stderr, r.stderr
+
+
+def test_read_forward_reference_aborts() -> None:
+    """D191：step 引用**更晚** step 才 read 的变量 ⇒ 中止（step 只能引用更早的 read）。"""
+    case = CASE.replace(
+        "  - click home-cta-btn          # 点击主操作按钮\n",
+        "  - fill home-title $后读的值\n"
+        "  - read home-cta-btn data-cta -> 后读的值\n")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=case)
+        r = run(root, "--apply")
+        assert r.returncode != 0, r.stdout
+        assert "先读后用" in r.stderr, r.stderr
+
+
+def test_read_duplicate_name_aborts() -> None:
+    """D191：同名变量重复 read ⇒ 中止（用例内唯一；生成物 const 重复声明 = 语法错）。"""
+    case = CASE.replace(
+        "  - click home-cta-btn          # 点击主操作按钮\n",
+        "  - read home-cta-btn data-cta -> 同名\n"
+        "  - read home-title -> 同名\n")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=case)
+        r = run(root, "--apply")
+        assert r.returncode != 0, r.stdout
+        assert "重复定义" in r.stderr, r.stderr
+
+
+def test_read_variable_assertions_excluded_from_zero_step_baseline() -> None:
+    """D191：含 `$<名>` 的断言不参与零步基线（无初始态语义）；其余断言照常在列。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, case=READ_CASE)
+        assert run(root, "--apply").returncode == 0
+        probes = zs_probes(spec_of(root))
+        assert all("已知按钮" not in p["label"] for p in probes), probes
+        assert not any("atlasVar_" in p["expr"] for p in probes), probes
+        assert any("home-cta-btn" in p["label"] for p in probes), probes
+
+
+def test_js_var_cjk_names_do_not_collide() -> None:
+    """D191：不同中文名归一后同为下划线串 ⇒ 码点后缀防撞（const 重复声明 = 生成物语法错）。"""
+    gn = load_generator()
+    assert gn.js_var("已知按钮") != gn.js_var("变量甲")
+    assert gn.js_var("plain") == "atlasVar_plain"

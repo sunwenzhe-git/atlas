@@ -198,15 +198,26 @@ def test_member_review_state_recomputed_at_member_root_h5(tmp_path: Path) -> Non
     seed_parent_submit(tmp_path, ["E2E-SOLUTION-001", "E2E-SOLUTION-002"])
     assert {c["review_state"] for c in view(tmp_path)["parent"]["cases"]} == {"fresh"}
 
-    # 只改成员 B（api）的应用内容：父仓全部用例 stale；成员 A 本地仍 fresh。
+    # D198 起评审只认用例内容：只改成员 B（api）的应用代码不再作废已审
+    # （成员本地与父仓一视同仁），重算也不得回写成员账本/索引（RFC §5.8）。
     (tmp_path / "api" / "app.txt").write_text("v2\n", encoding="utf-8")
     before = hashes(tmp_path / "web") | hashes(tmp_path / "api")
     result = view(tmp_path)
-    # stale 重算不得回写成员账本/索引（RFC §5.8）。
     assert hashes(tmp_path / "web") | hashes(tmp_path / "api") == before
     members = {m["name"]: m for m in result["members"]}
     assert members["web"]["review"]["fresh"] == 1
-    assert members["api"]["review"]["stale"] == 1
+    assert members["api"]["review"]["fresh"] == 1
+    assert {c["review_state"] for c in result["parent"]["cases"]} == {"fresh"}
+
+    # 只改父仓用例内容（两条都改）：父仓全部用例 stale，成员 A/B 本地仍 fresh
+    # —— 根隔离：成员用例没有拿父仓根算 current。
+    shard = tmp_path / "product" / "e2e" / "cases" / "solution-flow.md"
+    shard.write_text(shard.read_text(encoding="utf-8").replace("  - 可见", "  - 可见且已刷新"),
+                     encoding="utf-8")
+    result = view(tmp_path)
+    members = {m["name"]: m for m in result["members"]}
+    assert members["web"]["review"]["fresh"] == 1
+    assert members["api"]["review"]["fresh"] == 1
     assert {c["review_state"] for c in result["parent"]["cases"]} == {"stale"}
     # 不依赖 api 的 E2E-SOLUTION-001 也不豁免（RFC §4.5.2 H5）。
     assert next(c for c in result["parent"]["cases"]
@@ -432,7 +443,7 @@ def free_port() -> int:
 class FakeConsole:
     """假控制台：只实现 `/api/cases`（不带真服务/真依赖），用于验证端口判别。"""
 
-    def __init__(self, scope: str = "single") -> None:
+    def __init__(self, scope: str = "single", port: int = 0) -> None:
         self.scope = scope
         outer = self
 
@@ -448,7 +459,7 @@ class FakeConsole:
                 self.end_headers()
                 self.wfile.write(body)
 
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", port), H)
         self.port = int(self.httpd.server_address[1])
         self._th = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self._th.start()
@@ -496,7 +507,7 @@ def test_port_with_member_console_is_reused_and_never_killed(tmp_path: Path) -> 
         snap = mc.snapshot("web")
         assert snap["console_state"] == "reused"
         assert "退出不回收" in snap["console_note"]
-        assert mc._owned == {}
+        assert mc._handles == {}
         mc.stop()
         assert fake.alive() is True   # 复用的外部实例一根手指都不碰
     finally:
@@ -518,87 +529,107 @@ def test_port_occupied_by_other_process_is_skipped(tmp_path: Path) -> None:
         fake.close()
 
 
-class _FakeProc:
-    def __init__(self) -> None:
-        self.terminated = False
-        self.killed = False
-        self.running = True
+def test_spawn_command_targets_terminal_with_member_root(tmp_path: Path) -> None:
+    log = tmp_path / "web.log"
+    pidfile = tmp_path / "web.pid"
+    cmd = cons.member_console_shell_command(tmp_path, 4299, log, pidfile)
+    assert cmd.startswith("cd ")
+    assert "echo $$ > " in cmd and str(pidfile).split("/")[-1] in cmd
+    assert "exec " in cmd
+    assert f"--port 4299" in cmd                 # 端口按清单序号推导
+    assert "--host 127.0.0.1" in cmd
+    assert "--no-spawn" in cmd                   # 被拉起的成员不再递归拉起
+    assert "--root " in cmd and tmp_path.name in cmd
+    assert str(log).split("/")[-1] in cmd and "2>&1" in cmd
 
-    def poll(self):
-        return None if self.running else 0
-
-    def terminate(self) -> None:
-        self.terminated = True
-        self.running = False
-
-    def kill(self) -> None:
-        self.killed = True
-        self.running = False
-
-    def wait(self, timeout=None):
-        return 0
-
-
-def test_stop_reaps_only_owned_children(tmp_path: Path) -> None:
-    mc = cons.MemberConsoles(tmp_path, 4290)
-    owned, other = _FakeProc(), _FakeProc()
-    mc._owned = {"web": owned}
-    mc._procs = {"web": owned, "api": other}
-    mc.stop()
-    assert owned.terminated is True
-    assert other.terminated is False and other.killed is False
-    mc.stop()                       # 幂等：第二次不再动手
-    assert owned.terminated is True
+    script = cons.terminal_spawn_command(cmd)
+    assert script.startswith('tell application "Terminal" to do script "')
+    assert script.endswith('"')
+    # AppleScript 字符串内的双引号必须转义，否则 do script 会被截断
+    assert '\\"' in cons.terminal_spawn_command('echo "hi"')
 
 
-def test_spawn_uses_member_root_cwd_and_no_spawn_flag(tmp_path: Path, monkeypatch) -> None:
-    captured: dict = {}
+def test_spawn_failure_reports_readable_reason(tmp_path: Path) -> None:
+    def spawner(name, mroot, port):
+        raise cons.SpawnError(
+            "osascript 调用失败（exit=1）：Not authorized to send Apple events")
 
-    class _P(_FakeProc):
-        pid = 4321
-
-        def poll(self):
-            return 1                # 立刻"退出"，测试不需要等就绪轮询
-
-    def fake_popen(argv, **kw):
-        captured["argv"], captured["kw"] = argv, kw
-        return _P()
-
-    monkeypatch.setattr(cons.subprocess, "Popen", fake_popen)
-    port = free_port()
-    mc = cons.MemberConsoles(tmp_path, 4290)
-    mc.start_all([{"name": "web", "path": "web", "root": str(tmp_path), "port": port}])
+    mc = cons.MemberConsoles(tmp_path, 4290, spawner=spawner)
+    mc.start_all([{"name": "web", "path": "web", "root": str(tmp_path),
+                   "port": free_port()}])
     mc._threads[-1].join(5)
-
-    argv = captured["argv"]
-    assert argv[argv.index("--root") + 1] == str(tmp_path)
-    assert argv[argv.index("--port") + 1] == str(port)
-    assert argv[argv.index("--host") + 1] == "127.0.0.1"
-    assert "--no-spawn" in argv                     # 子进程不再递归拉起
-    assert captured["kw"]["cwd"] == str(tmp_path)   # 工作目录 = 成员根
     snap = mc.snapshot("web")
     assert snap["console_state"] == "failed"
-    assert "启动即退出" in snap["console_note"]
-    assert str(snap["console_log"]).endswith(".log")
+    assert "拉起失败" in snap["console_note"]
+    assert "Not authorized" in snap["console_note"]   # 原始错误行不吞掉
 
 
-def test_app_js_gates_console_link_on_ready_state() -> None:
-    text = (PKG_ROOT / "templates" / "e2e" / "console" / "app.js").read_text(encoding="utf-8")
-    block = text.split("function memberBlock")[1].split("function rowHTML")[0]
-    assert "console_state" in block
-    assert "const live = cs === 'ready' || cs === 'reused'" in block
-    assert "live && m.console_url" in block         # 未就绪不给可点链接
+def test_free_port_is_spawned_and_survives_parent_stop(tmp_path: Path) -> None:
+    port = free_port()
+    spawned: dict = {}
+
+    def spawner(name, mroot, port):
+        spawned["console"] = FakeConsole(port=port)
+        return {"via": "terminal", "pid": None, "log": str(tmp_path / "web.log"),
+                "pidfile": str(tmp_path / "web.pid"), "shell_cmd": "stub"}
+
+    mc = cons.MemberConsoles(tmp_path, 4290, spawner=spawner)
+    try:
+        mc.start_all([{"name": "web", "path": "web", "root": str(tmp_path),
+                       "port": port}])
+        mc._threads[-1].join(5)
+        snap = mc.snapshot("web")
+        assert snap["console_state"] == "ready"
+        assert "Terminal.app" in snap["console_note"]
+        assert "父会话退出不影响" in snap["console_note"]
+        mc.stop()
+        assert spawned["console"].alive() is True   # 父退出不回收（硬要求）
+    finally:
+        if "console" in spawned:
+            spawned["console"].close()
 
 
-def test_no_local_e2e_member_is_not_spawned(tmp_path: Path, monkeypatch) -> None:
+def test_ensure_reuses_listening_console_without_spawning(tmp_path: Path) -> None:
+    fake = FakeConsole()
+    calls: list = []
+
+    def spawner(name, mroot, port):
+        calls.append(name)
+        raise AssertionError("已有监听时不得再拉起")
+
+    mc = cons.MemberConsoles(tmp_path, 4290, spawner=spawner)
+    try:
+        mc.start_all([{"name": "web", "path": "web", "root": str(tmp_path),
+                       "port": fake.port}])
+        mc._threads[-1].join(5)
+        snap = mc.ensure("web", wait=True)
+        assert snap["console_state"] == "reused"
+        assert calls == []
+        assert fake.alive() is True
+    finally:
+        fake.close()
+
+
+def test_member_open_returns_child_url_and_rejects_unknown() -> None:
+    class _Stub:
+        targets = [{"name": "web", "port": 4301}]
+        host = "127.0.0.1"
+        members = None
+
+    code, payload = cons.App.open_member_console(_Stub(), "web")
+    assert code == 200 and payload["url"] == "http://127.0.0.1:4301/"
+    code, payload = cons.App.open_member_console(_Stub(), "nope")
+    assert code == 404 and "未知成员" in payload["error"]
+
+
+def test_no_local_e2e_member_is_not_spawned(tmp_path: Path) -> None:
     spawned: list = []
 
-    def fake_popen(argv, **kw):
-        spawned.append(argv)
+    def spawner(name, mroot, port):
+        spawned.append(name)
         raise AssertionError("无本地 E2E 索引的成员不应起进程")
 
-    monkeypatch.setattr(cons.subprocess, "Popen", fake_popen)
-    mc = cons.MemberConsoles(tmp_path, 4290)
+    mc = cons.MemberConsoles(tmp_path, 4290, spawner=spawner)
     mc.start_all([{"name": "web", "path": "web", "root": str(tmp_path), "port": free_port()}],
                  {"web": "no_local_e2e"})
     snap = mc.snapshot("web")
@@ -609,10 +640,21 @@ def test_no_local_e2e_member_is_not_spawned(tmp_path: Path, monkeypatch) -> None
     assert "未启动控制台" in snap["console_note"]
 
 
+def test_app_js_console_entry_has_parent_to_child_route() -> None:
+    text = (PKG_ROOT / "templates" / "e2e" / "console" / "app.js").read_text(encoding="utf-8")
+    block = text.split("function memberBlock")[1].split("function rowHTML")[0]
+    assert "console_state" in block
+    # 已就绪 ⇒ 直连子控制台地址（host/port 来自后端 console_url）；否则走父仓兜底路由
+    assert "const entryHref = (live && m.console_url)" in block
+    assert "api/member-open?name=${encodeURIComponent(m.name)}" in block
+    assert "const entry = ok" in block          # 无索引成员不渲染入口链接
+    assert 'target="_blank" rel="noopener"' in block
+
+
 def test_app_js_hides_console_entry_for_members_without_index() -> None:
     text = (PKG_ROOT / "templates" / "e2e" / "console" / "app.js").read_text(encoding="utf-8")
     block = text.split("function memberBlock")[1].split("function rowHTML")[0]
-    assert "no_index: '无本地 E2E 索引，未启动控制台'" in block
+    assert "no_index: '无本地 E2E 索引 · 未启动控制台'" in block
     assert "(ok && m.console_cmd)" in block   # 无索引成员不展示启动命令/端口/日志
-    assert "live && m.console_url" in block   # 未就绪/无索引不渲染入口链接
+    assert "const entry = ok" in block        # 入口链接同样以 ok 为门
     assert "m.path !== m.name" in block       # 成员名不重复展示

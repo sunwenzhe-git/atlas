@@ -913,6 +913,7 @@ def test_testids_subscript_index_resolves_to_base_id() -> None:
         mk_prototype(root)
         case_with_index = CASE_GOOD.replace(
             "  - click home-cta-btn          # 点击主操作按钮",
+            "  - waitFor home-cta-btn[1] 开始 # 等第二项文案变为终态\n"
             "  - click home-cta-btn[1]       # 点击第二个同名按钮"
         ).replace(
             "  - visible home-title          # 页面主标题可见",
@@ -2649,6 +2650,29 @@ def test_stack_profile_origin_greenfield_pass() -> None:
         res = vsp.validate(root)
         assert res.status == "PASS", [(c["check"], c["level"], c["detail"]) for c in res.checks]
         assert _sp_check(res, "origin 枚举")["level"] == "PASS"
+
+
+def test_stack_profile_viewport_and_color_scheme_gate() -> None:
+    """contract §5.4（2026-11-11）：viewport 形态 + color_scheme 枚举；缺省合法。"""
+    base = PROFILE_BASE.format(origin="greenfield")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_profile(root, base)
+        res = vsp.validate(root)
+        assert _sp_check(res, "e2e.viewport 形态")["level"] == "PASS"
+        assert _sp_check(res, "e2e.color_scheme 枚举")["level"] == "PASS"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_profile(root, base + "  viewport: 1440x900\n  color_scheme: light\n")
+        res = vsp.validate(root)
+        assert _sp_check(res, "e2e.viewport 形态")["level"] == "PASS"
+        assert _sp_check(res, "e2e.color_scheme 枚举")["level"] == "PASS"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_profile(root, base + "  viewport: 1440by900\n  color_scheme: sepia\n")
+        res = vsp.validate(root)
+        assert _sp_check(res, "e2e.viewport 形态")["level"] == "FAIL"
+        assert _sp_check(res, "e2e.color_scheme 枚举")["level"] == "FAIL"
 
 
 def test_stack_profile_login_unstated_warn_gives_a_way_out() -> None:
@@ -4546,8 +4570,15 @@ e2e:
     rows = _gate(base + "  mock:\n    mode: on\n    api_prefix: /api/\n")
     assert rows["e2e.mock.mode 枚举"]["level"] == "PASS", rows
     assert rows["e2e.mock.api_prefix 前置"]["level"] == "PASS", rows
-    rows = _gate(base + "  mock:\n    mode: on\n")  # on 而 prefix 缺
+    rows = _gate(base + "  mock:\n    mode: on\n")  # on 而 prefix 缺 ⇒ 生成器兜底 /
+    assert rows["e2e.mock.api_prefix 前置"]["level"] == "PASS", rows
+    assert "兜底" in rows["e2e.mock.api_prefix 前置"]["detail"], rows
+    # 列表形态与逐项校验（2026-11-12）：合法列表 PASS；非法项 FAIL 且点名第几项
+    rows = _gate(base + "  mock:\n    mode: on\n    api_prefix:\n      - /api/a\n      - /api/b\n")
+    assert rows["e2e.mock.api_prefix 前置"]["level"] == "PASS", rows
+    rows = _gate(base + "  mock:\n    mode: on\n    api_prefix:\n      - /api/a\n      - bad\n")
     assert rows["e2e.mock.api_prefix 前置"]["level"] == "FAIL", rows
+    assert "第 2 项" in rows["e2e.mock.api_prefix 前置"]["detail"], rows
     rows = _gate(base + "  mock:\n    mode: maybe\n")
     assert rows["e2e.mock.mode 枚举"]["level"] == "FAIL" and "maybe" in rows["e2e.mock.mode 枚举"]["detail"], rows
     rows = _gate(base + "  mock:\n    mode: on\n    api_prefix: /api/\n    zombie: 1\n")
@@ -5246,3 +5277,201 @@ def test_stack_profile_targets_absent_pass() -> None:
         res = vsp.validate(root)
         assert _sp_check(res, "e2e.targets（可选段）")["level"] == "PASS", \
             [(c["check"], c["level"], c["detail"]) for c in res.checks]
+
+
+def test_stack_profile_app_login_probe_matrix() -> None:
+    """RFC-20261112-01 §4.2 / §8.3（2026-11-12）：`probe` 契约与 `app_login` 字段矩阵。
+
+    - `real` 缺 probe ⇒ FAIL（不可选）；
+    - `none` / `fabricated` 写 probe ⇒ FAIL（假令牌不可能通过认证探针）；
+    - 矩阵外字段（含 `storage_state`）⇒ FAIL；
+    - probe 形态：`path` 必须以 `/` 开头、`timeout_ms` 上限 10000、`expect_json` 键为 JSON Pointer。
+    """
+    def _gate(profile_text: str):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "product").mkdir(parents=True)
+            (root / "product" / "stack-profile.yaml").write_text(profile_text, encoding="utf-8")
+            res = vsp.validate(root)
+            return {c["check"]: c for c in res.checks}
+
+    base = """product: demo
+e2e:
+  runner: node-playwright
+"""
+    real = ("  app_login:\n    mode: real\n    endpoint: /auth/login\n    username_field: u\n"
+            "    password_field: p\n    token_key: data.token\n    storage_key: token\n")
+    rows = _gate(base + real)
+    assert rows["e2e.app_login.probe 必填"]["level"] == "FAIL", rows
+    rows = _gate(base + real + "    probe:\n      path: /api/session\n")
+    assert rows["e2e.app_login.probe 形态"]["level"] == "PASS", rows
+    rows = _gate(base + real + "    probe:\n      path: api/session\n")
+    assert rows["e2e.app_login.probe 形态"]["level"] == "FAIL", rows
+    rows = _gate(base + real + "    probe:\n      path: /api/session\n      timeout_ms: 60000\n")
+    assert rows["e2e.app_login.probe 形态"]["level"] == "FAIL", rows
+    rows = _gate(base + real + "    probe:\n      path: /api/session\n      expect_json:\n        data.ok: 1\n")
+    assert rows["e2e.app_login.probe 形态"]["level"] == "FAIL", rows
+    rows = _gate(base + "  app_login:\n    mode: fabricated\n    storage_key: token\n"
+                        "    probe:\n      path: /api/session\n")
+    assert rows["e2e.app_login.mode=fabricated 字段互斥"]["level"] == "FAIL", rows
+    rows = _gate(base + "  app_login:\n    mode: none\n    probe:\n      path: /api/session\n")
+    assert rows["e2e.app_login.mode=none 字段互斥"]["level"] == "FAIL", rows
+    rows = _gate(base + "  app_login:\n    mode: fabricated\n    storage_key: token\n"
+                        "    storage_state: .atlas-auth/state.json\n")
+    assert rows["e2e.app_login 字段矩阵"]["level"] == "FAIL", rows
+    assert "storage_state" in rows["e2e.app_login 字段矩阵"]["detail"], rows
+
+
+# ---- D191（2026-11-12）：`read` 语法/先读后用 + 同控件回读禁令 + 存在类锚定提示 ----
+
+
+def _d191_gate(res, name: str) -> dict:
+    return {c["check"]: c for c in res.checks}[name]
+
+
+def test_e2e_index_read_syntax_and_var_order_gates() -> None:
+    """D191：`read` 语法门（缺箭头 / 属性形态 / 变量重名）与变量先读后用门（未定义 / step 前向引用）。"""
+    good = CASE_GOOD.replace(
+        "  - click home-cta-btn          # 点击主操作按钮\n",
+        "  - read home-cta-btn data-cta -> 已知按钮\n"
+        "  - fill home-title \" $已知按钮 \"\n",
+    ).replace(
+        "  - text home-title 首页        # 页面标题文案为「首页」\n",
+        "  - contains home-title $已知按钮   # 列表面命中\n",
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, good)
+        mk_index(root)
+        mk_stub(root)
+        res = ve.validate(root)
+        assert _d191_gate(res, "read 语法合法")["level"] == "PASS", res.checks
+        assert _d191_gate(res, "read 变量先读后用")["level"] == "PASS", res.checks
+        assert _d191_gate(res, "同控件回读禁令")["level"] == "PASS", res.checks
+    for bad, gate, kw in (
+        ("  - read home-cta-btn 已知按钮\n", "read 语法合法", None),
+        ("  - read home-cta-btn 9bad -> 名\n", "read 语法合法", None),
+        ("  - read home-cta-btn data-a -> 名\n  - read home-title -> 名\n", "read 语法合法", "重复定义"),
+        ("  - fill home-title $缺失值\n", "read 变量先读后用", "缺失值"),
+        ("  - fill home-title $后读的值\n  - read home-cta-btn data-cta -> 后读的值\n",
+         "read 变量先读后用", "后读的值"),
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            mk_prototype(root)
+            mk_cases(root, CASE_GOOD.replace(
+                "  - click home-cta-btn          # 点击主操作按钮\n", bad))
+            mk_index(root)
+            mk_stub(root)
+            res = ve.validate(root)
+            row = _d191_gate(res, gate)
+            assert row["level"] == "FAIL" and (kw is None or kw in row["detail"]), (bad, row)
+
+
+def test_e2e_index_same_control_echo_gate() -> None:
+    """D191 R11：fill 后同控件回读 value 同值（无 refresh/goto 间隔）⇒ FAIL。
+
+    豁免态各自 PASS：refresh 间隔（真证据=刷新后值仍在）/ `initial:` 前缀 / select→value
+    （选项回显非恒真）。旧 007 形态（编造编号 + fill 回读）必须判红。
+    """
+    echo_bad = CASE_GOOD.replace(
+        "  - click home-cta-btn          # 点击主操作按钮\n",
+        "  - fill home-title 202611110000000000000001\n  - press home-title Enter\n",
+    ).replace(
+        "  - text home-title 首页        # 页面标题文案为「首页」\n",
+        "  - value home-title 202611110000000000000001\n",
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, echo_bad)
+        mk_index(root)
+        mk_stub(root)
+        res = ve.validate(root)
+        row = _d191_gate(res, "同控件回读禁令")
+        assert row["level"] == "FAIL" and "恒真" in row["detail"], row
+    for ok_case in (
+        # refresh 间隔：fill 与回读之间状态被重置，回读成为真证据
+        echo_bad.replace("  - press home-title Enter\n",
+                         "  - press home-title Enter\n  - refresh\n"),
+        # initial: 前缀（采样点在提交性动作之前，不属回读）
+        echo_bad.replace("  - value home-title", "  - initial: value home-title  # 初始态即为该值"),
+        # 空值豁免（清空语义）
+        CASE_GOOD.replace(
+            "  - click home-cta-btn          # 点击主操作按钮\n",
+            "  - fill home-title \"\"\n  - press home-title Enter\n").replace(
+            "  - text home-title 首页        # 页面标题文案为「首页」\n",
+            "  - value home-title (空)\n"),
+        # select→value 控件回显：验证的是「选项选中生效」，非 fill 自证
+        CASE_GOOD.replace(
+            "  - click home-cta-btn          # 点击主操作按钮\n",
+            "  - select home-title 项目\n").replace(
+            "  - text home-title 首页        # 页面标题文案为「首页」\n",
+            "  - value home-title 项目\n"),
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            mk_prototype(root)
+            mk_cases(root, ok_case)
+            mk_index(root)
+            mk_stub(root)
+            res = ve.validate(root)
+            row = _d191_gate(res, "同控件回读禁令")
+            assert row["level"] == "PASS", (ok_case, row)
+
+
+def test_e2e_index_existence_literal_hint_gate() -> None:
+    """D191 §5.7：同一 ≥12 位纯数字字面量同现 step 与 expected ⇒ WARN（存在类锚定提示）；
+    仅出现在 step（输入类字面量，合法）⇒ PASS。"""
+    warn_case = CASE_GOOD.replace(
+        "  - click home-cta-btn          # 点击主操作按钮\n",
+        "  - fill home-title 1111111111111111\n  - press home-title Enter\n",
+    ).replace(
+        "  - text home-title 首页        # 页面标题文案为「首页」\n",
+        "  - value home-title 1111111111111111\n",
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, warn_case)
+        mk_index(root)
+        mk_stub(root)
+        res = ve.validate(root)
+        row = _d191_gate(res, "存在类锚定提示")
+        assert row["level"] == "WARN" and "1111111111111111" in row["detail"], row
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD.replace(
+            "  - click home-cta-btn          # 点击主操作按钮\n",
+            "  - fill home-title 1111111111111111\n"))
+        mk_index(root)
+        mk_stub(root)
+        res = ve.validate(root)
+        assert _d191_gate(res, "存在类锚定提示")["level"] == "PASS", res.checks
+
+
+# ---- D191 配套（2026-11-12）：JSX props 对象键形态抽取 + `testid:` 清单行内注释剥离 ----
+
+
+def test_testid_props_object_form_extracted() -> None:
+    """`'data-testid': 'x'`（antd okButtonProps 等组件 props 透传）= 字面量键值，静态可枚举，
+    必须被全量抽取与落点门同源识别（file_testid_decls 单源）。"""
+    text = "<Button okButtonProps={{ disabled: true, 'data-testid': 'sync-modal-ok' }} />"
+    decls, seq, _tpl = vt.file_testid_decls(text)
+    assert "sync-modal-ok" in decls, decls
+    assert "sync-modal-ok" in seq, seq
+
+
+def test_testid_listed_entries_strip_inline_comment() -> None:
+    """F5 单源口径补账：分片 `testid:` 清单项可带行内 `#` 说明，收集侧必须剥离——
+    否则「带注释的同一 id」与「干净 id」会算成两个应然（双向集合门假缺失）。"""
+    md = Path(tempfile.mkdtemp()) / "home.md"
+    md.write_text(
+        "## E2E-HOME-001 t\n\n```atlas-case\nid: E2E-HOME-001\nintent: t\npages:\n  - home\n"
+        "step:\n  - click home-cta-btn\nexpected:\n  - visible home-cta-btn\n"
+        "testid:\n  - home-cta-btn        # 行内说明\n  - home-title     # 另一行说明\n```\n",
+        encoding="utf-8")
+    usage = vt.case_testid_usage(md)
+    assert usage[0][2] == {"home-cta-btn", "home-title"}, usage

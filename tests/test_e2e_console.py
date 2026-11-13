@@ -98,14 +98,16 @@ def _run_with_proc(cons, root: Path, proc, grace: float = 1.0):
     return runner
 
 
-def test_timeout_soft_kill_lets_trace_flush() -> None:
+def test_timeout_soft_kill_lets_trace_flush(monkeypatch) -> None:
     """P13/S1-20a：SIGTERM 后在 grace 内退出 ⇒ trace 完整归档、判定仍超时。
 
     变异 M180（退回硬杀）⇒ 进程没机会 flush ⇒ 本钉红。
+    D194：运行目录在仓库外（`ATLAS_RUN_ROOT` 指向临时缓存），假进程按本次 run 目录写 trace。
     """
     cons = load("e2e_console", "scripts/e2e_console.py")
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
+        monkeypatch.setenv("ATLAS_RUN_ROOT", str(root / "_cache"))
         build_project(root)
         scripts = cons.load_layout(root).e2e_scripts_dir
         scripts.mkdir(parents=True, exist_ok=True)
@@ -124,8 +126,8 @@ def test_timeout_soft_kill_lets_trace_flush() -> None:
 
             def terminate(self) -> None:
                 self.terminated = True
-                rd = scripts / ".atlas-run"
-                rd.mkdir(parents=True, exist_ok=True)
+                rd = cons.run_workspace.latest_run_dir(root)
+                assert rd is not None, "起跑必须先分配仓库外运行目录"
                 (rd / "trace.zip").write_bytes(b"flushed-on-sigterm")
 
             def kill(self) -> None:
@@ -140,7 +142,7 @@ def test_timeout_soft_kill_lets_trace_flush() -> None:
         assert any(Path(f["path"]).name == "trace.zip" for f in ev["files"]), ev
 
 
-def test_sigterm_ignored_escalates_to_sigkill_warn_partial() -> None:
+def test_sigterm_ignored_escalates_to_sigkill_warn_partial(monkeypatch) -> None:
     """P13/S1-20b：忽略 SIGTERM ⇒ grace 到期 SIGKILL ⇒ WARN + partial。
 
     变异 M186（摘掉 grace 后 SIGKILL 回退）⇒ 进程永不退出、测试挂死/本钉红。
@@ -148,6 +150,7 @@ def test_sigterm_ignored_escalates_to_sigkill_warn_partial() -> None:
     cons = load("e2e_console", "scripts/e2e_console.py")
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
+        monkeypatch.setenv("ATLAS_RUN_ROOT", str(root / "_cache"))
         build_project(root)
 
         class StubbornProc:
@@ -315,6 +318,81 @@ def test_snapshot_carries_mock_lines_for_badge() -> None:
         snap = cons.snapshot(root)
         case = next(c for c in snap["cases"] if c["id"] == "E2E-USERS-001")
         assert case["mock"] == ["GET /api/v1/users -> fixtures/users/empty.json"], case["mock"]
+
+
+def _users_case_md(expected: str = "visible users-empty-placeholder",
+                   step: str = "goto /users") -> str:
+    return (
+        "# users 页面用例\n\n## E2E-USERS-001 空态缺省页\n\n```atlas-case\n"
+        "id: E2E-USERS-001\nintent: 列表为空时渲染缺省占位\npages:\n  - users\n"
+        "mock:\n  - GET /api/v1/users -> fixtures/users/empty.json\n"
+        f"step:\n  - {step}\nexpected:\n  - {expected}\n"
+        "testid:\n  - users-empty-placeholder\n```\n")
+
+
+def test_case_content_hash_ignores_comments_and_blank_lines() -> None:
+    """D198：内容指纹只认断言/步骤内容；注释与排版空行不触发重审。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_project(Path(tmp))
+        cases = root / "product" / "e2e" / "cases"
+        cases.mkdir(parents=True, exist_ok=True)
+        f = cases / "users.md"
+        f.write_text(_users_case_md(), encoding="utf-8")
+        base = cons.case_content_hashes(root)["E2E-USERS-001"]
+        # 注释 + 空行 + 行内多余空格 ⇒ 不改变指纹
+        f.write_text(_users_case_md(step="goto /users   # 入口页").replace(
+            "expected:\n", "\n\nexpected:\n"), encoding="utf-8")
+        assert cons.case_content_hashes(root)["E2E-USERS-001"] == base
+        # 只改 expected ⇒ 内容变，需重审
+        f.write_text(_users_case_md(expected="visible users-empty-illustration"), encoding="utf-8")
+        assert cons.case_content_hashes(root)["E2E-USERS-001"] != base
+
+
+def test_case_review_state_content_hash_beats_regenerated_spec() -> None:
+    """D198：spec 块 / 共享脚本 / 应用代码全变，但用例内容没变 ⇒ 仍「已审」。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    snap = {"reviewed": {"pass": True},
+            "prov": {"head_sha": "h1", "git_dirty": False,
+                     "fp": {"script": "users.spec.ts:3", "block": "b1", "rest": "r1",
+                            "shared": "s1", "app": "a1", "case": "c1"}}}
+    current = {"head_sha": "h2", "scripts_hash": "x",
+               "case": {"E2E-USERS-001": "c1"},
+               "cases": {"E2E-USERS-001": {"script": "users.spec.ts:3", "block": "b2", "rest": "r2"}},
+               "shared_hash": "s2", "app_hash": "a2"}
+    got = cons.case_review_state("E2E-USERS-001", snap, current)
+    assert got["state"] == "fresh", got
+    assert "warning" not in got, got
+
+
+def test_case_review_state_content_hash_change_needs_review() -> None:
+    """D198：`expected` / `testid` 等真实内容变化 ⇒ stale（只作废这条）。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    snap = {"reviewed": {"pass": True},
+            "prov": {"head_sha": "h1", "fp": {"script": "users.spec.ts:3", "block": "b1",
+                                              "rest": "r1", "case": "c1"}}}
+    current = {"head_sha": "h1", "scripts_hash": "x", "case": {"E2E-USERS-001": "c2"},
+               "cases": {}, "shared_hash": "s1"}
+    got = cons.case_review_state("E2E-USERS-001", snap, current)
+    assert got["state"] == "stale" and "内容变动" in got["reason"], got
+
+
+def test_case_review_state_legacy_fp_adopts_current_content() -> None:
+    """D198 迁移：旧账本无内容指纹 ⇒ 按当前 md 内容沿用已审（生成器升级致块变不算重审）。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    snap = {"reviewed": {"pass": True},
+            "prov": {"head_sha": "h1", "fp": {"script": "users.spec.ts:3", "block": "b1",
+                                              "rest": "r1", "shared": "s1", "app": "a1"}}}
+    current = {"head_sha": "h2", "scripts_hash": "x2",
+               "case": {"E2E-USERS-001": "c1"},
+               "cases": {"E2E-USERS-001": {"script": "users.spec.ts:3", "block": "b9", "rest": "r9"}},
+               "shared_hash": "s2", "app_hash": "a2"}
+    got = cons.case_review_state("E2E-USERS-001", snap, current)
+    assert got["state"] == "fresh", got
+    # 解析不到该用例（无 case map）时退回块比较，真换脚本仍会 stale
+    current.pop("case")
+    got = cons.case_review_state("E2E-USERS-001", snap, current)
+    assert got["state"] == "stale" and "用例脚本变动" in got["reason"], got
 
 
 def test_snapshot_splits_multi_value_ac_for_display() -> None:
@@ -1110,11 +1188,11 @@ def test_case_review_state_lifecycle() -> None:
                                  current(case=dict(cur_case, rest="r2")))
     assert st6["state"] == "stale" and "同文件共享代码变动" in st6["reason"], st6
 
-    # ⑦ 共享脚本 / 应用代码变动 => stale
-    assert "共享脚本变动" in cons.case_review_state("E2E-DEMO-001", dict(snap, prov=prov),
-                                                    current(shared="s2"))["reason"]
-    assert "应用代码变动" in cons.case_review_state("E2E-DEMO-001", dict(snap, prov=prov),
-                                                    current(app="a2"))["reason"]
+    # ⑦ D198：共享脚本 / 应用代码变动不再作废（用例内容未变；重放与生成器升级属此类）
+    assert cons.case_review_state("E2E-DEMO-001", dict(snap, prov=prov),
+                                  current(shared="s2"))["state"] == "fresh"
+    assert cons.case_review_state("E2E-DEMO-001", dict(snap, prov=prov),
+                                  current(app="a2"))["state"] == "fresh"
 
     # ⑧ 用例换脚本 / 脚本里找不到 => stale
     st8 = cons.case_review_state("E2E-DEMO-001", dict(snap, prov=prov),
@@ -1307,3 +1385,121 @@ def test_console_app_js_handles_stale_and_legacy_and_provenance() -> None:
     assert "st.state === 'stale' || st.state === 'legacy'" in app_js
     assert "statList.push(['需重审', k.stale])" in app_js
 
+
+def test_console_app_js_member_block_renders_header_only() -> None:
+    """父仓控制台的成员仓分组只渲染头部摘要，不逐条渲染用例行。
+
+    保留：成员名 + counts/review 计数、控制台状态徽标与入口链接、启动命令、日志路径；
+    删除：复合键 / 用例 / 状态 / 评审 / 分片这些逐条用例行（含表格）。
+    父仓自身用例行由主表 `rowHTML` 渲染，不受本改动影响。
+    """
+    app_js = (Path(__file__).parent.parent / "templates" / "e2e" / "console" / "app.js").read_text(encoding="utf-8")
+    block = app_js.split("function memberBlock")[1].split("function rowHTML")[0]
+    # 头部摘要与入口：数量/评审计数、控制台入口、启动命令、日志
+    for kept in ("mcount", "counts.total", "counts.green", "counts.red",
+                 "counts.blocked", "counts.skipped",
+                 "review.fresh", "review.stale", "review.unreviewed", "review.legacy",
+                 "打开成员控制台", "m.console_url", "m.console_cmd", "m.console_log", "日志："):
+        assert kept in block, f"成员分组头部应保留 {kept}"
+    # 逐条用例行不再渲染
+    for gone in ("m.cases", "mgrid", "<table", "<thead", "复合键", "分片", "c.shard", "c.uid"):
+        assert gone not in block, f"成员分组不得再渲染用例行：{gone}"
+    # 父仓用例行与执行控件不受影响
+    assert "function rowHTML" in app_js and "data-run=" in app_js
+
+
+def test_hold_mode_collects_held_window_on_next_start() -> None:
+    """硬性要求（2026-11-12，取代 2026-11-11「只手动关」）：**持窗到下一条起跑**。
+
+    * 跑完 / 超时都**不得** kill 持窗进程（`_reap_finished()` 语义不变：只清已退出的）；
+    * **起跑下一条前**必须收掉之前保留的全部窗口（`_collect_held_windows()`：kill 活着的
+      持窗进程、清 `held_case`、返回收掉数）——这是唯一允许自动结束持窗进程的时点；
+    * 用户手动途径不变：`close_window()`（点「关闭浏览器窗口」）必须真正结束持窗进程。
+
+    变异 **M-HOLD**：把 `start()` 里的 `_collect_held_windows()` 删掉 / 让 collect 不 kill
+    / 让 `close_window()` 不 kill ⇒ 本钉红，还原逐字节一致。
+    """
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    killed: list[object] = []
+
+    class HeldProc:
+        returncode = 0
+        stdout = iter(())
+
+        def __init__(self, alive: bool = True) -> None:
+            self._alive = alive
+
+        def poll(self):  # None = 进程活着 = 窗口仍开着；0 = 已退出（人手动关过窗）
+            return None if self._alive else 0
+
+        def kill(self) -> None:
+            killed.append(self)
+
+    with tempfile.TemporaryDirectory() as td:
+        runner = cons.Runner(Path(td), cons.Ledger(Path(td), "tester"),
+                             timeout=60, head=True, keep_open=True)
+        exited, alive = HeldProc(alive=False), HeldProc(alive=True)
+        runner._held_procs = [exited, alive]
+        runner.held_case = "E2E-DEMO-001"
+        # reap 语义不变：只丢弃已退出的，绝不 kill 仍开着的窗口
+        runner._reap_finished()
+        assert killed == [], "reap 不得 kill 仍开着的浏览器窗口"
+        assert runner._held_procs == [alive] and runner.held_case == "E2E-DEMO-001"
+        # 起跑下一条前置收窗：必须 kill 全部仍开着的旧窗口并清 held_case
+        n = runner._collect_held_windows()
+        assert killed == [alive], "起跑下一条必须收掉之前保留的浏览器窗口"
+        assert n == 1 and runner._held_procs == [] and runner.held_case is None
+        # 无旧窗时静默：不 kill、返回 0
+        assert runner._collect_held_windows() == 0 and killed == [alive]
+        # 用户显式点「关闭浏览器窗口」= 手动收窗途径保持可用
+        runner._held_procs.append(HeldProc())
+        runner.held_case = "E2E-DEMO-002"
+        out = runner.close_window()
+        assert len(killed) == 2, "close_window() 必须真正结束持窗进程"
+        assert out["ok"] is True and out["closed"] == "E2E-DEMO-002"
+        assert runner._held_procs == [] and runner.held_case is None
+
+
+# ── 真实应用来源适用性（2026-11-12，D193）──────────────────────────────────────────
+def _min_profile(root: Path, app_base_url: str | None = None) -> None:
+    path = root / "product" / "stack-profile.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = f"  app_base_url: {app_base_url}\n" if app_base_url else ""
+    path.write_text("product: demo\ne2e:\n  runner: node-playwright\n" + line, encoding="utf-8")
+
+
+def test_read_sources_solution_root_does_not_ask_for_base_url() -> None:
+    """solution 根 / 父仓无实体页面 ⇒ 不索取 app_base_url、不参与执行判定。"""
+    con = load("atlas_console_solution_src", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "members" / "web").mkdir(parents=True)
+        (root / "atlas.solution.yaml").write_text(
+            "version: 1\nsolution: demo\nmode: federated\n"
+            "members:\n  - name: web\n    path: members/web\n    assets: member\n",
+            encoding="utf-8",
+        )
+        _min_profile(root)
+        src = con.read_sources(root)["app"]
+        assert src["applicable"] is False and src["configured"] is True
+        assert "索取" not in src["why"]
+        assert src["why"].startswith("本源无实体页面")
+
+
+def test_console_app_gates_base_url_notice_by_applicable() -> None:
+    """前端同样以 `applicable` 为门：无实体页面既不弹索取、也不显示「暂不可执行」。"""
+    js = (PKG_ROOT / "templates" / "e2e" / "console" / "app.js").read_text(encoding="utf-8")
+    assert "cfg.applicable !== false && !cfg.configured" in js
+    assert "cfg.applicable === false ? '本源无实体页面'" in js
+    assert "srcCfg().applicable === false ? '本源无实体页面，不参与执行'" in js
+
+
+def test_read_sources_member_missing_base_url_still_asks() -> None:
+    """成员仓（非 solution 根）缺 app_base_url ⇒ 仍如实提示「不猜默认」并禁用执行。"""
+    con = load("atlas_console_member_src", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _min_profile(root)
+        src = con.read_sources(root)["app"]
+        assert src["applicable"] is True and src["configured"] is False
+        assert "向用户索取" in src["why"] and "不猜默认" in src["why"]

@@ -19,7 +19,7 @@
       <input id="slowmo" type="number" min="0" max="5000" step="100" value="500">
       <span class="unit">ms</span>
     </label>
-    <button id="closewin" class="btn" hidden title="关闭上一条用例保留的浏览器窗口（跑完不会自动关，留给你手动看）">关闭浏览器窗口</button>
+    <button id="closewin" class="btn" hidden title="手动关闭当前保留的浏览器窗口（跑完不会自动关；起跑下一条时上一条的窗口会自动收掉，也可以在这里提前关）">关闭浏览器窗口</button>
     <button id="submit" class="btn" title="把页面上的执行结果与勾选一次性提交：① 账本追加一条快照；② 回写 {{ATLAS_E2E_INDEX}} 的「状态」一列（先给预览，确认后才写）">提交</button>
     <button id="reload" class="btn">重新加载用例</button>
   </div>
@@ -47,7 +47,7 @@
 
 <div id="notify" class="notify" hidden></div>
 
-<p class="legend">执行与勾选<b>先只改本地</b>（刷新不丢），点<b>提交</b>才一次性落账本；人工 review = 复核执行结果符合业务预期，勾选留痕、再点一次取消。<b>跑完不自动关浏览器窗口</b>，看够了手动关（或点右上「关闭浏览器窗口」）。失败那条点「输出」看底部面板。</p>
+<p class="legend">执行与勾选<b>先只改本地</b>（刷新不丢），点<b>提交</b>才一次性落账本；人工 review = 复核执行结果符合业务预期，勾选留痕、再点一次取消。<b>跑完窗口保留给你看</b>；起跑下一条时上一条的窗口会自动收掉（持窗到下一条起跑），看不够也可以手动关（或点右上「关闭浏览器窗口」）。失败那条点「输出」看底部面板。</p>
 
 <section id="members" class="members" hidden></section>
 

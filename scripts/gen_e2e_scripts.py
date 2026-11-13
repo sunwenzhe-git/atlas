@@ -79,6 +79,8 @@ parse_profile = _sp.parse_profile  # 单源别名（原实现已并入 `_support
 strip_inline_comment = _sp.strip_inline_comment
 # 宿主注入型 base query 的转发（issue #27 / D104）：单源 `_support/url_merge.py`。
 url_merge = load_module("url_merge")
+# 登录态单源（RFC-20261112-01 v1）：probe 形态校验与 state 工具复用同一内核。
+auth_state = load_module("auth_state")
 
 CASE_BLOCK = re.compile(r"```atlas-case\s*\n(.*?)```", re.S)
 RUNNERS = {"node-playwright": ".spec.ts"}  # 单轨（3507 BO）：python-playwright 已退役
@@ -88,17 +90,27 @@ RUNNERS = {"node-playwright": ".spec.ts"}  # 单轨（3507 BO）：python-playwr
 NOT_READY = 3
 # e2e.app_login 段的必填字段（mode: real 须全齐；fabricated 收窄为 storage_key；3509 §B101）
 APP_LOGIN_FIELDS = ("endpoint", "username_field", "password_field", "token_key", "storage_key")
+# 字段矩阵（RFC-20261112-01 §8.3）：矩阵外的键（含 storage_state）一律 FAIL。
+APP_LOGIN_KEYS = ("mode", "endpoint", "username_field", "password_field", "token_key",
+                  "storage_key", "body_format", "probe")
 # e2e.app_login.mode（契约 §5.8/§7.1，2026-10-12；2026-10-16 增 none，RFC-20261015-02）：
 # real（缺省 = 真实登录语义）/ fabricated（纯前端桩项目：setup 直写假令牌，必填收窄为 storage_key）/
 # none（靶场无访问门：不生成登录预置设施、不打警告 —— 声明过的形态，不是降级）。
 # 与既有词表同族（e2e.mock.mode off / e2e.review.mode off：在 X 段里用 mode 值声明「X 通道不需要」）。
 APP_LOGIN_MODES = ("real", "fabricated", "none")
+# 运行器视口与配色（契约 shared/stack-profile.md §2 / rings/e2e/reference.md §5.4，2026-11-11）：
+# 声明式写入 playwright.config.ts 的 use；未声明 ⇒ 不写该键，保持 Playwright 原生默认。
+COLOR_SCHEMES = ("light", "dark", "no-preference")
 # 网络边界打桩（契约 §5.8，2026-10-12）：`mock:` 行的方法枚举（行式语法见 parse_mock_line）。
 MOCK_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
+# 主动接口断言（契约 §5.5，2026-11-12）：`api <METHOD> <PATH> ...`，在 Playwright
+# `context.request` 上直接发请求并断言响应（复用浏览器上下文 cookie / localStorage 令牌）。
+API_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
 
 # 分片 step / expected 的动词词表（契约 `rings/e2e/reference.md` §5.5，2026-09-23 定）
-ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "type", "hover", "refresh", "goto", "waitFor", "download", "upload", "dispatch")
-ASSERT_VERBS = ("text", "contains", "count", "countOptions", "visible", "hidden", "enabled", "disabled", "checked", "unchecked", "value", "attr", "delta", "request")
+# D199（2026-11-12）：动作侧新增 `send`（发请求 + 捕获响应值），见 `parse_send_line`。
+ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "type", "hover", "read", "refresh", "goto", "waitFor", "download", "upload", "dispatch", "send")
+ASSERT_VERBS = ("text", "contains", "count", "countOptions", "visible", "hidden", "enabled", "disabled", "checked", "unchecked", "value", "attr", "delta", "request", "api")
 NO_TESTID_VERBS = ("refresh", "goto")  # 这两个动词第二个 token 不是 testid（goto 的值是路径）
 # 契约 §5.5（2026-10-16 补，issue #R4）：`click` / `hover` 默认追加 `{ force: true }`
 # （动机：真实 UI 里悬浮遮罩 / 动画 / 父容器事件拦截会造出动作执行超时的**假红**）。
@@ -196,6 +208,139 @@ def case_uses_request(case: dict) -> bool:
                for raw in (case.get("expected") or []))
 
 
+def case_uses_api(case: dict) -> bool:
+    """契约 §5.5（2026-11-12）：该用例是否含 `api` 主动接口断言（决定 helper 发射）。"""
+    return any(parse_line(split_after(split_prefix(raw)[1])[1])[0] == "api"
+               for raw in (case.get("expected") or []))
+
+
+def case_uses_send(case: dict) -> bool:
+    """契约 §5.5（D199）：该用例是否含 `send` 动作（决定发送/捕获 helper 发射）。"""
+    return any(parse_line(s)[0] == "send" for s in (case.get("step") or []))
+
+
+def parse_api_request(method: str, left: str, verb: str = "api") -> dict:
+    """`<METHOD> <PATH> [body <JSON>]` 的**单点解析**（`api` 断言与 `send` 动作同源）。
+
+    D199：两个动词共用方法白名单 / 路径锚定 / 请求体 JSON 校验，错误文案带 `verb`
+    （`api` 既有文案逐字节不变），防「一个动词改了、另一个没跟上」的半通态。
+    """
+    method = (method or "").strip().upper()
+    if method not in API_METHODS:
+        raise ValueError(f"`{verb}` 的方法须为 {list(API_METHODS)} 之一: {method!r}（契约 §5.5）")
+    left = left.strip()
+    if not left:
+        raise ValueError(f"`{verb} {method}` 缺 <PATH>（契约 §5.5）")
+    path, _, body_part = left.partition(" ")
+    path = path.strip()
+    if not path.startswith("/") and not re.match(r"^https?://", path):
+        raise ValueError(f"`{verb}` 的 PATH 须以 / 开头或为绝对 URL: {path!r}（契约 §5.5）")
+    body = None
+    body_raw = None
+    body_part = body_part.strip()
+    if body_part:
+        if not body_part.startswith("body "):
+            raise ValueError(f"`{verb}` 请求体须写作 `body <JSON>`: {body_part!r}（契约 §5.5）")
+        body_raw = body_part[5:].strip()
+        try:
+            body = json.loads(body_raw)
+        except ValueError as exc:
+            raise ValueError(f"`{verb}` 的 body 不是合法 JSON: {body_raw!r}（{exc}）") from None
+    return {"method": method, "path": path, "body": body, "body_raw": body_raw}
+
+
+def parse_api_line(method: str, rest: str) -> dict:
+    """`api <METHOD> <PATH> [body <JSON>] [-> status N | -> json <path> <expected> | -> text <substr>]`。
+
+    设计取舍：线式、单条断言/行（多条断言写多行，语义与失败定位都更清楚）；无 `->` 时
+    默认断言 **2xx**（至少证「接口可达且成功」，不静默放过）。`json` 断言支持
+    `.` / `/` 分隔与 `[n]` / `[-1]` 下标（如 `records/2/tagName`、`records[-1]/targetDescription`）。
+
+    D199：PATH 支持 `$<名>` / `${<名>}` 插值（变量来自 `read` / `send -> capture`）；
+    无变量时发射与既有一致，`-> json …` 的断言语义不变（插值与断言正交）。
+    """
+    left, sep, assertion = rest.partition("->")
+    spec = parse_api_request(method, left)
+    assertion = assertion.strip()
+    checks: list[dict] = []
+    if sep and assertion:
+        kind, _, tail = assertion.partition(" ")
+        kind, tail = kind.strip(), tail.strip()
+        if kind == "status":
+            if not re.fullmatch(r"\d{3}", tail):
+                raise ValueError(f"`api -> status` 须为三位状态码: {tail!r}（契约 §5.5）")
+            checks.append({"kind": "status", "expected": int(tail)})
+        elif kind == "json":
+            jpath, _, expected = tail.partition(" ")
+            jpath, expected = jpath.strip(), expected.strip()
+            if not jpath or not expected:
+                raise ValueError(f"`api -> json` 需要 `<json-path> <expected>`: {tail!r}（契约 §5.5）")
+            if re.search(r"\s", jpath):
+                raise ValueError(f"`api -> json` 的 json-path 不得含空白: {jpath!r}")
+            if expected == "(空)":
+                raise ValueError("`api -> json` 不接受 `(空)`：请用 `(缺席)` / `null` / `\"\"` 区分三态")
+            if expected == "(缺席)":
+                checks.append({"kind": "jsonAbsent", "path": jpath})
+            else:
+                checks.append({"kind": "json", "path": jpath, "expected": expected,
+                               "expected_js": request_expected_js(expected)})
+        elif kind == "text":
+            if not tail:
+                raise ValueError(f"`api -> text` 需要 <substr>: {assertion!r}（契约 §5.5）")
+            checks.append({"kind": "text", "expected": tail})
+        else:
+            raise ValueError(
+                f"未知 `api` 断言形状: {kind!r}（允许 status / json / text；契约 §5.5）")
+    elif sep:
+        raise ValueError(f"`api` 的 `->` 后缺断言内容: {rest!r}（契约 §5.5）")
+    if not checks:
+        checks.append({"kind": "ok"})
+    spec["checks"] = checks
+    return spec
+
+
+def parse_send_line(method: str, rest: str, cid: str = "") -> dict:
+    """`send <METHOD> <PATH> [body <JSON>] -> capture <变量名> <json-path>`（D199）。
+
+    动作阶段发请求，并把响应里的**标量**捕获进用例变量表：后续 testid / api·send 路径 /
+    请求体 / 值段均可引用（先 `send` 后用）。`-> capture` 是**必填项** —— 丢弃响应的动作
+    没有断言价值，不该借道 `send` 混进执行面。请求面复用 `parse_api_request`（与 `api`
+    同一套方法白名单 / 路径锚定 / body JSON 校验）。
+    """
+    left, arrow, tail = rest.partition("->")
+    if not arrow:
+        raise ValueError(
+            f"{cid}: `send` 需要 `-> capture <变量名> <json-path>`（`send` 的产出必须被使用）："
+            f"{rest!r}（契约 §5.5 D199）")
+    spec = parse_api_request(method, left, "send")
+    toks = tail.split()
+    if len(toks) != 3 or toks[0] != "capture":
+        raise ValueError(
+            f"{cid}: `send` 的 `->` 后须为 `capture <变量名> <json-path>`，得 {tail.strip()!r}"
+            f"（契约 §5.5 D199）")
+    var, jpath = toks[1], toks[2]
+    if not re.fullmatch(READ_NAME_RE, var):
+        raise ValueError(
+            f"{cid}: `send ... -> capture` 的变量名非法 {var!r}"
+            f"（允许字母/数字/下划线/中文；契约 §5.5 D199）")
+    spec.update({"capture": var, "json_path": jpath})
+    return spec
+
+
+def api_check_js(check: dict) -> str:
+    """单条 `api` 断言 → JS 字面量（helper 侧统一执行）。"""
+    if check["kind"] == "status":
+        return "{ kind: 'status', expected: " + str(check["expected"]) + " }"
+    if check["kind"] == "text":
+        return "{ kind: 'text', expected: " + json.dumps(check["expected"], ensure_ascii=False) + " }"
+    if check["kind"] == "json":
+        return ("{ kind: 'json', path: " + json.dumps(check["path"], ensure_ascii=False)
+                + ", expected: " + check["expected_js"] + " }")
+    if check["kind"] == "jsonAbsent":
+        return "{ kind: 'jsonAbsent', path: " + json.dumps(check["path"], ensure_ascii=False) + " }"
+    return "{ kind: 'ok' }"
+
+
 def split_request_assertion(value: str) -> tuple[str, str]:
     """`request <api> <json-path> <expected>` 的值段 → (path, expected)。
 
@@ -231,19 +376,191 @@ def request_expected_js(expected: str) -> str:
 
 
 def parse_tid_nth(raw_tid: str) -> tuple[str, int | None]:
-    """把 `<tid>[<N>]` 拆成 (base_tid, index)。无下标返回 (raw_tid, None)。（D120 / issue #31）"""
+    """把 `<tid>[<N>]` 拆成 (base_tid, index)。无下标返回 (raw_tid, None)。（D120 / issue #31）
+
+    D199：含变量的 tid（如 `row-$slug[2]`）同样拆下标 —— 静态 id 仍走原正则（零变化）。
+    """
     m = re.match(r"^([a-z0-9-]+)\[(\d+)\]$", raw_tid)
     if m:
         return m.group(1), int(m.group(2))
+    if "$" in raw_tid:
+        m = re.match(r"^(.*)\[(\d+)\]$", raw_tid)
+        if m:
+            return m.group(1), int(m.group(2))
     return raw_tid, None
 
 
-def tid_locator(raw_tid: str) -> str:
-    """返回定位器表达式：带下标发射 `.nth(N)`，不带下标发射 `.first()`（向后兼容）。"""
+def tid_locator(raw_tid: str, known: frozenset[str] | set[str] | None = None,
+                cid: str = "", ctx: str = "testid") -> str:
+    """返回定位器表达式：带下标发射 `.nth(N)`，不带下标发射 `.first()`（向后兼容）。
+
+    D199：testid 段支持 `$<名>` / `${<名>}` 插值 ⇒ 实参发成模板字面量；无变量时仍是
+    单引号字面量（既有生成物逐字节不变）。`known` = 该时点可见的变量表（先 read/send 后用）。
+    """
     base, idx = parse_tid_nth(raw_tid)
-    if idx is not None:
-        return f"page.getByTestId('{base}').nth({idx})"
-    return f"page.getByTestId('{base}').first()"
+    loc = f"page.getByTestId({interp_testid(base, known, cid, ctx)})"
+    return f"{loc}.nth({idx})" if idx is not None else f"{loc}.first()"
+
+
+# 契约 §5.5（2026-11-12 补，`DESIGN.md` D191）：`read` —— **运行时取数原语**。
+#   语法：`read <tid>[N] -> <名>`（读渲染后可见文案，trim）/ `read <tid>[N] <attr> -> <名>`（读属性）。
+#   值段引用：`$<名>`（fill/type 的值、text/contains/value/attr 的期望值；成对双引号可包裹含空格值）。
+#   变量**用例级**、**先读后用**；含变量的断言不参与零步基线（同 delta/request 桶——无「初始态」语义）。
+# 动机（D191）：**存在类数据**（预期命中 / 打开 / 操作某个已存在业务记录的目标值）此前只能写死
+# 生成期字面量 ⇒ 编造编号换环境必挂（跨网同步记录页 007 现场实证：编造 24 位编号 + fill 回读恒真 = 假绿）。
+# 存在类值的合法来源三分：运行时 `read` / `seed:` 播种 / `mock:` fixture（桩内声明的数据）——
+# 契约 §5.7「输入类 / 存在类二分」的生成器执行面。
+READ_NAME_RE = r"[A-Za-z0-9_\u4e00-\u9fff]+"
+VAR_RE = re.compile(r"\$(" + READ_NAME_RE + r")")
+READ_ATTR_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
+
+
+def js_var(name: str) -> str:
+    """用例变量名 → 生成物 JS 标识符。
+
+    ASCII 字母数字直拼；含非 ASCII（中文名）时在归一串后追加**码点确定性后缀**
+    （`x<码点16进制>` 逐字拼接）——不同中文名归一后都是下划线串，无后缀会撞名
+    （`const` 重复声明 = 生成物语法错）。校验器已判「用例内唯一」，这里是生成物面的防撞双保险。
+    """
+    base = re.sub(r"[^0-9a-zA-Z]", "_", name)
+    if base == name:
+        return "atlasVar_" + base
+    tail = "".join(f"x{ord(ch):x}" for ch in name if not (ch.isascii() and ch.isalnum()))
+    return "atlasVar_" + base + "_" + tail
+
+
+def unquote_value(value: str) -> str:
+    """值段的成对双引号形态：`"..."` → 去引号；`""` → 空串（D158 语义的超集承载）。
+
+    D158 只认 `""` / `(空)` = 清空；D191 起引号形态扩展为**含空格 / 含 `$<名>` 变量**值的
+    承载（如 `"$已知编号 "`——行尾空格必须落在引号内才不会被编辑器吞掉）。
+    `fill` / `type` / 断言期望值共用本函数（单点解析，两处语义不漂）。
+    无引号形态的值原样返回 ⇒ 既有分片逐字节零变化。
+    """
+    v = value.strip()
+    if len(v) >= 2 and v.startswith('"') and v.endswith('"'):
+        return v[1:-1]
+    return value
+
+
+def parse_read_step(line: str, cid: str) -> tuple[str, str | None, str]:
+    """`read <tid>[N] [attr] -> <名>` → (tid, attr 或 None, 变量名)；语法不符 ⇒ ValueError（生成期中止）。"""
+    _verb, tid, value, _note = parse_line(line)
+    left, arrow, name = value.rpartition("->")
+    left, name = left.strip(), name.strip()
+    if not arrow or not name or not re.fullmatch(READ_NAME_RE, name):
+        raise ValueError(
+            f"{cid}: `read` 语法须为 `<testid>[N] [attr] -> <名>`，得值段 {value!r}：{line!r}"
+            f"（契约 §5.5 D191）")
+    attr: str | None = None
+    if left:
+        if not re.fullmatch(READ_ATTR_RE, left):
+            raise ValueError(
+                f"{cid}: `read` 属性名形态非法 {left!r}：{line!r}（契约 §5.5 D191）")
+        attr = left
+    return tid, attr, name
+
+
+def interp_value(value: str, known: frozenset[str] | set[str], cid: str, ctx: str) -> str:
+    """值段 `$<名>` 插值：无变量 ⇒ JSON 字面量（与既有发射逐字节一致）；有变量 ⇒ JS 模板字面量表达式。
+
+    引用了不在 `known` 里的变量 ⇒ ValueError（先读后用的生成期执行面；
+    与校验器 FAIL 双保险——防「校验器放行 / 生成器认不得」的半通态）。
+    """
+    names = VAR_RE.findall(value)
+    unknown = sorted({n for n in names if n not in known})
+    if unknown:
+        raise ValueError(
+            f"{cid}: {ctx} 引用了未 `read` 的变量 {unknown}：{value!r}（契约 §5.5 D191：先读后用）")
+    if not names:
+        return json.dumps(value, ensure_ascii=False)
+
+    def _sub(m: re.Match) -> str:
+        return "${" + js_var(m.group(1)) + "}"
+
+    tpl = value.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+    tpl = VAR_RE.sub(_sub, tpl)
+    return "`" + tpl + "`"
+
+
+BRACED_VAR_RE = re.compile(r"\$\{(" + READ_NAME_RE + r")\}")
+
+
+def normalize_var_braces(text: str) -> str:
+    """`${名}` → `$名`（D199 的花括号别名，仅用于 **testid / api·send 路径 / 请求体**）。
+
+    值段（fill/type/断言期望值）保持 D191 原义：只认 `$名`，`${…}` 仍是字面量 ——
+    既有分片（不含 `${` 的）生成物逐字节不变。两种写法归一后共用一个模板发射器。
+    """
+    return BRACED_VAR_RE.sub(lambda m: "$" + m.group(1), text)
+
+
+def _known_var_names(text: str, known: frozenset[str] | set[str] | None,
+                     cid: str, ctx: str) -> list[str]:
+    """变量表校验（先 read/send 后用）：未定义 ⇒ ValueError 点名变量与该段原文。"""
+    names = VAR_RE.findall(text)
+    unknown = sorted({n for n in names if n not in (known or ())})
+    if unknown:
+        raise ValueError(
+            f"{cid}: {ctx} 引用了未定义的变量 {unknown}：{text!r}"
+            f"（契约 §5.5：先 `read` / `send ... -> capture` 后用）")
+    return names
+
+
+def _var_template(text: str) -> str:
+    """含变量的文本 → JS 反引号模板字面量（字面 `${` 转义，`$名` → `${atlasVar_名}`）。"""
+    tpl = text.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+    tpl = VAR_RE.sub(lambda m: "${" + js_var(m.group(1)) + "}", tpl)
+    return "`" + tpl + "`"
+
+
+def interp_testid(raw: str, known: frozenset[str] | set[str] | None = None,
+                  cid: str = "", ctx: str = "testid") -> str:
+    """testid 段插值：无变量 ⇒ 单引号字面量（与既有发射逐字节一致）；有变量 ⇒ 模板字面量。
+
+    用法示例（分片）：`click project-list-row-checkbox-$slug`，生成物为
+    `page.getByTestId(`project-list-row-checkbox-${atlasVar_slug}`)`。
+    """
+    text = normalize_var_braces(raw)
+    if not _known_var_names(text, known, cid, ctx):
+        return "'" + text + "'"
+    return _var_template(text)
+
+
+def interp_path(raw: str, known: frozenset[str] | set[str] | None = None,
+                cid: str = "", ctx: str = "api 路径") -> str:
+    """api / send 的 PATH 插值：无变量 ⇒ JSON 字符串（既有发射逐字节一致）；有变量 ⇒ 模板。"""
+    text = normalize_var_braces(raw)
+    if not _known_var_names(text, known, cid, ctx):
+        return json.dumps(text, ensure_ascii=False)
+    return _var_template(text)
+
+
+def interp_body(spec: dict, known: frozenset[str] | set[str] | None = None,
+                cid: str = "", ctx: str = "请求体") -> str:
+    """`body` 段：无变量 ⇒ 原 `json.dumps`（逐字节不变）；含变量 ⇒ 逐叶子模板字面量。
+
+    变量只插进**字符串叶子**（JSON 键保持静态）：请求体是数据，不是表达式。
+    """
+    raw = spec.get("body_raw")
+    if spec.get("body") is None or not raw:
+        return "null"
+    if not _known_var_names(normalize_var_braces(raw), known, cid, ctx):
+        return json.dumps(spec["body"], ensure_ascii=False)
+    return _json_js(spec["body"], known, cid, ctx)
+
+
+def _json_js(node, known, cid: str, ctx: str) -> str:
+    """JSON 值 → JS 字面量（字符串叶子走插值；`json.dumps` 的分隔符口径保持一致）。"""
+    if isinstance(node, str):
+        return interp_path(node, known, cid, ctx)
+    if isinstance(node, dict):
+        return "{" + ", ".join(
+            json.dumps(k, ensure_ascii=False) + ": " + _json_js(v, known, cid, ctx)
+            for k, v in node.items()) + "}"
+    if isinstance(node, list):
+        return "[" + ", ".join(_json_js(v, known, cid, ctx) for v in node) + "]"
+    return json.dumps(node, ensure_ascii=False)
 
 
 # `strip_inline_comment` / `yaml_scalar` / `parse_profile` 已并入随包内核
@@ -312,7 +629,15 @@ def parse_seed_line(line: str) -> tuple[str, dict]:
 MOCK_FIXTURE_RE = r"fixtures/[\w./-]+\.json"
 
 
-def parse_mock_line(line: str, api_prefix: str | None = None) -> dict:
+def normalize_mock_prefixes(raw, mode: str = "off") -> tuple[list[str] | None, list[str]]:
+    """`e2e.mock.api_prefix` 归一化（标量/列表 → 列表），校验器与生成器共用单源口径。
+
+    实现与错误文案在 `_support/stack_profile.py`（`load_module("stack_profile")`）。
+    """
+    return _sp.normalize_mock_prefixes(raw, mode)
+
+
+def parse_mock_line(line: str, api_prefix: str | list[str] | None = None) -> dict:
     """`<METHOD> <path> -> <rhs>` → 桩表条目（契约 §5.8 的 `mock:` 行式语法）。
 
     rhs 为**封闭文法**（越界即 ValueError，不得静默降级）：
@@ -340,7 +665,7 @@ def parse_mock_line(line: str, api_prefix: str | None = None) -> dict:
     if not is_external:
         if not path.startswith("/"):
             raise ValueError(f"mock 路径须以 / 开头或为全量外部 URL（以 http://、https:// 开头）：{path!r}（契约 §5.8）")
-        if api_prefix is not None and not path.startswith(api_prefix):
+        if not _sp.path_matches_prefix(path, api_prefix):
             raise ValueError(f"mock 路径 {path!r} 不在 api_prefix {api_prefix!r} 内（锚定门，契约 §5.8）")
     r = rhs.strip()
     m = re.fullmatch(MOCK_FIXTURE_RE, r)
@@ -371,7 +696,7 @@ def parse_mock_line(line: str, api_prefix: str | None = None) -> dict:
     raise ValueError(f"mock 行右段语法不识：{r!r}（契约 §5.8）")
 
 
-def compile_mock_entries(case: dict, api_prefix: str, e2e_root: Path, fixtures_root: Path | None = None) -> list[dict] | None:
+def compile_mock_entries(case: dict, api_prefix: str | list[str] | None, e2e_root: Path, fixtures_root: Path | None = None) -> list[dict] | None:
     """把用例的 `mock:` 行编译为派发表条目（fixture 内容生成期内联；契约 §5.8）。
 
     内联而非运行期读盘：生成物 = **确定性派生物**，`atlas_check` 的「生成物最新」门
@@ -574,6 +899,114 @@ def ts_request_helpers() -> str:
     )
 
 
+def ts_api_helpers(token_key: str = "") -> str:
+    """D197 主动接口断言 helper（仅含 `api` 断言的页面发射，保证无该动词时零变化）。
+
+    登录态复用：`context.request` 天然携带该 context 的 cookie（imported 会话 / 服务端会话）；
+    `real` / `fabricated` 的 JWT 在 localStorage ⇒ 运行时读 `ATLAS_API_TOKEN_KEY` 并附
+    `Authorization`；`Amp-Organ-Id` 从页面 URL 或请求 URL 的 `organId` 派生。
+    """
+    return (
+        "const ATLAS_API_TOKEN_KEY = " + json.dumps(token_key or "") + ";\n"
+        "type AtlasApiCheck = { kind: 'ok' | 'status' | 'text' | 'json' | 'jsonAbsent'; expected?: any; path?: string };\n"
+        "function atlasApiResolve(body: any, path: string) {\n"
+        "  const segs = path.replace(/\\[(-?\\d+)\\]/g, '.$1').split(/[./]/).filter(Boolean);\n"
+        "  let cur = body;\n"
+        "  for (const seg of segs) {\n"
+        "    if (cur === null || typeof cur !== 'object') return { found: false, value: undefined };\n"
+        "    if (Array.isArray(cur)) {\n"
+        "      let idx = Number(seg);\n"
+        "      if (!Number.isInteger(idx)) return { found: false, value: undefined };\n"
+        "      if (idx < 0) idx = cur.length + idx;\n"
+        "      if (idx < 0 || idx >= cur.length) return { found: false, value: undefined };\n"
+        "      cur = cur[idx];\n"
+        "      continue;\n"
+        "    }\n"
+        "    if (!(seg in cur)) return { found: false, value: undefined };\n"
+        "    cur = cur[seg];\n"
+        "  }\n"
+        "  return { found: true, value: cur };\n"
+        "}\n"
+        "async function atlasApi(page: any, method: string, path: string, body: any, checks: AtlasApiCheck[]) {\n"
+        "  const pageUrl = new URL(page.url());\n"
+        "  const url = /^https?:\\/\\//.test(path) ? path : new URL(path, pageUrl).toString();\n"
+        "  const headers: Record<string, string> = {};\n"
+        "  const organ = new URL(url).searchParams.get('organId') || pageUrl.searchParams.get('organId');\n"
+        "  if (organ) headers['Amp-Organ-Id'] = organ;\n"
+        "  if (ATLAS_API_TOKEN_KEY) {\n"
+        "    const token = await page.evaluate((k: string) => {\n"
+        "      try { return localStorage.getItem(k) || ''; } catch { return ''; }\n"
+        "    }, ATLAS_API_TOKEN_KEY).catch(() => '');\n"
+        "    if (token) headers['Authorization'] = /^Bearer\\s/i.test(token) ? token : `Bearer ${token}`;\n"
+        "  }\n"
+        "  if (body !== null) headers['content-type'] = 'application/json';\n"
+        "  const resp = await page.context().request.fetch(url, {\n"
+        "    method,\n"
+        "    headers,\n"
+        "    data: body === null ? undefined : JSON.stringify(body),\n"
+        "    timeout: ATLAS_WAIT_TIMEOUT_MS,\n"
+        "  });\n"
+        "  const text = await resp.text();\n"
+        "  const snippet = text.length > 800 ? text.slice(0, 800) + '…' : text;\n"
+        "  const fail = (msg: string): never => {\n"
+        "    throw new Error(`api ${method} ${url} ${msg}；HTTP ${resp.status()}；响应片段：${snippet}`);\n"
+        "  };\n"
+        "  let json: any;\n"
+        "  let jsonErr = '';\n"
+        "  try { json = JSON.parse(text); } catch (e: any) { jsonErr = e?.message || 'JSON 解析失败'; }\n"
+        "  for (const c of checks) {\n"
+        "    if (c.kind === 'ok') {\n"
+        "      if (!(resp.status() >= 200 && resp.status() < 300)) fail(`期望 2xx，实际 ${resp.status()}`);\n"
+        "      continue;\n"
+        "    }\n"
+        "    if (c.kind === 'status') {\n"
+        "      if (resp.status() !== c.expected) fail(`状态期望 ${c.expected}，实际 ${resp.status()}`);\n"
+        "      continue;\n"
+        "    }\n"
+        "    if (c.kind === 'text') {\n"
+        "      if (!text.includes(String(c.expected))) fail(`响应文本不包含 ${JSON.stringify(c.expected)}`);\n"
+        "      continue;\n"
+        "    }\n"
+        "    if (jsonErr) fail(`JSON 解析失败：${jsonErr}`);\n"
+        "    const got = atlasApiResolve(json, String(c.path));\n"
+        "    if (c.kind === 'jsonAbsent') {\n"
+        "      if (got.found) fail(`JSON 路径 ${c.path} 期望缺席，实际 ${JSON.stringify(got.value)}`);\n"
+        "      continue;\n"
+        "    }\n"
+        "    if (!got.found) fail(`JSON 路径 ${c.path} 缺席`);\n"
+        "    const actual = JSON.stringify(got.value);\n"
+        "    const want = JSON.stringify(c.expected);\n"
+        "    if (actual !== want) fail(`JSON ${c.path} 期望 ${want}，实际 ${actual}`);\n"
+        "  }\n"
+        "  return { status: resp.status(), text, json };\n"
+        "}\n"
+    )
+
+
+def ts_send_helpers() -> str:
+    """D199 `send` 动作 helper（**仅含 `send` 的页面发射**；依赖 atlasApi / atlasApiResolve）。
+
+    捕获语义 = 响应 JSON 里的**标量**：路径缺席 / 非标量 / 非 2xx 一律抛错，错误消息带
+    HTTP 状态与响应片段（≤800 字符）——「捕获不到值」必须以可读原因中止，不得退化成空串
+    或 `undefined`（那会让后续请求/定位在别处以假红或假绿现形）。
+    """
+    return (
+        "function atlasCapture(res: { status: number; text: string; json: any }, path: string): string {\n"
+        "  const snippet = res.text.length > 800 ? res.text.slice(0, 800) + '…' : res.text;\n"
+        "  const got = atlasApiResolve(res.json, path);\n"
+        "  if (!got.found) {\n"
+        "    throw new Error(`send 捕获失败：JSON 路径 ${path} 缺席；HTTP ${res.status}；响应片段：${snippet}`);\n"
+        "  }\n"
+        "  const v = got.value;\n"
+        "  if (v === null || typeof v === 'object') {\n"
+        "    throw new Error(`send 捕获失败：JSON 路径 ${path} 不是标量（实际 ${JSON.stringify(v)}）；"
+        "HTTP ${res.status}；响应片段：${snippet}`);\n"
+        "  }\n"
+        "  return String(v);\n"
+        "}\n"
+    )
+
+
 def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
     cid = case["id"]
     # 契约 §5.5 `守卫:`（2026-10-16，issue #23）：**元素齐全守卫导航用的具体路径**。
@@ -607,6 +1040,13 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
     # 行内 `#` 说明 —— 逐项经同一 `strip_inline_comment`（与零步基线侧 `case_testids` 同口径）。
     # 不剥则守卫面发射带注释的 id（如 `["foo   # 行内说明"]`）⇒ `toHaveCount(1)` 恒不命中 ⇒ 假红。
     declared = [strip_inline_comment(t).strip() for t in (case.get("testid") or [])]
+    # D199：`testid:` 是**应然清单**（静态 id，供双向集合门与页面就绪锚点消费）——
+    # 插值只允许出现在 step / expected 的操作面上；声明里写变量会让守卫去等一个字面量 id。
+    _dyn_decl = [t for t in declared if "$" in t]
+    if _dyn_decl:
+        raise ValueError(
+            f"{cid}: `testid:` 声明须为静态 id，得变量形态 {_dyn_decl}（插值只用于 step/expected；"
+            f"契约 §5.5 D199）")
     ids = json.dumps(declared, ensure_ascii=False)
     # 契约 §5.5 / §7.1（DESIGN D114，2026-10-19，issue #26；同日**修正**）：元素齐全守卫 = **单段页面就绪锚点** ——
     #   ① 声明的 id 里「任意一个」在场 ⇒ 页面已渲染（`expect.poll` 原生轮询；一个都没出现 ⇒ 超时并点名
@@ -645,10 +1085,57 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
             "  test.use({ storageState: { cookies: [], origins: [] } });\n"
         )
         wrap_close = "});\n"
-    actions: list[str] = []
+    # 契约 §5.5（D191）：`read` 变量的**先读后用**登记 —— 第 i 条 step 的值段只能引用**更早**
+    # step 读入的变量；expected 可引用本用例任意 `read` 变量。同名变量重复定义 ⇒ 生成期中止
+    # （校验器 FAIL 双保险）。D199：`send ... -> capture <名>` 与 `read` 同属变量定义，
+    # 同一张表登记（同名重复定义同样中止）。
+    read_known_before: list[frozenset[str]] = []
+    _read_seen: set[str] = set()
     for s in case.get("step", []):
+        read_known_before.append(frozenset(_read_seen))
+        _sverb, _stid, _svalue, _ = parse_line(s)
+        if _sverb == "read":
+            _rn = parse_read_step(s, cid)[2]
+            if _rn in _read_seen:
+                raise ValueError(
+                    f"{cid}: `read` 变量重复定义 {_rn!r}：{s!r}（契约 §5.5 D191）")
+            _read_seen.add(_rn)
+        elif _sverb == "send":
+            _rn = parse_send_line(_stid, _svalue, cid)["capture"]
+            if _rn in _read_seen:
+                raise ValueError(
+                    f"{cid}: `send -> capture` 变量重复定义 {_rn!r}：{s!r}（契约 §5.5 D199）")
+            _read_seen.add(_rn)
+    _read_known_all = frozenset(_read_seen)
+    actions: list[str] = []
+    for _si, s in enumerate(case.get("step", [])):
         verb, tid, value, _ = parse_line(s)
-        if verb == "refresh":
+        _known = read_known_before[_si]   # D199：该步可见变量表（read / send -> capture）
+        if verb == "read":
+            # 契约 §5.5（D191）：运行时取数 —— 属性形态 `getAttribute ?? ''`、文本形态
+            # `innerText().trim()`。一条 step 一个 action 元素（`after:<N>` 按 action 序号挂锚，
+            # 与 refresh 的「不得拆两条」纪律同规）。
+            rtid, rattr, rname = parse_read_step(s, cid)
+            _var = js_var(rname)
+            if rattr:
+                actions.append(
+                    f"const {_var} = (await {tid_locator(rtid, _known, cid, 'read testid')}"
+                    f".getAttribute({json.dumps(rattr, ensure_ascii=False)})) ?? '';")
+            else:
+                actions.append(
+                    f"const {_var} = (await {tid_locator(rtid, _known, cid, 'read testid')}.innerText()).trim();")
+        elif verb == "send":
+            # D199：动作阶段发请求 + 捕获响应标量 —— 一条 step 一个 action 元素（同 refresh 纪律）。
+            # 2xx 由 `[{ kind: 'ok' }]` 判据保证；捕获失败（路径缺席 / 非标量）由 atlasCapture
+            # 抛错并带 HTTP 状态与响应片段（fail-loud，不静默给空串）。
+            _spec = parse_send_line(tid, value, cid)
+            _body_js = interp_body(_spec, _known, cid, "send 请求体")
+            actions.append(
+                f"const {js_var(_spec['capture'])} = atlasCapture(await atlasApi(page, "
+                f"{json.dumps(_spec['method'])}, "
+                f"{interp_path(_spec['path'], _known, cid, 'send 路径')}, {_body_js}, "
+                f"[{{ kind: 'ok' }}]), {json.dumps(_spec['json_path'], ensure_ascii=False)});")
+        elif verb == "refresh":
             # refresh 落盘节拍参数化（先等后刷；对齐 F11 `ATLAS_SLOWMO` 注入先例）：启用**节流型
             # 自动保存**的项目（现场：距上次成功保存 <15s 则延迟落库）refresh 前不等待 ⇒ 编辑
             # 内容用例必然丢。具体毫秒数是项目侧运行时前提，不写死进生成器（业务常数出项目）；
@@ -662,41 +1149,51 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
             )
         elif verb == "goto":
             # 宿主注入型 base query（issue #27 / D104）：step 的 goto 是**第二处**发射面。
-            actions.append(f"await page.goto('{url_merge.merge_base_query(value, base)}');")
+            # 导航层 query 保真（RFC-20261112-01 §5）：base 带 query 时经 atlasGoto 校验后导航。
+            _goto_target = url_merge.merge_base_query(value, base)
+            _goto_call = "atlasGoto" if url_merge.base_query_keys(base or "") else "page.goto"
+            actions.append(f"await {_goto_call}({'page, ' if _goto_call == 'atlasGoto' else ''}'{_goto_target}');")
         elif verb == "click":
             actions.append(
-                f"await {tid_locator(tid)}.click("
+                f"await {tid_locator(tid, _known, cid)}.click("
                 f"{step_force_arg(verb, value, s, cid).strip()});")
         elif verb == "fill":
             # 契约 §5.5（beta.17，D158）：`fill` 值 `""` / `(空)` = 清空输入（与 value 断言的 B173-1
             # 空串约定对称）——Playwright fill('') 即先清后写；此前字面发射两个引号字符
             # （现场：搜索框被填进 `""` 字面量 ⇒ 过滤恒不命中，用例无法表达「清空即恢复」判据）。
-            _fill_value = "" if value.strip() in ('""', "(空)") else value
-            actions.append(f"await {tid_locator(tid)}.fill({json.dumps(_fill_value, ensure_ascii=False)});")
+            # D191：值段支持成对双引号（含空格 / `$<名>` 变量引用，先读后用）。
+            _fill_value = unquote_value(value)
+            if _fill_value.strip() in ('""', "(空)"):
+                _fill_value = ""
+            actions.append(
+                f"await {tid_locator(tid, _known, cid)}.fill({interp_value(_fill_value, read_known_before[_si], cid, 'fill 值段')});")
         elif verb == "select":
             # 契约 §5.5（B173-1）：发射实现无关 helper，不再钉死原生 `<select>` ——
             # 语义 = 「选中 label 的那一项」，DOM 机制由 helper 按元素自适应。
-            base_tid, idx = parse_tid_nth(tid)
+            base_tid, idx = parse_tid_nth(normalize_var_braces(tid))
             idx_arg = f", {idx}" if idx is not None else ""
-            actions.append(f"await atlasSelect(page, '{base_tid}', {json.dumps(value, ensure_ascii=False)}{idx_arg});")
+            actions.append(f"await atlasSelect(page, {interp_testid(base_tid, _known, cid)}, "
+                           f"{json.dumps(value, ensure_ascii=False)}{idx_arg});")
         elif verb == "check":
-            actions.append(f"await {tid_locator(tid)}.check();")
+            actions.append(f"await {tid_locator(tid, _known, cid)}.check();")
         elif verb == "uncheck":
-            actions.append(f"await {tid_locator(tid)}.uncheck();")
+            actions.append(f"await {tid_locator(tid, _known, cid)}.uncheck();")
         elif verb == "press":
-            actions.append(f"await {tid_locator(tid)}.press({json.dumps(value)});")
+            actions.append(f"await {tid_locator(tid, _known, cid)}.press({json.dumps(value)});")
         elif verb == "type":
             # 契约 §5.5（D134，2026-10-23）：逐字键入 —— 触发 keydown/keypress/input 的真实
             # 按键链，供带掩码 / 受控输入的控件使用（`fill` 一次性写 DOM 不触发组件内部解析，
             # 如 Ant Design RangePicker 的日期输入）。**不先清空原值**；替换语义用 `fill`。
-            if not value.strip():
+            # D191：值段支持成对双引号 + `$<名>` 变量引用（先读后用）。
+            _type_value = unquote_value(value)
+            if not _type_value.strip():
                 raise ValueError(
                     f"{cid}: `type` 需要输入文本，得空值：{s!r}（契约 §5.5）")
             actions.append(
-                f"await {tid_locator(tid)}.pressSequentially({json.dumps(value, ensure_ascii=False)});")
+                f"await {tid_locator(tid, _known, cid)}.pressSequentially({interp_value(_type_value, read_known_before[_si], cid, 'type 值段')});")
         elif verb == "hover":
             actions.append(
-                f"await {tid_locator(tid)}.hover("
+                f"await {tid_locator(tid, _known, cid)}.hover("
                 f"{step_force_arg(verb, value, s, cid).strip()});")
         elif verb == "dispatch":
             # 契约 §5.5（2026-10-17，v3 现场实证）：React 合成事件直发——`dispatchEvent('click')`
@@ -708,10 +1205,10 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
                 raise ValueError(
                     f"{cid}: `dispatch` 只接受 `<testid>` 一个参数，得 {value.strip()!r}"
                     f"：{s!r}（契约 §5.5 值域封闭）")
-            actions.append(f"await {tid_locator(tid)}.dispatchEvent('click');")
+            actions.append(f"await {tid_locator(tid, _known, cid)}.dispatchEvent('click');")
         elif verb == "waitFor":
             # 契约 §7.1：带轮询的断言（不得退化为固定等待）
-            loc = tid_locator(tid)
+            loc = tid_locator(tid, _known, cid)
             if value == "":
                 actions.append(f"await expect({loc}).toBeVisible({{ timeout: ATLAS_WAIT_TIMEOUT_MS }});")
             else:
@@ -723,10 +1220,11 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
             # 契约 §5.5（契约 §5.5）：先注册监听、再点击、再校验建议文件名（glob）。
             if not value.strip():
                 raise ValueError(f"`download` 需要文件名 glob 参数: {s!r}（契约 §5.5）")
-            base_tid, idx = parse_tid_nth(tid)
+            base_tid, idx = parse_tid_nth(normalize_var_braces(tid))
             idx_arg = f", {idx}" if idx is not None else ""
             actions.append(
-                f"await atlasDownload(page, '{base_tid}', {json.dumps(value, ensure_ascii=False)}{idx_arg});"
+                f"await atlasDownload(page, {interp_testid(base_tid, _known, cid)}, "
+                f"{json.dumps(value, ensure_ascii=False)}{idx_arg});"
             )
         elif verb == "upload":
             # 契约 §5.5（B201-1，2026-10-12）：`upload <testid> <值>`，值 = 相对
@@ -745,7 +1243,7 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
                 else f"resolve(__dirname, '..', 'fixtures', {json.dumps(rel, ensure_ascii=False)})"
             )
             actions.append(
-                f"await {tid_locator(tid)}.setInputFiles({path_expr});"
+                f"await {tid_locator(tid, _known, cid)}.setInputFiles({path_expr});"
             )
         else:
             raise ValueError(f"未知动作动词: {verb}（契约 §5.5）")
@@ -759,38 +1257,47 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
         verb, tid, value, _ = parse_line(e)
         v = json.dumps(value, ensure_ascii=False)
         if verb == "text":
-            line = f"await expect({tid_locator(tid)}).toHaveText({v});"
+            # D191：期望值支持 `$<名>` 变量引用（无变量时 = 原 JSON 字面量，逐字节零变化）
+            _tv = interp_value(unquote_value(value), _read_known_all, cid, "expected text")
+            line = f"await expect({tid_locator(tid, _read_known_all, cid)}).toHaveText({_tv});"
         elif verb == "contains":
-            base_tid, idx = parse_tid_nth(tid)
+            base_tid, idx = parse_tid_nth(normalize_var_braces(tid))
             nth_str = f".nth({idx})" if idx is not None else ".first()"
-            line = f"await expect(page.getByTestId('{base_tid}').filter({{ hasText: {v} }}){nth_str}).toBeVisible();"
+            _cv = interp_value(unquote_value(value), _read_known_all, cid, "expected contains")
+            line = (f"await expect(page.getByTestId({interp_testid(base_tid, _read_known_all, cid)})"
+                    f".filter({{ hasText: {_cv} }}){nth_str}).toBeVisible();")
         elif verb == "count":
-            base_tid, _ = parse_tid_nth(tid)
-            line = f"await expect(page.getByTestId('{base_tid}')).toHaveCount(Number({v}));"
+            base_tid, _ = parse_tid_nth(normalize_var_braces(tid))
+            line = (f"await expect(page.getByTestId({interp_testid(base_tid, _read_known_all, cid)}))"
+                    f".toHaveCount(Number({v}));")
         elif verb == "visible":
-            line = f"await expect({tid_locator(tid)}).toBeVisible();"
+            line = f"await expect({tid_locator(tid, _read_known_all, cid)}).toBeVisible();"
         elif verb == "hidden":
-            line = f"await expect({tid_locator(tid)}).toBeHidden();"
+            line = f"await expect({tid_locator(tid, _read_known_all, cid)}).toBeHidden();"
         elif verb == "enabled":
-            line = f"await expect({tid_locator(tid)}).toBeEnabled();"
+            line = f"await expect({tid_locator(tid, _read_known_all, cid)}).toBeEnabled();"
         elif verb == "disabled":
-            line = f"await expect({tid_locator(tid)}).toBeDisabled();"
+            line = f"await expect({tid_locator(tid, _read_known_all, cid)}).toBeDisabled();"
         elif verb == "value":
             # 契约 §5.5（契约 §5.5）：值写作 `""` / `(空)` 时是**空串**，
             # 必须渲染成空串实参 —— 直接 json.dumps 会得到两个字面引号字符，
             # 与真实空串永不相等。（B173-1：断言经 atlasExpectValue 实现无关化。）
-            if value.strip() in ('""', "(空)"):
+            # D191：期望值支持 `$<名>` 变量引用（先读后用）。
+            _vv = unquote_value(value)
+            if _vv.strip() in ('""', "(空)"):
                 v = json.dumps("", ensure_ascii=False)
-            base_tid, idx = parse_tid_nth(tid)
+            else:
+                v = interp_value(_vv, _read_known_all, cid, "expected value")
+            base_tid, idx = parse_tid_nth(normalize_var_braces(tid))
             idx_arg = f", {idx}" if idx is not None else ""
-            line = f"await atlasExpectValue(page, '{base_tid}', {v}{idx_arg});"
+            line = f"await atlasExpectValue(page, {interp_testid(base_tid, _read_known_all, cid)}, {v}{idx_arg});"
         elif verb == "countOptions":
             # 契约 §5.5（契约 §5.5）：数该元素内的 `option` 子元素个数。
-            line = f"await expect({tid_locator(tid)}.locator('option')).toHaveCount(Number({v}));"
+            line = f"await expect({tid_locator(tid, _read_known_all, cid)}.locator('option')).toHaveCount(Number({v}));"
         elif verb == "checked":
-            line = f"await expect({tid_locator(tid)}).toBeChecked();"
+            line = f"await expect({tid_locator(tid, _read_known_all, cid)}).toBeChecked();"
         elif verb == "unchecked":
-            line = f"await expect({tid_locator(tid)}).not.toBeChecked();"
+            line = f"await expect({tid_locator(tid, _read_known_all, cid)}).not.toBeChecked();"
         elif verb == "attr":
             # 契约 §5.5（契约 §5.5）：`attr <testid> <name> <value>`。
             aname, _, aval = value.strip().partition(" ")
@@ -802,13 +1309,15 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
                 # 为何不用 `toHaveAttribute(name, "")`：**实测**缺席时 `getAttribute` 得 `null`，
                 # 该调用判 FAIL（半通状态）；`?? ''` 归一 + 轮询才是全档语义，且与探针表达式同形（单源）。
                 line = (
-                    f"await expect.poll(async () => (await {tid_locator(tid)}"
+                    f"await expect.poll(async () => (await {tid_locator(tid, _read_known_all, cid)}"
                     f".getAttribute({json.dumps(aname, ensure_ascii=False)})) ?? '').toBe('');"
                 )
             else:
+                # D191：期望值支持 `$<名>` 变量引用（无变量时 = 原 JSON 字面量，逐字节零变化）
+                _av = interp_value(unquote_value(aval), _read_known_all, cid, "expected attr")
                 line = (
-                    f"await expect({tid_locator(tid)}).toHaveAttribute("
-                    f"{json.dumps(aname, ensure_ascii=False)}, {json.dumps(aval, ensure_ascii=False)});"
+                    f"await expect({tid_locator(tid, _read_known_all, cid)}).toHaveAttribute("
+                    f"{json.dumps(aname, ensure_ascii=False)}, {_av});"
                 )
         elif verb == "delta":
             # 契约 §5.5（P5，2026-10-07）：`delta <tid> <±N>` 相对断言 —— 行动前采样
@@ -822,9 +1331,9 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
             if not case.get("step"):
                 raise ValueError(f"{cid}: delta 相对断言需要至少一条 step（行动前采样点不存在）")
             var = "__delta_" + re.sub(r"[^0-9a-zA-Z]", "_", tid)
-            delta_pre.append(f"const {var} = await atlasIntOf({tid_locator(tid)});")
+            delta_pre.append(f"const {var} = await atlasIntOf({tid_locator(tid, _read_known_all, cid)});")
             line = (
-                f"await expect.poll(() => atlasIntOf({tid_locator(tid)}), "
+                f"await expect.poll(() => atlasIntOf({tid_locator(tid, _read_known_all, cid)}), "
                 f"{{ timeout: ATLAS_WAIT_TIMEOUT_MS }}).toBe({var} + {int(value.strip())});"
             )
         elif verb == "request":
@@ -846,6 +1355,18 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
             line = (
                 f"await atlasExpectRequest(page, {json.dumps(tid, ensure_ascii=False)}, "
                 f"{json.dumps(path, ensure_ascii=False)}, {request_expected_js(expected_raw)}, {mark});"
+            )
+        elif verb == "api":
+            # D197（2026-11-12）：主动接口断言 —— 自带 cookie / JWT / Amp-Organ-Id，
+            # 直接在 `context.request` 上发请求；断言失败抛错并带 HTTP 状态与响应片段。
+            # D199：PATH / body 支持 `$<名>`（来自 read / send -> capture）；插值只改地址与
+            # 请求体，`-> json <json-path> <expected>` 的断言语义不变（断言仍对响应体求值）。
+            spec = parse_api_line(tid, value)
+            checks_js = "[" + ", ".join(api_check_js(c) for c in spec["checks"]) + "]"
+            line = (
+                f"await atlasApi(page, {json.dumps(spec['method'])}, "
+                f"{interp_path(spec['path'], _read_known_all, cid, 'api 路径')}, "
+                f"{interp_body(spec, _read_known_all, cid, 'api 请求体')}, {checks_js});"
             )
         else:
             raise ValueError(f"未知断言动词: {verb}（契约 §5.5）")
@@ -892,13 +1413,14 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
     request_open = ""
     if case_uses_request(case):
         request_open = "  await atlasWatchRequests(page);\n"
+    _guard_call = "atlasGoto(page, " if url_merge.base_query_keys(base or "") else "page.goto("
     body = (
         f"test({json.dumps(cid + ' ' + (case.get('_title') or ''), ensure_ascii=False)}, async ({{ page }}) => {{\n"
         f"  {step_note}\n  {assert_note}\n"
         f"{mock_open}"
         f"{session_open}"
         f"{request_open}"
-        f"  await page.goto('{guard_url}');\n"
+        f"  await {_guard_call}'{guard_url}');\n"
         f"{guard_block}"
         f"{indented}\n}});\n"
     )
@@ -918,6 +1440,10 @@ def ts_assert_expr(line: str) -> str:
     verb, tid, value, _note = parse_line(line)
     if verb == "request":
         raise ValueError("`request` 断言不参与零步基线（D142：动作锚定新请求）")
+    if verb == "api":
+        raise ValueError("`api` 主动接口断言不参与零步基线（D197：与页面初始态无关）")
+    if VAR_RE.search(line) or "${" in line:
+        raise ValueError("`read` 变量断言不参与零步基线（D191：值由用例步骤运行时产生，无初始态语义）")
     base_tid, idx = parse_tid_nth(tid)
     nth_idx = idx if idx is not None else 0
     nth_locator = f"page.getByTestId({json.dumps(base_tid, ensure_ascii=False)}).nth({idx})" if idx is not None else f"page.getByTestId({json.dumps(base_tid, ensure_ascii=False)}).first()"
@@ -989,7 +1515,7 @@ def ts_assert_expr(line: str) -> str:
     raise ValueError(f"未知断言动词: {verb}（契约 §5.5）")
 
 
-def ts_mock_helpers(api_prefix: str, mode: str = "on") -> str:
+def ts_mock_helpers(api_prefix: str | list[str], mode: str = "on") -> str:
     """契约 §5.8（2026-10-12）：网络边界打桩的页面头部 helper（**只出现在 mock 页脚本**——
     未启用项目的生成物零变化）。
 
@@ -998,15 +1524,18 @@ def ts_mock_helpers(api_prefix: str, mode: str = "on") -> str:
     OPTIONS 自动 204 + CORS 头；命中留痕 = `atlas-mock` 注记 + `[atlas-mock]` 日志（证据披露）。
     mode === 'auto' 时，未命中规则表直接 route.continue() 穿透访问真实后端。
     """
+    prefixes = list(api_prefix) if isinstance(api_prefix, (list, tuple)) else [api_prefix]
     return (
         "// 契约 §5.8：网络边界打桩（单条 context.route 派发表；随用例 context 生灭）\n"
-        "const ATLAS_MOCK_PREFIX = " + json.dumps(api_prefix) + ";\n"
+        "const ATLAS_MOCK_PREFIXES: string[] = " + json.dumps(prefixes) + ";\n"
         "const ATLAS_MOCK_MODE = " + json.dumps(mode) + ";\n"
         "async function atlasMockTable(page: any, entries: any[]) {\n"
         "  const audit = { errors: [] as string[], hits: [] as string[] };\n"
         "  const table = entries.map((e) => ({ ...e, queue: e.seq ? e.seq.slice() : null }));\n"
-        "  await page.context().route('**' + ATLAS_MOCK_PREFIX + '**',\n"
-        "    (route: any) => atlasMockDispatch(route, table, audit));\n"
+        "  for (const __prefix of ATLAS_MOCK_PREFIXES) {\n"
+        "    await page.context().route('**' + __prefix + '**',\n"
+        "      (route: any) => atlasMockDispatch(route, table, audit));\n"
+        "  }\n"
         "  await page.route(\"https://**/*\",\n"
         "    (route: any) => atlasMockDispatch(route, table, audit));\n"
         "  return audit;\n"
@@ -1039,11 +1568,11 @@ def ts_mock_helpers(api_prefix: str, mode: str = "on") -> str:
         "      await route.continue();\n"
         "      return;\n"
         "    }\n"
-        "    if (!u.pathname.startsWith(ATLAS_MOCK_PREFIX)) {\n"
+        "    if (!ATLAS_MOCK_PREFIXES.some((p) => u.pathname.startsWith(p))) {\n"
         "      await route.continue();  // 前缀外（如 /static/api/… 静态资源）：放行\n"
         "      return;\n"
         "    }\n"
-        "    if (ATLAS_MOCK_PREFIX === '/' && route.request().resourceType() !== 'fetch' && route.request().resourceType() !== 'xhr') {\n"
+        "    if (ATLAS_MOCK_PREFIXES.includes('/') && route.request().resourceType() !== 'fetch' && route.request().resourceType() !== 'xhr') {\n"
         "      await route.continue();\n"
         "      return;\n"
         "    }\n"
@@ -1123,6 +1652,10 @@ def ts_zero_step_baseline(page: str, url: str, cases: list[dict], mock_vacuous: 
                 continue  # 契约 §5.5（P5）：delta 是行动前后差值断言，没有「初始态成立/不成立」语义
             if strip_inline_comment(body).strip().split(" ", 1)[0] == "request":
                 continue  # D142：request 是动作后新请求断言，没有初始态语义
+            if strip_inline_comment(body).strip().split(" ", 1)[0] == "api":
+                continue  # D197：api 是主动接口断言，与页面初始态无关
+            if VAR_RE.search(strip_inline_comment(body)):
+                continue  # D191：含 `read` 变量的断言依赖用例步骤产生的运行时值，无「初始态」语义
 
             # F24 规则二（守卫型 visible 豁免）：
             # 仅限 kind == "plain" 且无 anchor，断言动词为 visible，目标在 testid: 块内，
@@ -1629,6 +2162,55 @@ def main() -> int:
         print(f"NOT_READY: {msg}", file=sys.stderr)
         return NOT_READY
 
+    # 契约 shared/stack-profile.md §2 / rings/e2e/reference.md §5.4（2026-11-11）：
+    # 视口与配色是项目级声明，生成期烘进运行器原生配置；两者都未声明 ⇒ 输出逐字节不变。
+    viewport_line = ""
+    viewport = e2e.get("viewport")
+    if viewport is not None:
+        m_vp = re.fullmatch(r"(\d+)\s*[xX]\s*(\d+)", str(viewport).strip())
+        if not m_vp or int(m_vp.group(1)) <= 0 or int(m_vp.group(2)) <= 0:
+            print(f"ERROR: e2e.viewport 非法: {viewport!r}（应形如 1440x900，宽高为正整数；"
+                  "契约见 shared/stack-profile.md §2 + rings/e2e/reference.md §5.4）", file=sys.stderr)
+            return 2
+        viewport_line = (f"    viewport: {{ width: {int(m_vp.group(1))}, "
+                         f"height: {int(m_vp.group(2))} }},\n")
+    color_line = ""
+    color_scheme = e2e.get("color_scheme")
+    if color_scheme is not None:
+        cs = str(color_scheme).strip()
+        if cs not in COLOR_SCHEMES:
+            print(f"ERROR: e2e.color_scheme 非法: {color_scheme!r}（允许 {list(COLOR_SCHEMES)}；"
+                  "契约见 shared/stack-profile.md §2 + rings/e2e/reference.md §5.4）", file=sys.stderr)
+            return 2
+        color_line = f"    colorScheme: '{cs}',\n"
+    extra_use = viewport_line + color_line
+    # 导航层 URL query 保真（RFC-20261112-01 §5 / 契约 §5.5）：`e2e.app_base_url` 的 query 是
+    # 宿主注入型租户前提，用例里写死的同源导航一旦丢键 ⇒ 落错租户。生成物在**导航层**校验
+    # （不是控制台配置自检——那恒真且看不到用例正文）。跨域（SSO / 外部登录）不校验。
+    base_query_keys = url_merge.base_query_keys(base or "")
+    if base_query_keys:
+        _base_lit = json.dumps(base or "")
+        nav_guard = (
+            f"const ATLAS_BASE_QUERY_KEYS: string[] = {json.dumps(base_query_keys, ensure_ascii=False)};\n"
+            f"const ATLAS_BASE_ORIGIN = new URL(process.env.ATLAS_BASE_URL ?? {_base_lit}).origin;\n"
+            "// 契约 §5.5 / RFC-20261112-01 §5：同源导航必须带齐 app_base_url 声明的 query 键；\n"
+            "// 缺失即**导航前**失败（用例红在入口，不进入错误租户的页面）。\n"
+            "function atlasAssertBaseQuery(url: string) {\n"
+            "  let target: URL;\n"
+            "  try { target = new URL(url, ATLAS_BASE_ORIGIN); } catch { return; }\n"
+            "  if (target.origin !== ATLAS_BASE_ORIGIN) return;  // 跨域（SSO / 外部登录）不校验\n"
+            "  const missing = ATLAS_BASE_QUERY_KEYS.filter((k) => !target.searchParams.has(k));\n"
+            "  if (missing.length) throw new Error(`导航 URL 缺少 e2e.app_base_url 声明的 query 键 "
+            "${JSON.stringify(missing)}；期望 ${JSON.stringify(ATLAS_BASE_QUERY_KEYS)}；实际 ${url}`);\n"
+            "}\n"
+            "async function atlasGoto(page: any, url: string) {\n"
+            "  atlasAssertBaseQuery(url);\n"
+            "  return page.goto(url);\n"
+            "}\n"
+        )
+    else:
+        nav_guard = ""
+
     # 契约 §5.4/§5.5（多靶场，beta.16）：具名靶场登记表 `e2e.targets`（可选；闭集）。
     # 名字进生成测试名（`__<名>` 后缀）⇒ 只允 `[a-z0-9-]+`；路由形态同页面表 `路由` 列（`/` 开头）。
     targets_raw = e2e.get("targets") if isinstance(e2e.get("targets"), dict) else {}
@@ -1675,20 +2257,43 @@ def main() -> int:
             # none（2026-10-16，RFC-20261015-02）：显式声明「靶场无访问门」⇒ 取证与形态字段一律
             # 不得残留（含 storage_key 与 body_format）。与 fabricated 的
             # 「收窄」相反：全弃（fabricated = 收窄，none = 全弃，两条判据同构成镜像）。
-            leftover = [k for k in ("endpoint", "username_field", "password_field", "token_key", "storage_key", "body_format") if (app_login.get(k) or "").strip()]
+            leftover = [k for k in ("endpoint", "username_field", "password_field", "token_key", "storage_key", "body_format", "probe") if app_login.get(k) is not None and str(app_login.get(k)).strip()]
             if leftover:
                 print(f"ERROR: e2e.app_login.mode=none 与残留取证字段互斥（{leftover}）"
                       "——无门项目请写 app_login: {mode: none}，整段不留取证值", file=sys.stderr)
                 return 2
         else:
-            # fabricated（契约 §5.8，2026-10-12）：纯前端桩项目——不发真实登录请求，
-            # setup 直写假令牌 ⇒ 必填收窄为 storage_key（其余取证字段无消费方）。
-            required = ("storage_key",) if login_mode == "fabricated" else APP_LOGIN_FIELDS
-            missing = [k for k in required if not (app_login.get(k) or "").strip()]
+            # 字段矩阵（RFC-20261112-01 §8.3）：矩阵外字段（含 storage_state）一律拒绝。
+            unknown = [k for k in app_login if k not in APP_LOGIN_KEYS]
+            if unknown:
+                print(f"ERROR: e2e.app_login 含矩阵外字段 {unknown}（允许 {list(APP_LOGIN_KEYS)}）"
+                      "——state 路径固定为 .atlas-auth/state.json，不接受 profile 覆盖", file=sys.stderr)
+                return 2
+            if login_mode == "fabricated":
+                # fabricated（契约 §5.8，2026-10-12）：纯前端桩项目——不发真实登录请求，
+                # setup 直写假令牌 ⇒ 必填收窄为 storage_key（其余取证字段无消费方）。
+                # probe 禁写：假令牌不可能通过认证探针（RFC-20261112-01 §8.3）。
+                forbidden = [k for k in ("endpoint", "username_field", "password_field",
+                                         "token_key", "body_format", "probe")
+                             if app_login.get(k) is not None]
+                if forbidden:
+                    print(f"ERROR: e2e.app_login.mode=fabricated 禁写字段 {forbidden}"
+                          "——桩项目只允许 mode + storage_key", file=sys.stderr)
+                    return 2
+                required = ("storage_key",)
+            else:
+                required = APP_LOGIN_FIELDS
+            missing = [k for k in required if not str(app_login.get(k) or "").strip()]
             if missing:
                 print(f"ERROR: e2e.app_login 段不完整（mode={login_mode}，缺 {missing}）——要么补齐，"
                       "要么按形态声明（真实登录=real；无门=mode: none）", file=sys.stderr)
                 return 2
+            if login_mode == "real":
+                probe_errors = auth_state.probe_config_errors(app_login.get("probe"))
+                if probe_errors:
+                    print("ERROR: e2e.app_login.probe 缺失或非法：" + "；".join(probe_errors)
+                          + "（real 形态必须能判定会话可用性，RFC-20261112-01 §4.2）", file=sys.stderr)
+                    return 2
 
     # 数据播种通道（契约 §5.7，2026-09-28）：`e2e.seed.hook`（项目自定实现，路径相对项目根）。
     # `e2e.seed.mode`（B197-1，2026-10-07）：声明 / 发射解耦开关——enforce（缺省 = 现行为，
@@ -1709,13 +2314,14 @@ def main() -> int:
         print(f"ERROR: e2e.mock.mode 非法: {mock_mode!r}（允许 off|on|auto；缺省 off）"
               "——契约见 shared/stack-profile.md §2 + rings/e2e/reference.md §5.8", file=sys.stderr)
         return 2
-    mock_prefix = mock_cfg.get("api_prefix")
-    if mock_mode in ("on", "auto") and not mock_prefix:
-        mock_prefix = "/"
-    if mock_mode in ("on", "auto") and (not str(mock_prefix).startswith("/")
-                              or " " in str(mock_prefix)):
-        print(f"ERROR: e2e.mock.mode={mock_mode} 须同时声明合法 api_prefix（以 / 开头、无空白），"
-              f"得 {mock_prefix!r}（契约 §5.8）", file=sys.stderr)
+    # api_prefix 支持标量或列表（2026-11-12 多前缀能力回归真源；生成物 ATLAS_MOCK_PREFIXES）。
+    # 归一化在 `_support/stack_profile.py` 单源实现，校验器与生成器共用同一口径。
+    mock_prefix, mock_prefix_bad = _sp.normalize_mock_prefixes(mock_cfg.get("api_prefix"), mock_mode)
+    if mock_prefix_bad:
+        print(f"ERROR: e2e.mock.mode={mock_mode} 的 api_prefix 非法"
+              "（每项须以 / 开头、无空白；契约 §5.8）：", file=sys.stderr)
+        for err in mock_prefix_bad:
+            print(f"  - {err}", file=sys.stderr)
         return 2
 
     cases = gather_cases(cases_dir, cases_prefix)
@@ -2084,6 +2690,13 @@ def main() -> int:
         page_uses_upload = any(
             parse_line(s)[0] == "upload" for c in items for s in (c.get("step") or []))
         page_uses_request = any(case_uses_request(c) for c in items)
+        # D197：`api` 主动接口断言的 helper 按页发射；令牌键只在 real/fabricated 下有值
+        # （imported 会话靠 context cookie 自动携带，不需要读 localStorage）。
+        # D199：`send` 动作与 `api` 共用请求 helper；捕获 helper 只在有 `send` 的页面发射。
+        page_uses_send = any(case_uses_send(c) for c in items)
+        page_uses_api = any(case_uses_api(c) for c in items) or page_uses_send
+        api_token_key = (((app_login or {}).get("storage_key") or "")
+                         if login_mode in ("real", "fabricated") else "")
         # 契约 §5.6 R9（2026-09-30）：基线先于用例（与 python 侧同因：真栈用例持久化改态）。
         # D142：含 request 断言的用例单独成文件（顶层 test.use trace off；Playwright 不允许
         # 在 describe 内改 trace），普通用例仍保留全局失败 trace。
@@ -2099,7 +2712,8 @@ def main() -> int:
             + "// 契约 §7.1（DESIGN D118）：等待超时缺省 **20s** —— 与 `expect` 下限（D105）同口径；\n"
             "// `ATLAS_WAIT_TIMEOUT_MS` 为运维覆盖口（与 `ATLAS_EXPECT_TIMEOUT` / `ATLAS_SLOWMO` 同族）。\n"
             "const ATLAS_WAIT_TIMEOUT_MS = Number(process.env.ATLAS_WAIT_TIMEOUT_MS ?? 20_000);\n\n"
-            "function tsLoc(page: any, tid: string) {\n"
+            + nav_guard
+            + "function tsLoc(page: any, tid: string) {\n"
             "  const m = tid.match(/^([a-z0-9-]+)\\[(\\d+)\\]$/);\n"
             "  return m ? page.getByTestId(m[1]).nth(Number(m[2])) : page.getByTestId(tid).first();\n"
             "}\n"
@@ -2170,6 +2784,8 @@ def main() -> int:
             "    : atlasVisibleText(l);\n"
             "}\n"
             + (ts_request_helpers() if page_uses_request else "")
+            + (ts_api_helpers(api_token_key) if page_uses_api else "")
+            + (ts_send_helpers() if page_uses_send else "")
             + "async function atlasSelect(page: any, tid: string, label: string, nth: number = 0) {\n"
             "  // 契约 §5.5（B173-1，2026-10-04；**2026-10-19 D112** 选项定位放宽）：`select` 的语义 =\n"
             "  // 「在该控件上选中 label 的那一项」。原生 <select> 走 selectOption；否则视作 trigger+listbox：\n"
@@ -2290,8 +2906,8 @@ def main() -> int:
             "async function atlasZeroStepBaseline(page: any, data: any) {\n"
             "  // 契约 §5.6 R9：初始态观测（数据驱动；两趟取样 §B72）。\n"
             "  // 判据『以返回值判定』而非『没抛异常』——tsVis 对隐藏元素返回 null = 不成立。\n"
-            "  await page.goto(data.url);\n"
-            "  // SPA 安定：React 异步渲染/API 响应会重渲染并冲掉手改的展开样式，\n"
+            + ("  await atlasGoto(page, data.url);\n" if base_query_keys else "  await page.goto(data.url);\n")
+            + "  // SPA 安定：React 异步渲染/API 响应会重渲染并冲掉手改的展开样式，\n"
             "  // 两趟取样都必须在**安定态**；networkidle 不可达环境超时降级为继续。\n"
             "  await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => { });\n"
             "  const initialTrue: string[] = [];\n"
@@ -2387,19 +3003,54 @@ def main() -> int:
     # 外加编排是对原设计的稀释）。用例级 `auth: none` 依然成立：describe 内 test.use
     # 显式给空 storageState，不依赖全局预置。
     state_rel = ".atlas-auth/state.json"
+    # D194（2026-11-12）：运行期产物一律落仓库外。仓内 `.atlas-run` 在某些机器上被环境层拦截
+    # ——即使目录权限/flags 正常，Playwright 启动清空 outputDir、worker 建 `.playwright-artifacts-N`
+    # 时仍 EACCES。故默认落 `/tmp/atlas-e2e/<repo>/current`；`ATLAS_RUN_DIR`（控制台按 run 注入）
+    # 仍可覆盖，但解析后若仍指向仓内则强制改道并告警。ESM 仓（package.json `type: module`，D123）
+    # 没有 `__dirname` ⇒ 用 import.meta.url 定位 config 目录；CJS 仓用 __dirname。
+    run_imports = (
+        "import { basename, dirname, resolve } from 'node:path';\n"
+        "import { fileURLToPath } from 'node:url';\n"
+        if esm_project else
+        "import { basename, resolve } from 'node:path';\n"
+    )
+    repo_root_ts = (
+        "resolve(dirname(fileURLToPath(import.meta.url)), '../../..')" if esm_project
+        else "resolve(__dirname, '../../..')"
+    )
+    run_dir_ts = (
+        "// 运行期产物目录（D194）：默认落仓库外（仓内运行期目录需「先删后建」，本机被环境拦截）；\n"
+        "// ATLAS_RUN_DIR 可覆盖，但解析后仍指向仓内时强制改道。\n"
+        "const REPO_ROOT = " + repo_root_ts + ";\n"
+        "const DEFAULT_RUN_DIR = `/tmp/atlas-e2e/${basename(REPO_ROOT)}/current`;\n"
+        "const RUN_DIR = (() => {\n"
+        "  const fromEnv = process.env.ATLAS_RUN_DIR;\n"
+        "  if (!fromEnv) return DEFAULT_RUN_DIR;\n"
+        "  const abs = resolve(fromEnv);\n"
+        "  if (abs === REPO_ROOT || abs.startsWith(REPO_ROOT + '/')) {\n"
+        "    process.stderr.write(`[atlas] ATLAS_RUN_DIR 指向仓内(${abs})，改用仓库外 ${DEFAULT_RUN_DIR}\\n`);\n"
+        "    return DEFAULT_RUN_DIR;\n"
+        "  }\n"
+        "  return abs;\n"
+        "})();\n"
+        "process.env.ATLAS_RUN_DIR = RUN_DIR;\n"
+    )
     if login_mode == "none":
         cfg = (
             "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py；重跑覆盖。\n"
-            "import { defineConfig } from '@playwright/test';\n\n"
+            "import { defineConfig } from '@playwright/test';\n"
+            + run_imports
+            + "\n"
             "// app_login.mode=none（契约 shared/stack-profile.md §2 / rings/e2e §7.1）：\n"
             "// 靶场无访问门 ⇒ 无登录预置设施（setup 项目与 storageState 均不生成）。\n"
             "// 未登录前提的用例（auth: none）自带空 storageState，不依赖全局预置。\n"
-            "export default defineConfig({\n"
+            + run_dir_ts
+            + "export default defineConfig({\n"
             "  reporter: [\n"
             "    ['list'],\n"
-            "    ['json', { outputFile: '.atlas-run/results.json' }],\n"
+            "    ['json', { outputFile: `${RUN_DIR}/results.json` }],\n"
             "  ],\n"
-            "  outputDir: '.atlas-run',\n"
+            "  outputDir: RUN_DIR,\n"
             "  // P12（RFC-20261104-01）：跑后证据归档补充点——只 copy + 写 manifest，不判定、不改 verdict；\n"
             "  // 相对 **config 所在目录** 解析（config 在 <e2e>/scripts/）⇒ 不得写 './scripts/…'。\n"
             "  globalTeardown: './atlas-evidence-teardown.ts',\n"
@@ -2413,8 +3064,9 @@ def main() -> int:
             "  // 3 failed 1 passed）。提升到 20s（仍远小于 test 超时），并留 `ATLAS_EXPECT_TIMEOUT` 覆盖口。\n"
             "  expect: { timeout: Number(process.env.ATLAS_EXPECT_TIMEOUT ?? 20_000) },\n"
             f"  use: {{ baseURL: process.env.ATLAS_BASE_URL ?? '{base}',\n"
-            "    // 失败留证（2026-10-18，RFC-20261018-01；落点勘误 2026-10-25）：失败才落 .atlas-run/（本配置 outputDir），\n"
-            "    // 全绿轮零产物；留存窗口 = 到下一次起跑（Playwright 启动清空 outputDir）。\n"
+            + extra_use
+            + "    // 失败留证（2026-10-18，RFC-20261018-01；落点 D194 2026-11-12）：失败才落 RUN_DIR，\n"
+            "    // 全绿轮零产物；RUN_DIR 由控制台按 run 分配（仓库外，保留最近 N 次，互不清空）。\n"
             "    // 生效咬合点 = 重装配（install --update / 首装），不溯及已装配副本。\n"
             "    trace: 'retain-on-failure',\n"
             "    screenshot: 'only-on-failure',\n"
@@ -2429,16 +3081,19 @@ def main() -> int:
     else:
         cfg = (
             "// AUTO-GENERATED by atlas scripts/gen_e2e_scripts.py；重跑覆盖。\n"
-            "import { defineConfig } from '@playwright/test';\n\n"
+            "import { defineConfig } from '@playwright/test';\n"
+            + run_imports
+            + "\n"
             "// 会话预置登录（契约 §5.7 / §5.4）：setup 项目真实登录一次 → state 文件；\n"
             "// 凭据来自运行期环境变量 ATLAS_APP_USER / ATLAS_APP_PASSWORD（不读项目 .env、不硬编码）；\n"
             "// 未设置 ⇒ setup 写空 state 并警告（不静默）；换取失败 ⇒ setup 抛错中止（不静默续跑）。\n"
-            "export default defineConfig({\n"
+            + run_dir_ts
+            + "export default defineConfig({\n"
             "  reporter: [\n"
             "    ['list'],\n"
-            "    ['json', { outputFile: '.atlas-run/results.json' }],\n"
+            "    ['json', { outputFile: `${RUN_DIR}/results.json` }],\n"
             "  ],\n"
-            "  outputDir: '.atlas-run',\n"
+            "  outputDir: RUN_DIR,\n"
             "  // P12（RFC-20261104-01）：跑后证据归档补充点——只 copy + 写 manifest，不判定、不改 verdict；\n"
             "  // 相对 **config 所在目录** 解析（config 在 <e2e>/scripts/）⇒ 不得写 './scripts/…'。\n"
             "  globalTeardown: './atlas-evidence-teardown.ts',\n"
@@ -2452,8 +3107,9 @@ def main() -> int:
             "  // 3 failed 1 passed）。提升到 20s（仍远小于 test 超时），并留 `ATLAS_EXPECT_TIMEOUT` 覆盖口。\n"
             "  expect: { timeout: Number(process.env.ATLAS_EXPECT_TIMEOUT ?? 20_000) },\n"
             f"  use: {{ baseURL: process.env.ATLAS_BASE_URL ?? '{base}',  // E1 单段\n"
-            "    // 失败留证（2026-10-18，RFC-20261018-01；落点勘误 2026-10-25）：失败才落 .atlas-run/（本配置 outputDir），\n"
-            "    // 全绿轮零产物；留存窗口 = 到下一次起跑（Playwright 启动清空 outputDir）。\n"
+            + extra_use
+            + "    // 失败留证（2026-10-18，RFC-20261018-01；落点 D194 2026-11-12）：失败才落 RUN_DIR，\n"
+            "    // 全绿轮零产物；RUN_DIR 由控制台按 run 分配（仓库外，保留最近 N 次，互不清空）。\n"
             "    // 生效咬合点 = 重装配（install --update / 首装），不溯及已装配副本。\n"
             "    trace: 'retain-on-failure',\n"
             "    screenshot: 'only-on-failure',\n"
@@ -2486,7 +3142,7 @@ def main() -> int:
         "// 都在 globalTeardown 的 try/catch 内 —— **归档失败不改判**（唯一例外：进程被 SIGKILL /\n"
         "// 整机中断时 teardown 根本不执行，仅缺归档）；挂死由 timeout 兜断（非法值/0 回退 120s）；失败只写一行 WARN。\n"
         "import { execFileSync } from 'node:child_process';\n"
-        "import { resolve } from 'node:path';\n\n"
+        "import { basename, resolve } from 'node:path';\n\n"
         "const WARN_PREFIX = 'ATLAS-EVIDENCE WARN: teardown 归档失败: ';\n\n"
         "export default async function globalTeardown() {\n"
         "  try {\n"
@@ -2494,12 +3150,29 @@ def main() -> int:
         "    //（`rings/e2e/reference.md` 执行 cwd 契约），故在**函数体内**才调 process.cwd()。\n"
         "    const here = process.cwd();\n"
         f"    const repoRoot = resolve(here, {json.dumps(repo_rel)});\n"
+        "    // D194（2026-11-12）：run / evidence 一律落仓库外。控制台注入的 per-run 目录原样保留；\n"
+        "    // 未注入 ⇒ `/tmp/atlas-e2e/<repo>/…`（绝不再回退仓内 `.atlas-run` / `.atlas-evidence`）；\n"
+        "    // 注入值解析后仍指向仓内 ⇒ 强制改道并告警。两值回写 env，与 config 归一化结果一致。\n"
+        "    const outside = (raw, fallback, envName) => {\n"
+        "      if (!raw) return fallback;\n"
+        "      const abs = resolve(raw);\n"
+        "      if (abs === repoRoot || abs.startsWith(repoRoot + '/')) {\n"
+        "        process.stderr.write(`[atlas] ${envName} 指向仓内(${abs})，改用仓库外 ${fallback}\\n`);\n"
+        "        return fallback;\n"
+        "      }\n"
+        "      return abs;\n"
+        "    };\n"
+        "    const base = `/tmp/atlas-e2e/${basename(repoRoot)}`;\n"
+        "    const runDir = outside(process.env.ATLAS_RUN_DIR, `${base}/current`, 'ATLAS_RUN_DIR');\n"
+        "    const evidenceDir = outside(process.env.ATLAS_EVIDENCE_DIR, `${base}/evidence`, 'ATLAS_EVIDENCE_DIR');\n"
+        "    process.env.ATLAS_RUN_DIR = runDir;\n"
+        "    process.env.ATLAS_EVIDENCE_DIR = evidenceDir;\n"
         "    execFileSync(process.env.ATLAS_PYTHON ?? 'python3', [\n"
         "      resolve(repoRoot, '.atlas/_support/evidence_archive.py'),\n"
         "      '--phase', 'post-run',\n"
         "      '--root', repoRoot,\n"
-        "      '--run-dir', resolve(here, '.atlas-run'),\n"
-        "      '--evidence-dir', resolve(repoRoot, '.atlas-evidence'),\n"
+        "      '--run-dir', runDir,\n"
+        "      '--evidence-dir', evidenceDir,\n"
         "    ], { encoding: 'utf8', stdio: 'pipe', timeout: (() => { const n = Number(process.env.ATLAS_EVIDENCE_TIMEOUT_MS || '120000'); return Number.isFinite(n) && n > 0 ? n : 120000; })() });\n"
         "  } catch (e) {\n"
         "    // 归档是观测动作：失败只向 stderr 写一行 WARN（解释器缺失也走这里），绝不外抛。\n"
@@ -2534,7 +3207,7 @@ def main() -> int:
         "//   ATLAS_RESULT_FILE：结果哨兵（持窗期间进程活着，控制台不能靠进程退出码判结果）；\n"
         "//   ATLAS_KEEP_OPEN=1：跑完**不自动关浏览器**，留给人手动 review（用户 2026-09-23 定）。\n"
         "const test = base.extend<{ atlasHold: void }>({\n"
-        "  atlasHold: [async ({ context }, use, testInfo) => {\n"
+        "  atlasHold: [async ({ context, page }, use, testInfo) => {\n"
         "    await use();\n"
         "    if (process.env.ATLAS_RESULT_FILE) {\n"
         "      try {\n"
@@ -2543,7 +3216,10 @@ def main() -> int:
         "      } catch { /* 哨兵写失败 ⇒ 控制台回落进程退出码 */ }\n"
         "    }\n"
         "    if (process.env.ATLAS_KEEP_OPEN !== '1') return;\n"
-        "    // 留窗：本 fixture 依赖 context ⇒ teardown 先于内置 context 关闭；\n"
+        "    // 留窗（2026-11-11 修正）：**必须**同时依赖 `page`——只依赖 `context` 时\n"
+        "    // `page` 在它之后 setup ⇒ teardown 反向先关页，`context.pages()` 已空，\n"
+        "    // 留窗被瞬间放行（实测：用例 1 passed 后浏览器立即被关）。依赖 `page` 后\n"
+        "    // 本 fixture 先于内置 page/context 拆除，窗口保持到人工关窗。\n"
         "    // 轮询等人工关窗（关页 ⇒ pages 空；关整个浏览器 ⇒ 断连）再放行。\n"
         "    await new Promise<void>((resolve) => {\n"
         "      const timer = setInterval(() => {\n"

@@ -104,6 +104,22 @@ def query_keys(target: str) -> list[str]:
     return out
 
 
+def base_query_keys(base: str) -> list[str]:
+    """`e2e.app_base_url` 查询串里的键（按出现顺序去重）。
+
+    与 `query_keys` 分载体：`query_keys` 只认 `/` 开头的**导航目标**，本函数认**完整 base URL**
+    （RFC-20261112-01 §5 的导航层守卫取值；`ATLAS_BASE_URL` 只覆盖 host，query 仍以 base 为准）。
+    """
+    out: list[str] = []
+    for part in base_query(base).split("&"):
+        if not part:
+            continue
+        k = part.partition("=")[0].strip()
+        if k and k not in out:
+            out.append(k)
+    return out
+
+
 def append_query(target: str, q: str) -> str:
     """把查询串 `q` 追加到 `target` 的 query 上（**插在 hash 之前**；已有 `?` ⇒ 用 `&` 接）。
 

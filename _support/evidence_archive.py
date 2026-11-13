@@ -75,6 +75,14 @@ def _is_within(child: Path, parent: Path) -> bool:
         return False
 
 
+def _display_path(path: Path, root: Path) -> str:
+    """清单里的路径：根内用相对路径；仓库外（D194 证据根）用绝对路径。"""
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return str(path)
+
+
 # ---------------------------------------------------------------- 布局发现
 
 
@@ -298,8 +306,10 @@ def archive_run_artifacts(
                     "dir": None, "files": [], "warnings": [], "partial": False,
                     "trace": {"status": "N/A", "cases": {}, "warnings": []}}
 
-    # 符号链接越界（`shared/layout.md` §1.1「解析后仍须落在项目根内」同源）
-    if evidence.is_symlink() or evidence.exists():
+    # 符号链接越界（`shared/layout.md` §1.1「解析后仍须落在项目根内」同源）。
+    # D194：调用方**显式**指定 `evidence_dir` 时，仓库外落点是合法设计（控制台 run 的证据根在
+    # `<cache>/atlas-e2e/<slug>/evidence/`）⇒ 不做根内包含判定；缺省路径仍须落在根内。
+    if evidence_dir is None and (evidence.is_symlink() or evidence.exists()):
         if not _is_within(evidence, root):
             result.update(status="WARN")
             result["warnings"].append(f"证据目录解析到项目根外：{evidence} ⇒ 拒绝写入")
@@ -344,7 +354,7 @@ def archive_run_artifacts(
             index = _read_index(evidence)
             index_files: dict[str, str] = dict(index.get("files") or {})
             entries: list[dict] = []
-            rel_dir = out_dir.relative_to(root).as_posix()
+            rel_dir = _display_path(out_dir, root)
             for src in files:
                 rel_src = src.relative_to(run_dir)
                 try:
@@ -369,7 +379,7 @@ def archive_run_artifacts(
                     result.update(status="WARN", partial=True)
                     result["warnings"].append(f"{rel_src}: 复制失败 {exc}")
                     continue
-                rel_dest = dest.relative_to(root).as_posix()
+                rel_dest = _display_path(dest, root)
                 entries.append({"path": rel_dest, "sha256": sha, "bytes": src.stat().st_size})
                 index_files[sha] = rel_dest
 

@@ -180,7 +180,8 @@ def validate(root: Path) -> Result:
         return res
     mode = mock_cfg.get("mode") or "off"
     raw_prefix = mock_cfg.get("api_prefix")
-    prefix = raw_prefix if raw_prefix is not None else ("/" if mode in ("on", "auto") else None)
+    # 标量或列表（2026-11-12）：归一化与逐项校验走生成器同源实现。
+    prefixes, prefix_errors = gen.normalize_mock_prefixes(raw_prefix, mode)
 
     shards = gen.gather_cases(cases_dir, lay.print_value("e2e_cases"))
     mock_pages = sorted(p for p, items in shards.items() if any(c.get("mock") for c in items))
@@ -198,15 +199,16 @@ def validate(root: Path) -> Result:
         res.add("mode 开关（防误用）", "PASS",
                 f"mode={mode} 放行" if mode in ("on", "auto") else "无 mock: 行（未启用打桩 = 合态）")
 
-    # —— api_prefix 前置
+    # —— api_prefix 前置（标量或列表；每项须以 / 开头且无空白）
     if mode in ("on", "auto"):
-        ok = bool(prefix) and str(prefix).startswith("/") and " " not in str(prefix)
-        msg = (f"值={prefix!r}（未配置默认兜底为 /；以 / 开头且无空白）" if raw_prefix is None
-               else f"值={prefix!r}（mode: {mode} 时以 / 开头且无空白）")
-        res.add("api_prefix 前置", "PASS" if ok else "FAIL", msg)
+        msg = (f"值={raw_prefix!r}（未配置默认兜底为 /；每项以 / 开头且无空白）" if raw_prefix is None
+               else f"值={raw_prefix!r}（mode: {mode} 时每项以 / 开头且无空白）")
+        if prefix_errors:
+            msg += "；" + "；".join(prefix_errors)
+        res.add("api_prefix 前置", "PASS" if not prefix_errors else "FAIL", msg)
 
     # —— 行语法 + 锚定（复用生成器 parse_mock_line；mode off 时 prefix 未知 ⇒ 只查文法）
-    anchor = str(prefix) if (mode in ("on", "auto") and prefix) else None
+    anchor = prefixes if (mode in ("on", "auto") and prefixes) else None
     grammar_bad: list[str] = []
     refs: list[str] = []
     for _page, items in shards.items():

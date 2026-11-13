@@ -40,6 +40,8 @@ from _support.siblings import load_module  # noqa: E402
 from _support.layout import LayoutError, load_layout  # noqa: E402
 
 parse_block = load_module("case_block").parse_block
+# F5 行内注释单源口径（2026-11-12）：`testid:` 清单项与 step/expected 同形，可带行内 `#` 说明
+strip_inline_comment = load_module("stack_profile").strip_inline_comment
 
 # RFC-20261108-02 §3.7：父仓模式的 testid 命名空间按成员仓隔离，不在 solution 根合并扫描。
 # 三条缓解：① 跨仓用例禁写成员 testid，或必须标注成员归属；② 成员 `app_hash` 变化必须重跑
@@ -120,6 +122,9 @@ TEMPLATE_TESTID_ATTR = re.compile(r"""data-testid\s*=\s*\{\s*`([^`]+)`\s*\}""")
 # setAttribute 允许尾逗号（Prettier `trailingComma: all` 会把多行调用写成 `...,\n)`；2026-10-23 D135）
 DATASET_TESTID = re.compile(r"""(?:\.dataset\.testid|\.dataset\[["']testid["']\])\s*=\s*["']([a-zA-Z0-9_\-]+)["']""")
 SETATTR_TESTID = re.compile(r"""\.setAttribute\(\s*["']data-testid["']\s*,\s*["']([a-zA-Z0-9_\-]+)["']\s*,?\s*\)""")
+# JSX props 对象键形态（2026-11-12，D191 现场配套）：`'data-testid': 'x'`——组件 props 透传
+# （如 antd `okButtonProps={{ 'data-testid': 'x' }}`）。字面量键值 = 静态可枚举，与静态属性同形。
+PROPS_TESTID_ATTR = re.compile(r"""["']data-testid["']\s*:\s*["']([a-zA-Z0-9_\-]+)["']""")
 DATASET_TESTID_TPL = re.compile(r"""(?:\.dataset\.testid|\.dataset\[["']testid["']\])\s*=\s*`([^`]+)`""")
 SETATTR_TESTID_TPL = re.compile(r"""\.setAttribute\(\s*["']data-testid["']\s*,\s*`([^`]+)`\s*,?\s*\)""")
 # 同文件静态字符串常量 + 单层引用（issue #19，2026-10-16）：`const X = 'a-b-c'; … data-testid={X}`。
@@ -389,6 +394,7 @@ def file_testid_decls(clean_text: str, pages: list[str] | None = None) -> tuple[
         TESTID_ATTR.findall(clean_text)
         + DATASET_TESTID.findall(clean_text)
         + SETATTR_TESTID.findall(clean_text)
+        + PROPS_TESTID_ATTR.findall(clean_text)
     )
     # 同文件静态常量解析（issue #19）：未在本文件声明的标识符不解析（跨文件导入 / 非静态初始化）。
     consts = dict(CONST_DECL.findall(clean_text))
@@ -402,7 +408,9 @@ def file_testid_decls(clean_text: str, pages: list[str] | None = None) -> tuple[
         ):
             tpl_values.update(expand_template_testid(body, clean_text, pages) or [])
     # 静态属性同形态出现序列：供「同文件重复声明」计数（R6.3 收窄）。
-    return set(raw_lits) | set(ident_tids), TESTID_ATTR.findall(clean_text) + ident_tids, tpl_values
+    return (set(raw_lits) | set(ident_tids),
+            TESTID_ATTR.findall(clean_text) + PROPS_TESTID_ATTR.findall(clean_text) + ident_tids,
+            tpl_values)
 
 
 def shard_landings(cases: Path, proto_pages: list[str] | None = None) -> dict[str, dict[str, list[str]]]:
@@ -525,8 +533,9 @@ def shard_testids(cases: Path, proto_pages: list[str] | None = None) -> dict[str
 
 
 
-# 契约 §5.5：这两个动作没有 testid（`goto` 取路径、`refresh` 无参）。
-_NO_TID_VERBS = {"goto", "refresh", "request"}  # D142：request 的第二个 token 是 api 后缀，不是 testid
+# 契约 §5.5：这些动词的第二个 token 不是 testid（`goto` 取路径、`refresh` 无参；
+# `request` 是 api 后缀（D142）；`api` / `send` 的第二位是 METHOD（D197 / D199））。
+_NO_TID_VERBS = {"goto", "refresh", "request", "api", "send"}
 
 
 def case_testid_usage(md: Path) -> list[tuple[str, set[str], set[str]]]:
@@ -562,9 +571,15 @@ def case_testid_usage(md: Path) -> list[tuple[str, set[str], set[str]]]:
                 parts = code.split()
                 if len(parts) >= 2 and parts[0] not in _NO_TID_VERBS:
                     raw_tid = parts[1]
+                    # D199（2026-11-12）：testid 支持 `$名` / `${名}` 插值（如
+                    # `project-list-row-checkbox-$slug`）—— 运行期拼出的名字**无法静态枚举**，
+                    # 不进双向集合的两侧（同 §4 模板字面量的「结构匹配、值不枚举」口径）；
+                    # 它的正确性由真实执行的定位失败（真红）承担，静态门不造假应然。
+                    if "$" in raw_tid:
+                        continue
                     base_tid = re.sub(r"\[\d+\]$", "", raw_tid)
                     used.add(base_tid)
-        listed = {i.strip() for i in (block_dict.get("testid") or [])}
+        listed = {strip_inline_comment(i).strip() for i in (block_dict.get("testid") or [])}
         out.append((cid, used, listed))
     return out
 

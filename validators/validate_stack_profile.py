@@ -61,10 +61,20 @@ MOCK_MODES = ("off", "on", "auto")
 # 与 e2e.mock.mode off / e2e.review.mode off 同构——在 X 段里用 mode 值声明「靶场没有 X」）。
 # mode：real（缺省 = 真实登录语义）/ fabricated（纯前端桩：setup 不发请求直写假令牌，必填收窄
 # 为 storage_key）/ none（靶场无访问门——声明形态，非降级；段内取证字段一律不得残留）。
-APP_LOGIN_KEYS = ("mode", "endpoint", "username_field", "password_field", "token_key", "storage_key", "body_format")
+APP_LOGIN_KEYS = ("mode", "endpoint", "username_field", "password_field", "token_key", "storage_key", "body_format", "probe")
 APP_LOGIN_FIELDS = ("endpoint", "username_field", "password_field", "token_key", "storage_key", "body_format")
 APP_LOGIN_MODES = ("real", "fabricated", "none")
 APP_LOGIN_BODY_FORMATS = ("form", "json")
+# 字段矩阵（RFC-20261112-01 §8.3）：fabricated 只允许 mode + storage_key；none 全弃。
+APP_LOGIN_FABRICATED_FORBIDDEN = ("endpoint", "username_field", "password_field", "token_key", "body_format", "probe")
+# probe 契约（RFC §4.2 / rings/e2e/reference.md §7.1）：real 下必填；不可选。
+PROBE_KEYS = ("path", "method", "expect_status", "expect_content_type", "expect_json", "timeout_ms")
+PROBE_METHODS = ("GET", "POST")
+PROBE_TIMEOUT_MAX_MS = 10000
+# 运行器视口与配色（shared/stack-profile.md §2 / rings/e2e/reference.md §5.4，2026-11-11）：
+# 可选段键；缺省 = 不写 playwright.config.ts 的 use，保持运行器原生默认。
+VIEWPORT_RE = re.compile(r"^(\d+)\s*[xX]\s*(\d+)$")
+COLOR_SCHEMES = ("light", "dark", "no-preference")
 
 # 独立审查调度通道词表（shared/stack-profile.md §2，rings/e2e §12.6；v0.1.0-beta.14）
 # mode: gate（缺省 = 严格独立审查门）/ auto-baseline（无报告时自动兜底生成基线，免阻断）/ off（免审）
@@ -105,6 +115,50 @@ def resolvable(root: Path, name: str) -> bool:
             if c.suffix == ".py" or os.access(c, os.X_OK):
                 return True
     return False
+
+
+def _as_int(value) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and re.fullmatch(r"-?\d+", value.strip()):
+        return int(value.strip())
+    return None
+
+
+def probe_errors(probe) -> list[str]:
+    """probe 契约（RFC-20261112-01 §4.2）：real 必填；缺失 / 形态非法 ⇒ FAIL。"""
+    if not isinstance(probe, dict):
+        return ["probe 必须是映射（path / method / expect_status / expect_content_type / expect_json / timeout_ms）"]
+    errors: list[str] = []
+    unknown = [k for k in probe if k not in PROBE_KEYS]
+    if unknown:
+        errors.append(f"未知键={unknown} 允许={list(PROBE_KEYS)}")
+    path = probe.get("path")
+    if not isinstance(path, str) or not path.strip().startswith("/"):
+        errors.append(f"path 必填且以 / 开头，得 {path!r}")
+    method = str(probe.get("method") or "GET").upper()
+    if method not in PROBE_METHODS:
+        errors.append(f"method 非法={probe.get('method')!r} 允许={list(PROBE_METHODS)}")
+    status = _as_int(probe.get("expect_status", 200))
+    if status is None or not (100 <= status <= 599):
+        errors.append(f"expect_status 应为 100..599 的整数，得 {probe.get('expect_status')!r}")
+    ctype = probe.get("expect_content_type", "application/json")
+    if not isinstance(ctype, str) or not ctype.strip():
+        errors.append("expect_content_type 应为非空字符串")
+    expect_json = probe.get("expect_json")
+    if expect_json is not None:
+        if not isinstance(expect_json, dict):
+            errors.append("expect_json 应为 `JSON Pointer → 期望值` 映射")
+        else:
+            bad = [k for k in expect_json if not str(k).startswith("/")]
+            if bad:
+                errors.append(f"expect_json 的键应为 JSON Pointer（以 / 开头），非法={bad}")
+    timeout_ms = _as_int(probe.get("timeout_ms", 3000))
+    if timeout_ms is None or not (1 <= timeout_ms <= PROBE_TIMEOUT_MAX_MS):
+        errors.append(f"timeout_ms 应为 1..{PROBE_TIMEOUT_MAX_MS} 的整数，得 {probe.get('timeout_ms')!r}")
+    return errors
 
 
 def validate(root: Path) -> Result:
@@ -178,6 +232,20 @@ def validate(root: Path) -> Result:
         res.add("e2e.runner 枚举（单轨）",
                 "PASS" if (runner is None or runner == "node-playwright") else "FAIL",
                 f"值={runner!r} 允许=['node-playwright']（缺省同值；python-playwright 已退役，B201-4/3507 BO）")
+        # 视口与配色（2026-11-11）：可选；缺省保持运行器原生默认，声明了就必须合法。
+        viewport = e2e_prof.get("viewport")
+        if viewport is None:
+            res.add("e2e.viewport 形态", "PASS", "未声明 = 不写 use.viewport（运行器默认）")
+        else:
+            m_vp = VIEWPORT_RE.fullmatch(str(viewport).strip())
+            ok_vp = bool(m_vp) and int(m_vp.group(1)) > 0 and int(m_vp.group(2)) > 0
+            res.add("e2e.viewport 形态",
+                    "PASS" if ok_vp else "FAIL",
+                    f"值={viewport!r}（应形如 1440x900，宽高为正整数；缺省不写该键）")
+        color_scheme = e2e_prof.get("color_scheme")
+        res.add("e2e.color_scheme 枚举",
+                "PASS" if (color_scheme is None or color_scheme in COLOR_SCHEMES) else "FAIL",
+                f"值={color_scheme!r} 允许={list(COLOR_SCHEMES)}（缺省不写该键）")
     seed = e2e_prof.get("seed") if isinstance(e2e_prof, dict) else None
     if isinstance(seed, dict) and seed:
         unknown = [k for k in seed if k not in SEED_KEYS]
@@ -239,20 +307,75 @@ def validate(root: Path) -> Result:
 
     app_login = e2e_prof.get("app_login") if isinstance(e2e_prof, dict) else None
     if isinstance(app_login, dict) and app_login:
+        unknown_keys = [k for k in app_login if k not in APP_LOGIN_KEYS]
+        # 字段矩阵（RFC-20261112-01 §8.3）：矩阵外字段一律 FAIL，含 `storage_state`
+        # （state 路径固定为 .atlas-auth/state.json，不接受 profile 覆盖）。
+        res.add("e2e.app_login 字段矩阵", "PASS" if not unknown_keys else "FAIL",
+                (f"矩阵外字段={unknown_keys} 允许={list(APP_LOGIN_KEYS)}"
+                 if unknown_keys else f"字段均在矩阵内（{list(APP_LOGIN_KEYS)}）"))
         m = app_login.get("mode")
         res.add("e2e.app_login.mode 枚举", "PASS" if m is None or m in APP_LOGIN_MODES else "FAIL",
                 f"值={m!r} 允许={list(APP_LOGIN_MODES)}（缺省 real；fabricated = 纯前端桩项目直写假令牌；"
                 "none = 靶场无访问门的显式声明——rings/e2e §5.8/§7.1，RFC-20261015-02）")
         if m == "none":
-            # none ⇒ 取证与形态字段一律不得残留（含 storage_key 与 body_format）。
+            # none ⇒ 取证与形态字段一律不得残留（含 storage_key、body_format 与 probe）。
             # 与 fabricated 的「收窄」相反是「全弃」，两条判据同构成镜像（RFC-20261015-02）。
-            leftover = [k for k in APP_LOGIN_FIELDS if (app_login.get(k) or "").strip()]
+            leftover = [k for k in (APP_LOGIN_FIELDS + ("probe",))
+                        if app_login.get(k) not in (None, "", {})]
             res.add("e2e.app_login.mode=none 字段互斥", "PASS" if not leftover else "FAIL",
                     (f"残留={leftover}（无门 ⇒ 全弃 —— fabricated 是收窄，none 是全弃）"
                      if leftover else "无取证值残留（none = 全弃，正确形态）"))
+        elif m == "fabricated":
+            forbidden = [k for k in APP_LOGIN_FABRICATED_FORBIDDEN
+                         if app_login.get(k) not in (None, "", {})]
+            res.add("e2e.app_login.mode=fabricated 字段互斥", "PASS" if not forbidden else "FAIL",
+                    (f"禁写字段残留={forbidden}（fabricated 只允许 mode + storage_key；probe 不可能通过认证探针）"
+                     if forbidden else "只含 mode + storage_key（正确形态）"))
+            res.add("e2e.app_login.mode=fabricated 必填", "PASS"
+                    if str(app_login.get("storage_key") or "").strip() else "FAIL",
+                    f"storage_key={app_login.get('storage_key')!r}（必填）")
+        else:
+            probe = app_login.get("probe")
+            if probe is None:
+                res.add("e2e.app_login.probe 必填", "FAIL",
+                        "mode=real 必须声明 probe（端点 / 方法 / 期望状态码与类型 / JSON 字段 / 超时）；"
+                        "缺失 = 无法判定会话可用性，执行必须拒绝（RFC-20261112-01 §4.2）")
+            else:
+                errs = probe_errors(probe)
+                res.add("e2e.app_login.probe 形态", "PASS" if not errs else "FAIL",
+                        ("probe 合法（" + "；".join(errs) + "）" if not errs else "；".join(errs)))
         bf = app_login.get("body_format")
         res.add("e2e.app_login.body_format 枚举", "PASS" if bf is None or bf in APP_LOGIN_BODY_FORMATS else "FAIL",
                 f"值={bf!r} 允许={list(APP_LOGIN_BODY_FORMATS)}（缺省 form；json = 发送 application/json 载荷）")
+
+    # 凭据落盘卫生（RFC-20261112-01 §9）：`.atlas-auth/` 必须被忽略；state / meta 必须 0600。
+    auth_dir = lay.e2e_auth_dir
+    if auth_dir.is_dir():
+        gi = lay.e2e_scripts_dir / ".gitignore"
+        covered = False
+        try:
+            covered = gi.is_file() and any(
+                ln.strip().rstrip("/") == ".atlas-auth"
+                for ln in gi.read_text(encoding="utf-8").splitlines()
+            )
+        except OSError:
+            covered = False
+        res.add("e2e .atlas-auth 忽略规则", "PASS" if covered else "WARN",
+                (f"{gi} 已覆盖 .atlas-auth/" if covered else
+                 f"{gi} 未覆盖 .atlas-auth/（运行期凭据不得入库；生成器补 .gitignore 后重跑）"))
+        bad_perms = []
+        for name in ("state.json", "state.meta.json"):
+            f = auth_dir / name
+            try:
+                if f.is_file() and (f.stat().st_mode & 0o077):
+                    bad_perms.append(f"{name}={oct(f.stat().st_mode & 0o777)}")
+            except OSError:
+                continue
+        res.add("e2e 登录态文件权限", "PASS" if not bad_perms else "WARN",
+                ("state / meta 均为 0600" if not bad_perms else
+                 f"权限过宽={bad_perms}（应 0600；请 chmod 600 或用 atlas e2e login 重写）"))
+    else:
+        res.add("e2e 登录态卫生（可选）", "N/A", "无 .atlas-auth/（未产生人工会话）")
 
     # RFC-20261015-02（issue #11）：登录形态未声明 ⇒ WARN 指名（第一阶段；第二阶段 = 下一次
     # 真跑准备日推生成器 `not_ready`，升档记录见 shared/gates.md「E2E 真跑」行）。
@@ -280,14 +403,11 @@ def validate(root: Path) -> Result:
                 "rings/e2e §5.8）")
         if mode in ("on", "auto"):
             prefix = mock.get("api_prefix")
-            if mode == "on":
-                bad_prefix = not prefix or not str(prefix).startswith("/") or " " in str(prefix)
-                res.add("e2e.mock.api_prefix 前置", "PASS" if not bad_prefix else "FAIL",
-                        f"值={prefix!r}（mode: on 时必填、以 / 开头且无空白）")
-            elif mode == "auto" and prefix is not None:
-                bad_prefix = not str(prefix).startswith("/") or " " in str(prefix)
-                res.add("e2e.mock.api_prefix 前置", "PASS" if not bad_prefix else "FAIL",
-                        f"值={prefix!r}（mode: auto 时若指定须以 / 开头且无空白）")
+            prefix_errors = _sp.normalize_mock_prefixes(prefix, mode)[1]
+            detail = (f"值={prefix!r}（mode: {mode} 时必填或兜底 /；标量或列表，每项以 / 开头且无空白）")
+            if prefix_errors:
+                detail += "；" + "；".join(prefix_errors)
+            res.add("e2e.mock.api_prefix 前置", "PASS" if not prefix_errors else "FAIL", detail)
     elif mock:
         # 非映射真值（字符串等）= 形态非法；空 dict / null 与未声明同判（显式不用 = 合法降级）。
         res.add("e2e.mock 段形态", "FAIL", f"值={mock!r}（应为映射或 null）")

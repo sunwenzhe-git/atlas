@@ -287,8 +287,24 @@ REFRESH_WORDS = ("刷新", "reload", "refresh")
 I18N_HINTS = (re.compile(r"\bt\("), re.compile(r"\b[a-z]+\.[a-z]+\.[a-z]+\b"), re.compile(r"\b[A-Z]{2,}_[A-Z_]+\b"))
 
 # 分片 step / expected 的动词词表（契约 `rings/e2e/reference.md` §5.5，2026-09-23 定）
-ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "type", "hover", "refresh", "goto", "waitFor", "download", "upload", "dispatch")
-ASSERT_VERBS = ("text", "contains", "count", "countOptions", "visible", "hidden", "enabled", "disabled", "checked", "unchecked", "value", "attr", "delta", "request")
+# D199（2026-11-12）：动作侧 `send`（发请求 + 捕获响应值）；断言侧 `api`（D197 主动接口断言）
+# —— 与生成器 `gen_e2e_scripts.py` 同名常量同口径（两处机器面双保险，防半通态）。
+ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "type", "hover", "read", "refresh", "goto", "waitFor", "download", "upload", "dispatch", "send")
+ASSERT_VERBS = ("text", "contains", "count", "countOptions", "visible", "hidden", "enabled", "disabled", "checked", "unchecked", "value", "attr", "delta", "request", "api")
+
+# 契约 §5.5/§5.6/§5.7（2026-11-12 补，`DESIGN.md` D191）：`read` 运行时取数原语 + 存在类数据纪律。
+# 与生成器 `gen_e2e_scripts.py` 同名常量同口径（两处机器面双保险，防半通态）。
+READ_NAME_RE = r"[A-Za-z0-9_\u4e00-\u9fff]+"
+VAR_RE = re.compile(r"\$(" + READ_NAME_RE + r")")
+READ_ATTR_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
+
+
+def _unquote_value(value: str) -> str:
+    """值段的成对双引号形态：`"..."` → 去引号；`""` → 空串（D158 语义超集；D191 同口径）。"""
+    v = value.strip()
+    if len(v) >= 2 and v.startswith('"') and v.endswith('"'):
+        return v[1:-1]
+    return value
 # 契约 §5.6 R9：`expected` 行可加**行首前缀**，显式声明该断言的判据形状。
 # 本校验器只负责**形态项**（前缀后是词表内的动词 / 不嵌套 / `unchanged:` 的用例有提交性动作）；
 # **不判**断言是否空转，也不判初始态成不成立（那是运行期零步基线的职责，§6.0 C-new）。
@@ -1233,6 +1249,11 @@ def validate(root: Path) -> Result:
     delta_bad = []
     request_bad = []
     cross_page_bad = []
+    # 契约 §5.5/§5.6/§5.7（D191）：`read` 运行时取数四门
+    read_bad = []       # ① read 语法 / 变量名重复定义
+    var_bad = []        # ② `$<名>` 引用了未 read 的变量（或顺序在后）
+    echo_bad = []       # ③ 同控件回读禁令：fill/type 后对同控件断言 value 同值（无 refresh/goto 间隔）
+    exist_warn = []     # ④ 存在类锚定提示：同一 ≥12 位数字字面量同现 step 与 expected（WARN，走 D10）
     # R10 门用反查表 page_routes_map 已在页面表解析处（上方）构建
     for g in grid:
         d = blocks.get(g["用例ID"], {})
@@ -1259,6 +1280,82 @@ def validate(root: Path) -> Result:
                 _sw = strip_inline_comment(s).split(None, 2)
                 if len(_sw) > 2 and _sw[2].strip():
                     switch_bad.append(f"{g['用例ID']}:{first} <{_sw[2].strip()}>")
+        # 契约 §5.5/§5.6/§5.7（D191）：`read` 运行时取数 —— ①语法/重名 ②先读后用 ③同控件回读禁令。
+        # 单遍扫 step：`read` 登记（语法门）；fill/type 值段的 `$<名>` 对「**更早** step 已读集合」判
+        # 先读后用（与生成器 `interp_value` 的 known 集合同口径）；其余动词值段出现 `$<名>` 同判
+        # （词表外用法——插值只覆盖 fill/type 值与 text/contains/value/attr 期望值）。
+        _read_seen: set[str] = set()
+        _filled: dict[str, str] = {}          # testid token → 最近一次 fill/type 的归一值
+        _reloaded: dict[str, bool] = {}       # 该次 fill/type 之后是否发生过 refresh/goto（状态已重置）
+        for s in step:
+            code = _code(s)
+            toks = code.split(None, 2)
+            verb0 = toks[0] if toks else ""
+            if verb0 == "read":
+                val = toks[2].strip() if len(toks) > 2 else ""
+                left, arrow, name = val.rpartition("->")
+                left, name = left.strip(), name.strip()
+                if (not arrow or not name or not re.fullmatch(READ_NAME_RE, name)
+                        or (left and not re.fullmatch(READ_ATTR_RE, left))):
+                    read_bad.append(f"{g['用例ID']}:{code}")
+                elif name in _read_seen:
+                    read_bad.append(f"{g['用例ID']}:{code}（变量 {name} 重复定义）")
+                else:
+                    _read_seen.add(name)
+                continue
+            if len(toks) > 2:
+                for _n in sorted(set(VAR_RE.findall(toks[2]))):
+                    if _n not in _read_seen:
+                        var_bad.append(f"{g['用例ID']}:step[{verb0} ${_n}]（未 read / send 捕获，或顺序在后）")
+            if verb0 == "send":
+                # D199（2026-11-12）：`send <METHOD> <PATH> … -> capture <名> <json-path>` ——
+                # 捕获变量与 `read` 同表（先捕获后用）。形态校验归生成器（同一文法单源），
+                # 本器只补「变量表可见性」这一层，不新增门行。
+                _mcap = re.search(r"->\s*capture\s+(\S+)\s+(\S+)\s*$", code)
+                if _mcap and _mcap.group(1) not in _read_seen:
+                    _read_seen.add(_mcap.group(1))
+            if verb0 in ("fill", "type") and len(toks) > 2:
+                _filled[toks[1]] = _unquote_value(toks[2])
+                _reloaded[toks[1]] = False
+            elif verb0 in ("refresh", "goto"):
+                for _k in _reloaded:
+                    _reloaded[_k] = True
+        # expected 侧：变量引用对本用例全部 read 变量开放；同控件回读禁令只看**非豁免前缀**的
+        # `value` 断言（`initial:` 采样点在提交性动作之前、`unchanged:` 期望方向相反，都不属回读；
+        # `after:<N>` 锚不豁免——锚定时点的回读同样是恒真）；空值 `(空)`/`""` 豁免——
+        # 「清空后为空」是清空语义的合法表达（006 现场形态）。
+        # R11 是**运行性缺陷**门：blocked / skipped 用例不进执行面（状态真相源 = 索引，缺陷由
+        # 状态原因披露）⇒ 豁免；重写恢复 red/green 后重新受门。语法 / 变量门不豁免（静态
+        # 结构正确性无关可跑性，保护重激活时不破）。
+        if g["状态"] in ("blocked", "skipped"):
+            continue
+        for raw_e in raw_exp:
+            code_e = _code(raw_e)
+            if not code_e:
+                continue
+            for _n in sorted(set(VAR_RE.findall(code_e))):
+                if _n not in _read_seen:
+                    var_bad.append(f"{g['用例ID']}:expected ${_n}（未 read）")
+            _m = AFTER_RE.match(code_e.lstrip())
+            _body = _m.group(2) if _m else code_e
+            toks_e = _body.split(None, 2)
+            if _body.lstrip().startswith(LINE_PREFIXES) or len(toks_e) < 2 or toks_e[0] != "value":
+                continue
+            _ev = _unquote_value(toks_e[2].strip() if len(toks_e) > 2 else "")
+            if _ev.strip() in ("", "(空)"):
+                continue  # 空值豁免（清空语义）
+            for _ftid, _fval in _filled.items():
+                if _ftid == toks_e[1] and _fval.strip() == _ev.strip() and not _reloaded.get(_ftid, True):
+                    echo_bad.append(
+                        f"{g['用例ID']}:{_ftid} = {_ev.strip()!r}（fill 回读同控件同值 = 恒真，断言须落列表/结果面）")
+        # ④ 存在类锚定提示（WARN）：同一 ≥12 位纯数字字面量同现 step 值段与 expected 值段
+        # ⇒ 疑似「编造已存在业务数据的字面量再回读」（007 现场形态）；存在类判定是语义的，
+        # 机器只点名提示，审查维度 D10 从严。
+        _num_step = set(re.findall(r"\d{12,}", " ".join(_code(s) for s in step)))
+        _num_exp = set(re.findall(r"\d{12,}", " ".join(_code(x) for x in raw_exp)))
+        for _n in sorted(_num_step & _num_exp):
+            exist_warn.append(
+                f"{g['用例ID']}:{_n}（同一 ≥12 位数字字面量同现 step 与 expected——疑似存在类锚定）")
         # 契约 §5.5 `参数:`（2026-10-18 新增，`DESIGN.md` D109）：**键清单（无值）**。
         # 值只住 `goto` 的查询串（单一来源，便于守卫导航取首跳、无需回灌 step）。
         # 形态 = `- <键>`；带 `=` / 含空白 / 重复 ⇒ FAIL；键不在白名单 ⇒ FAIL。
@@ -1631,6 +1728,15 @@ def validate(root: Path) -> Result:
     res.add("断言不自相矛盾", "PASS" if not contradict else "FAIL",
             f"同一 testid 既断言可见又断言不可见={_format_list(contradict)}")
     res.add("expected 动词合法", "PASS" if not assert_bad else "FAIL", f"词表外={_format_list(assert_bad)}")
+    # 契约 §5.5/§5.6/§5.7（D191）：`read` 运行时取数四门（与生成器中止双保险）
+    res.add("read 语法合法", "PASS" if not read_bad else "FAIL",
+            f"{_format_list(read_bad)}（契约 §5.5 D191：`read <testid>[N] [attr] -> <名>`，变量名用例内唯一）" if read_bad else "")
+    res.add("read 变量先读后用", "PASS" if not var_bad else "FAIL",
+            f"{_format_list(var_bad)}（契约 §5.5 D191：`$<名>` 只能引用本用例已 read 的变量，且 step 内不得前向引用）" if var_bad else "")
+    res.add("同控件回读禁令", "PASS" if not echo_bad else "FAIL",
+            f"{_format_list(echo_bad)}（契约 §5.6 D191：fill/type 后对同控件回读 value 同值且中间无 refresh/goto = 恒真断言——断言须落在列表/结果面等不同真相源）" if echo_bad else "")
+    res.add("存在类锚定提示", "PASS" if not exist_warn else "WARN",
+            f"{_format_list(exist_warn)}（契约 §5.7 D191：存在类值（预期命中/操作已存在记录的目标值）禁止编造字面量——合法来源 = 运行时 read / seed: / mock fixture；审查维度 D10 从严）" if exist_warn else "")
     res.add("waitFor 属动作", "PASS" if not waitfor_assert else "FAIL",
             f"`waitFor` 出现在 expected（应写在 step）= {_format_list(waitfor_assert)}")
     res.add("delta 相对断言形态", "PASS" if not delta_bad else "FAIL",
