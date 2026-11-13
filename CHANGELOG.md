@@ -4,6 +4,39 @@
 
 ---
 
+## [v0.2.0-beta.34] - 2026-11-13
+
+
+### 🚦 验收资产契约 C 批（封条与任务卡门，`RFC-20261111-03`）
+
+* **`atlas-acceptance:` 专用验收行**：任务卡投影只认专用行（围栏块 / HTML 注释内不计、不认裸 AC token）；`validate_task_card` 纳入 `atlas_check.VALIDATORS`（K-01…K-22）。
+* **封条归父仓**（`atlas apply seal`）：`card_untracked` 无宽限 FAIL（成员卡跟踪为严格态硬前置）；`card_absent` = 封条 task.path 在 active 与 `archive/*/<ID>/` 双查双缺 FAIL（本地 `--allow-card-absent` 才 WARN）；归档后封条不动。
+* **任务卡 Confirmed 表证据状态列**：`prd_schema: 2` 立即要求（缺列 / `verified` 无证据指针 / `assumed` 无默认值来源各成码）；`1` 缓冲至 `2027-06-30`（含前 WARN）、`2027-07-01` 起 FAIL。
+* **`atlas solution task acceptance --backfill`**：从验收指针回填专用行；拒绝覆盖已有验收行（K-11），dry-run 零写。
+
+### 🚦 验收资产契约 D 批（crosswalk 与契约 AC 门，`RFC-20261111-03`）
+
+* **crosswalk 六列对账**：`_support/ac_crosswalk.py` 独立解析器（纯函数 `parse_crosswalk` + findings 入口），C-01…C-11；`check_solution` 与 `validate_ac_alignment` 双接线；坏行闭集 `header_missing / column_count / ac_format / prd_path / member_field_empty`。
+* **豁免资产**：`<assets_root>/prd/ac-crosswalk-waivers.md` + `waiver_baseline_digest` 首锁不可变；`crosswalk_orphan_member_ac` 默认不报（C-10）——**#51 双向对账只落单向，成员 AC → 方案 AC 默认无人判**（§9 留拍板）。
+* **封条 upstream[] role→path 固定绑定**：manifest / prd-global / prd-domain / ac-crosswalk / e2e-index / e2e-case / stack-profile，全在父仓可解析；`seal_upstream_unbound` WARN→FAIL 窗口由 `SEAL_UPSTREAM_BIND_FROM` 控制（C 批落 `None` = 追溯窗口未启动，D 批首 tag 发版按 §2.5 常量发版门落 UTC 日期）；frozen 封条永久 WARN 不升级。
+* **历史防篡改**：`moved_to` 与 `reanchor` 同封条互斥（写侧拒 + 读侧 FAIL）；`retired` 锚 `epoch_origin` 固化不重指；`epoch_origin_history` append-only 校验（堵删项洗掉重指痕迹）；单提交仓 TOFU。
+* **续签链复算**：`renewal_seq` + `previous_seal_sha256/commit`；普通续签复算 case / link 变化，缺对应 reason ⇒ `seal_renewal_reason_missing`（T-08/T-09/T-12），写了无变化 ⇒ `seal_renewal_reason_superfluous`。
+
+### 🚦 #59 定义源契约收尾（`RFC-20261111-03`）
+
+* **命令面输出契约**：`lock --update` 打印 old→new（path / prd_version / prd_date / sha256[:8]，路径或版本变化加印 REVIEW-ID）；`check` 每次输出「定义源: …」行。
+* **写侧拒绝静默替换**：同版本换内容（D-03）/ 换路径无评审（D-04）/ 抬版本无评审（D-30）一律拒签。
+* **`definition_commit_pending`**：首刷前 `commit: null` 仅 WARN；锁历史任一版本出现过非 null 后，null ⇒ `definition_commit_unverifiable` FAIL；`--allow-unverifiable-chain` 只降「对象本地缺失」一支。
+* **R2 口径**：机器只承诺「变更可见 + 不可静默替换」；同域副本抬版本洗白不设机器防承诺，人审 PRD diff 兜底（残余边界实录见 `duty-review/bugs.md` #59 追踪口子）。
+
+### 🔧 修复（随本批发版清偿）
+
+* **docs/map 计数与锚同步**：VALIDATORS 10→12、出厂测试 62→74、`atlas_check.py` 1052→1058 行、`main()` :966、内核 17 件、门行表行号校准；**origin 既有计数红回正**（`test_validators.py` 201→194 条 AST 实收、DESIGN.md 12 器清单）。
+* **i3-reachable 同秒竞态**：手工写锁固定旧 `locked_at`，整文件语境必现的「锁逐字节相同 ⇒ commit 无差异 exit 1」拆雷。
+* **门册三修**：发版门行 `pytest.skip` 框架名违规改写；E2E 真跑行回长即拆（撤下无提交树锚点的 D198 子句，D198 条款待其落地批自行入册）；duty 基线自感知族最近日期复冻（11-11，出库归纳行带日期）。
+
+---
+
 ## [v0.2.0-beta.33] - 2026-11-10
 
 ### 🧭 多仓方案层 E2E：父仓只读聚合视图（二期，RFC-20261108-02）
