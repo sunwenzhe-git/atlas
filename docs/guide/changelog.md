@@ -4,7 +4,11 @@
 
 ---
 
-## [Unreleased]
+## [v0.2.0-beta.36] - 2026-11-14
+
+### 📦 装配面：装配集摘除出厂测试目录 `tests/`（`RFC-20261114-01`）
+
+* **四表同批摘除**（`pkg_dirs` / `ASSEMBLY_COVER_DIRS` / `package.json files` / `BACKFLOW_DIRS`）：出厂测试回归源包验收面；新装配态对齐门落 F53 SKIP（无跑齐义务 + 残留随更新移除）；历史残留 `.atlas/tests` 带基线闸清理；`tests/test_assembly_surface.py` 四表守恒钉 + golden 重录。
 
 ### 🔧 修复：playground 真跑门不可用（issue #63）
 

@@ -4,7 +4,13 @@
 
 ---
 
-## [Unreleased]
+## [v0.2.0-beta.36] - 2026-11-14
+
+### 📦 装配面：装配集摘除出厂测试目录 `tests/`（`RFC-20261114-01`）
+
+* **四表同批摘除**：`install.py pkg_dirs` / `pkg_digest.ASSEMBLY_COVER_DIRS` / `package.json files` / `backflow.BACKFLOW_DIRS` 不再携带 `tests/`——出厂测试回归**源包验收面**，采纳仓不再为「没见过的疤痕」付全量出厂价（动机实证：采纳仓对齐门 9m22s + 7 failed 与采纳方无关的红）。新装配态下对齐测试门落 F53 三态 SKIP（文案出路修订：无跑齐义务 + 残留随更新移除）。
+* **历史装配残留清理闸**：`.atlas/tests` 显式清理（MANIFEST 基线闸：纯出厂残留删、基线外/hash 不符拒绝 `--force` 越过）。
+* **守恒钉**：新增 `tests/test_assembly_surface.py` 四表守恒钉 + `test_tools` F30 反向钉（cover ⊆ pkg_dirs ∪ {skills}）+ golden 重录（装配集四表一变即 `--record` 纪律）。
 
 ### 🔧 修复：playground 真跑门不可用（issue #63）
 
