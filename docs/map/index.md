@@ -105,7 +105,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 |---|---|---|
 | 校验器 | 12(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py:52` |
 | 编排门行 | 9 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 / 消融残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:92`) |
-| 出厂测试文件 | 77 | `tests/` |
+| 出厂测试文件 | 78 | `tests/` |
 | skills | 7(含 frontend-design) | `skills/` |
 | 环 | 3(structure / prd / e2e;原型环 E1 已退役) | `rings/` |
 | 共享契约 | 9 份 | `shared/` |
