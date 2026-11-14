@@ -57,7 +57,7 @@ ACCEPTANCE_CUTOVER_DEFAULT = "2027-03-31"
 ACCEPTANCE_CUTOVER_MAX_DAYS = 90
 # D 批首版日期（UTC）；C 批写 `None` = 追溯窗口未开始 ⇒ `seal_upstream_unbound`
 # 只进 `warnings[]`。D 批发版时改为首版 tag 的 UTC 日期（§2.5 常量发版门）。
-SEAL_UPSTREAM_BIND_FROM: str | None = None
+SEAL_UPSTREAM_BIND_FROM: str | None = "2026-11-13"
 MIN_ATLAS_FOR_V2 = "0.4.0"
 MODES = ("federated", "unified")
 ASSET_OWNERS = ("member", "solution")

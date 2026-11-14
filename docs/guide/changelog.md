@@ -4,6 +4,12 @@
 
 ---
 
+## [Unreleased]
+
+### 🔐 验收面：`SEAL_UPSTREAM_BIND_FROM` 落值 D 批首版 tag 日期（案 10 A / D-48）
+
+* **常量武装**：`_support/solution.py` 的 `SEAL_UPSTREAM_BIND_FROM` 由 `None` 改为 `"2026-11-13"`（D 批首版 tag `v0.2.0-beta.34`，提交 `b529a55` 的 UTC 日期；§2.5 常量发版门）——`seal_upstream_unbound` 追溯窗口自该日起算 90 天，逾期未绑定由 WARN 转 FAIL（`frozen` 仍永久 WARN）。
+
 ## [v0.2.0-beta.36] - 2026-11-14
 
 ### 📦 装配面：装配集摘除出厂测试目录 `tests/`（`RFC-20261114-01`）

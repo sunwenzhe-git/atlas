@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### 🔐 验收面：`SEAL_UPSTREAM_BIND_FROM` 落值 D 批首版 tag 日期（案 10 A / D-48）
+
+* **常量武装**：`_support/solution.py` 的 `SEAL_UPSTREAM_BIND_FROM` 由 `None` 改为 `"2026-11-13"`（D 批首版 tag `v0.2.0-beta.34`，提交 `b529a55` 的 UTC 日期；§2.5 常量发版门）——`seal_upstream_unbound` 追溯窗口自该日起算 90 天，逾期未绑定由 WARN 转 FAIL（`frozen` 仍永久 WARN）。
+
 ### 🤖 巡检面：`families.py --json` 双轨批（`RFC-20261114-06`）
 
 * **人读轨不动，尾部加机器段**：`duty-review/families.py` 新增 `--json`（扫描剥离旗标，`--json <path>` 与 `<path> --json` 皆通），输出 compact 单行 JSON（`ledger` / `cutoff` / `families[{family,count,exact,last_date,active,verdict,warns[]}]` / `warns`）；显式挑字段序列化（rows 内含 `ids` / `exact_ids` 两个 set，直接 `json.dumps` 必炸），不重复人读文本；台账缺 ⇒ 空族 + `cutoff=null`，不崩不编造。无旗标输出逐字节不变（实测同台账 sha256 一致）。
