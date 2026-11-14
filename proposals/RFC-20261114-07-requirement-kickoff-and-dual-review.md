@@ -108,7 +108,8 @@
 - [ ] **契约/文档**：`proposals/README.md` 末尾增两行指针（起手协议 / 评审派工法）
 - [ ] **测试防线**：无新机器判据；**但 proposals/ 落在 `tests/test_canonical_consistency.py` 判据①/⑤/⑥ 的全仓扫描域内**（`canonical_text_files()` 对 `PKG_ROOT.rglob("*")` 全仓扫描，仅跳过 `__pycache__/.git/.pytest_cache`，proposals/ 在域内——2026-11-14 实查；同日 RFC-02 同款「无机器判据」断言已被列为必修）——落刀时核对新增档内 `shared/`、`rings/` 引用全部可达 + `pytest tests/` 全量，并粘贴 `git diff --name-only` + `scripts/closeout_derive.py` 原始输出
 - [ ] **留出验证（§4.5）**：不适用 + 触发面核对（见 §4.5）
-- [ ] **版本装配**：不涉及（proposals/ 不进装配集）
+- [ ] **契约/文档（落刀批，v5 增）**：新增 `skills/atlas-onegate/SKILL.md`（仓内正本，atlas- 家族命名；**自包含执行面而非瘦桩**——家族惯例是瘦桩指 `shared/` 骨架，但本案骨架正文在 proposals/RFC-07 + KICKOFF 档且不进装配集，自包含避免把骨架复制进 `shared/` 造第二真相源；用户级 `~/.agents/skills/atlas-onegate/` 为本机同内容副本，正本在本仓）
+- [ ] **版本装配（v5 增）**：`skills/` 在 install.py 装配源集合（`install.py:633` 全量 iterdir，逐 `skills/atlas-*/` 装到各平台 skill 目录 `.agents/skills` / `.claude/skills` / `.codex/skills`）——落刀时按 golden 纪律 `--record` 重录 + selfcheck / 计数棘轮链核查，据实回填
 
 > 依赖注记：`RFC-20261114-05` 落刀改 `docs/guide/contributing.md:40` 时，宜在其增行带一句指向 KICKOFF 档（新人从 contributing 入口可见起手协议）；本案自身不改 contributing.md。
 
@@ -136,6 +137,7 @@ python3 scripts/atlas_check.py --fast
 * **修复版本**：本文件 v2（上述修复落齐后即评审通过版）。
 * **v3 补充（2026-11-14 用户拍板）**：触发面改零口令——用户驳回「直接说一句『按 RFC-07 起手』」的触发方式（反摩擦协议自带口令自相矛盾）；机制一增「触发面」行：默认生效、Agent 自判启用、档位可见、用户可跳过。
 * **v4 扩展（2026-11-14 用户拍板）**：适用面从「需求起手」扩至「评审接力」——增机制四「意见处置」四分法（自证面直接修 / 判断面回应留痕 / 真取舍升级一次 / 回评审按派工），方案细节 review 与代码 review 通用。skill 封装随 v4 落用户级 `~/.agents/skills/onegate/`（执行面自包含，留证面指回本 RFC；仓内不另做 skill，防第二真相源）；机制四为已评审规则（机制二三判据与合流规则）的组装，轻档未另开双评，随下轮评审批复核。
+* **v5 命名（2026-11-14 用户拍板）**：skill 归入 atlas- 家族——理由「所有的需求都会先装 atlas」，家族命名 = 装配分发通道（install.py 逐 `skills/atlas-*/` 装到各平台 skill 目录）；`onegate` → **`atlas-onegate`**，仓内正本 `skills/atlas-onegate/SKILL.md` 列入落刀批（§3），用户级改路径留同内容副本即时生效。v4 的「仓内不另做 skill」被本拍板取代。
 
 ### 4.5 留出验证（系统性修复必填；`RFC-20261026-03`）
 
