@@ -1,7 +1,7 @@
 {
   "installer": [
-    "bash",
-    "/Users/sunwenzhe/Desktop/atlas/install.sh"
+    "python3.12",
+    "/Users/sunwenzhe/Desktop/atlas/install.py"
   ],
   "runs": [
     {

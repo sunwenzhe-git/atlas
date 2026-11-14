@@ -1,7 +1,7 @@
 {
   "installer": [
-    "bash",
-    "<PKG>/install.sh"
+    "python3.12",
+    "<PKG>/install.py"
   ],
   "runs": [
     {

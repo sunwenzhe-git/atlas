@@ -1,7 +1,7 @@
 {
   "installer": [
-    "bash",
-    "<PKG>/install.sh"
+    "python3.12",
+    "<PKG>/install.py"
   ],
   "runs": [
     {
@@ -78,6 +78,10 @@
         "  [dry-run] mkdir -p <ROOT>/.agents/skills",
         "  [dry-run] cp -R <PKG>/skills/atlas-grill <ROOT>/.agents/skills/atlas-grill",
         "      -> atlas-grill（1 个平台）",
+        "  [dry-run] rm -rf <ROOT>/.agents/skills/atlas-onegate",
+        "  [dry-run] mkdir -p <ROOT>/.agents/skills",
+        "  [dry-run] cp -R <PKG>/skills/atlas-onegate <ROOT>/.agents/skills/atlas-onegate",
+        "      -> atlas-onegate（1 个平台）",
         "  [dry-run] rm -rf <ROOT>/.agents/skills/atlas-prd",
         "  [dry-run] mkdir -p <ROOT>/.agents/skills",
         "  [dry-run] cp -R <PKG>/skills/atlas-prd <ROOT>/.agents/skills/atlas-prd",
