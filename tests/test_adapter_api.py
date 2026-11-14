@@ -426,6 +426,55 @@ def test_runtime_schema_alias_constructor_yields_pointer() -> None:
         assert run_root(root).get("spec_entry") == "/openapi.json"
 
 
+def test_default_scan_is_narrowed_to_registered_apps() -> None:
+    """默认扫描面 = apps[] 注册项（issue #64）：未登记顶层目录不得产出事实，且计数可见。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_backend(root, {
+            "backend/main.go": 'package main\nfunc main() { r.GET("/health", h) }\n',
+            "vendor/thirdparty.go": 'package v\nfunc x() { r.GET("/evil", h) }\n',
+        })
+        data = run_root(root)
+        assert [i["path"] for i in data["items"]] == ["/health"], data["items"]
+        scope = data["scan_scope"]
+        assert scope["mode"] == "apps" and scope["roots"] == ["backend"], scope
+        assert "vendor" in scope["excluded"] and "product" in scope["excluded"], scope
+        assert scope["excluded_count"] == len(scope["excluded"]), scope
+
+
+def test_explicit_app_scan_scope_is_unchanged() -> None:
+    """显式 `--app` 行为不变：只扫该 app，不产生排除清单。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_backend(root, {
+            "backend/main.go": 'package main\nfunc main() { r.GET("/health", h) }\n',
+            "vendor/thirdparty.go": 'package v\nfunc x() { r.GET("/evil", h) }\n',
+        })
+        data = run_backend(root)
+        assert [i["path"] for i in data["items"]] == ["/health"], data["items"]
+        assert data["scan_scope"] == {
+            "mode": "explicit-app", "roots": ["backend"],
+            "excluded": [], "excluded_count": 0}, data["scan_scope"]
+
+
+def test_missing_apps_falls_back_to_source_dirs_and_counts_excluded() -> None:
+    """无 apps[] 兜底：只扫含候选源码的顶层目录 + 根目录文件，其余目录排除并计数。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_plain(root, {
+            "main.go": 'package main\nfunc main() { r.GET("/root-alive", h) }\n',
+            "src/main.go": 'package main\nfunc main() { r.GET("/src-alive", h) }\n',
+            "docs/readme.md": "# 文档\n",
+        })
+        (root / "assets").mkdir()
+        (root / "assets" / "logo.png").write_bytes(b"\x89PNG")
+        data = run_root(root)
+        assert sorted(i["path"] for i in data["items"]) == ["/root-alive", "/src-alive"], data
+        scope = data["scan_scope"]
+        assert scope["mode"] == "fallback" and scope["roots"] == ["src"], scope
+        assert scope["excluded"] == ["assets", "docs"] and scope["excluded_count"] == 2, scope
+
+
 def test_schema_marker_literals_are_not_descriptor_evidence() -> None:
     """issue #46：注释 / 字符串 / 测试夹具 / 适配器自身源码里的标记字面量不算描述源。
 

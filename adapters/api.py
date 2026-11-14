@@ -37,8 +37,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _lib import (  # noqa: E402
-    IGNORE_DIRS, die, iter_files, load_apps, read_source, resolve_app, strip_js_comments,
-    write_json,
+    IGNORE_DIRS, die, iter_scope_files, load_apps, read_source, resolve_app, scan_scope,
+    strip_js_comments, write_json,
 )
 
 ADAPTER = "api"
@@ -488,7 +488,7 @@ def uses_runtime_schema(text: str) -> bool:
     return False
 
 
-def find_descriptors(root: Path) -> list[str]:
+def find_descriptors(root: Path, scope=None) -> list[str]:
     """按**文件名**找机器可读描述文件（§3.5 的「有描述」探测）。
 
     为何不能搭源码那圈遍历：`iter_files` 只枚举源码后缀（`.py` / `.ts` …），
@@ -498,19 +498,34 @@ def find_descriptors(root: Path) -> list[str]:
 
     为何**整项目**找而不按 `--app` 收窄：描述文件通常就在仓库根（`spec_entry` 是
     项目级真相源入口），按 app 收窄会让 `--app` 调用整支探测失明。
+    默认模式（无 `--app`）仍遵守 apps[] 扫描面（issue #64）：未登记顶层目录里的
+    第三方 `openapi.json` 不得被当成项目真相源；根目录描述文件始终可见。
     """
     if not root.exists():
         return []
     out: list[str] = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(
-            d for d in dirnames
-            if d not in IGNORE_DIRS and not d.startswith(".venv") and not d.endswith(".venv")
-        )
-        for name in sorted(filenames):
-            if name in DESCRIPTOR_FILES:
-                out.append((Path(dirpath) / name).relative_to(root).as_posix())
-    return out
+
+    def walk(base: Path) -> None:
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = sorted(
+                d for d in dirnames
+                if d not in IGNORE_DIRS and not d.startswith(".venv")
+                and not d.endswith(".venv")
+            )
+            for name in sorted(filenames):
+                if name in DESCRIPTOR_FILES:
+                    out.append((Path(dirpath) / name).relative_to(root).as_posix())
+
+    if scope is None or scope.mode == "explicit-app":
+        walk(root)
+    else:
+        if scope.include_root_files and "." not in scope.roots:
+            for p in sorted(root.iterdir()):
+                if p.is_file() and p.name in DESCRIPTOR_FILES:
+                    out.append(p.name)
+        for r in scope.roots:
+            walk(root if r == "." else root / r)
+    return sorted(set(out))
 
 
 def main() -> int:
@@ -525,11 +540,13 @@ def main() -> int:
         die(ADAPTER, f"--root 不是目录: {root}")
     apps = load_apps(root, ADAPTER)
     app_path = resolve_app(root, apps, args.app, ADAPTER)
+    suffixes = (".py", ".pyxl", ".js", ".jsx", ".ts", ".tsx", ".java", ".go")
+    scope = scan_scope(root, apps, app_path, suffixes, ADAPTER)
 
-    desc_files: list[str] = find_descriptors(root)
+    desc_files: list[str] = find_descriptors(root, scope)
     schema_sources: list[str] = []
     items: list[dict] = []
-    for f in iter_files(root, (".py", ".pyxl", ".js", ".jsx", ".ts", ".tsx", ".java", ".go"), app_path):
+    for f in iter_scope_files(root, suffixes, scope):
         rel = f.relative_to(root).as_posix()
         if f.suffix == ".py":
             text = read_source(f, rel, ADAPTER)
@@ -569,6 +586,7 @@ def main() -> int:
             "spec_entry": entry,
             "source_files": sorted(set(desc_files + schema_sources)),
             "adapter_version": VERSION,
+            "scan_scope": scope.payload(),
         }
     else:
         # **适配器不去重**（2026-10-15 复核改判）：items 的粒度 = 代码里的事实，同一端点被
@@ -582,7 +600,9 @@ def main() -> int:
             "items": items,
             "source_files": sorted({i["source_module"] for i in items}),
             "adapter_version": VERSION,
+            "scan_scope": scope.payload(),
         }
+    print(f"[{ADAPTER}] 扫描面：{scope.describe()}")
     write_json(ADAPTER, args.out, payload)
     return 0
 

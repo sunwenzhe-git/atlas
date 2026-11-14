@@ -34,7 +34,7 @@ if str(Path(__file__).resolve().parents[1]) not in sys.path:
 from _support.layout import load_layout  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _lib import read_source, strip_js_comments  # noqa: E402  # 同包共用工具
+from _lib import read_source, scan_scope, strip_js_comments  # noqa: E402  # 同包共用工具
 from _jpa import parse_project as parse_jpa_project  # noqa: E402
 
 ADAPTER = "models"
@@ -52,18 +52,27 @@ def die(msg: str) -> None:
     sys.exit(1)
 
 
-def iter_py(root: Path, app_path: str | None):
-    base = root / app_path if app_path else root
-    if not base.exists():
-        return
-    for dirpath, dirnames, filenames in os.walk(base):
-        dirnames[:] = sorted(
-            d for d in dirnames
-            if d not in IGNORE_DIRS and not d.startswith(".venv") and not d.endswith(".venv")
-        )
-        for name in sorted(filenames):
-            if name.endswith(".py"):
-                yield Path(dirpath) / name
+def _scope_bases(root: Path, scope):
+    for r in scope.roots:
+        base = root if r == "." else root / r
+        if base.exists():
+            yield base
+
+
+def iter_py(root: Path, scope):
+    for base in _scope_bases(root, scope):
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = sorted(
+                d for d in dirnames
+                if d not in IGNORE_DIRS and not d.startswith(".venv") and not d.endswith(".venv")
+            )
+            for name in sorted(filenames):
+                if name.endswith(".py"):
+                    yield Path(dirpath) / name
+    if scope.include_root_files and "." not in scope.roots:
+        for p in sorted(root.iterdir()):
+            if p.is_file() and p.name.endswith(".py"):
+                yield p
 
 
 def load_apps(root: Path) -> list[dict]:
@@ -264,19 +273,22 @@ def parse_models(text: str) -> tuple[list[dict], list[dict]]:
     return items, enums
 
 
-def iter_ts(root: Path, app_path: str | None):
-    base = root / app_path if app_path else root
-    if not base.exists():
-        return
-    for dirpath, dirnames, filenames in os.walk(base):
-        dirnames[:] = sorted(
-            d for d in dirnames
-            if d not in IGNORE_DIRS and not d.startswith(".venv") and not d.endswith(".venv")
-        )
-        for name in sorted(filenames):
-            # `*.d.ts` 是库 / 打包器产物（不是本项目的模型声明）⇒ 跳过。
-            if name.endswith((".ts", ".tsx")) and not name.endswith(".d.ts"):
-                yield Path(dirpath) / name
+def iter_ts(root: Path, scope):
+    for base in _scope_bases(root, scope):
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = sorted(
+                d for d in dirnames
+                if d not in IGNORE_DIRS and not d.startswith(".venv") and not d.endswith(".venv")
+            )
+            for name in sorted(filenames):
+                # `*.d.ts` 是库 / 打包器产物（不是本项目的模型声明）⇒ 跳过。
+                if name.endswith((".ts", ".tsx")) and not name.endswith(".d.ts"):
+                    yield Path(dirpath) / name
+    if scope.include_root_files and "." not in scope.roots:
+        for p in sorted(root.iterdir()):
+            if p.is_file() and p.name.endswith((".ts", ".tsx")) \
+                    and not p.name.endswith(".d.ts"):
+                yield p
 
 
 # ---------------------------------------------------------------- TS：export 的 interface / type
@@ -534,15 +546,18 @@ def parse_ts_models(src: str) -> tuple[list[dict], list[dict], dict]:
 
 
 
-def iter_java(root: Path, app_path: str | None):
-    base = root / app_path if app_path else root
-    if not base.exists():
-        return
-    for dirpath, dirnames, filenames in os.walk(base):
-        dirnames[:] = sorted(d for d in dirnames if d not in IGNORE_DIRS and not d.startswith("."))
-        for name in sorted(filenames):
-            if name.endswith(".java"):
-                yield Path(dirpath) / name
+def iter_java(root: Path, scope):
+    for base in _scope_bases(root, scope):
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = sorted(
+                d for d in dirnames if d not in IGNORE_DIRS and not d.startswith("."))
+            for name in sorted(filenames):
+                if name.endswith(".java"):
+                    yield Path(dirpath) / name
+    if scope.include_root_files and "." not in scope.roots:
+        for p in sorted(root.iterdir()):
+            if p.is_file() and p.name.endswith(".java"):
+                yield p
 
 
 
@@ -621,15 +636,18 @@ def parse_go_models(text: str, rel: str) -> list[dict]:
     return items
 
 
-def iter_go(root: Path, app_path: str | None):
-    base = root / app_path if app_path else root
-    if not base.exists():
-        return
-    for dirpath, dirnames, filenames in os.walk(base):
-        dirnames[:] = sorted(d for d in dirnames if d not in IGNORE_DIRS and not d.startswith("."))
-        for name in sorted(filenames):
-            if name.endswith(".go") and not name.endswith("_test.go"):
-                yield Path(dirpath) / name
+def iter_go(root: Path, scope):
+    for base in _scope_bases(root, scope):
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = sorted(
+                d for d in dirnames if d not in IGNORE_DIRS and not d.startswith("."))
+            for name in sorted(filenames):
+                if name.endswith(".go") and not name.endswith("_test.go"):
+                    yield Path(dirpath) / name
+    if scope.include_root_files and "." not in scope.roots:
+        for p in sorted(root.iterdir()):
+            if p.is_file() and p.name.endswith(".go") and not p.name.endswith("_test.go"):
+                yield p
 
 
 def main() -> int:
@@ -651,10 +669,13 @@ def main() -> int:
             die(f"--app {args.app} 不在 stack-profile.apps 中")
         app_path = hit.get("path") or hit.get("name")
 
+    suffixes = (".py", ".ts", ".tsx", ".java", ".go")
+    scope = scan_scope(root, apps, app_path, suffixes, ADAPTER)
+
     items: list[dict] = []
     enums: list[dict] = []
     source_files: list[str] = []
-    for f in iter_py(root, app_path):
+    for f in iter_py(root, scope):
         rel = f.relative_to(root).as_posix()
         text = read_source(f, rel, ADAPTER)
         if text is None:
@@ -681,7 +702,7 @@ def main() -> int:
 
     # TS 侧：契约层声明文件里 `export` 的 interface / type 声明体（前端 adopt 的 E 类事实）。
     n_enum_decls = n_alias_refs = 0
-    for f in iter_ts(root, app_path):
+    for f in iter_ts(root, scope):
         rel = f.relative_to(root).as_posix()
         if not _ts_decl_file(rel):
             continue
@@ -707,12 +728,12 @@ def main() -> int:
         print(f"[{ADAPTER}] 统计：顶层枚举/字面量别名声明 {n_enum_decls} 个（自身不成行）；"
               f"字段引用旁表补回取值 {n_alias_refs} 处", file=sys.stderr)
 
-    java_items, java_enums, java_sources = parse_jpa_project(list(iter_java(root, app_path)), root)
+    java_items, java_enums, java_sources = parse_jpa_project(list(iter_java(root, scope)), root)
     if java_items:
         items.extend(java_items)
         enums.extend(java_enums)
         source_files.extend(java_sources)
-    for f in iter_go(root, app_path):
+    for f in iter_go(root, scope):
         rel = f.relative_to(root).as_posix()
         text = read_source(f, rel, ADAPTER)
         if text is None:
@@ -731,7 +752,9 @@ def main() -> int:
         "enums": enums,
         "source_files": sorted(source_files),
         "adapter_version": VERSION,
+        "scan_scope": scope.payload(),
     }
+    print(f"[{ADAPTER}] 扫描面：{scope.describe()}")
     dst = Path(args.out)
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(json.dumps(out, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 if str(Path(__file__).resolve().parents[1]) not in sys.path:
@@ -96,13 +97,134 @@ def load_apps(root: Path, adapter: str = "adapters") -> list[dict]:
 
 
 def resolve_app(root: Path, apps: list[dict], name: str | None, adapter: str) -> str | None:
-    """--app 名 → apps[].path；返回单 app 遍历根，None 表示整项目。"""
+    """--app 名 → apps[].path；返回单 app 遍历根，None 表示未显式指定 app。
+
+    未显式指定时的默认扫描面由 `scan_scope` 决定（apps[] 收窄 / 无 apps[] 兜底），
+    不再等于「整项目递归」。
+    """
     if not name:
         return None
     hit = next((a for a in apps if a.get("name") == name), None)
     if hit is None:
         die(adapter, f"--app {name} 不在 stack-profile.apps 中")
     return hit.get("path") or hit.get("name")
+
+
+@dataclass(frozen=True)
+class ScanScope:
+    """默认扫描面（issue #64）：apps[] 注册项 + 根目录文件；未登记顶层目录排除并计数。"""
+
+    mode: str                      # explicit-app | apps | fallback
+    roots: tuple[str, ...]         # 项目相对扫描根；"." = 整个项目根
+    excluded: tuple[str, ...]      # 默认排除的顶层目录（项目相对）
+    include_root_files: bool       # 是否扫根目录直接文件（顶层目录之外的文件）
+
+    def includes(self, rel: str) -> bool:
+        if "/" not in rel:
+            return self.include_root_files or "." in self.roots
+        for r in self.roots:
+            if r == "." or rel == r or rel.startswith(r + "/"):
+                return True
+        return False
+
+    def payload(self) -> dict:
+        return {
+            "mode": self.mode,
+            "roots": list(self.roots),
+            "excluded": list(self.excluded),
+            "excluded_count": len(self.excluded),
+        }
+
+    def describe(self) -> str:
+        if self.mode == "explicit-app":
+            return f"--app 作用域 {self.roots[0]}（显式指定，行为不变）"
+        names = "、".join(self.excluded) if self.excluded else "无"
+        if self.mode == "apps":
+            head = f"apps[] 注册 {len(self.roots)} 个（{'、'.join(self.roots)}）"
+        else:
+            head = (f"未声明可用 apps[] ⇒ 兜底扫描含源码的顶层目录"
+                    f"（{'、'.join(self.roots) or '无'}）+ 根目录文件")
+        return f"{head}；排除未登记顶层目录 {len(self.excluded)} 个（{names}）"
+
+
+def _norm_app_path(value: str | None) -> str:
+    p = (value or "").strip().replace("\\", "/").strip("/")
+    return p or "."
+
+
+def _top_level_dirs(root: Path) -> list[str]:
+    return sorted(
+        p.name for p in root.iterdir()
+        if p.is_dir() and p.name not in IGNORE_DIRS
+        and not p.name.startswith(".venv") and not p.name.endswith(".venv")
+    )
+
+
+def _has_candidate_source(base: Path, suffixes: tuple[str, ...]) -> bool:
+    for _dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = sorted(
+            d for d in dirnames
+            if d not in IGNORE_DIRS and not d.startswith(".venv") and not d.endswith(".venv")
+        )
+        if any(n.endswith(suffixes) for n in filenames):
+            return True
+    return False
+
+
+def _dedupe_roots(roots: list[str]) -> list[str]:
+    """去掉被祖先根覆盖的嵌套根（"apps" + "apps/web" ⇒ 只留 "apps"）。"""
+    out: list[str] = []
+    for p in roots:
+        if p == ".":
+            return ["."]
+        if any(q != p and (p == q or p.startswith(q + "/")) for q in roots):
+            continue
+        out.append(p)
+    return out
+
+
+def scan_scope(root: Path, apps: list[dict], app_path: str | None,
+               suffixes: tuple[str, ...], adapter: str) -> ScanScope:
+    """按 apps[] 收窄默认扫描面；显式 --app 行为不变；无 apps[] 时走可解释兜底。"""
+    if app_path:
+        return ScanScope("explicit-app", (_norm_app_path(app_path),), (), False)
+
+    top = _top_level_dirs(root)
+    registered: list[str] = []
+    for a in apps:
+        p = _norm_app_path(a.get("path") or a.get("name"))
+        if p not in registered:
+            registered.append(p)
+    missing = [p for p in registered if p != "." and not (root / p).is_dir()]
+    existing = _dedupe_roots([p for p in registered if p == "." or (root / p).is_dir()])
+    if missing:
+        print(f"WARN[{adapter}]: apps[].path 不存在，已排除: {'、'.join(missing)}",
+              file=sys.stderr)
+    if existing:
+        covered = {t for t in top if any(t == p or p.startswith(t + "/") for p in existing)}
+        return ScanScope("apps", tuple(existing),
+                         tuple(t for t in top if t not in covered), True)
+
+    # 兜底：没有可用 apps[] ⇒ 只扫「含候选源码的顶层目录」+ 根目录文件，不整仓递归。
+    roots = tuple(d for d in top if _has_candidate_source(root / d, suffixes))
+    excluded = tuple(d for d in top if d not in roots)
+    return ScanScope("fallback", roots, excluded, True)
+
+
+def iter_scope_files(root: Path, suffixes: tuple[str, ...], scope: ScanScope):
+    """按扫描面产出候选文件（确定性；根目录文件与根遍历不重复）。"""
+    seen: set[Path] = set()
+    if scope.include_root_files and "." not in scope.roots:
+        for p in sorted(root.iterdir()):
+            if p.is_file() and p.name.endswith(suffixes):
+                seen.add(p)
+                yield p
+    for r in scope.roots:
+        for f in iter_files(root, suffixes, None if r == "." else r):
+            if f in seen:
+                continue
+            seen.add(f)
+            yield f
 
 
 def write_json(adapter: str, out: str, payload: dict) -> None:

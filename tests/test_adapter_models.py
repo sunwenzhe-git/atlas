@@ -97,6 +97,15 @@ def run(root: Path, app: str = "backend") -> dict:
     return run_full(root, app)[0]
 
 
+def run_default(root: Path) -> dict:
+    """不带 `--app`（默认扫描面 = apps[]，issue #64）。"""
+    out = root / "out.json"
+    p = subprocess.run([sys.executable, str(ADAPTER), "--root", str(root), "--out", str(out)],
+                       capture_output=True, text=True, timeout=120)
+    assert p.returncode == 0, p.stdout + p.stderr
+    return json.loads(out.read_text(encoding="utf-8"))
+
+
 def test_sqlmodel_table_with_inherited_fields() -> None:
     """`table=True` 才算表；**继承字段必须合并**（否则事实区少列）。"""
     with tempfile.TemporaryDirectory() as td:
@@ -485,6 +494,23 @@ def test_utf8_model_source_with_chinese_text_is_not_skipped() -> None:
         data, p = run_full(root)
         assert {i["table"] for i in data["items"]} == {"item"}, data["items"]
         assert "跳过无法读取的文件" not in p.stderr, p.stderr
+
+
+def test_default_scan_is_narrowed_to_registered_apps() -> None:
+    """默认扫描面 = apps[] 注册项（issue #64）：未登记目录里的模型不得进 items，计数可见。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, SQLALCHEMY)
+        vendor = root / "vendor"
+        vendor.mkdir()
+        (vendor / "models.py").write_text(
+            SQLALCHEMY.replace('"item"', '"vendor_item"'), encoding="utf-8")
+        data = run_default(root)
+        assert {i["table"] for i in data["items"]} == {"item"}, data["items"]
+        scope = data["scan_scope"]
+        assert scope["mode"] == "apps" and scope["roots"] == ["backend"], scope
+        assert "vendor" in scope["excluded"] and "product" in scope["excluded"], scope
+        assert scope["excluded_count"] == len(scope["excluded"]), scope
 
 
 def test_go_plain_infra_struct_is_not_a_model() -> None:

@@ -334,6 +334,20 @@ export const routesList = [{ path: '/m1', element: <ModOne /> }]
         assert out["route_coverage"]["mounted"] == 1, out["route_coverage"]
 
 
+def test_default_scan_is_narrowed_to_registered_apps() -> None:
+    """默认扫描面 = apps[] 注册项（issue #64）：未登记顶层目录里的路由不得进 items，且计数可见。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, {**FILES, "third_party/src/routes/leak.tsx": "// 第三方路由\n"})
+        out = run(root)
+        paths = sorted(i["path"] for i in out["items"])
+        assert paths == ["/", "/config", "/login", "/projects/:id"], paths
+        scope = out["scan_scope"]
+        assert scope["mode"] == "apps" and scope["roots"] == ["frontend"], scope
+        assert "third_party" in scope["excluded"] and "product" in scope["excluded"], scope
+        assert scope["excluded_count"] == len(scope["excluded"]), scope
+
+
 def test_sub_router_without_basename_and_without_mount_is_dropped() -> None:
     """D83 条 5（2026-10-16 变异取证补的钉）：子路由（本文件挂载了自己的 router）**既无入边又
     无 basename** 时必须判「未解析 + 计数」，不得因为「没有 basename 声明」就误判成站点级 ——

@@ -44,7 +44,7 @@ _ENUM_SUFFIXES = (".pyxl", ".tsx", ".ts", ".jsx", ".js")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _graph  # noqa: E402  # 同包隔离层（唯一后端接触面）
-from _lib import strip_js_comments  # noqa: E402  # 同包共用工具（引号感知的注释剥离）
+from _lib import scan_scope, strip_js_comments  # noqa: E402  # 同包共用工具
 
 IGNORE_DIRS = {
     ".git", "node_modules", "__pycache__", "site-packages", "dist", "build",
@@ -657,7 +657,7 @@ def collect_js_routes(root: Path, apps: list[dict], app_path: str | None,
 
 # ------------------------------------------------------------------ main
 
-def resolve_relpaths(root: Path, app_path: str | None, backend: str, cfg: dict | None,
+def resolve_relpaths(root: Path, scope, app_path: str | None, backend: str, cfg: dict | None,
                      explicit: bool = False) -> tuple[list[str], str | None, str | None]:
     """文件枚举二通道。返回 (relpaths, 实际 backend, 降级原因)。
 
@@ -666,19 +666,19 @@ def resolve_relpaths(root: Path, app_path: str | None, backend: str, cfg: dict |
     auto 解析出的 graph 通道在后端不可用时降级（auto = profile 偏好，不是用户显式要求）。
     """
     if backend == "regex":
-        return _walk_relpaths(root, app_path), "regex", None
+        return _walk_relpaths(root, scope), "regex", None
     det = _graph.detect(root, cfg)
     if det is None:
         if explicit:
             _graph.die("--backend graph 显式要求，但 cgc 不可用（未安装或探测失败）")
         _graph.warn(f"profile 声明了 graph.backend 但 cgc 不可用——显式降级为 regex 枚举"
                     f"（安装 cgc 或移除 profile 的 graph 段后恢复 graph 通道）")
-        return _walk_relpaths(root, app_path), "regex", "cgc 不可用（未安装或探测失败）"
+        return _walk_relpaths(root, scope), "regex", "cgc 不可用（未安装或探测失败）"
     _graph.ensure_index(root, cfg, version=det["version"])
-    return _prune(_graph.file_paths(root, prefix=app_path, cfg=cfg)), "graph", None
+    return _prune(_graph.file_paths(root, prefix=app_path, cfg=cfg), scope), "graph", None
 
 
-def _prune(relpaths: list[str]) -> list[str]:
+def _prune(relpaths: list[str], scope) -> list[str]:
     """把图谱枚举结果剪成与 regex 通道**同一范围**（确定性排序）。
 
     为何必须剪（2026-10-15 复核补，`3509 §B92` 同族）：regex 通道走 `iter_files`，
@@ -695,17 +695,29 @@ def _prune(relpaths: list[str]) -> list[str]:
         if any(p in IGNORE_DIRS or p.startswith(".venv") or p.endswith(".venv")
                for p in rel.split("/")[:-1]):
             continue
+        if not scope.includes(rel):      # 与 regex 通道同一 apps[] 扫描面（issue #64）
+            continue
         out.append(rel)
     return sorted(out)
 
 
-def _walk_relpaths(root: Path, app_path: str | None) -> list[str]:
-    base = root / app_path if app_path else root
-    if not base.exists():
-        return []
+def _walk_relpaths(root: Path, scope) -> list[str]:
     out: list[str] = []
-    for f in iter_files(root, _ENUM_SUFFIXES, app_path):
-        out.append(f.relative_to(root).as_posix())
+    seen: set[str] = set()
+
+    def add(f: Path) -> None:
+        rel = f.relative_to(root).as_posix()
+        if rel not in seen:
+            seen.add(rel)
+            out.append(rel)
+
+    if scope.include_root_files and "." not in scope.roots:
+        for p in sorted(root.iterdir()):
+            if p.is_file() and p.name.endswith(_ENUM_SUFFIXES):
+                add(p)
+    for r in scope.roots:
+        for f in iter_files(root, _ENUM_SUFFIXES, None if r == "." else r):
+            add(f)
     return sorted(out)
 
 
@@ -730,13 +742,15 @@ def main() -> int:
             die(f"--app {args.app} 不在 stack-profile.apps 中")
         app_path = hit.get("path") or hit.get("name")
 
+    scope = scan_scope(root, apps, app_path, _ENUM_SUFFIXES, ADAPTER)
+
     cfg = _graph.load_graph_config(root)
     backend = args.backend
     if backend == "auto":
         backend = "graph" if cfg else "regex"
     elif backend == "graph" and cfg is None:
         die("--backend graph 但 profile 未声明 graph 段（先在资产根/stack-profile.yaml 声明）")
-    relpaths, backend_used, fallback = resolve_relpaths(root, app_path, backend, cfg,
+    relpaths, backend_used, fallback = resolve_relpaths(root, scope, app_path, backend, cfg,
                                                         explicit=args.backend != "auto")
 
     js_items, route_coverage = collect_js_routes(root, apps, app_path, relpaths)
@@ -763,9 +777,11 @@ def main() -> int:
         "adapter_version": VERSION,
         "backend": backend_used,
         "route_coverage": route_coverage,
+        "scan_scope": scope.payload(),
     }
     if fallback:
         out["backend_fallback"] = fallback
+    print(f"[{ADAPTER}] 扫描面：{scope.describe()}")
     dst = Path(args.out)
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(json.dumps(out, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
