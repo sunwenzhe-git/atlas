@@ -16,6 +16,22 @@
 * **`duty_signals.sh` 两次调用**：`:30` 原行一字不动，其下加 marker `== bugs.md 族 JSON (机器段,供脚本取数) ==` + `--json` 调用；文件头自述改「人读为主，尾部机器段供脚本取数」。JSON 机器段实测 922 字节（≤1KB 增量线）。
 * **钉与变异**：`tests/test_duty_bug_families.py` 19 → 22 条（同源逐字段对照 / warns 双轨等值 / no-flag 单源直通）；变异 MB24–MB26 四段协议。介质（`bugs.md` / `QUEUE.md`）不动——承 D154 拒 JSON/SQLite 搬介质，只加读取侧出口（D200）。
 
+### 🤖 同步自动化：changelog 批次规则 + docs/map 计数锚刷新器（`RFC-20261114-04` 阶段 0/1/2a）
+
+* **批次收口 changelog 规则**（`shared/closeout.md` §1 落档）：批次 = 未推送提交或 `--range`；只对**触装配面**的 feat/fix 要求两份 `[Unreleased]` 各 ≥1 行新增；docs / test / chore 豁免；
+* **docs/map 计数锚刷新器**：`tests/refresh_count_anchors.py` 薄 CLI——缺省 dry-run，`--write` 写 `N 行` 锚 / index.md 实收快照 / html `N 行` 与 ×N 计数，写后同进程复跑三函数、余漂非零 exit 1；检测真源复用 `test_map_anchors` 四函数；
+* **changelog_guard shadow 模式**：违规批次先照常放行、旁路留证（shadow 不阻断发版），积累实证后再转硬门。
+
+### 🔧 修复：适配器扫描面两条（issue #64 / #65）
+
+* **#64**：默认扫描面按 stack-profile `apps[]` 收窄，并输出排除计数；
+* **#65**：非 UTF-8 源文件逐文件跳过并 WARN，不中断整次扫描。
+
+### 🤝 协作方法面：`atlas-onegate` 入装配 + KICKOFF 协议档（`RFC-20261114-07` 落刀批）
+
+* **`skills/atlas-onegate`**（随装配分发）：需求起手三件套 + 一次对齐门（零口令）、三类才问人（缺信息 / 缺权限 / 真取舍，其余假设推进留痕）、方案细节与代码 review 意见四分法处置、全档提案并行双评审（同一冻结输入 + 合流四规则）——用户不再做确认 / 评审接力的传话中枢；
+* **`proposals/KICKOFF-requirement-protocol.md`**：协议正文（非 RFC 工作方法档）+ proposals/README 指针 + README「九、自带技能生态」第 5 节。
+
 ---
 
 ## [v0.2.0-beta.36] - 2026-11-14

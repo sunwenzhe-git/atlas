@@ -10,6 +10,28 @@
 
 * **常量武装**：`_support/solution.py` 的 `SEAL_UPSTREAM_BIND_FROM` 由 `None` 改为 `"2026-11-13"`（D 批首版 tag `v0.2.0-beta.34`，提交 `b529a55` 的 UTC 日期；§2.5 常量发版门）——`seal_upstream_unbound` 追溯窗口自该日起算 90 天，逾期未绑定由 WARN 转 FAIL（`frozen` 仍永久 WARN）。
 
+### 🤖 巡检面：`families.py --json` 双轨批（`RFC-20261114-06`）
+
+* **人读轨不动，尾部加机器段**：`duty-review/families.py` 新增 `--json`（`--json <path>` 与 `<path> --json` 皆通），输出 compact 单行 JSON；无旗标输出逐字节不变。
+* **`duty_signals.sh` 两次调用**：原行一字不动，其下加机器段 marker + `--json` 调用（922 字节，≤1KB 增量线）。
+* **钉与变异**：`tests/test_duty_bug_families.py` 19 → 22 条；变异 MB24–MB26。介质不动——只加读取侧出口（D200）。
+
+### 🤖 同步自动化：changelog 批次规则 + docs/map 计数锚刷新器（`RFC-20261114-04` 阶段 0/1/2a）
+
+* **批次收口 changelog 规则**（`shared/closeout.md` §1 落档）：批次 = 未推送提交或 `--range`；只对**触装配面**的 feat/fix 要求两份 `[Unreleased]` 各 ≥1 行新增；docs / test / chore 豁免；
+* **docs/map 计数锚刷新器**：`tests/refresh_count_anchors.py` 薄 CLI——缺省 dry-run，`--write` 写计数锚并复跑自检；版本串只报告；
+* **changelog_guard shadow 模式**：违规批次先照常放行、旁路留证，积累实证后再转硬门。
+
+### 🔧 修复：适配器扫描面两条（issue #64 / #65）
+
+* **#64**：默认扫描面按 stack-profile `apps[]` 收窄，并输出排除计数；
+* **#65**：非 UTF-8 源文件逐文件跳过并 WARN，不中断整次扫描。
+
+### 🤝 协作方法面：`atlas-onegate` 入装配 + KICKOFF 协议档（`RFC-20261114-07` 落刀批）
+
+* **`skills/atlas-onegate`**（随装配分发）：需求起手三件套 + 一次对齐门（零口令）、三类才问人、方案与代码 review 意见四分法处置、全档提案并行双评审——用户不再做确认 / 评审接力的传话中枢；
+* **`proposals/KICKOFF-requirement-protocol.md`**：协议正文（非 RFC 工作方法档）+ proposals/README 指针 + README「九、自带技能生态」第 5 节。
+
 ## [v0.2.0-beta.36] - 2026-11-14
 
 ### 📦 装配面：装配集摘除出厂测试目录 `tests/`（`RFC-20261114-01`）
