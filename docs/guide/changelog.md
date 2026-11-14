@@ -4,7 +4,7 @@
 
 ---
 
-## [Unreleased]
+## [v0.3.0-beta.1] - 2026-11-14
 
 ### 🔐 验收面：`SEAL_UPSTREAM_BIND_FROM` 落值 D 批首版 tag 日期（案 10 A / D-48）
 
