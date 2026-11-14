@@ -340,6 +340,47 @@ export class UserController {
         ], triples
 
 
+NON_UTF8_NOTE = "\n# 中文注释（GBK）\n".encode("gbk")
+
+
+def test_non_utf8_sources_are_skipped_with_warn_and_scan_continues() -> None:
+    """非 UTF-8 源文件（issue #65）：逐文件跳过 + WARN，**不中断**整次扫描。
+
+    反例面：坏文件里的 `/dead` 与 `svc.mod.dead` 一条都不许进 items——按 `errors="ignore"`
+    硬读会把它们当活事实收走。正例面：同目录的合法文件照常产出。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, {
+            "frontend/src/good.py": "@app.get('/alive')\ndef handler():\n    pass\n",
+            "frontend/src/good.ts": "export const f = () => request('svc.mod.ok', {})\n",
+        })
+        (root / "frontend" / "src" / "bad.py").write_bytes(
+            b"@app.get('/dead')\ndef handler():\n    pass\n" + NON_UTF8_NOTE)
+        (root / "frontend" / "src" / "bad.ts").write_bytes(
+            b"export const f = () => request('svc.mod.dead', {})\n" + NON_UTF8_NOTE)
+
+        data, p = run_full(root)
+        paths = sorted(i["path"] for i in data["items"])
+        assert paths == ["/alive", "svc.mod.ok"], data["items"]
+        assert "WARN[api]" in p.stderr, p.stderr
+        assert "bad.py" in p.stderr and "bad.ts" in p.stderr, p.stderr
+
+
+def test_utf8_sources_with_chinese_text_are_not_skipped() -> None:
+    """反例：合法 UTF-8（含中文）不得被跳过，也不得打「无法读取」WARN。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, {
+            "frontend/src/good.py": (
+                "# 中文注释：这条路由是活的\n@app.get('/alive')\n"
+                "def handler():\n    pass\n"),
+        })
+        data, p = run_full(root)
+        assert [i["path"] for i in data["items"]] == ["/alive"], data["items"]
+        assert "跳过无法读取的文件" not in p.stderr, p.stderr
+
+
 def test_atlas_dir_is_not_scanned_as_api_source() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)

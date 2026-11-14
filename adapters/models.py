@@ -34,7 +34,7 @@ if str(Path(__file__).resolve().parents[1]) not in sys.path:
 from _support.layout import load_layout  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _lib import strip_js_comments  # noqa: E402  # 同包共用工具（引号感知的注释剥离）
+from _lib import read_source, strip_js_comments  # noqa: E402  # 同包共用工具
 from _jpa import parse_project as parse_jpa_project  # noqa: E402
 
 ADAPTER = "models"
@@ -70,10 +70,16 @@ def load_apps(root: Path) -> list[dict]:
     p = load_layout(root).stack_profile
     if not p.is_file():
         return []
+    try:
+        text = p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        print(f"WARN[{ADAPTER}]: 无法读取 {p.name}（非 UTF-8 或 I/O 错误）⇒ 按无 apps[] 处理: "
+              f"{exc}", file=sys.stderr)
+        return []
     apps: list[dict] = []
     cur: dict | None = None
     in_apps = False
-    for raw in p.read_text(encoding="utf-8").splitlines():
+    for raw in text.splitlines():
         line = raw.rstrip()
         if not line.strip() or line.lstrip().startswith("#"):
             continue
@@ -649,9 +655,9 @@ def main() -> int:
     enums: list[dict] = []
     source_files: list[str] = []
     for f in iter_py(root, app_path):
-        try:
-            text = f.read_text(encoding="utf-8")
-        except OSError:
+        rel = f.relative_to(root).as_posix()
+        text = read_source(f, rel, ADAPTER)
+        if text is None:
             continue
         # 两种声明风格都收：SQLAlchemy 式（`__tablename__` + `Column(`）与 **SQLModel 式**
         # （`class X(Base, table=True)` + 带注解的字段）。2026-09-28 实测（`3509 §B118`）：
@@ -663,11 +669,10 @@ def main() -> int:
         try:
             file_items, file_enums = parse_models(text)
         except SyntaxError as e:
-            print(f"WARN[{ADAPTER}]: 跳过无法解析的文件 {f}: {e}", file=sys.stderr)
+            print(f"WARN[{ADAPTER}]: 跳过无法解析的文件 {rel}: {e}", file=sys.stderr)
             continue
         if not file_items:
             continue
-        rel = f.relative_to(root).as_posix()
         source_files.append(rel)
         for it in file_items:
             it["source_file"] = rel
@@ -680,9 +685,8 @@ def main() -> int:
         rel = f.relative_to(root).as_posix()
         if not _ts_decl_file(rel):
             continue
-        try:
-            text = f.read_text(encoding="utf-8")
-        except OSError:
+        text = read_source(f, rel, ADAPTER)
+        if text is None:
             continue
         if not (_TS_IFACE_RE.search(text) or _TS_TYPE_RE.search(text)
                 or _TS_ENUM_RE.search(text)):
@@ -709,13 +713,12 @@ def main() -> int:
         enums.extend(java_enums)
         source_files.extend(java_sources)
     for f in iter_go(root, app_path):
-        try:
-            text = f.read_text(encoding="utf-8")
-        except OSError:
+        rel = f.relative_to(root).as_posix()
+        text = read_source(f, rel, ADAPTER)
+        if text is None:
             continue
         if "type " not in text or "struct" not in text:
             continue
-        rel = f.relative_to(root).as_posix()
         file_items = parse_go_models(text, rel)
         if not file_items:
             continue

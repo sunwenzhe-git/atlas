@@ -84,13 +84,17 @@ def mk(root: Path, body: str, name: str = "models.py") -> None:
     (d / name).write_text(body, encoding="utf-8")
 
 
-def run(root: Path, app: str = "backend") -> dict:
+def run_full(root: Path, app: str = "backend") -> tuple[dict, subprocess.CompletedProcess]:
     out = root / "out.json"
     p = subprocess.run([sys.executable, str(ADAPTER), "--root", str(root),
                         "--app", app, "--out", str(out)],
                        capture_output=True, text=True, timeout=120)
     assert p.returncode == 0, p.stdout + p.stderr
-    return json.loads(out.read_text(encoding="utf-8"))
+    return json.loads(out.read_text(encoding="utf-8")), p
+
+
+def run(root: Path, app: str = "backend") -> dict:
+    return run_full(root, app)[0]
 
 
 def test_sqlmodel_table_with_inherited_fields() -> None:
@@ -436,6 +440,51 @@ def test_mybatis_plus_table_name_and_base_entity_fields() -> None:
         assert items["id"]["constraints"] == "主键"
         assert items["CREATE_TIME"]["type"] == "String"
         assert items["runId"]["table"] == "FM_AI_FUND_FORECAST_RUN"
+
+
+NON_UTF8_NOTE = "\n# 中文注释（GBK）\n".encode("gbk")
+
+
+def test_non_utf8_python_model_source_is_skipped_with_warn() -> None:
+    """非 UTF-8 模型文件（issue #65）：跳过 + WARN，同目录合法文件照常产出。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, SQLALCHEMY)
+        (root / "backend" / "app" / "legacy.py").write_bytes(
+            SQLALCHEMY.replace('"item"', '"legacy_item"').encode("ascii") + NON_UTF8_NOTE)
+
+        data, p = run_full(root)
+        assert {i["table"] for i in data["items"]} == {"item"}, data["items"]
+        assert "WARN[models]" in p.stderr and "legacy.py" in p.stderr, p.stderr
+
+
+def test_non_utf8_ts_and_java_sources_are_skipped_with_warn() -> None:
+    """TS / Java 两侧同样逐文件跳过并 WARN（不止 Python 分支）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_ts(root, {"frontend/src/types/index.ts": TS_TYPES})
+        (root / "frontend" / "src" / "types" / "bad.ts").write_bytes(
+            b"export interface Bad {\n  leaked: string\n}\n" + NON_UTF8_NOTE)
+        (root / "frontend" / "src" / "types" / "Bad.java").write_bytes(
+            b"@Entity\n@Table(name = \"leak\")\nclass Bad { private String id; }\n" + NON_UTF8_NOTE)
+
+        data, p = run_full(root, "frontend")
+        tables = {i["table"] for i in data["items"]}
+        assert "Bad" not in tables and "leak" not in tables, tables
+        assert {"Item", "Owner", "PageQuery"} <= tables, tables
+        assert "WARN[models]" in p.stderr, p.stderr
+        assert "bad.ts" in p.stderr and "Bad.java" in p.stderr, p.stderr
+
+
+def test_utf8_model_source_with_chinese_text_is_not_skipped() -> None:
+    """反例：合法 UTF-8（含中文注释）不得被跳过，也不得打「无法读取」WARN。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk(root, SQLALCHEMY.replace(
+            'Base = declarative_base()', '# 中文注释\nBase = declarative_base()'))
+        data, p = run_full(root)
+        assert {i["table"] for i in data["items"]} == {"item"}, data["items"]
+        assert "跳过无法读取的文件" not in p.stderr, p.stderr
 
 
 def test_go_plain_infra_struct_is_not_a_model() -> None:

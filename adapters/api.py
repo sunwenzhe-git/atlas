@@ -37,7 +37,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _lib import (  # noqa: E402
-    IGNORE_DIRS, die, iter_files, load_apps, resolve_app, strip_js_comments, write_json,
+    IGNORE_DIRS, die, iter_files, load_apps, read_source, resolve_app, strip_js_comments,
+    write_json,
 )
 
 ADAPTER = "api"
@@ -85,7 +86,10 @@ def extract_actions(root: Path, f: Path) -> list[dict]:
     if f.parent.name != "pages":
         return []
     page = "/".join(f.relative_to(f.parent).with_suffix("").parts)
-    lines = f.read_text(encoding="utf-8").splitlines()
+    text = read_source(f, rel, ADAPTER)
+    if text is None:
+        return []
+    lines = text.splitlines()
     items: list[dict] = []
     for i, ln in enumerate(lines):
         if not re.match(r"^\s*@action\b", ln):
@@ -106,7 +110,9 @@ def extract_actions(root: Path, f: Path) -> list[dict]:
 
 def extract_py_routes(root: Path, f: Path) -> list[dict]:
     rel = f.relative_to(root).as_posix()
-    text = f.read_text(encoding="utf-8")
+    text = read_source(f, rel, ADAPTER)
+    if text is None:
+        return []
     prefixes = {m.group(1): m.group(2) for m in PREFIX_RE.finditer(text)}
     items: list[dict] = []
     for i, ln in enumerate(text.splitlines(), 1):
@@ -128,7 +134,10 @@ def extract_py_routes(root: Path, f: Path) -> list[dict]:
 
 def extract_js_routes(root: Path, f: Path) -> list[dict]:
     rel = f.relative_to(root).as_posix()
-    text = strip_js_comments(f.read_text(encoding="utf-8"))
+    raw = read_source(f, rel, ADAPTER)
+    if raw is None:
+        return []
+    text = strip_js_comments(raw)
     items: list[dict] = []
     for i, ln in enumerate(text.splitlines(), 1):
         for m in JS_RE.finditer(ln):
@@ -151,7 +160,10 @@ def extract_ts_rpc(root: Path, f: Path) -> list[dict]:
     `summary` 留空（JSDoc 到调用点之间隔着函数声明，硬挂会错配 ⇒ 宁缺，用途列由 agent 补）。
     """
     rel = f.relative_to(root).as_posix()
-    text = strip_js_comments(f.read_text(encoding="utf-8"))
+    raw = read_source(f, rel, ADAPTER)
+    if raw is None:
+        return []
+    text = strip_js_comments(raw)
     items: list[dict] = []
     for m in _RPC_CALL_RE.finditer(text):
         if not _RPC_CALLEE_RE.search(m.group("callee")):
@@ -289,7 +301,10 @@ def extract_java_routes(root: Path, f: Path) -> list[dict]:
     动词时记 `ANY`（不猜成 GET/POST）。只有 `@RestController` / `@Controller` 类才收。
     """
     rel = f.relative_to(root).as_posix()
-    text = _strip_java_comments(f.read_text(encoding="utf-8"))
+    raw = read_source(f, rel, ADAPTER)
+    if raw is None:
+        return []
+    text = _strip_java_comments(raw)
     lines = text.splitlines()
     pending: list[tuple[str, int]] = []
     class_base = [""]
@@ -349,7 +364,10 @@ def extract_go_routes(root: Path, f: Path) -> list[dict]:
     rel = f.relative_to(root).as_posix()
     if f.name.endswith("_test.go"):
         return []
-    text = strip_js_comments(f.read_text(encoding="utf-8"))
+    raw = read_source(f, rel, ADAPTER)
+    if raw is None:
+        return []
+    text = strip_js_comments(raw)
     items: list[dict] = []
     for i, ln in enumerate(text.splitlines(), 1):
         for m in GO_METHOD_RE.finditer(ln):
@@ -413,7 +431,10 @@ def extract_nest_routes(root: Path, f: Path) -> list[dict]:
     只处理含 `@Controller` 的 TS/JS 文件，避免把任意装饰器当路由。
     """
     rel = f.relative_to(root).as_posix()
-    text = strip_js_comments(f.read_text(encoding="utf-8"))
+    raw = read_source(f, rel, ADAPTER)
+    if raw is None:
+        return []
+    text = strip_js_comments(raw)
     if "@Controller" not in text:
         return []
     items: list[dict] = []
@@ -502,7 +523,7 @@ def main() -> int:
     root = Path(args.root).resolve()
     if not root.is_dir():
         die(ADAPTER, f"--root 不是目录: {root}")
-    apps = load_apps(root)
+    apps = load_apps(root, ADAPTER)
     app_path = resolve_app(root, apps, args.app, ADAPTER)
 
     desc_files: list[str] = find_descriptors(root)
@@ -511,9 +532,8 @@ def main() -> int:
     for f in iter_files(root, (".py", ".pyxl", ".js", ".jsx", ".ts", ".tsx", ".java", ".go"), app_path):
         rel = f.relative_to(root).as_posix()
         if f.suffix == ".py":
-            try:
-                text = f.read_text(encoding="utf-8")
-            except OSError:
+            text = read_source(f, rel, ADAPTER)
+            if text is None:
                 continue
             if not TEST_PATH_RE.search(rel) and any(n in text for n in RUNTIME_SCHEMA_CALLS):
                 try:

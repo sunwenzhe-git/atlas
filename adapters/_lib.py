@@ -44,15 +44,34 @@ def iter_files(root: Path, suffixes: tuple[str, ...], app_path: str | None = Non
                 yield Path(dirpath) / name
 
 
-def load_apps(root: Path) -> list[dict]:
+def read_source(f: Path, rel: str, adapter: str) -> str | None:
+    """读单个源文件；读不出（I/O 错误 / 非 UTF-8）⇒ WARN 后跳过，不中断整次扫描。
+
+    与 `_scaffold.py` 同口径：单文件失败只影响该文件，整次扫描照常收口。
+    """
+    try:
+        return f.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        print(f"WARN[{adapter}]: 跳过无法读取的文件 {rel}（非 UTF-8 或 I/O 错误）: {exc}",
+              file=sys.stderr)
+        return None
+
+
+def load_apps(root: Path, adapter: str = "adapters") -> list[dict]:
     """读资产根/stack-profile.yaml 的 apps（name / path / role）。"""
     p = load_layout(root).stack_profile
     if not p.is_file():
         return []
+    try:
+        text = p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        print(f"WARN[{adapter}]: 无法读取 {p.name}（非 UTF-8 或 I/O 错误）⇒ 按无 apps[] 处理: "
+              f"{exc}", file=sys.stderr)
+        return []
     apps: list[dict] = []
     cur: dict | None = None
     in_apps = False
-    for raw in p.read_text(encoding="utf-8").splitlines():
+    for raw in text.splitlines():
         line = raw.rstrip()
         if not line.strip() or line.lstrip().startswith("#"):
             continue

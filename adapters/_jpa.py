@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -225,11 +226,13 @@ def parse_project(files: list[Path], root: Path) -> tuple[list[dict], list[dict]
     defs: list[dict[str, Any]] = []
     texts: list[str] = []
     for f in files:
+        rel = f.relative_to(root).as_posix()
         try:
             text = f.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError) as exc:
+            print(f"WARN[models]: 跳过无法读取的文件 {rel}（非 UTF-8 或 I/O 错误）: {exc}",
+                  file=sys.stderr)
             continue
-        rel = f.relative_to(root).as_posix()
         texts.append(text)
         defs.extend(parse_classes(text, rel))
     if not defs:
