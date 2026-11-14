@@ -9,7 +9,10 @@
   生成脚本;`http.server` 线程当靶场。**零后端依赖、零 /tmp 残留**——执行器的真跑级回归场。
 - 前置判据:模块可解析(`pw_runner.probe`)+ 浏览器在(`probe_browser`)任一不成立 ⇒
   `pytest.skip`(真跑级测试如实跳过,与「E2E 真跑」门 SKIP 同语义,不假装绿)。
-- 每测试自清场(`.atlas-run/` + `reviews/*-verify/`),互不依赖执行顺序。
+- 每测试自清场(`.atlas-run/` + `reviews/*-verify/` + 本测试运行面),互不依赖执行顺序。
+- 运行面隔离(issue #66):仓外 run/evidence 落 tmp 根的**本次唯一目录**,经
+  `ATLAS_RUN_DIR` / `ATLAS_EVIDENCE_DIR` 注入,配置与断言同源 ⇒ 并行会话不共用
+  `/tmp/atlas-e2e/playground`。
 
 断言对齐 D150 出库实录:全链绿批(pre 真跑/run=atlas_check 真跑/report 留档)、短路复跑、
 注红批(run FAIL + trace 留证 + 不落档)、恢复复绿。
@@ -18,6 +21,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -63,6 +67,17 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _runtime_dirs(root: Path) -> tuple[Path, Path]:
+    """本次运行的仓外运行面(run, evidence)——**与 playground 同生同灭**。
+
+    D194 的默认落点 `/tmp/atlas-e2e/<basename>/current|evidence` 只按仓名区分,本测试的仓名
+    恒为 `playground` ⇒ 并行会话与历史批次共用同一目录(issue #66)。这里按 tmp 根分配唯一
+    目录并注入 `ATLAS_RUN_DIR` / `ATLAS_EVIDENCE_DIR`:生成配置(gen_e2e_scripts 的
+    `outside()` 归一化)与断言读的是同一组值,且与任何别的会话无关。
+    """
+    return root.parent / "run", root.parent / "evidence"
+
+
 @pytest.fixture(scope="module")
 def playground():
     with tempfile.TemporaryDirectory() as td:
@@ -100,6 +115,11 @@ def _clean_batches(root: Path) -> None:
     shutil.rmtree(root / "product/e2e/scripts/.atlas-run", ignore_errors=True)
     for d in (root / "product/e2e/reviews").glob("*-verify"):
         shutil.rmtree(d, ignore_errors=True)
+    run_dir, evidence_dir = _runtime_dirs(root)
+    shutil.rmtree(run_dir, ignore_errors=True)
+    # 只清本测试自己的证据目录下的锁文件：不碰 `/tmp/atlas-e2e` 等机器共享目录。
+    # 归档锁是 flock 咨询锁，陈旧空文件本不阻塞；显式清掉 = 不让「锁文件在不在」影响判据。
+    (evidence_dir / ".index.lock").unlink(missing_ok=True)
 
 
 def _run(root: Path, *extra: str) -> subprocess.CompletedProcess:
@@ -107,8 +127,14 @@ def _run(root: Path, *extra: str) -> subprocess.CompletedProcess:
     # 整链 = pre + check（对齐门 ≤1800s + E2E 真跑）+ backfill。旧外层 900s 曾**小于**
     # 门内预算：负载日对齐门装不进 900s，外层先杀——issue #63「900s 无输出不退出」
     # 的第二层根因（真跑门未触达的直接原因）。外层必须 ≥ 门内上限 + E2E 段，取 2400s。
+    # 运行面走 `_runtime_dirs` 注入（issue #66）：atlas_check → Playwright config/teardown
+    # 一路继承，断言与配置同源 ⇒ 并行会话互不踩。
+    run_dir, evidence_dir = _runtime_dirs(root)
+    env = {**os.environ,
+           "ATLAS_RUN_DIR": str(run_dir),
+           "ATLAS_EVIDENCE_DIR": str(evidence_dir)}
     return subprocess.run([sys.executable, str(VERIFY), "--root", str(root), *extra],
-                          capture_output=True, text=True, timeout=2400)
+                          capture_output=True, text=True, timeout=2400, env=env)
 
 
 def _archive(root: Path) -> Path | None:
@@ -151,11 +177,11 @@ def test_playground_red_batch_keeps_evidence_and_skips_archive(playground) -> No
     """真跑级咬合③(D150 实录同款):注红(产品态破坏)⇒ run FAIL + trace 留证 + **不落档**;
     恢复后复绿重落档。注红 = 取证动作,red 不计缺陷判据(D148 注红条款)。
 
-    trace 落点 = D194(2026-11-12)后的仓外运行面:`/tmp/atlas-e2e/<basename>/evidence/`
-    (生成配置 DEFAULT_RUN_DIR 的父目录;config 的 global teardown 把失败构件归档进
-    evidence/ 并记 index.json)。旧断言(runs/.atlas-run)是 beta.23 D108 时代的仓内落点,
+    trace 落点 = D194(2026-11-12)后的仓外运行面（本测试由 `_runtime_dirs` 注入
+    `ATLAS_EVIDENCE_DIR`，与生成配置同源；config 的 global teardown 把失败构件归档进
+    evidence/ 并记 index.json）。旧断言(runs/.atlas-run)是 beta.23 D108 时代的仓内落点,
     D194 后恒空——beta.35 发版全量回归排除 playground ⇒ 本咬合迟到一批(issue #63 复跑咬出)。
-    断言带**起跑时间窗**(mtime ≥ 注红前):防机器上同名仓的历史证据把本断言喂成假绿。
+    断言带**起跑时间窗**(mtime ≥ 注红前):防同一证据根里更早批次的构件把本断言喂成假绿。
     """
     root = playground
     _clean_batches(root)
@@ -166,13 +192,13 @@ def test_playground_red_batch_keeps_evidence_and_skips_archive(playground) -> No
         site.write_text(original.replace("验收靶场", "验收耙场"), encoding="utf-8")
         r = _run(root)
         assert r.returncode == 1, (r.stdout[-600:], r.stderr[-400:])
-        # 与生成配置的 DEFAULT_RUN_DIR 字面同源（`/tmp/atlas-e2e/<basename>/current`）——
-        # 不走 tempfile.gettempdir()（macOS 解析到 /var/folders，与配置的 /tmp 不是一处）。
-        run_parent = Path("/tmp/atlas-e2e") / root.name
-        traces = [p for p in (run_parent / "evidence").rglob("trace.zip")
+        # 与 `_run` 注入的 `ATLAS_EVIDENCE_DIR` 同源（`_runtime_dirs`）——不再按仓名拼
+        # `/tmp/atlas-e2e/playground`（issue #66：那是全机器共享、并行会话互踩的固定目录）。
+        _, evidence_dir = _runtime_dirs(root)
+        traces = [p for p in evidence_dir.rglob("trace.zip")
                   if p.stat().st_mtime >= stamp - 5]
-        assert traces, (f"失败批必须留 D108 证据(trace);D194 落点 {run_parent}/evidence/ 无本批构件",
-                        sorted(p.name for p in run_parent.rglob("*"))[:20] if run_parent.is_dir() else "目录不存在")
+        assert traces, (f"失败批必须留 D108 证据(trace);D194 落点 {evidence_dir} 无本批构件",
+                        sorted(p.name for p in evidence_dir.rglob("*"))[:20] if evidence_dir.is_dir() else "目录不存在")
         assert _archive(root) is None                            # 失败批不落档
     finally:
         site.write_text(original, encoding="utf-8")
