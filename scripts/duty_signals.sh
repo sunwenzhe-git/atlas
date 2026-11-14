@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Atlas 每日巡检 · 只读信号收集器（协议见 duty-review/README.md §4）
 # 用法: bash scripts/duty_signals.sh "<上次巡检日期，如 2026-10-16；也接受 git since 表达式>"
-# 铁则: 全程只读、不落任何文件；输出给人读，正文判断交巡检器。
+# 铁则: 全程只读、不落任何文件；输出人读为主，尾部机器段供脚本取数；正文判断交巡检器。
 set -uo pipefail
 SINCE="${1:-yesterday}"
 # 裸日期补 00:00：git 会把无时间成分的日期锚定到当前时刻（2026-10-16 实测 --since="2026-10-16" 返回空），产生假「无新增信号」
@@ -28,6 +28,9 @@ git log --since='30 days ago' --name-only --grep='fix\|修\|红\|回归' -i --pr
 
 echo; echo "== bugs.md 同根段聚类 (DR4 口径 B：族规模 × 活跃窗；活跃且 >=3 案 ⇒ 升室候选) =="
 python3 "$(git rev-parse --show-toplevel)/duty-review/families.py"
+
+echo; echo "== bugs.md 族 JSON (机器段,供脚本取数) =="
+python3 "$(git rev-parse --show-toplevel)/duty-review/families.py" --json
 
 REPO=$(git remote get-url origin 2>/dev/null | sed -E 's#.*github\.com[:/]##; s#\.git$##')
 echo; echo "== GitHub issues (${REPO:-仓库不明, 跳过}; open 全列 + closed 近 14 天有动静 + closed 全索引) =="

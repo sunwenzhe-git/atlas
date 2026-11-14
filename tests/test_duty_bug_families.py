@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """DR4 **口径 B** 单源模块（`duty-review/families.py`）的形状钉 + 判定真值表 + 条目字段制式钉。
 
-**套件计数**：19 条 = 既有形状/真值表 4 + D154 字段制式 7 + **D155 日期越界 7** + **D156 指针行 1**
+**套件计数**：22 条 = 既有形状/真值表 4 + D154 字段制式 7 + **D155 日期越界 7** + **D156 指针行 1** + **JSON 机器段 3**
 （`duty-review/README.md` §2 的钉数与本文件一致；改任一钉同步改这里）。
 D156 的 1 条 = 留出验证指针行形状钉（正向：合规指针不改三值；反向：带日期改 `last_date`、带 `#NN` 改 `count`——反向用例即其反面包，不另配 M）。
 D155 的 7 条 = 越界两钉（日历非法 / 未来日期）+ 合法边界反面包 + 判别性补强 + **轮 2 复核补的三钉**：
@@ -26,6 +26,9 @@ D155 的 7 条 = 越界两钉（日历非法 / 未来日期）+ 合法边界反�
 * **M158c**（D155）：把 `main()` 的 `print` 换成 `sys.stderr.write` ⇒ **恰 1 红 = 只有 CLI 轨钉**，17 条判据面全绿
   —— 这正说明该钉咬的是「告警有没有送达巡检消费者」，与两关算得对不对无关（轮 2 复实用它证伪了「换通道=换留出」的第一版说法，也据此把 CLI 轨从「留出」降为「送达钉」，判据级留出改由归零路径与 `T+1` 边界承担）。
 * 三枚的红因集合 = **恰好是依赖被摘那一关的钉**，无一条无关钉被牵连 ⇒ 注入面与红因一致（不是「一处崩了冒充全局红」）。
+* **MB24**（RFC-20261114-06）：摘 `--json` 分支 ⇒ 钉 1/钉 2 红（JSON 解析失败 / 无机器段）；
+  **MB25**：JSON 丢 `warns` ⇒ 钉 2 红；**MB26**：动 no-flag 输出（改 `stderr` 或改一字节措辞）⇒ 钉 3 红。
+  三枚红因集合 = 恰好是依赖被摘那一面，无一条无关钉被牵连 ⇒ 注入面与红因一致。
 
 判据零变更对照基线（D154 落刀日 2026-10-26，证据 = `proposals/REVIEW-20261026-07` §3 试跑）：
 五段 verdict/案数/最近日期冻结在
@@ -35,6 +38,7 @@ from __future__ import annotations
 
 import datetime
 import importlib.util
+import json
 import re
 from pathlib import Path
 
@@ -460,3 +464,94 @@ def test_holdout_pointer_line_is_judgment_neutral() -> None:
     assert d["last_date"] == "2026-10-26" and d["last_date"] != b["last_date"], \
         "反向：带日期的指针行会把最近日期抬到指针行——故格式禁日期"
     assert i["count"] == b["count"] + 1, "反向：带 #NN 的指针行会虚增案数——故格式禁 #NN"
+
+
+# ---------------------------------------------------------------------------
+# JSON 机器段（RFC-20261114-06，2026-11-14）——三钉
+# ---------------------------------------------------------------------------
+
+def test_json_dual_track_matches_in_process_rows(tmp_path, capsys) -> None:
+    """钉 1：`--json` 双参数序都通，JSON families 与进程内 rows **逐字段同源**。
+
+    日期按运行日推导（不绑死某天）；夹具中间约定日期不写未来日。
+    不做「真实台账冻结反查」——`families()` 内部取运行日，真实台账四周内必翻「族已静默」。
+    """
+    fam = _load()
+    today = datetime.date.today()
+    body = (
+        "## 甲族\n- 同根归纳：同属一族\n"
+        f"- #901 案甲〔日期 {today.isoformat()}｜状态 开放〕\n"
+        "- #902 案乙\n- #903 案丙\n- #904 案丁 2026-01-01\n"
+        "## 乙族\n- 同根归纳：同属一族\n- #911 案甲\n- #912 案乙\n"
+        "## 丙族\n- #921 案甲\n"
+    )
+    path = tmp_path / "ledger.md"
+    path.write_text(body, encoding="utf-8")
+    expected = fam.families(body, today=today)
+
+    for argv in (["--json", str(path)], [str(path), "--json"]):
+        capsys.readouterr()
+        assert fam.main(argv) == 0, f"参数序不通：{argv}"
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ledger"] == str(path)
+        assert payload["cutoff"] == today.isoformat()
+        got = payload["families"]
+        assert len(got) == len(expected), (got, expected)
+        for g, e in zip(got, expected):
+            assert g == {
+                "family": e["name"], "count": e["count"], "exact": e["exact"],
+                "last_date": e["last_date"], "active": e["active"],
+                "verdict": e["verdict"], "warns": e["warns"],
+            }, (g, e)
+
+
+def test_json_warns_equal_render_warn_lines(tmp_path, capsys) -> None:
+    """钉 2：warns 双轨等值——JSON warns 数 == 人读轨（`render`）WARN 行数（同源不各算一套）。"""
+    fam = _load()
+    today = datetime.date.today()
+    bad = (today + datetime.timedelta(days=1)).isoformat()
+    body = (
+        "## 越界族\n- 同根归纳：同属一族\n"
+        f"- #801 案甲 2026-01-01〔日期 {bad}〕\n"
+        "- #802 案乙〔日期 2026-13-40〕\n"
+        "- #803 案丙\n"
+    )
+    path = tmp_path / "ledger.md"
+    path.write_text(body, encoding="utf-8")
+
+    capsys.readouterr()
+    assert fam.main(["--json", str(path)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    warn_lines = [ln for ln in fam.render(fam.families(body, today=today))
+                  if "WARN 条目字段形状" in ln]
+    assert len(warn_lines) == 2, warn_lines
+    assert len(payload["warns"]) == len(warn_lines)
+    assert sum(len(f["warns"]) for f in payload["families"]) == len(warn_lines)
+
+
+def test_no_flag_output_is_render_passthrough(tmp_path, capsys) -> None:
+    """钉 3：无旗标输出 = `render()` 单源直通 + 首行措辞逐字 + 不含 JSON 键。
+
+    真实台账不做永久冻结（四周内必翻「族已静默」）；批内一次性 diff 证据见 RFC §4。
+    """
+    fam = _load()
+    today = datetime.date.today()
+    body = (
+        "## 直通族\n- 同根归纳：同属一族\n"
+        "- #601 案甲 2026-01-01\n- #602 案乙\n- #603 案丙\n"
+    )
+    path = tmp_path / "ledger.md"
+    path.write_text(body, encoding="utf-8")
+    capsys.readouterr()
+    assert fam.main([str(path)]) == 0
+    out = capsys.readouterr().out
+
+    assert out == "\n".join(fam.render(fam.families(body, today=today))) + "\n", \
+        "无旗标输出不再是 render() 直通（改通道 / 加前缀都会在这里红）"
+    cutoff = (today - datetime.timedelta(days=fam.WINDOW_DAYS)).isoformat()
+    assert out.splitlines()[0] == (
+        f"(活跃窗 = 近 {fam.WINDOW_DAYS} 天，cutoff {cutoff}；"
+        "日期取证 = 带字段条目的字段日期 ∪ 无字段条目行内日期，其余行不参与；"
+        "无日期 ⇒ 视为已静默)")
+    assert '"families"' not in out and '"ledger"' not in out

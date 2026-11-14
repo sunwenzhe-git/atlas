@@ -4,6 +4,16 @@
 
 ---
 
+## [Unreleased]
+
+### 🤖 巡检面：`families.py --json` 双轨批（`RFC-20261114-06`）
+
+* **人读轨不动，尾部加机器段**：`duty-review/families.py` 新增 `--json`（扫描剥离旗标，`--json <path>` 与 `<path> --json` 皆通），输出 compact 单行 JSON（`ledger` / `cutoff` / `families[{family,count,exact,last_date,active,verdict,warns[]}]` / `warns`）；显式挑字段序列化（rows 内含 `ids` / `exact_ids` 两个 set，直接 `json.dumps` 必炸），不重复人读文本；台账缺 ⇒ 空族 + `cutoff=null`，不崩不编造。无旗标输出逐字节不变（实测同台账 sha256 一致）。
+* **`duty_signals.sh` 两次调用**：`:30` 原行一字不动，其下加 marker `== bugs.md 族 JSON (机器段,供脚本取数) ==` + `--json` 调用；文件头自述改「人读为主，尾部机器段供脚本取数」。JSON 机器段实测 922 字节（≤1KB 增量线）。
+* **钉与变异**：`tests/test_duty_bug_families.py` 19 → 22 条（同源逐字段对照 / warns 双轨等值 / no-flag 单源直通）；变异 MB24–MB26 四段协议。介质（`bugs.md` / `QUEUE.md`）不动——承 D154 拒 JSON/SQLite 搬介质，只加读取侧出口（D200）。
+
+---
+
 ## [v0.2.0-beta.36] - 2026-11-14
 
 ### 📦 装配面：装配集摘除出厂测试目录 `tests/`（`RFC-20261114-01`）

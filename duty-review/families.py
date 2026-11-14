@@ -32,6 +32,7 @@ r"""DR4 **口径 B** —— `bugs.md` 同根段聚类（族规模 × 活跃窗�
 from __future__ import annotations
 
 import datetime
+import json
 import pathlib
 import re
 import subprocess
@@ -187,6 +188,9 @@ def render(rows: list[dict]) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    json_mode = "--json" in argv
+    if json_mode:  # 扫描剥离，不上 argparse：未知旗标 exit 2 / -h 的行为面不扩张
+        argv = [a for a in argv if a != "--json"]
     if argv:
         path = pathlib.Path(argv[0])
     else:
@@ -196,7 +200,24 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             top = ""
         path = pathlib.Path(top or ".") / UPSTREAM
-    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    exists = path.is_file()
+    text = path.read_text(encoding="utf-8") if exists else ""
+    if json_mode:
+        today = datetime.date.today()
+        rows = families(text, today=today) if text else []
+        # 显式挑字段：rows 内含 ids / exact_ids 两个 set，直接 dumps 必炸
+        print(json.dumps({
+            "ledger": str(path),
+            "cutoff": today.isoformat() if exists else None,
+            "families": [
+                {"family": r["name"], "count": r["count"], "exact": r["exact"],
+                 "last_date": r["last_date"], "active": r["active"],
+                 "verdict": r["verdict"], "warns": list(r["warns"])}
+                for r in rows
+            ],
+            "warns": [w for r in rows for w in r["warns"]],
+        }, ensure_ascii=False, separators=(",", ":")))
+        return 0
     print("\n".join(render(families(text) if text else [])))
     return 0
 
