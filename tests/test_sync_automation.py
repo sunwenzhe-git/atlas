@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
-"""同步脚本化工具的行为钉（`RFC-20261114-04` 阶段 1：`refresh_count_anchors`）。
+"""同步脚本化工具的行为钉（`RFC-20261114-04` 阶段 1 / 2a）。
 
-钉的四类（与 RFC §3 对齐）：
+阶段 1（`refresh_count_anchors`）四类钉：
   * 跨工具绿：合成行数变化 → `--write` → `test_map_anchors` 三函数全绿；
   * 只动数字：改后文档与改前逐字节差异只在数字段；
   * 幂等：连跑两次 `--write`，第二次零 diff；
   * 边界：脏树告警但按工作树写 / 非源仓与非 git 响亮 SKIP / 余漂非零 exit 1 /
     范围外（`shared/gates.md` 计数）不写只报 / `path:line` 不碰。
+
+阶段 2a（`changelog_guard` shadow）钉：
+  * 缺段 / 段在零新增 / 只补一份 ⇒ would-flag 且 exit 0；`--enforce` ⇒ exit 1；
+  * 两份都有新增 ⇒ PASS；纯 docs / test 批 ⇒ PASS；
+  * 空 range ⇒ exit 2（绝不退回 `HEAD~1..HEAD`）；缺省 range = `origin/main..HEAD`；
+  * DETECT ⊇ ASSEMBLY_COVER_DIRS ∪ ASSEMBLY_COVER_FILES（守恒钉）；
+  * 只提示不改写。
 """
 from __future__ import annotations
 
@@ -16,9 +23,11 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
+for extra in (HERE, HERE.parent / "scripts"):
+    if str(extra) not in sys.path:
+        sys.path.insert(0, str(extra))
 
+import changelog_guard as cg  # noqa: E402
 import refresh_count_anchors as rca  # noqa: E402
 from test_map_anchors import check_freshness, check_snapshot, collect_docs  # noqa: E402
 
@@ -180,3 +189,158 @@ def test_residual_drift_exits_1(tmp_path, capsys):
 
 def test_regex_self_check_rejects_path_line_counts():
     rca.self_check_regexes()  # 不抛 = 行号锚与计数锚不相交
+
+
+# ---------------- 阶段 2a：changelog_guard（shadow） ----------------
+
+# 历史回放（2026-11-14 实测；判据 = 批次 range 净 diff，不参与下列夹具）：
+# 1) `c6ff399^..ac891d3`（11-12 批，14 笔触装配面 feat/fix）：根 CHANGELOG 缺
+#    `[Unreleased]` 段、guide 段内 0 行 ⇒ **would-flag**。
+# 2) `v0.2.0-beta.31..6b4e8c6`：**PASS**——`cad2d5d`（11-08 01:10）已在同批内给
+#    guide 的 `[Unreleased]` 补了 11 行，`6b4e8c6` 补根文件；净 diff 两份都有账。
+# 3) `v0.2.0-beta.30..2fd6911`：**PASS**——`2fd6911` 的 diff 本身同时给两份加了内容。
+#    （回放到补写提交的父提交 `..6b4e8c6^` / `..2fd6911^` 才会 would-flag 单份；
+#    这不是判据口径，不拿它当样本。）
+# 4) `cad2d5d..6b4e8c6`（5 笔纯 docs/chore）：**PASS**（豁免形态）。
+# 结论：单份形态只由下面的**合成夹具**覆盖，不拿真实历史当单份样本。
+
+GUARD_CL = "## [Unreleased]\n\n## [v0.1.0] - 2026-01-01\n\n* old\n"
+GUARD_NO_UNREL = "## [v0.1.0] - 2026-01-01\n\n* old\n"
+GUARD_NEW = "## [Unreleased]\n\n### 📦 feat\n\n* added\n\n## [v0.1.0] - 2026-01-01\n\n* old\n"
+
+
+def _mk_guard_repo(tmp: Path, base: str = GUARD_CL) -> Path:
+    (tmp / "docs" / "guide").mkdir(parents=True)
+    (tmp / "tests").mkdir()
+    (tmp / "scripts").mkdir()
+    (tmp / "scripts" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp / "tests" / "test_a.py").write_text("def test_a():\n    pass\n", encoding="utf-8")
+    (tmp / "package.json").write_text('{"name": "p"}\n', encoding="utf-8")
+    (tmp / "CHANGELOG.md").write_text(base, encoding="utf-8")
+    (tmp / "docs" / "guide" / "changelog.md").write_text(base, encoding="utf-8")
+    (tmp / "docs" / "note.md").write_text("# note\n", encoding="utf-8")
+    _git(tmp, "init", "-q")
+    _git(tmp, "add", "-A")
+    _git(tmp, "commit", "-q", "-m", "chore: base")
+    return tmp
+
+
+def _guard_commit(repo: Path, msg: str, files: dict[str, str]) -> str:
+    for rel, content in files.items():
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", msg)
+    return subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+def test_guard_detect_covers_assembly_surface():
+    import pkg_digest
+    assert set(pkg_digest.ASSEMBLY_COVER_DIRS) <= cg.DETECT, "DETECT 收窄漏了装配目录"
+    assert set(pkg_digest.ASSEMBLY_COVER_FILES) <= cg.DETECT, "DETECT 收窄漏了装配顶层件"
+    assert {"install.py", "install.sh", "package.json", "bin"} <= cg.DETECT
+
+
+def test_guard_flags_missing_changelog_in_shadow(tmp_path, capsys):
+    repo = _mk_guard_repo(tmp_path / "repo")
+    _guard_commit(repo, "feat(scripts): 改装配面", {"scripts/a.py": "x = 2\n"})
+    assert cg.main(["--root", str(repo), "--range", "HEAD~1..HEAD"]) == 0
+    out = capsys.readouterr().out
+    assert "[would-flag]" in out and "feat/fix 1 笔" in out
+    assert "CHANGELOG.md：0 行新增" in out
+    assert "docs/guide/changelog.md：0 行新增" in out
+    assert "shadow" in out
+
+
+def test_guard_enforce_exits_1(tmp_path):
+    repo = _mk_guard_repo(tmp_path / "repo")
+    _guard_commit(repo, "fix(scripts): 改装配面", {"scripts/a.py": "x = 2\n"})
+    assert cg.main(["--root", str(repo), "--range", "HEAD~1..HEAD", "--enforce"]) == 1
+
+
+def test_guard_passes_when_both_have_added_lines(tmp_path, capsys):
+    repo = _mk_guard_repo(tmp_path / "repo")
+    _guard_commit(repo, "feat(scripts): 带 changelog",
+                  {"scripts/a.py": "x = 2\n", "CHANGELOG.md": GUARD_NEW,
+                   "docs/guide/changelog.md": GUARD_NEW})
+    assert cg.main(["--root", str(repo), "--range", "HEAD~1..HEAD"]) == 0
+    out = capsys.readouterr().out
+    assert "PASS" in out and "[would-flag]" not in out
+
+
+def test_guard_header_only_section_is_flagged(tmp_path, capsys):
+    repo = _mk_guard_repo(tmp_path / "repo", base=GUARD_NO_UNREL)
+    _guard_commit(repo, "feat(scripts): 只起段头",
+                  {"scripts/a.py": "x = 2\n",
+                   "CHANGELOG.md": "## [Unreleased]\n\n" + GUARD_NO_UNREL,
+                   "docs/guide/changelog.md": "## [Unreleased]\n\n" + GUARD_NO_UNREL})
+    assert cg.main(["--root", str(repo), "--range", "HEAD~1..HEAD"]) == 0
+    out = capsys.readouterr().out
+    assert "[would-flag]" in out
+    assert "CHANGELOG.md：0 行新增" in out and "docs/guide/changelog.md：0 行新增" in out
+
+
+def test_guard_passes_when_in_batch_catchup_fills_both(tmp_path, capsys):
+    """样本 2/3 的合成版：feat 提交没写账，同批后续 docs 补写两份 ⇒ 净 diff PASS。"""
+    repo = _mk_guard_repo(tmp_path / "repo")
+    _guard_commit(repo, "feat(scripts): 只改代码", {"scripts/a.py": "x = 2\n"})
+    _guard_commit(repo, "docs(changelog): 同批补两份",
+                  {"CHANGELOG.md": GUARD_NEW, "docs/guide/changelog.md": GUARD_NEW})
+    assert cg.main(["--root", str(repo), "--range", "HEAD~2..HEAD"]) == 0
+    out = capsys.readouterr().out
+    assert "PASS" in out and "[would-flag]" not in out
+
+
+def test_guard_synthetic_single_file_is_flagged(tmp_path, capsys):
+    """单份形态 = **合成夹具**（同批只有根 CHANGELOG 有新增、guide 零新增）。"""
+    repo = _mk_guard_repo(tmp_path / "repo")
+    _guard_commit(repo, "feat(scripts): 只补一份",
+                  {"scripts/a.py": "x = 2\n", "CHANGELOG.md": GUARD_NEW})
+    assert cg.main(["--root", str(repo), "--range", "HEAD~1..HEAD"]) == 0
+    out = capsys.readouterr().out
+    assert "CHANGELOG.md：2 行新增" in out
+    assert "docs/guide/changelog.md：0 行新增" in out
+
+
+def test_guard_passes_pure_docs_batch(tmp_path, capsys):
+    repo = _mk_guard_repo(tmp_path / "repo")
+    _guard_commit(repo, "docs: 纯文档", {"docs/note.md": "# changed\n"})
+    assert cg.main(["--root", str(repo), "--range", "HEAD~1..HEAD"]) == 0
+    out = capsys.readouterr().out
+    assert "PASS" in out and "纯 docs/test/chore 批豁免" in out
+
+
+def test_guard_passes_pure_test_batch(tmp_path, capsys):
+    repo = _mk_guard_repo(tmp_path / "repo")
+    _guard_commit(repo, "test: 纯测试", {"tests/test_a.py": "def test_a():\n    assert 1\n"})
+    assert cg.main(["--root", str(repo), "--range", "HEAD~1..HEAD"]) == 0
+    assert "PASS" in capsys.readouterr().out
+
+
+def test_guard_empty_range_exits_2(tmp_path, capsys):
+    repo = _mk_guard_repo(tmp_path / "repo")
+    assert cg.main(["--root", str(repo), "--range", "HEAD..HEAD"]) == 2
+    out = capsys.readouterr().out
+    assert "为空" in out and "--range" in out
+
+
+def test_guard_default_range_is_origin_main(tmp_path, capsys):
+    repo = _mk_guard_repo(tmp_path / "repo")
+    base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    _git(repo, "update-ref", "refs/remotes/origin/main", base)
+    _guard_commit(repo, "feat(scripts): 未推送提交", {"scripts/a.py": "x = 2\n"})
+    assert cg.main(["--root", str(repo)]) == 0
+    out = capsys.readouterr().out
+    assert "origin/main..HEAD" in out and "[would-flag]" in out
+
+
+def test_guard_never_rewrites_changelog(tmp_path):
+    repo = _mk_guard_repo(tmp_path / "repo")
+    _guard_commit(repo, "feat(scripts): 改装配面", {"scripts/a.py": "x = 2\n"})
+    before = {rel: (repo / rel).read_bytes() for rel in cg.CHANGELOGS}
+    cg.main(["--root", str(repo), "--range", "HEAD~1..HEAD"])
+    after = {rel: (repo / rel).read_bytes() for rel in cg.CHANGELOGS}
+    assert before == after, "守卫只提示，绝不自动改写 changelog"

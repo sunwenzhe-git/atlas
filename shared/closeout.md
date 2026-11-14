@@ -31,6 +31,7 @@
 - **批次** = 未推送提交（默认 `origin/main..HEAD`），或显式 `--range <base>..HEAD`；
 - **要求面**：只对触装配面的 `feat` / `fix` 提交要求，纯 `docs` / `test` / `chore` 批豁免；
 - **判据**：`CHANGELOG.md` 与 `docs/guide/changelog.md` 两份的 `[Unreleased]` 段内各须 ≥1 行新增（段在、段内零新增同样算漏写）。
+- **当前是 shadow 口径**：`tests/changelog_guard.py` 只报不阻（`--enforce` 已留但未接本清单）；2026-11-14 实测近 30 天按自然日划批有 26/30 会被 would-flag（历史账多按发版补写）——转 `--enforce` 的前提是先改成当日写账。
 
 ## 2. 步骤
 
