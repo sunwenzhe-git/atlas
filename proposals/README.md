@@ -58,3 +58,5 @@ proposals/RFC-YYYYMMDD-序号-<短横线英文主题>.md
 > **非 RFC 的长期待办**见 [`BACKLOG-execution-layer.md`](BACKLOG-execution-layer.md)：执行层最终自建，Trellis 只是当前插件。该文件只登记能力，不授权实现；落地仍须走本目录的 RFC 流程。
 
 > **编号规则（2026-10-26，D154 批补）**：`RFC-YYYYMMDD-NN` 与 `REVIEW-YYYYMMDD-NN` 两列号**各自独立递增**；并行会话同日撞号（先例：2026-10-26 两个 06）⇒ 保留先落盘者，后到者在文件名主题段加主题后缀区分（当日先例 = `-batch-a-implementation` / `-weakness-family-heldout-validation`），并在实际裁决行点名自己引用哪一份。
+
+> **需求起手与评审接力协议（2026-11-14，`RFC-20261114-07`）**：起案 / 评审会话默认走 [`KICKOFF-requirement-protocol.md`](KICKOFF-requirement-protocol.md)——起手三件套 + 一次对齐门（零口令，用户正常说需求即入场）；全档提案评审**并行双评**（同一冻结输入、合流四规则）、意见**四分法处置**（自证面直接修 / 判断面回应留痕 / 真取舍升级一次 / 回评审按派工）。skill 面 = `skills/atlas-onegate/`（随装配分发）。
