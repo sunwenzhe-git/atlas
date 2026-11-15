@@ -52,9 +52,12 @@ GATE_ROW = re.compile(r"^\|\s*\d+\s*\|", re.M)
 GATE_HEADING = re.compile(r"^##[^\n]*待决策登记[^\n]*$", re.M)
 GATE_DECIDED = re.compile(r"已决策")
 NEXT_H2 = re.compile(r"^##\s", re.M)
-FN_RE = re.compile(r"FN-[A-Z0-9]+-\d+")
-R_RE = re.compile(r"\b[A-Z][A-Z0-9]+-R-\d+")
-AC_RE = re.compile(r"AC-[A-Z0-9]+-\d+")
+FN_RE = re.compile(r"FN-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+")
+R_RE = re.compile(r"\b[A-Z][A-Z0-9]+(?:-[A-Z0-9]+)*-R-\d+")
+# AC 文法：前缀可含连字符段（`AC-V2-DP-*`），序号 2–3 位（`AC-SYNC-006`）。
+# 与 `_support/ac_crosswalk.py`、`_support/solution.py::_AC_TOKEN_RE` 同文法。
+_AC_CODE = r"[A-Z0-9]+(?:-[A-Z0-9]+)*"
+AC_RE = re.compile(rf"AC-{_AC_CODE}-\d{{2,3}}")
 
 # ---- 域间依赖门（参数 4 ⑧）的解析口径（F39，2026-10-15；issue #7 现场实证）----
 # 节点 id = 词字符与连字符，**末位必须是词字符**（否则 `---` 这种纯横线会被当成节点）。
@@ -107,7 +110,7 @@ def _solid_edges(body: str) -> list[tuple[str, str]]:
 
 # 契约 §4「五、验收标准」（2026-09-25 补）：域级 PRD 末附**结构类 AC 清单**（只能初始态观测的 AC）。
 STRUCT_LIST_HEAD = "#### 结构类 AC 清单"
-STRUCT_AC_RE = re.compile(r"AC-[A-Z0-9]+-\d{3}")
+STRUCT_AC_RE = re.compile(rf"AC-{_AC_CODE}-\d{{2,3}}")
 # 契约 §4「五、验收标准」（2026-10-12 补，`3509 §B201-3`）：**不可验 AC 清单**（当前 UI 无观测面的
 # AC——「AC 反向覆盖」门从零挂靠清单中减去它；豁免落点定形即本条的落地）。
 UNVER_LIST_HEAD = "#### 不可验 AC 清单"
@@ -137,16 +140,20 @@ MIN_SECTIONS = ("五", "六", "七")
 DOMAIN_SLUG = re.compile(r"`([a-z0-9][a-z0-9-]+)`")
 # 独立审查报告留痕（rings/prd/reference.md §2 / §8；issue #43）：平铺目录的唯一例外。
 ALLOWED_PRD_SUBDIRS = {"reviews"}
-RULE_ROW = re.compile(r"^\|\s*`?([A-Z][A-Z0-9]+-R-\d+)`?\s*\|", re.M)
+# solution 环的契约文件：`_support/solution.py` 的 `CROSSWALK_FILE` /
+# `CROSSWALK_WAIVERS_FILE` 规定它们必须落在 `<assets_root>/prd/`，但它们不是域级 PRD。
+# 白名单只放行这两个文件名（不放任任意 `*.md`），与契约路径保持可同时满足。
+ALLOWED_CONTRACT_FILES = ("ac-crosswalk.md", "ac-crosswalk-waivers.md")
+RULE_ROW = re.compile(r"^\|\s*`?([A-Z][A-Z0-9]+(?:-[A-Z0-9]+)*-R-\d+)`?\s*\|", re.M)
 # 规则 → 所属功能（契约 §4「所属功能」列；2026-09-28 补，`3509 §B109`）：功能 → 规则 → AC 链路的前一环。
 RULE_FUNC_COL = "所属功能"
-RULE_FUNC_ROW = re.compile(r"^\|\s*`?([A-Z][A-Z0-9]+-R-\d+)`?\s*\|[^|]*\|\s*([^|]*?)\s*\|", re.M)
+RULE_FUNC_ROW = re.compile(r"^\|\s*`?([A-Z][A-Z0-9]+(?:-[A-Z0-9]+)*-R-\d+)`?\s*\|[^|]*\|\s*([^|]*?)\s*\|", re.M)
 # 追溯总表行：| 域 | `<file>-prd.md` | 模块 | 页面 | 功能数 | 规则数 | AC 数 | …
 TRACE_ROW = re.compile(
     r"^\|\s*[^|]+\|\s*`?([a-z0-9-]+-prd\.md)`?\s*\|\s*[^|]*\|\s*[^|]*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|",
     re.M)
 # 必须吞到行尾：`group(0)` 要包含「回指规则」列，否则规则→AC 判定永远为假（实测踩到）。
-AC_ROW_LINE = re.compile(r"^\|\s*`?AC-[A-Z0-9]+-\d+`?\s*\|.*$", re.M)
+AC_ROW_LINE = re.compile(rf"^\|\s*`?AC-{_AC_CODE}-\d{{2,3}}`?\s*\|.*$", re.M)
 
 
 class Result:
@@ -332,7 +339,7 @@ def derived_field_gaps(dtext: str) -> tuple[bool, list[str]]:
 # AC 号**定义行**：表格首格 = 该 ID 且**至少 3 列**（`| ID | 场景 | 回指规则 |`）。
 # 必须排除引用行（跨域回指 / 规则→AC 列）与结构类 AC 清单（只有 2 列）。**`[^|\n]` 不能写成 `[^|]`**
 # （后者会跨行吃掉后续内容 ⇒ 把 2 列行也当 3 列）。
-AC_DEF_ROW = re.compile(r"^\|\s*`?(AC-[A-Z0-9]+-\d+)`?\s*\|[^|\n]*\|[^|\n]*\|", re.M)
+AC_DEF_ROW = re.compile(rf"^\|\s*`?(AC-{_AC_CODE}-\d{{2,3}})`?\s*\|[^|\n]*\|[^|\n]*\|", re.M)
 
 
 def _mask_conditional_lists(text: str) -> str:
@@ -408,11 +415,14 @@ def validate(root: Path) -> Result:
             if item.name not in ALLOWED_PRD_SUBDIRS:
                 illegal.append(f"子目录:{item.name}/")
         elif item.is_file():
-            if item.suffix == ".md" and item.name not in ("prd.md", "README.md") and not item.name.endswith("-prd.md"):
+            if item.suffix == ".md" \
+                    and item.name not in ("prd.md", "README.md",
+                                          *ALLOWED_CONTRACT_FILES) \
+                    and not item.name.endswith("-prd.md"):
                 illegal.append(f"非标准文件:{item.name}")
     if illegal:
         res.add("参数0 目录规范", "FAIL",
-                f"发现非契约目录层级或非标准文件：{illegal}（契约 rings/prd/reference.md §2 规定 PRD 必须为平铺目录 {lay.print_value('prd')}/prd.md 与 *-prd.md；{lay.print_value('prd')}/reviews/ 是独立审查报告留痕的唯一保留子目录，其余子目录严禁）")
+                f"发现非契约目录层级或非标准文件：{illegal}（契约 rings/prd/reference.md §2 规定 PRD 必须为平铺目录 {lay.print_value('prd')}/prd.md 与 *-prd.md；{lay.print_value('prd')}/reviews/ 是独立审查报告留痕的唯一保留子目录；solution 契约文件 {'/'.join(ALLOWED_CONTRACT_FILES)} 亦允许；其余子目录与非标准文件严禁）")
     else:
         res.add("参数0 目录规范", "PASS", "")
 
@@ -650,7 +660,7 @@ def validate(root: Path) -> Result:
                 cut = re.search(r"^#{1,4} ", tail, re.M)
                 zone = tail[:cut.start()] if cut else tail
                 listed = set(m.group(1) for m in
-                             re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|", zone, re.M))
+                             re.finditer(rf"^\|\s*`?(AC-{_AC_CODE}-\d{{2,3}})`?\s*\|", zone, re.M))
                 declared = set(AC_RE.findall(head))
                 ghost = sorted(a for a in listed if a not in declared)
                 if ghost:
@@ -697,7 +707,7 @@ def validate(root: Path) -> Result:
             # 功能 → 规则 链路（契约 §6 双向追溯 + §4 `所属功能` 列；2026-09-28 补，`3509 §B109`）：
             # ① 每条规则在 §四 声明它服务哪些功能；② 每个功能被 ≥1 条规则服务。两条合起来，
             # 才让「每个功能至少有一条 AC」可机器判（功能 → 规则 → AC 由上面的「规则被 AC 回指」接上）。
-            code_m = re.search(r"^domain_code:\s*([A-Z0-9]+)", t, re.M)
+            code_m = re.search(r"^domain_code:\s*([A-Z0-9-]+)", t, re.M)
             code = code_m.group(1) if code_m else ""
             # 功能号只能取自 **§二 功能清单小节** —— 从全文取就是自证：幽灵号写在规则行里，
             # 它也出现在全文里，幽灵检查于是永远不咬（实测踩到，属「恒 PASS 空门」一族）。
@@ -757,7 +767,7 @@ def validate(root: Path) -> Result:
         dup_acs: list[str] = []
         for d in domains:
             t = d.read_text(encoding="utf-8")
-            cm = re.search(r"^domain_code:\s*([A-Z0-9]+)", t, re.M)
+            cm = re.search(r"^domain_code:\s*([A-Z0-9-]+)", t, re.M)
             c = cm.group(1) if cm else ""
             if not c:
                 continue
@@ -815,7 +825,7 @@ def validate(root: Path) -> Result:
                 if not p.is_file():
                     continue
                 dt = p.read_text(encoding="utf-8")
-                cm = re.search(r"^domain_code:\s*([A-Z0-9]+)", dt, re.M)
+                cm = re.search(r"^domain_code:\s*([A-Z0-9-]+)", dt, re.M)
                 if not cm:
                     continue
                 c = cm.group(1)

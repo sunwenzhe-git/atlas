@@ -48,8 +48,8 @@ except Exception as exc:  # 装配缺失 / 加载失败必须响亮，不静默�
     ac_command = None
     _ADAPTER_IMPORT_ERROR = exc
 
-AC_ID_RE = re.compile(r"\b(AC-[A-Z0-9]+-\d+)\b")
-AC_ID_STRICT_RE = re.compile(r"^AC-[A-Z0-9]+-\d{3}$")
+AC_ID_RE = re.compile(r"\b(AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3})\b")
+AC_ID_STRICT_RE = re.compile(r"^AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3}$")
 BACKEND_DIM_HEADER = "后端适用覆盖维度"
 E2E_DIM_HEADER = "适用覆盖维度"
 BASELINE_PATH = Path(".atlas/runs/backend-ac-alignment.json")

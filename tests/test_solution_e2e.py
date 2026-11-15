@@ -113,6 +113,39 @@ def test_manifest_rejects_duplicate_case_ids(tmp_path: Path) -> None:
         core.validate_manifest(core.parse_manifest_text(text), tmp_path)
 
 
+def _manifest_with_acs(acs: str) -> str:
+    return (
+        "version: 1\nsolution: demo\nmode: federated\n"
+        "members:\n  - name: web\n    path: web\n    assets: member\n"
+        "requirements:\n"
+        "  - id: REQ-001\n    member: web\n"
+        f"    acs: {acs}\n"
+        "    task_slug: web-task\n    scope: 演示\n"
+    )
+
+
+def test_manifest_accepts_segmented_two_digit_ac(tmp_path: Path) -> None:
+    """`AC-V2-DP-01`（连字符前缀段 + 2 位序号）必须通过 `requirements[].acs`。"""
+    data = core.validate_manifest(
+        core.parse_manifest_text(_manifest_with_acs("AC-V2-DP-01")), tmp_path)
+    assert data["requirements"][0]["acs"] == ["AC-V2-DP-01"]
+
+
+def test_manifest_keeps_three_digit_legacy_ac(tmp_path: Path) -> None:
+    """3 位旧编号（`AC-SYNC-006`）不得因扩容被收紧。"""
+    data = core.validate_manifest(
+        core.parse_manifest_text(_manifest_with_acs("AC-SYNC-006")), tmp_path)
+    assert data["requirements"][0]["acs"] == ["AC-SYNC-006"]
+
+
+def test_manifest_rejects_four_digit_ac(tmp_path: Path) -> None:
+    """只扩容纳面，不放松判别：4 位及以上序号仍判非法。"""
+    for bad in ("AC-SOLUTION-0001", "AC-V2-DP-0001"):
+        with pytest.raises(core.SolutionError, match="AC ID 非法"):
+            core.validate_manifest(
+                core.parse_manifest_text(_manifest_with_acs(bad)), tmp_path)
+
+
 def test_manifest_rejects_selector_mutual_exclusion(tmp_path: Path) -> None:
     text = (
         "version: 1\nsolution: demo\nmode: federated\n"

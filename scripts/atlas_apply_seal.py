@@ -40,6 +40,22 @@ def _card_acs(card: Path | None) -> list[str]:
     return [t.strip() for t in re.split(r"[,，、]", m.group(1)) if t.strip()]
 
 
+def _resolve_card(root: Path, data: dict, card_rel: str) -> Path | None:
+    """`--card` 解析：与读侧 `member_dir / card.path` 同口径。
+
+    契约规定 `card.path` 是**成员仓内相对路径**；单仓布局仍允许根下相对路径。
+    存在性检查与 AC 读取共用本函数，避免写侧 / 读侧两套根路径。
+    """
+    direct = root / card_rel
+    if direct.is_file():
+        return direct
+    for member in data.get("members") or []:
+        candidate = root / str(member.get("path") or "") / card_rel
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", default=".")
@@ -82,15 +98,21 @@ def main(argv: list[str] | None = None) -> int:
         if seal.worktree_dirty(root, path):
             raise solution.SolutionError(
                 f"{path} 工作树不干净；先提交或还原再签发（封条是唯一写入口）")
+        card_file = None
         if args.card:
-            card_rel = args.card
-            if not (root / card_rel).is_file():
-                raise solution.SolutionError(f"--card 不存在: {card_rel}")
+            card_file = _resolve_card(root, data, args.card)
+            if card_file is None:
+                raise solution.SolutionError(f"--card 不存在: {args.card}")
         acs = ([] if args.acceptance_acs is None
                else [t.strip() for t in
                      re.split(r"[,，、]", args.acceptance_acs) if t.strip()])
         if args.acceptance_acs is None:
-            acs = _card_acs(root / args.card if args.card else None)
+            acs = _card_acs(card_file)
+            if card_file is not None and not acs:
+                # 静默为空 = 签了一个没写验收项的字：至少让签发人看见。
+                print(f"[WARN] 任务卡未声明 atlas-acceptance（或解析为空）："
+                      f"{args.card}；封条 card.projection.acceptance_acs 为空",
+                      file=sys.stderr)
         gap = None
         if args.e2e_status in ("not_ready", "n/a"):
             if not (args.gap_reason and args.gap_owner and args.gap_due):

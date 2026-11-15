@@ -13,7 +13,7 @@
 
 | 文件 | 行数 | 角色 |
 |---|---|---|
-| `scripts/gen_e2e_scripts.py` | 3410 | 生成器本体(全仓最大单件):分片 DSL → `.spec.ts` |
+| `scripts/gen_e2e_scripts.py` | 3425 | 生成器本体(全仓最大单件):分片 DSL → `.spec.ts` |
 | `scripts/e2e_console.py` | 2324 | 评审控制台:纯标准库 SSE 服务(默认 127.0.0.1:4190) |
 | `<e2e>/scripts/atlas-evidence-teardown.ts` | — | 生成物:`globalTeardown` 调证据归档 CLI(P12) |
 | `<e2e>/scripts/.atlas-trace-policy.json` | — | 生成物:逐用例 `request_assertion`(B4) |
@@ -41,7 +41,7 @@
 
 ### 5. 双前置门:独立审查 + 就绪
 
-`review_gate`(`scripts/gen_e2e_scripts.py:1779`)读最新审查报告(`REVIEW_LEVELS`,`scripts/gen_e2e_scripts.py:1779`),有 Critical 拒绝写盘;`NOT_READY`(`scripts/gen_e2e_scripts.py:88`,exit 3)= 前置未声明的显式跳过,不是失败。
+`review_gate`(`scripts/gen_e2e_scripts.py:1794`)读最新审查报告(`REVIEW_LEVELS`,`scripts/gen_e2e_scripts.py:1794`),有 Critical 拒绝写盘;`NOT_READY`(`scripts/gen_e2e_scripts.py:88`,exit 3)= 前置未声明的显式跳过,不是失败。
 
 ### 6. 失败留证(D108/D142)
 

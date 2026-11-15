@@ -48,8 +48,12 @@ from datetime import date
 from typing import Any
 
 SOLUTION_AC_RE = re.compile(r"^AC-SOLUTION-\d{3}$")
-MEMBER_AC_RE = re.compile(r"^AC-[A-Z0-9]+-\d{3}$")
-MEMBER_AC_PARTS_RE = re.compile(r"^AC-(?P<code>.+)-(?P<num>\d{3})$")
+# 成员 AC 文法：前缀可含连字符段（`AC-V2-DP-*`），序号 2–3 位（`AC-SYNC-006`）。
+# 与 `_support/solution.py::_AC_TOKEN_RE`、`validators/validate_prd.py::AC_RE`
+# 同文法（一致性钉见 `tests/test_ac_crosswalk.py`）。
+_AC_CODE = r"[A-Z0-9]+(?:-[A-Z0-9]+)*"
+MEMBER_AC_RE = re.compile(rf"^AC-{_AC_CODE}-\d{{2,3}}$")
+MEMBER_AC_PARTS_RE = re.compile(rf"^AC-(?P<code>.+)-(?P<num>\d{{2,3}})$")
 CONTRACT_AC_RE = re.compile(r"^AC-CONTRACT-\d{3}$")
 CONTRACT_AC_PREFIX = "AC-CONTRACT-"
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -327,13 +331,20 @@ def crosswalk_findings(table: CrosswalkTable, manifest: dict, reader,
                             prd_rel))
             if reader.exists(prd_rel):
                 fm = reader.front_matter(prd_rel) or {}
-                domain = str(fm.get("domain") or "").strip()
-                if domain and domain.lower() != row.member_domain.lower():
+                # 成员域取 AC 前缀（`AC-SYNC-*` → `sync`），对应 PRD 的 `domain_code`；
+                # `domain` 是域 slug（`cross-network-sync`），不是同一口径。无 `domain_code`
+                # 的存量 PRD 才回落到 `domain`（旧口径继续可用）。
+                code = str(fm.get("domain_code") or "").strip()
+                slug = str(fm.get("domain") or "").strip()
+                source = "domain_code" if code else "domain"
+                declared = code or slug
+                if declared and declared.lower() != row.member_domain.lower():
                     add("member_domain_mismatch", "error",
                         f"member_domain_mismatch: 成员 PRD front matter "
-                        f"domain={domain!r} 与 crosswalk 成员域 "
+                        f"{source}={declared!r} 与 crosswalk 成员域 "
                         f"{row.member_domain!r} 不符（{prd_rel}）", prd_rel,
-                        {"line": row.line, "kind": "front_matter"},
+                        {"line": row.line, "kind": "front_matter",
+                         "source": source},
                         dedupe=("member_domain_mismatch", "front_matter", row.member,
                                 row.prd))
 
@@ -540,7 +551,7 @@ def _contract_ac_findings(text: str, manifest: dict, rel: str) -> list[Finding]:
     for idx, line in enumerate(text.splitlines(), 1):
         if idx in contract_lines or not line.strip().startswith("|"):
             continue
-        for token in re.findall(r"AC-[A-Z0-9]+-\d{3}", line):
+        for token in re.findall(rf"AC-{_AC_CODE}-\d{{2,3}}", line):
             if not token.startswith(CONTRACT_AC_PREFIX):
                 section_ac.add(token)
     ids: list[str] = []

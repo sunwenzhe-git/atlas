@@ -19,7 +19,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-AC_RE = re.compile(r"AC-[A-Z0-9]+-\d{3}")
+AC_RE = re.compile(r"AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3}")
 SLUG_BAD = re.compile(r"[/\\]|\.\.")
 
 
@@ -160,7 +160,7 @@ def _ac_defs(root: Path, data: dict, assets_root: str | None = None) -> set[str]
         return set()
     defs: set[str] = set()
     for line in prd.read_text(encoding="utf-8", errors="replace").splitlines():
-        m = re.match(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|", line)
+        m = re.match(r"^\|\s*`?(AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3})`?\s*\|", line)
         if m:
             defs.add(m.group(1))
     return defs

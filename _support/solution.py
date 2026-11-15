@@ -92,6 +92,12 @@ _LAYOUT = _load_sibling("layout", "_atlas_solution_layout")
 # 封条单源（C 批）：路径宇宙 / 续签链 / 状态机 / 写侧。
 _SEAL = _load_sibling("solution_seal", "_atlas_solution_seal")
 
+# AC ID 文法单源（`AC-V2-DP-01`：前缀可含连字符段，序号 2–3 位；`AC-SYNC-006` 等
+# 3 位旧号继续可用，4 位及以上仍非法）。`validate_manifest` 的 `requirements[].acs`
+# 与 D 批 crosswalk 解析共用本常量——同一文件内不得再写第二份正则副本；跨模块
+# （`ac_crosswalk` / `validate_prd` / `solution_e2e`）须同文法，改动一并同步。
+_AC_TOKEN_RE = re.compile(r"^AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3}$")
+
 
 # ---------------------------------------------------------------- manifest
 
@@ -607,7 +613,7 @@ def validate_manifest(data: dict, root: Path, phase1: bool = True) -> dict:
         if not acs:
             raise SolutionError(f"requirement {rid} 缺少 acs")
         for ac in acs:
-            if not re.fullmatch(r"AC-[A-Z0-9]+-\d{3}", ac):
+            if not _AC_TOKEN_RE.match(ac):
                 raise SolutionError(f"requirement {rid} 的 AC ID 非法: {ac!r}")
         slug = str(item.get("task_slug") or "").strip()
         if not _valid_task_slug(slug):
@@ -3041,7 +3047,6 @@ def _layer0_lock(root: Path):
 
 CROSSWALK_FILE = "ac-crosswalk.md"
 CROSSWALK_WAIVERS_FILE = "ac-crosswalk-waivers.md"
-_AC_TOKEN_RE = re.compile(r"^AC-[A-Z0-9]+-\d{3}$")
 _SOLUTION_AC_RE = re.compile(r"^AC-SOLUTION-\d{3}$")
 
 
@@ -3126,7 +3131,9 @@ class _SolutionPrdReader:
 
     def front_matter(self, path: str) -> dict:
         fm = _prd_front_matter(self.root / path)
-        return {"domain": fm.get("domain", ""), "prd_schema": fm.get("prd_schema", "")}
+        return {"domain": fm.get("domain", ""),
+                "domain_code": fm.get("domain_code", ""),
+                "prd_schema": fm.get("prd_schema", "")}
 
     def ac_links(self, path: str) -> list[dict]:
         file = self.root / path

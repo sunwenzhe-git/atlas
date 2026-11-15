@@ -26,8 +26,8 @@ from _support.siblings import load_module  # noqa: E402
 
 _ac_coverage = load_module("ac_coverage")
 
-AC_ID_RE = re.compile(r"\b(AC-[A-Z0-9]+-\d+)\b")
-TITLE_AC_RE = re.compile(r"\[(AC-[A-Z0-9]+-\d+)\]")
+AC_ID_RE = re.compile(r"\b(AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3})\b")
+TITLE_AC_RE = re.compile(r"\[(AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3})\]")
 CALL_RE = re.compile(
     r"\b(it|test|describe|xit|xdescribe|fit|fdescribe)\b"
     r"(\s*\.\s*(skip|todo|only|fails|concurrent|skipIf|each))?\s*\("

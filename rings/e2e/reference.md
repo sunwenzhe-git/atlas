@@ -431,7 +431,7 @@ testid:
 - **临时调试打桩 ≠ E2E 证据**（2026-10-31，D177）：实现期在浏览器里临时拦截接口做本地交互核对，不属于本节的用例级 `mock:` 声明，也不产生 E2E 证据；交付说明须写明打桩范围，**不得记作 E2E 通过**，E2E 覆盖仍按分片 / 生成器口径判定。
 - **零步基线咬合（v0.1.0-beta.14 优化）**：含 `mock:` 段的用例自动免除注入零步探针，防外部打桩用例中初始容器/布局元素被误判恒真（假阳性）；用例测试体仍 100% 严谨执行断言，无需人工机械式补 `initial:`。mock 页（分片含 `mock:` 行）的基线降级为**显式空转**：生成物注释标记 + §8.3 **WARN**（恒真守卫在该页失效 = 知悉项，不静默）。后续如需恢复守卫强度，引入 `mock-default:`（页级缺省桩集）另立批。
 - **登录预置咬合**：纯前端桩项目**不应声明真实登录取证**（桩跑真登录是对不存在的登录说话；**靶场无门请显式 `e2e.app_login: {mode: none}`**，`shared/stack-profile.md` §2）；确需预置会话的桩项目用 **`e2e.app_login.mode: fabricated`**（§7.1 / `shared/stack-profile.md` §2：setup 不发真请求、直写假令牌进 storageState），或用例 `auth: none` + 桩登录端点走完整登录流。
-- **系统级套件另环（2026-11-15，诊断 S4）**：页面 E2E 明确不承载「后端记得上一步」的行为（上条出界判据），该类行为落在 `product/e2e/system/`（pytest 直连真实后端，**不属本环生成物、不受本环用例门约束**）。硬约定：① 环境变量缺失 ⇒ 整目录 **skip**（skip 不算通过）；② 造数名称必须含 `agent-` 前缀，`finally` 清理；③ **`SKIP` 不得计作通过**——只有「重跑幂等」用例允许 `action=SKIP`，且须同时断言目标侧未新增；④ 禁止固定源 id 与共享 state 文件（复跑即回归）。后端 AC 覆盖由 `validators/validate_ac_alignment.py` 承载，`backend_test.mode: enforce`（缺省 `advisory` = WARN）用于高风险域把「零后端测试」升 FAIL。
+- **系统级套件另环（2026-11-15，诊断 S4）**：页面 E2E 明确不承载「后端记得上一步」的行为（上条出界判据），该类行为落在 `product/e2e/system/`（项目侧测试套件直连真实后端，**不属本环生成物、不受本环用例门约束**）。硬约定：① 环境变量缺失 ⇒ 整目录 **skip**（skip 不算通过）；② 造数名称必须含 `agent-` 前缀，`finally` 清理；③ **`SKIP` 不得计作通过**——只有「重跑幂等」用例允许 `action=SKIP`，且须同时断言目标侧未新增；④ 禁止固定源 id 与共享 state 文件（复跑即回归）。后端 AC 覆盖由 `validators/validate_ac_alignment.py` 承载，`backend_test.mode: enforce`（缺省 `advisory` = WARN）用于高风险域把「零后端测试」升 FAIL。
 
 ---
 

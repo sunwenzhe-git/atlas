@@ -5008,6 +5008,32 @@ def test_prd_illegal_nested_directories_fails() -> None:
         assert "domains" in row0_bad["detail"]
 
 
+def test_prd_allows_only_solution_contract_files() -> None:
+    """solution 契约文件必须落在 `<assets_root>/prd/`（`_support/solution.py` 的
+    `CROSSWALK_FILE` / `CROSSWALK_WAIVERS_FILE`），但白名单只放行这两个文件名：
+    其它散落 `.md` 仍判非标准文件（防白名单泛滥成任意 `.md` 都过）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root, _with_page_table("已实现"))
+        mk_prd_raw(root, FM_GLOBAL + PRD_GLOBAL,
+                   FM_DOMAIN + PRD_DEMO.format(ac="AC-HOME-001", rows=""))
+        prd = root / "product" / "prd"
+
+        (prd / "ac-crosswalk.md").write_text("# 跨接表\n", encoding="utf-8")
+        (prd / "ac-crosswalk-waivers.md").write_text("# 豁免\n", encoding="utf-8")
+        row = [c for c in vpr.validate(root).checks
+               if c["check"] == "参数0 目录规范"][0]
+        assert row["status"] == "PASS", row
+
+        (prd / "notes.md").write_text("# 散落笔记\n", encoding="utf-8")
+        row_bad = [c for c in vpr.validate(root).checks
+                   if c["check"] == "参数0 目录规范"][0]
+        assert row_bad["status"] == "FAIL"
+        assert "notes.md" in row_bad["detail"], row_bad
+
+
 def test_validate_testids_strip_comments() -> None:
     """v0.1.0-beta.14: 注释中的 testid 必须被剥离，不得产生幻影实然 testid。"""
     with tempfile.TemporaryDirectory() as td:

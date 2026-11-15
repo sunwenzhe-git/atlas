@@ -89,6 +89,23 @@ def test_parse_member_field_empty() -> None:
     assert exc.value.code == "member_field_empty"
 
 
+def test_parse_accepts_segmented_two_digit_member_ac() -> None:
+    """成员 AC 文法扩容：连字符前缀段 + 2 位序号（`AC-V2-DP-01`）必须可解析。"""
+    table = ac.parse_crosswalk(cw(
+        "| `AC-SOLUTION-001` | backend | `product/prd/auth-prd.md` | auth "
+        "| `AC-V2-DP-01` | C1 |"))
+    assert table.rows[0].member_ac == "AC-V2-DP-01"
+
+
+def test_parse_rejects_four_digit_member_ac() -> None:
+    """只扩容纳面：4 位序号仍判 `ac_format`。"""
+    with pytest.raises(ac.CrosswalkParseError) as exc:
+        ac.parse_crosswalk(cw(
+            "| `AC-SOLUTION-001` | backend | `product/prd/auth-prd.md` | auth "
+            "| `AC-V2-DP-0001` | C1 |"))
+    assert exc.value.code == "ac_format"
+
+
 def test_parse_error_code_closed_set() -> None:
     with pytest.raises(ValueError):
         ac.CrosswalkParseError("member_unknown", 1)
@@ -111,7 +128,9 @@ class FakeReader:
 
     def front_matter(self, path: str) -> dict:
         item = self.prds[path]
-        return {"domain": item.get("domain", ""), "prd_schema": "2"}
+        return {"domain": item.get("domain", ""),
+                "domain_code": item.get("domain_code", ""),
+                "prd_schema": "2"}
 
     def ac_links(self, path: str) -> list[dict]:
         item = self.prds[path]
@@ -307,6 +326,41 @@ def test_c11_domain_mismatch_prefix_and_front_matter() -> None:
     assert kinds == {"ac_prefix", "front_matter"}
 
 
+def test_c11_front_matter_prefers_domain_code_over_slug() -> None:
+    """成员域取 `domain_code`（与 AC 前缀同口径）；`domain` 是域 slug
+    （`cross-network-sync`），slug 与 AC 前缀不同不算冲突。"""
+    reader = FakeReader({PRD: {"domain": "cross-network-sync",
+                               "domain_code": "auth",
+                               "acs": {"AC-AUTH-012"}}})
+    found = ac.crosswalk_findings(
+        ac.parse_crosswalk(cw(ROW)), manifest(req(["AC-SOLUTION-001"])), reader)
+    assert [f for f in found if f.code == "member_domain_mismatch"] == []
+
+
+def test_c11_front_matter_domain_code_conflict_still_fails() -> None:
+    """`domain_code` 与 crosswalk 成员域冲突时仍报错，证据指向 `domain_code`。"""
+    reader = FakeReader({PRD: {"domain": "auth", "domain_code": "billing",
+                               "acs": {"AC-AUTH-012"}}})
+    found = [f for f in ac.crosswalk_findings(
+        ac.parse_crosswalk(cw(ROW)), manifest(req(["AC-SOLUTION-001"])), reader)
+        if f.code == "member_domain_mismatch"]
+    assert len(found) == 1
+    assert found[0].detail == {"line": 3, "kind": "front_matter",
+                               "source": "domain_code"}
+    assert "domain_code='billing'" in found[0].message
+
+
+def test_c11_front_matter_falls_back_to_domain_when_code_absent() -> None:
+    """无 `domain_code` 的存量 PRD 回落 `domain`（旧口径继续可用）。"""
+    reader = FakeReader({PRD: {"domain": "billing", "acs": {"AC-AUTH-012"}}})
+    found = [f for f in ac.crosswalk_findings(
+        ac.parse_crosswalk(cw(ROW)), manifest(req(["AC-SOLUTION-001"])), reader)
+        if f.code == "member_domain_mismatch"]
+    assert len(found) == 1
+    assert found[0].detail["source"] == "domain"
+    assert "domain='billing'" in found[0].message
+
+
 def test_contract_ac_in_member_slot_both_forms() -> None:
     table = ac.parse_crosswalk(cw(
         "| `AC-SOLUTION-001` | backend | `product/prd/auth-prd.md` | auth "
@@ -406,6 +460,15 @@ def test_d47_parse_error_suppresses_c_family(tmp_path: Path, body: str,
 
 def test_happy_path_no_findings(tmp_path: Path) -> None:
     write(tmp_path, PRD, PRD_OK)
+    write(tmp_path, "product/prd/ac-crosswalk.md", cw(ROW))
+    assert check(tmp_path, data()) == []
+
+
+def test_c11_real_reader_prefers_domain_code(tmp_path: Path) -> None:
+    """真实 `_SolutionPrdReader` 必须把 `domain_code` 交给 crosswalk 判据：
+    只改 `front_matter` 的返回值而漏掉读侧透传时本钉转红。"""
+    write(tmp_path, PRD, PRD_OK.replace(
+        "domain: auth", "domain: cross-network-sync\ndomain_code: auth"))
     write(tmp_path, "product/prd/ac-crosswalk.md", cw(ROW))
     assert check(tmp_path, data()) == []
 

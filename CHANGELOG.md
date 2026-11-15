@@ -4,6 +4,25 @@
 
 ---
 
+## [Unreleased]
+
+### 🧪 E2E 文本期门：R3 机器化 + R11 扩面到 `select`
+
+* `validators/validate_e2e_index.py`：`同控件回读禁令` 纳入 `select`；新增门 **`断言异源（R3）`**——非 `initial:` / `unchanged:` 断言若全部落在被交互动作操作过的控件上 ⇒ FAIL（`waitFor` / `read` 不计入，`request` / `api` 天然异源）；契约 `rings/e2e/reference.md` §5.6 / §8.2 同步；
+* `validators/validate_e2e_mocks.py`：`mode: on` 时每份 fixture 缺 `<fixture>.schema.json` ⇒ **FAIL**；新增 `scripts/gen_fixture_schemas.py`（`--write` 落盘，只锁形状）；
+* `scripts/gen_e2e_scripts.py`：`hidden` 发射改为「先 `not.toHaveCount(0)` 再 `toBeHidden()`」，新增断言动词 `absent`（`toHaveCount(0)`）；
+* 契约 `rings/e2e/reference.md` §5.8 增「系统级套件另环」；新增项目侧 `product/e2e/system/` 样板（无环境 skip，不冒充通过）。
+
+### 🧪 AC 文法扩容与解析器口径统一
+
+* `_support/solution.py`：`requirements[].acs` 去掉旧正则副本，与 D 批 crosswalk 共用 `_AC_TOKEN_RE` 单源——`AC-V2-DP-01`（连字符前缀段 + 2 位序号）通过，`AC-SYNC-006` 等 3 位旧号继续可用，**4 位及以上仍判非法**；
+* `_support/ac_crosswalk.py`：成员 PRD 域取 front matter 的 `domain_code`（`domain` 是域 slug，不是同一口径），无 `domain_code` 时回落 `domain`；冲突仍报 `member_domain_mismatch`，`detail.source` 标明取用字段；
+* `scripts/atlas_apply_seal.py`：`--card` 按成员仓内相对路径解析；卡未声明 `atlas-acceptance` 时封条照签但打 `[WARN]`，不再静默签出空投影；
+* `validators/validate_prd.py`：`prd/` 白名单只放行 `ac-crosswalk.md` / `ac-crosswalk-waivers.md`；`domain_code` 允许连字符段（`V2-DP`）；
+* 发版门清障：`shared/gates.md` 与 `docs/map` 计数锚随实况回正；`rings/e2e/reference.md` 系统级套件条目去掉具体测试框架名。
+
+---
+
 ## [v0.3.0-beta.1] - 2026-11-14
 
 ### 🔐 验收面：`SEAL_UPSTREAM_BIND_FROM` 落值 D 批首版 tag 日期（案 10 A / D-48）

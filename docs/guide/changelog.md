@@ -32,6 +32,16 @@
 * 契约 `rings/e2e/reference.md` §5.5 动词表同步；零步基线口径改写为「mock 用例逐例豁免，同页非 mock 探针照跑」（`validate_e2e_mocks` 的 WARN 文案同步，行为不变）；
 * 单测：`tests/test_e2e_hidden_absent.py`（hidden 存在性守卫 / absent 计数 0 / 基线逐例豁免），`test_gen_e2e_scripts.py` 170 passed。
 
+### 🧪 AC 文法扩容与解析器口径统一（2026-11-15）
+
+* `_support/solution.py`：`requirements[].acs` 不再自带旧正则副本（`AC-[A-Z0-9]+-\d{3}`），与 D 批 crosswalk 共用 `_AC_TOKEN_RE` 单源——`AC-V2-DP-01`（连字符前缀段 + 2 位序号）通过，`AC-SYNC-006` 等 3 位旧号继续可用，**4 位及以上仍判非法**（只扩容纳面，不放松判别）；
+* 同一文法同步到 `_support/ac_coverage.py`、`_support/ac_crosswalk.py`、`_support/solution_e2e.py`、`_support/solution_task.py`、`validators/validate_prd.py`、`validators/validate_e2e_index.py`、`validators/validate_ac_alignment.py` 与 `adapters/ac/{pytest,js,junit}.py`；
+* `_support/ac_crosswalk.py`：成员 PRD 域改为取 front matter 的 `domain_code`（与 AC 前缀同口径；`domain` 是域 slug `cross-network-sync`，不是同一口径），无 `domain_code` 的存量 PRD 回落 `domain`；冲突仍报 `member_domain_mismatch`，`detail.source` 标明取用字段；
+* `scripts/atlas_apply_seal.py`：`--card` 按**成员仓内相对路径**解析（与读侧 `member_dir / card.path` 同口径，单仓布局仍允许根下相对路径）；卡未声明 `atlas-acceptance`（或解析为空）时封条照签，但打 `[WARN]`，不再静默签出空投影；
+* `validators/validate_prd.py`：`prd/` 目录白名单只放行 solution 契约文件 `ac-crosswalk.md` / `ac-crosswalk-waivers.md`（其它散落 `.md` 仍判非标准文件）；`domain_code` 允许连字符段（`V2-DP`），不再只截到首段；
+* 单测：`test_solution_e2e.py`（2 位 / 3 位正例 + 4 位反例）、`test_ac_crosswalk.py`（成员 AC 文法、`domain_code` 优先 / 冲突 / 回落、真实 reader 接线）、`test_apply_record.py`（无验收项告警）、`test_validators.py`（白名单只放行两个文件名）；
+* 发版门清障：`shared/gates.md` 与 `docs/map` 计数锚随实况回正（80 个测试文件 / `test_validators.py` 205 条 / 生成器 3425 行）；`rings/e2e/reference.md` 系统级套件条目去掉具体测试框架名（`test_no_framework_names` 守恒门）。
+
 ---
 
 ## [v0.3.0-beta.1] - 2026-11-14

@@ -33,7 +33,8 @@ _DIM_CLAIM_RE = re.compile(r"(?<!AC-)(?<![0-9A-Za-z])[Cc](\d{1,2})(?![0-9])")
 
 # `关联AC` 单元格多值口径（RFC-20261111-03 §1.6）：一格可写单值或分隔列表，
 # 分隔符 `、` / `,` / `，`；逐 token 去首尾空白。token 合法性仍须整串匹配本正则。
-AC_REF_RE = re.compile(r"^AC-[A-Z0-9]+-\d{3}$")
+# AC 文法：前缀可含连字符段（`AC-V2-DP-*`），序号 2–3 位（`AC-SYNC-006`）。
+AC_REF_RE = re.compile(r"^AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3}$")
 _AC_REF_DELIMS = re.compile(r"[、,，]")
 
 

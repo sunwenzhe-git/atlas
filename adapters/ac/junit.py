@@ -28,7 +28,7 @@ from _support.siblings import load_module  # noqa: E402
 
 _ac_coverage = load_module("ac_coverage")
 
-TITLE_AC_RE = re.compile(r"\[(AC-[A-Z0-9]+-\d+)\]")
+TITLE_AC_RE = re.compile(r"\[(AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3})\]")
 TEST_ANN_RE = re.compile(r"@(Test|ParameterizedTest|RepeatedTest|TestFactory)\b")
 CLASS_RE = re.compile(r"\b(?:class|interface|record|enum)\s+([A-Za-z_]\w*)")
 METHOD_RE = re.compile(r"([A-Za-z_]\w*)\s*\(")

@@ -258,7 +258,7 @@ def is_canonical_ac_header(hdr: list[str]) -> bool:
 # 契约 §8.2（2026-09-25 补）：PRD 环登记「结构类 AC」的小节标题 ——
 # 该小节内的 AC 其被测属性**只能在初始态观测**（骨架 / 默认面板 / 按数据渲染构成）。
 STRUCT_LIST_HEAD = "#### 结构类 AC 清单"
-STRUCT_AC_RE = re.compile(r"AC-[A-Z0-9]+-\d{3}")
+STRUCT_AC_RE = re.compile(r"AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3}")
 # 契约 §8.2 / PRD 环 §五（2026-10-12 补，`3509 §B201-3`）：PRD 环登记「不可验 AC」的小节标题 ——
 # 「AC 反向覆盖」门从零挂靠清单中**减去**本清单（豁免落点定形 = 本条的落地）。
 UNVER_LIST_HEAD = "#### 不可验 AC 清单"
@@ -975,7 +975,7 @@ def validate(root: Path) -> Result:
             for pf in prd_files:
                 seg = pf.read_text(encoding="utf-8")
                 defs |= {m.group(1) for m in
-                         re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|", seg, re.M)}
+                         re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3})`?\s*\|", seg, re.M)}
             unreachable = [g["用例ID"] for g in grid if _ac_unreachable(g["关联AC"], defs)]
         else:
             corpus = "".join(p.read_text(encoding="utf-8") for p in prd_files)
@@ -1031,7 +1031,7 @@ def validate(root: Path) -> Result:
         if not m_slug:
             continue
         dom_acs[m_slug.group(1)] = {
-            m.group(1) for m in re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|", seg, re.M)
+            m.group(1) for m in re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3})`?\s*\|", seg, re.M)
         }
         # 不可验 AC 清单（豁免面，2026-10-12，`3509 §B201-3`）：只取小节内**表格行**的 AC
         # （至下一个标题止；说明散文里的 AC 提及不构成条目）；自洽（清单 ⊆ 本文档 AC 表）

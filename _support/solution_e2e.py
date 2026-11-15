@@ -365,7 +365,7 @@ def _ac_coverage(root: Path | None, index: dict, data: dict | None = None) -> di
     except OSError:
         return dict(_AC_COVERAGE_EMPTY)
     defs = {m.group(1) for m in
-            re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|", prd_text, re.M)}
+            re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3})`?\s*\|", prd_text, re.M)}
     # RFC-20261111-03 §1.6：`关联AC` 一格可持多值，按 token 拆开后再与定义集求交。
     attached = {ac for r in index["rows"]
                 for ac in load_module("ac_coverage").split_acs(r.get("关联AC"))} & defs

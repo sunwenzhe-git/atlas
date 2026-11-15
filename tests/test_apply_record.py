@@ -506,6 +506,23 @@ def test_c_apply_seal_cli_writes_seconds_signature(repo: Path) -> None:
     assert {u["role"] for u in doc["upstream"]} >= {"manifest", "prd-global"}
 
 
+def test_c_apply_seal_warns_when_card_has_no_acceptance(repo: Path) -> None:
+    """`--card` 按成员仓相对路径解析；卡无 `atlas-acceptance` 行时封条照签，
+    但必须打可见 WARN（静默签「没写验收项的字」不可接受）。"""
+    card = repo / "web" / CARD
+    card.write_text("# 任务卡\n\n本卡没有验收项。\n", encoding="utf-8")
+    new = "product/reviews/apply/web/T-004.seal.json"
+    res = subprocess.run(
+        [sys.executable, str(SEAL_SCRIPT), "--root", str(repo), "--seal", new,
+         "--card", CARD, "--e2e-status", "ready",
+         "--case", CASE_ID, "--json"],
+        capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    assert "[WARN]" in res.stderr and "atlas-acceptance" in res.stderr
+    doc = json.loads((repo / new).read_text(encoding="utf-8"))
+    assert doc["card"]["projection"]["acceptance_acs"] == []
+
+
 def test_c_seal_cli_exit_codes(repo: Path) -> None:
     head = last_seal_commit(repo)
     res = subprocess.run(

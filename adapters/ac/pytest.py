@@ -110,7 +110,7 @@ def wire_project(target: Path, force: bool = False) -> dict:
             "detail": "appended ac marker registration to existing pytest.ini",
             "_write": (ini_path, new_content)}
 
-AC_ID_RE = re.compile(r"\b(AC-[A-Z0-9]+-\d+)\b")
+AC_ID_RE = re.compile(r"\b(AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3})\b")
 SKIP_DIRS = {
     "node_modules", ".git", "dist", "build", ".next", "coverage", "__pycache__",
     ".venv", "venv", "vendor", ".cache", "out", "target", ".atlas", ".atlas-run", ".scratch", ".trellis",
