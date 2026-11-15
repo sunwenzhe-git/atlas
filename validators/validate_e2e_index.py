@@ -290,7 +290,14 @@ I18N_HINTS = (re.compile(r"\bt\("), re.compile(r"\b[a-z]+\.[a-z]+\.[a-z]+\b"), r
 # D199（2026-11-12）：动作侧 `send`（发请求 + 捕获响应值）；断言侧 `api`（D197 主动接口断言）
 # —— 与生成器 `gen_e2e_scripts.py` 同名常量同口径（两处机器面双保险，防半通态）。
 ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "type", "hover", "read", "refresh", "goto", "waitFor", "download", "upload", "dispatch", "send")
-ASSERT_VERBS = ("text", "contains", "count", "countOptions", "visible", "hidden", "enabled", "disabled", "checked", "unchecked", "value", "attr", "delta", "request", "api")
+ASSERT_VERBS = ("text", "contains", "count", "countOptions", "visible", "hidden", "absent", "enabled", "disabled", "checked", "unchecked", "value", "attr", "delta", "request", "api")
+# R3（2026-11-15）：会改变控件自身状态的交互动词——只有这些动词的 testid 计入「被操作控件」。
+# `waitFor` / `download` / `read` / `goto` / `refresh` 不计：它们不改变被测状态，断言同一元素
+# 不构成自证。
+ACTED_TID_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "type", "hover", "dispatch", "upload")
+# R3：以 testid 为第一参数的断言动词（`request` / `api` 以 METHOD 开头，天然属异源）。
+TID_ASSERT_VERBS = ("text", "contains", "count", "countOptions", "visible", "hidden", "absent", "enabled",
+                    "disabled", "checked", "unchecked", "value", "attr", "delta")
 
 # 契约 §5.5/§5.6/§5.7（2026-11-12 补，`DESIGN.md` D191）：`read` 运行时取数原语 + 存在类数据纪律。
 # 与生成器 `gen_e2e_scripts.py` 同名常量同口径（两处机器面双保险，防半通态）。
@@ -1008,6 +1015,15 @@ def validate(root: Path) -> Result:
                 dom_pages.setdefault(dom, set()).add(slug)
     dom_acs: dict[str, set[str]] = {}
     dom_unver: dict[str, set[str]] = {}
+    unver_ref_bad: list[str] = []   # 2026-11-15：补偿证据缺失 / 引用不可解析
+    _manual_text = ""
+    try:
+        _mp = e2e / "manual.md"
+        if _mp.is_file():
+            _manual_text = _mp.read_text(encoding="utf-8")
+    except OSError:
+        _manual_text = ""
+    _all_case_ids = {g["用例ID"] for g in grid}
     for pf in prd_files:
         seg = pf.read_text(encoding="utf-8")
         fm_text = seg.split("---")[1] if seg.startswith("---") else ""
@@ -1020,13 +1036,32 @@ def validate(root: Path) -> Result:
         # 不可验 AC 清单（豁免面，2026-10-12，`3509 §B201-3`）：只取小节内**表格行**的 AC
         # （至下一个标题止；说明散文里的 AC 提及不构成条目）；自洽（清单 ⊆ 本文档 AC 表）
         # 由 validate_prd.py 参数 4 检——两门分工不重叠。
+        # 2026-11-15（RFC 座：E2E 漏检诊断 S2）：清单升级为四列
+        # `AC ID | 为什么不可验 | 到期版本 | 补偿证据`；**无补偿证据 ⇒ 不豁免**（覆盖门按缺挂靠），
+        # 补偿证据里的 `MANUAL-*` / 本地 `E2E-*` 必须可解析（跨仓 `*-track-*:` 前缀的引用只验非空）。
         unver: set[str] = set()
         if UNVER_LIST_HEAD in seg:
             tail = seg.split(UNVER_LIST_HEAD, 1)[1]
             cut = re.search(r"^#{1,4} ", tail, re.M)
             zone = tail[:cut.start()] if cut else tail
-            unver = {m.group(1) for m in
-                     re.finditer(r"^\|\s*`?(AC-[A-Z0-9]+-\d{3})`?\s*\|", zone, re.M)}
+            for _ln in zone.splitlines():
+                _m = re.match(r"^\|\s*`?(AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3})`?\s*\|(.*)$", _ln)
+                if not _m:
+                    continue
+                _ac = _m.group(1)
+                _cells = [c.strip() for c in _ln.strip().strip("|").split("|")]
+                _ev = _cells[3] if len(_cells) >= 4 else ""
+                if not _ev:
+                    continue
+                unver.add(_ac)
+                if "track-" in _ev:
+                    continue  # 跨仓证据：本仓无法解析其用例号
+                for _ref in re.findall(r"MANUAL-[A-Za-z0-9-]+|E2E-[A-Za-z0-9-]+", _ev):
+                    if _ref.startswith("MANUAL-"):
+                        if _ref not in _manual_text:
+                            unver_ref_bad.append(f"{_ac}:{_ref}（manual.md 无此项）")
+                    elif _ref not in _all_case_ids:
+                        unver_ref_bad.append(f"{_ac}:{_ref}（索引无此用例）")
         dom_unver[m_slug.group(1)] = unver
     if not dom_acs or not dom_pages:
         res.add("AC 反向覆盖", "N/A", "域级 PRD 无 `domain:` 声明，或索引无页面表")
@@ -1058,6 +1093,16 @@ def validate(root: Path) -> Result:
         res.add("AC 反向覆盖", "PASS" if not gaps else "WARN",
                 (detail + "；残留待裁决（清零后升 FAIL，规则在 shared/gates.md §3 AC⇔用例行）")
                 if gaps else detail)
+
+    # 2026-11-15（诊断 S2）：不可验 AC 的豁免不再是永久白名单——清单行必须有补偿证据，
+    # 且证据可解析。缺列 / 空证据的行已在上面按「不豁免」处理（覆盖门照常点名）。
+    if dom_acs and dom_pages:
+        res.add("不可验 AC 补偿证据", "PASS" if not unver_ref_bad else "FAIL",
+                f"{_format_list(unver_ref_bad)}（契约 §5.6/§8.2：不可验清单四列，补偿证据须可解析——"
+                f"`MANUAL-*` 在 manual.md、本地 `E2E-*` 在索引；跨仓 `*-track-*:` 引用只验非空）"
+                if unver_ref_bad else "")
+    else:
+        res.add("不可验 AC 补偿证据", "N/A", "无域级 PRD 或页面表")
 
     # 解析口径归 `_support/ac_coverage.py::parse_dims_cell`（D153 单源，行为与 D130 逐字节一致）：
     # 区间展开、中文邻接、疑似写法出声；本文件不再自持第二份 parser。
@@ -1252,7 +1297,8 @@ def validate(root: Path) -> Result:
     # 契约 §5.5/§5.6/§5.7（D191）：`read` 运行时取数四门
     read_bad = []       # ① read 语法 / 变量名重复定义
     var_bad = []        # ② `$<名>` 引用了未 read 的变量（或顺序在后）
-    echo_bad = []       # ③ 同控件回读禁令：fill/type 后对同控件断言 value 同值（无 refresh/goto 间隔）
+    echo_bad = []       # ③ 同控件回读禁令：fill/type/select 后对同控件断言 value 同值（无 refresh/goto 间隔）
+    same_src_bad = []   # ③' R3 断言异源：非豁免断言全部落在被操作控件上（无一条不同真相源）
     exist_warn = []     # ④ 存在类锚定提示：同一 ≥12 位数字字面量同现 step 与 expected（WARN，走 D10）
     # R10 门用反查表 page_routes_map 已在页面表解析处（上方）构建
     for g in grid:
@@ -1285,12 +1331,15 @@ def validate(root: Path) -> Result:
         # 先读后用（与生成器 `interp_value` 的 known 集合同口径）；其余动词值段出现 `$<名>` 同判
         # （词表外用法——插值只覆盖 fill/type 值与 text/contains/value/attr 期望值）。
         _read_seen: set[str] = set()
-        _filled: dict[str, str] = {}          # testid token → 最近一次 fill/type 的归一值
-        _reloaded: dict[str, bool] = {}       # 该次 fill/type 之后是否发生过 refresh/goto（状态已重置）
+        _filled: dict[str, str] = {}          # testid token → 最近一次 fill/type/select 的归一值
+        _reloaded: dict[str, bool] = {}       # 该次 fill/type/select 之后是否发生过 refresh/goto（状态已重置）
+        _acted: set[str] = set()              # R3：本用例被交互动作直接操作的 testid
         for s in step:
             code = _code(s)
             toks = code.split(None, 2)
             verb0 = toks[0] if toks else ""
+            if verb0 in ACTED_TID_VERBS and len(toks) > 1:
+                _acted.add(toks[1])
             if verb0 == "read":
                 val = toks[2].strip() if len(toks) > 2 else ""
                 left, arrow, name = val.rpartition("->")
@@ -1314,7 +1363,7 @@ def validate(root: Path) -> Result:
                 _mcap = re.search(r"->\s*capture\s+(\S+)\s+(\S+)\s*$", code)
                 if _mcap and _mcap.group(1) not in _read_seen:
                     _read_seen.add(_mcap.group(1))
-            if verb0 in ("fill", "type") and len(toks) > 2:
+            if verb0 in ("fill", "type", "select") and len(toks) > 2:
                 _filled[toks[1]] = _unquote_value(toks[2])
                 _reloaded[toks[1]] = False
             elif verb0 in ("refresh", "goto"):
@@ -1329,6 +1378,8 @@ def validate(root: Path) -> Result:
         # 结构正确性无关可跑性，保护重激活时不破）。
         if g["状态"] in ("blocked", "skipped"):
             continue
+        _n_measured = 0      # R3：计入「是否异源」的非豁免断言数
+        _n_other_src = 0     # R3：落在被操作控件之外的断言数（`request` / `api` 天然异源）
         for raw_e in raw_exp:
             code_e = _code(raw_e)
             if not code_e:
@@ -1339,7 +1390,19 @@ def validate(root: Path) -> Result:
             _m = AFTER_RE.match(code_e.lstrip())
             _body = _m.group(2) if _m else code_e
             toks_e = _body.split(None, 2)
-            if _body.lstrip().startswith(LINE_PREFIXES) or len(toks_e) < 2 or toks_e[0] != "value":
+            if _body.lstrip().startswith(LINE_PREFIXES):
+                continue
+            _verb_e = toks_e[0] if toks_e else ""
+            # R3（2026-11-15，契约 §5.6）：非豁免断言至少有一条落在被操作控件之外。
+            # `initial:` / `unchanged:` 是采样与反向期望，不构成行为证据，不计入分母。
+            if _verb_e in ("request", "api"):
+                _n_measured += 1
+                _n_other_src += 1
+            elif _verb_e in TID_ASSERT_VERBS and len(toks_e) >= 2:
+                _n_measured += 1
+                if toks_e[1] not in _acted:
+                    _n_other_src += 1
+            if len(toks_e) < 2 or _verb_e != "value":
                 continue
             _ev = _unquote_value(toks_e[2].strip() if len(toks_e) > 2 else "")
             if _ev.strip() in ("", "(空)"):
@@ -1347,7 +1410,10 @@ def validate(root: Path) -> Result:
             for _ftid, _fval in _filled.items():
                 if _ftid == toks_e[1] and _fval.strip() == _ev.strip() and not _reloaded.get(_ftid, True):
                     echo_bad.append(
-                        f"{g['用例ID']}:{_ftid} = {_ev.strip()!r}（fill 回读同控件同值 = 恒真，断言须落列表/结果面）")
+                        f"{g['用例ID']}:{_ftid} = {_ev.strip()!r}（fill/type/select 回读同控件同值 = 恒真，断言须落列表/结果面）")
+        if _n_measured and not _n_other_src:
+            same_src_bad.append(
+                f"{g['用例ID']}（{_n_measured} 条非豁免断言全部落在被操作控件上：{sorted(_acted)}）")
         # ④ 存在类锚定提示（WARN）：同一 ≥12 位纯数字字面量同现 step 值段与 expected 值段
         # ⇒ 疑似「编造已存在业务数据的字面量再回读」（007 现场形态）；存在类判定是语义的，
         # 机器只点名提示，审查维度 D10 从严。
@@ -1734,7 +1800,9 @@ def validate(root: Path) -> Result:
     res.add("read 变量先读后用", "PASS" if not var_bad else "FAIL",
             f"{_format_list(var_bad)}（契约 §5.5 D191：`$<名>` 只能引用本用例已 read 的变量，且 step 内不得前向引用）" if var_bad else "")
     res.add("同控件回读禁令", "PASS" if not echo_bad else "FAIL",
-            f"{_format_list(echo_bad)}（契约 §5.6 D191：fill/type 后对同控件回读 value 同值且中间无 refresh/goto = 恒真断言——断言须落在列表/结果面等不同真相源）" if echo_bad else "")
+            f"{_format_list(echo_bad)}（契约 §5.6 R11：fill/type/select 后对同控件回读 value 同值且中间无 refresh/goto = 恒真断言——断言须落在列表/结果面等不同真相源）" if echo_bad else "")
+    res.add("断言异源（R3）", "PASS" if not same_src_bad else "FAIL",
+            f"{_format_list(same_src_bad)}（契约 §5.6 R3：非豁免断言至少一条须落在被操作控件之外——只断言控件自身状态不构成行为证据）" if same_src_bad else "")
     res.add("存在类锚定提示", "PASS" if not exist_warn else "WARN",
             f"{_format_list(exist_warn)}（契约 §5.7 D191：存在类值（预期命中/操作已存在记录的目标值）禁止编造字面量——合法来源 = 运行时 read / seed: / mock fixture；审查维度 D10 从严）" if exist_warn else "")
     res.add("waitFor 属动作", "PASS" if not waitfor_assert else "FAIL",

@@ -4,6 +4,36 @@
 
 ---
 
+## [Unreleased]
+
+### 🧪 E2E 文本期门：R3 机器化 + R11 扩面到 `select`（2026-11-15）
+
+* `validators/validate_e2e_index.py`：`同控件回读禁令` 纳入 `select`（`select X v` 后无 refresh/goto 即 `value X v` ⇒ FAIL）；新增门 **`断言异源（R3）`**——非 `initial:` / `unchanged:` 断言若全部落在被交互动作操作过的控件上 ⇒ FAIL（`waitFor` / `read` 不计入，`request` / `api` 天然异源）；
+* 契约 `rings/e2e/reference.md` §5.6 R11 与 §8.2 门表同步扩面；
+* `tests/test_validators.py`：`select` 回读由「豁免」改判红，新增 R3 门正反例；`test_validators.py` 202 passed；
+* 现场取证：跨网同步 E2E 002-006 / 011 / 014 / 019 由假绿转真红（用例内容未动、断言未放宽）。
+
+### 🧪 E2E fixture 契约：mode=on 强制伴生 schema（2026-11-15）
+
+* `validators/validate_e2e_mocks.py`：`mode: on` 时每份 fixture 缺 `<fixture>.schema.json` ⇒ **FAIL**（此前无 schema 即 PASS，桩形状漂移没有任何契约）；
+* 新增 `scripts/gen_fixture_schemas.py`：从 fixture / 真实响应推断收紧 schema（对象层 `additionalProperties: false`），`--write` 落盘；**推断只锁形状，字段名/类型是否与后端一致仍须真实响应快照核对**；
+* 契约 `rings/e2e/reference.md` §5.8 / §8.3 同步；单测覆盖「干净态 PASS / 缺 schema FAIL」与生成器嵌套合并。
+
+### 🧪 系统级套件成环（2026-11-15）
+
+* 契约 `rings/e2e/reference.md` §5.8 增「系统级套件另环」硬约定：环境缺失整目录 skip、造数含 `agent-` 前缀并清理、`SKIP` 不计通过、禁止固定源 id / 共享 state；
+* 新增项目侧 `product/e2e/system/`（pytest 直连真实后端）样板：接口外层 `data:null` 契约、空 ids 拒绝、entry-switches 布尔契约三条；无环境时 3 skipped（不冒充通过）。
+* 后端 AC 覆盖的 `backend_test.mode: enforce` 开关在既有 `validate_ac_alignment.py` 中已存在，文档补明用途（缺省仍 advisory/WARN）。
+
+### 🧪 E2E 断言语义：`hidden` 要求存在，新增 `absent`（2026-11-15）
+
+* `scripts/gen_e2e_scripts.py`：`hidden` 发射改为「先 `not.toHaveCount(0)` 再 `toBeHidden()`」——元素不存在时 Playwright 的 `toBeHidden()` 会通过，会把「功能块被裁掉」误判成「按预期隐藏」；新增断言动词 `absent`（`toHaveCount(0)`）表达「不渲染 / 不存在」；
+* `validators/validate_e2e_index.py` 词表与 R3 异源分母同步；
+* 契约 `rings/e2e/reference.md` §5.5 动词表同步；零步基线口径改写为「mock 用例逐例豁免，同页非 mock 探针照跑」（`validate_e2e_mocks` 的 WARN 文案同步，行为不变）；
+* 单测：`tests/test_e2e_hidden_absent.py`（hidden 存在性守卫 / absent 计数 0 / 基线逐例豁免），`test_gen_e2e_scripts.py` 170 passed。
+
+---
+
 ## [v0.3.0-beta.1] - 2026-11-14
 
 ### 🔐 验收面：`SEAL_UPSTREAM_BIND_FROM` 落值 D 批首版 tag 日期（案 10 A / D-48）

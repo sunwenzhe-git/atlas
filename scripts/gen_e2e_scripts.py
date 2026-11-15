@@ -110,7 +110,7 @@ API_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
 # 分片 step / expected 的动词词表（契约 `rings/e2e/reference.md` §5.5，2026-09-23 定）
 # D199（2026-11-12）：动作侧新增 `send`（发请求 + 捕获响应值），见 `parse_send_line`。
 ACTION_VERBS = ("click", "fill", "select", "check", "uncheck", "press", "type", "hover", "read", "refresh", "goto", "waitFor", "download", "upload", "dispatch", "send")
-ASSERT_VERBS = ("text", "contains", "count", "countOptions", "visible", "hidden", "enabled", "disabled", "checked", "unchecked", "value", "attr", "delta", "request", "api")
+ASSERT_VERBS = ("text", "contains", "count", "countOptions", "visible", "hidden", "absent", "enabled", "disabled", "checked", "unchecked", "value", "attr", "delta", "request", "api")
 NO_TESTID_VERBS = ("refresh", "goto")  # 这两个动词第二个 token 不是 testid（goto 的值是路径）
 # 契约 §5.5（2026-10-16 补，issue #R4）：`click` / `hover` 默认追加 `{ force: true }`
 # （动机：真实 UI 里悬浮遮罩 / 动画 / 父容器事件拦截会造出动作执行超时的**假红**）。
@@ -1273,7 +1273,18 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
         elif verb == "visible":
             line = f"await expect({tid_locator(tid, _read_known_all, cid)}).toBeVisible();"
         elif verb == "hidden":
-            line = f"await expect({tid_locator(tid, _read_known_all, cid)}).toBeHidden();"
+            # 契约 §5.5（2026-11-15，诊断 S5）：`hidden` 只表示「存在但不可见」；元素压根不存在
+            # 会让 Playwright 的 toBeHidden() 通过（detached 也算 hidden），从而把「功能块被裁掉」
+            # 误判成「按预期隐藏」。先钉存在性，再判不可见；「不渲染」用 `absent`。
+            base_tid, idx = parse_tid_nth(normalize_var_braces(tid))
+            nth_guard = f".nth({idx})" if idx is not None else ""
+            line = (f"await expect(page.getByTestId({interp_testid(base_tid, _read_known_all, cid)})"
+                    f"{nth_guard}).not.toHaveCount(0);\n"
+                    f"  await expect({tid_locator(tid, _read_known_all, cid)}).toBeHidden();")
+        elif verb == "absent":
+            base_tid, _ = parse_tid_nth(normalize_var_braces(tid))
+            line = (f"await expect(page.getByTestId({interp_testid(base_tid, _read_known_all, cid)}))"
+                    f".toHaveCount(0);")
         elif verb == "enabled":
             line = f"await expect({tid_locator(tid, _read_known_all, cid)}).toBeEnabled();"
         elif verb == "disabled":
@@ -1473,6 +1484,8 @@ def ts_assert_expr(line: str) -> str:
     # 否则「元素不存在」会被反转成 true，基线误判为恒真假阳性。
     if verb == "hidden":
         return f"(async () => {{ const c = await page.getByTestId({t}).count(); if (c <= {nth_idx}) return null; return !(await tsVisible(page, {tid_param})); }})()"
+    if verb == "absent":
+        return f"(async () => (await page.getByTestId({t}).count()) === 0)()"
     if verb == "enabled":
         return f"(async () => (await page.getByTestId({t}).count()) > {nth_idx} && (await {nth_locator}.isEnabled()))()"
     if verb == "disabled":
@@ -1619,8 +1632,10 @@ def ts_zero_step_baseline(page: str, url: str, cases: list[dict], mock_vacuous: 
     同一设计：断言清单落 `_data/zero_step_<page>.json`（label/expr/kind/sampling），
     运行期 runner 在页面 header（`atlasZeroStepBaseline`）。`expr` = ts_assert_expr
     的 awaitable 串——与用例断言**同源渲染**，两条路径语义不可能漂。
-    `mock_vacuous`（契约 §5.8，2026-10-12）：本页含 `mock:` 行 ⇒ 基线不挂桩，
-    无后端环境下探针全 null = **空转守卫**——生成物显式注释标记（validate_e2e_mocks 侧 WARN）。
+    `mock_vacuous`（契约 §5.8，2026-10-12）：本页含 `mock:` 行 ⇒ 标记为「含桩页」。
+    **探针按用例逐例豁免**（2026-11-15，诊断 S5）：mock / blocked / skipped 用例不进探针，
+    同页非 mock 用例照跑——只有整页全为 mock 用例时才真正空转。`validate_e2e_mocks` 侧 WARN
+    是「无后端环境探针全 null」的知悉项，不表示基线被整页关闭。
     `target`（契约 §5.5，多靶场 beta.16）：具名靶场组 ⇒ 函数名加 `__<名>` 后缀
     （default 组不带后缀 = 未用多靶场的项目逐字节不变）；URL 由调用方按组解析。
     """

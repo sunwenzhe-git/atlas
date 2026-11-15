@@ -955,6 +955,7 @@ ASSERT_SAMPLES = {
     "countOptions": "home-cta-btn 9",
     "visible": "home-cta-btn",
     "hidden": "home-cta-btn",
+    "absent": "home-cta-btn",
     "enabled": "home-cta-btn",
     "disabled": "home-cta-btn",
     "checked": "home-cta-btn",

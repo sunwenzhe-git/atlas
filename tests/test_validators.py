@@ -310,8 +310,8 @@ PRD_DEMO = """# demo 域 PRD
 
 > 契约（PRD 环契约 §五「验收标准」）。
 
-| AC ID | 为什么不可验 |
-|---|---|
+| AC ID | 为什么不可验 | 到期版本 | 补偿证据 |
+|---|---|---|---|
 
 ## 六、Assumptions & Defaults
 
@@ -4767,6 +4767,9 @@ def _mk_mocks_project(root: Path, *, mock_section: str = "  mock:\n    mode: on\
     (root / "product" / "e2e" / "e2e-index.md").write_text("# E2E 索引\n", encoding="utf-8")
     (root / "product" / "e2e" / "cases" / "users.md").write_text(shard, encoding="utf-8")
     (root / "product" / "e2e" / "fixtures" / "users" / "empty.json").write_text('{"items": []}', encoding="utf-8")
+    (root / "product" / "e2e" / "fixtures" / "users" / "empty.schema.json").write_text(
+        '{"type":"object","additionalProperties":false,'
+        '"properties":{"items":{"type":"array"}},"required":["items"]}', encoding="utf-8")
     (root / "product" / "stack-profile.yaml").write_text(
         "product: demo\napps:\n  - name: app\n    path: app\n    kind: frontend\n"
         "    role: landing\n    stack: demo\ne2e:\n  app_base_url: http://127.0.0.1:1\n" + mock_section,
@@ -4787,9 +4790,16 @@ def test_validate_e2e_mocks_gate_matrix() -> None:
         rows = _rows(root)
         for k in ("mode 开关（防误用）", "api_prefix 前置", "行语法 + 路径锚定",
                   "fixture 引用存在", "fixture 孤儿", "伴生 schema 有主",
-                  "fixture schema 收紧", "mock 先于 step"):
+                  "fixture schema 强制（mode=on）", "fixture schema 收紧", "mock 先于 step"):
             assert rows[k]["level"] == "PASS", (k, rows[k])
         assert rows["零步基线空转"]["level"] == "WARN" and "users" in rows["零步基线空转"]["detail"], rows
+
+    with tempfile.TemporaryDirectory() as td:  # 强制门：mode=on 而 fixture 无伴生 schema ⇒ FAIL
+        root = Path(td)
+        _mk_mocks_project(root)
+        (root / "product" / "e2e" / "fixtures" / "users" / "empty.schema.json").unlink()
+        row = _rows(root)["fixture schema 强制（mode=on）"]
+        assert row["level"] == "FAIL" and "empty.json" in row["detail"], row
 
     with tempfile.TemporaryDirectory() as td:  # mode 门：分片有 mock: 行而未开 ⇒ FAIL 点名
         root = Path(td)
@@ -4860,8 +4870,9 @@ def test_index_ac_reverse_coverage_subtracts_unverifiable_list() -> None:
     unverized = PRD_DEMO.format(ac="AC-HOME-001", rows="| `AC-HOME-001` | 纯渲染构成，页面初值即终态 |")
     # 把 AC-HOME-999 登进不可验清单（行为面已被等价覆盖的半结构，先例 AC-MIXING-001）
     unverized = unverized.replace(
-        "| AC ID | 为什么不可验 |\n|---|---|\n",
-        "| AC ID | 为什么不可验 |\n|---|---|\n| `AC-HOME-999` | 试验：下游系统可见，UI 无观测面 |\n",
+        "| AC ID | 为什么不可验 | 到期版本 | 补偿证据 |\n|---|---|---|---|\n",
+        "| AC ID | 为什么不可验 | 到期版本 | 补偿证据 |\n|---|---|---|---|\n"
+        "| `AC-HOME-999` | 试验：下游系统可见，UI 无观测面 | 2.0.0 | E2E-HOME-001 |\n",
     )
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -4883,8 +4894,9 @@ def test_prd_unverifiable_list_ghost_fails() -> None:
     """
     good = PRD_DEMO.format(ac="AC-HOME-001", rows="")
     good = good.replace(
-        "| AC ID | 为什么不可验 |\n|---|---|\n",
-        "| AC ID | 为什么不可验 |\n|---|---|\n| `AC-HOME-999` | 下游可见，UI 无观测面 |\n",
+        "| AC ID | 为什么不可验 | 到期版本 | 补偿证据 |\n|---|---|---|---|\n",
+        "| AC ID | 为什么不可验 | 到期版本 | 补偿证据 |\n|---|---|---|---|\n"
+        "| `AC-HOME-999` | 下游可见，UI 无观测面 | 2.0.0 | E2E-HOME-001 |\n",
     )
     bad = good.replace("`AC-HOME-999` | 下游可见", "`AC-GHOST-777` | 幽灵条目")
     with tempfile.TemporaryDirectory() as td:
@@ -4896,6 +4908,9 @@ def test_prd_unverifiable_list_ghost_fails() -> None:
         res = vpr.validate(root)
         row = [c for c in res.checks if c["check"] == "参数4 追溯完整"][0]
         assert row["status"] != "FAIL" or "不可验清单" not in row["detail"], row
+        # 清单是引用不是定义：四列清单行不得与 §五 定义行撞号
+        ac_row = [c for c in res.checks if c["check"] == "AC 号唯一"][0]
+        assert ac_row["status"] == "PASS", ac_row
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         mk_prototype(root)
@@ -4905,6 +4920,54 @@ def test_prd_unverifiable_list_ghost_fails() -> None:
         res = vpr.validate(root)
         row = [c for c in res.checks if c["check"] == "参数4 追溯完整"][0]
         assert row["status"] == "FAIL" and "AC-GHOST-777" in row["detail"], row
+
+
+def test_prd_unverifiable_list_requires_expiry_and_compensation() -> None:
+    """契约 PRD 环 §五 / E2E §8.2（2026-11-15 诊断 S2）：不可验清单四列化——
+
+    缺列、到期版本 ≤ 当前 version、补偿证据不可解析 ⇒ validate_prd **FAIL**。
+    「测不了」不得是永久白名单（AC-SYNC-013 现场）。
+    """
+    base = PRD_DEMO.format(ac="AC-HOME-001", rows="")
+    hdr = "| AC ID | 为什么不可验 | 到期版本 | 补偿证据 |\n|---|---|---|---|\n"
+    cases = {
+        # 3 列（旧形态）：缺补偿证据列
+        "缺列": "| `AC-HOME-999` | 下游可见 | 2.0.0 |\n",
+        # 到期版本 = 当前（1.0）⇒ 已到期
+        "已到期": "| `AC-HOME-999` | 下游可见 | 1.0.0 | E2E-HOME-001 |\n",
+        # 补偿证据不是可解析引用
+        "补偿证据": "| `AC-HOME-999` | 下游可见 | 2.0.0 | 人工看一下 |\n",
+    }
+    for kw, row in cases.items():
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            mk_prototype(root)
+            mk_cases(root, CASE_GOOD)
+            mk_index(root, _with_page_table("已实现"))
+            mk_prd_raw(root, FM_GLOBAL + PRD_GLOBAL, FM_DOMAIN + base.replace(hdr, hdr + row))
+            res = vpr.validate(root)
+            row_check = [c for c in res.checks if c["check"] == "参数4 追溯完整"][0]
+            assert row_check["status"] == "FAIL" and "不可验清单" in row_check["detail"], (kw, row_check)
+
+
+def test_index_unverifiable_compensation_must_resolve() -> None:
+    """E2E §8.2 新门「不可验 AC 补偿证据」（2026-11-15）：`MANUAL-*` 未在 manual.md、本地
+    `E2E-*` 未在索引 ⇒ FAIL；同时该 AC **不进入豁免面**（AC 反向覆盖照常点名）。
+    """
+    unverized = PRD_DEMO.format(ac="AC-HOME-001", rows="").replace(
+        "| AC ID | 为什么不可验 | 到期版本 | 补偿证据 |\n|---|---|---|---|\n",
+        "| AC ID | 为什么不可验 | 到期版本 | 补偿证据 |\n|---|---|---|---|\n"
+        "| `AC-HOME-999` | 下游可见 | 2.0.0 | MANUAL-NOPE |\n",
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root, _with_page_table("已实现"))
+        mk_prd_raw(root, FM_GLOBAL + PRD_GLOBAL, FM_DOMAIN + unverized)
+        res = ve.validate(root)
+        row = [c for c in res.checks if c["check"] == "不可验 AC 补偿证据"][0]
+        assert row["level"] == "FAIL" and "MANUAL-NOPE" in row["detail"], row
 
 
 def test_prd_illegal_nested_directories_fails() -> None:
@@ -5370,10 +5433,10 @@ def test_e2e_index_read_syntax_and_var_order_gates() -> None:
 
 
 def test_e2e_index_same_control_echo_gate() -> None:
-    """D191 R11：fill 后同控件回读 value 同值（无 refresh/goto 间隔）⇒ FAIL。
+    """D191 R11（2026-11-15 扩面）：fill/type/**select** 后同控件回读 value 同值 ⇒ FAIL。
 
-    豁免态各自 PASS：refresh 间隔（真证据=刷新后值仍在）/ `initial:` 前缀 / select→value
-    （选项回显非恒真）。旧 007 形态（编造编号 + fill 回读）必须判红。
+    豁免态各自 PASS：refresh 间隔（真证据=刷新后值仍在）/ `initial:` 前缀 / 空值清空语义。
+    `select X v` + `value X v` 属同控件回显（只证明控件接受了自己的选择），不再是豁免态。
     """
     echo_bad = CASE_GOOD.replace(
         "  - click home-cta-btn          # 点击主操作按钮\n",
@@ -5391,6 +5454,23 @@ def test_e2e_index_same_control_echo_gate() -> None:
         res = ve.validate(root)
         row = _d191_gate(res, "同控件回读禁令")
         assert row["level"] == "FAIL" and "恒真" in row["detail"], row
+    # select 回读同值：与 fill 同判（002-005 现场形态）
+    select_echo = CASE_GOOD.replace(
+        "  - click home-cta-btn          # 点击主操作按钮\n",
+        "  - select home-title 项目\n",
+    ).replace(
+        "  - text home-title 首页        # 页面标题文案为「首页」\n",
+        "  - value home-title 项目\n",
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, select_echo)
+        mk_index(root)
+        mk_stub(root)
+        res = ve.validate(root)
+        row = _d191_gate(res, "同控件回读禁令")
+        assert row["level"] == "FAIL" and "select" in row["detail"], row
     for ok_case in (
         # refresh 间隔：fill 与回读之间状态被重置，回读成为真证据
         echo_bad.replace("  - press home-title Enter\n",
@@ -5403,12 +5483,6 @@ def test_e2e_index_same_control_echo_gate() -> None:
             "  - fill home-title \"\"\n  - press home-title Enter\n").replace(
             "  - text home-title 首页        # 页面标题文案为「首页」\n",
             "  - value home-title (空)\n"),
-        # select→value 控件回显：验证的是「选项选中生效」，非 fill 自证
-        CASE_GOOD.replace(
-            "  - click home-cta-btn          # 点击主操作按钮\n",
-            "  - select home-title 项目\n").replace(
-            "  - text home-title 首页        # 页面标题文案为「首页」\n",
-            "  - value home-title 项目\n"),
     ):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -5419,6 +5493,42 @@ def test_e2e_index_same_control_echo_gate() -> None:
             res = ve.validate(root)
             row = _d191_gate(res, "同控件回读禁令")
             assert row["level"] == "PASS", (ok_case, row)
+
+
+def test_e2e_index_assertion_different_source_gate() -> None:
+    """R3（2026-11-15，契约 §5.6）：非豁免断言不得全部落在被操作控件上。
+
+    002-005 形态（select 后只回读该 select）⇒ FAIL；补一条列表/结果面断言 ⇒ PASS。
+    `initial:` / `unchanged:` 不计入分母（采样 / 反向期望不构成行为证据）。
+    """
+    same_src = CASE_GOOD.replace(
+        "  - click home-cta-btn          # 点击主操作按钮\n",
+        "  - select home-title 项目\n",
+    ).replace(
+        "  - text home-title 首页        # 页面标题文案为「首页」\n",
+        "  - value home-title 项目\n",
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, same_src)
+        mk_index(root)
+        mk_stub(root)
+        res = ve.validate(root)
+        row = _d191_gate(res, "断言异源（R3）")
+        assert row["level"] == "FAIL" and "被操作控件" in row["detail"], row
+    ok_case = same_src.replace(
+        "  - value home-title 项目\n",
+        "  - count home-row 3\n",
+    )
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, ok_case)
+        mk_index(root)
+        mk_stub(root)
+        res = ve.validate(root)
+        assert _d191_gate(res, "断言异源（R3）")["level"] == "PASS", res.checks
 
 
 def test_e2e_index_existence_literal_hint_gate() -> None:

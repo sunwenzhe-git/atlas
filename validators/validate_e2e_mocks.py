@@ -12,13 +12,18 @@
     方法枚举 / `->` / seq / status / delay / 锚定前缀越界 ⇒ FAIL 并逐行指名。
   * **fixture 引用闭环**：引用存在（缺 = FAIL）+ 孤儿（盘上未被引用 = FAIL，防僵尸数据；
     与 validate_testids 的双向集合同构）+ 伴生 schema 无 fixture ⇒ FAIL。
+  * **fixture schema 强制（mode: on）**：每个被引用的 fixture 必须有同名伴生
+    `<fixture>.schema.json` ⇒ 缺失 **FAIL**（2026-11-15 诊断 S3：桩形状漂移没有契约时，
+    后端改字段 / 改类型只会静默假绿；schema 由 `scripts/gen_fixture_schemas.py` 从 fixture
+    或真实响应生成，形状锁定是下限，真实契约快照另由抓取批补齐）。
   * **fixture schema 收紧**：同名伴生 `<fixture>.schema.json` 存在时 fixture ⊨ schema
     （子集：type/properties/required/enum/items）且声明 properties 的对象层必须
     `additionalProperties: false`（多余字段即 FAIL——防「后端删字段桩不知道」的静默假绿灯）。
-    无伴生 schema ⇒ 不阻断（纯前端无契约源的入场形态）。
+    `mode: off` 且无伴生 schema ⇒ 不阻断（纯前端无契约源的入场形态）。
   * **mock 先于 step**：`mock:` 行出现在首条 `step` 之后 ⇒ FAIL（注册先于 goto 的时序前提）。
-  * **零步基线空转**：`mode: on` 且某页分片含 `mock:` 行 ⇒ 该页 WARN（基线不挂桩、
-    无后端环境下探针全 null = 恒真守卫失效的知悉项，契约 §5.8）。
+  * **零步基线空转**：`mode: on` 且某页分片含 `mock:` 行 ⇒ 该页 WARN（**逐例**豁免 mock 用例，
+    同页非 mock 用例的探针照跑；仅当整页全为 mock 用例时才真正空转。无后端环境下探针全 null
+    仍是知悉项，契约 §5.8）。
 
 - 框架无关：本文件不得出现任何具体框架名。纯标准库。
 - 判定：`PASS`/`WARN` → 退出码 0；`FAIL` → 1。前置（E2E 资产未建）记 N/A。
@@ -262,6 +267,20 @@ def validate(root: Path) -> Result:
     res.add("伴生 schema 有主", "PASS" if not orphan_schemas else "FAIL",
             f"无同位 fixture={orphan_schemas[:8]}")
 
+    # —— fixture schema 强制（模式 on 时每个 fixture 必须有伴生 schema）
+    if mode == "on":
+        def _schema_path(rel: str) -> Path:
+            sub = rel[len("fixtures/"):] if rel.startswith("fixtures/") else rel
+            return fixtures_root / (sub[: -len(".json")] + ".schema.json")
+
+        schema_missing = [rel for rel in fixtures_on_disk if not _schema_path(rel).is_file()]
+        res.add("fixture schema 强制（mode=on）", "PASS" if not schema_missing else "FAIL",
+                f"缺伴生 schema={schema_missing[:8]}（契约 §5.8：mode=on 时桩形状须有契约；"
+                f"用 `scripts/gen_fixture_schemas.py --write` 生成后人工核对）"
+                if schema_missing else "")
+    else:
+        res.add("fixture schema 强制（mode=on）", "N/A", f"mode={mode}（按需启用）")
+
     # —— fixture schema 收紧（可选伴生；存在即校验）
     schema_bad: list[str] = []
     for rel in fixtures_on_disk:
@@ -298,8 +317,8 @@ def validate(root: Path) -> Result:
     # —— 零步基线空转 / mock 探针豁免（契约 §5.8 知悉项与 R6 豁免）
     if mode == "on" and mock_pages:
         res.add("零步基线空转", "WARN",
-                f"页={mock_pages}：基线不挂桩，无后端环境下探针全 null = 恒真守卫失效"
-                "（契约 §5.8 知悉项；恢复守卫强度须另立 mock-default 批）")
+                f"页={mock_pages}：mock 用例逐例豁免（同页非 mock 探针照跑）；无后端环境下探针全 null "
+                "= 恒真守卫失效（契约 §5.8 知悉项；恢复守卫强度须另立 mock-default 批）")
     elif mock_pages:
         res.add("零步基线空转", "PASS",
                 f"页={mock_pages}：mock 用例断言不参与零步基线（初态由桩环境定义，契约 §5.8 R6 探针豁免）")

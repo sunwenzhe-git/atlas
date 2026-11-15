@@ -111,6 +111,14 @@ STRUCT_AC_RE = re.compile(r"AC-[A-Z0-9]+-\d{3}")
 # 契约 §4「五、验收标准」（2026-10-12 补，`3509 §B201-3`）：**不可验 AC 清单**（当前 UI 无观测面的
 # AC——「AC 反向覆盖」门从零挂靠清单中减去它；豁免落点定形即本条的落地）。
 UNVER_LIST_HEAD = "#### 不可验 AC 清单"
+
+
+def _vtuple(s: str) -> tuple[int, int, int]:
+    """`X.Y[.Z]` → 可比三元组（不可验清单到期判定用；形态由调用方先行校验）。"""
+    parts = [int(x) for x in s.split(".")]
+    return (parts + [0, 0, 0])[:3]  # type: ignore[return-value]
+
+
 # 形态（`stack-profile.yaml` 的 `origin`）。词表与 `validate_stack_profile.py` / `validate_testids.py`
 # 同源，出厂测试逐项守恒（硬约束：同一口径的消费者数要数清）。
 ORIGINS = ("greenfield", "adopt")
@@ -327,16 +335,33 @@ def derived_field_gaps(dtext: str) -> tuple[bool, list[str]]:
 AC_DEF_ROW = re.compile(r"^\|\s*`?(AC-[A-Z0-9]+-\d+)`?\s*\|[^|\n]*\|[^|\n]*\|", re.M)
 
 
+def _mask_conditional_lists(text: str) -> str:
+    """抹掉「结构类 / 不可验 AC 清单」小节（2026-11-15）。
+
+    这两节是**引用**而非 AC 定义；2026-11-15 不可验清单升级为四列后会命中 `AC_DEF_ROW`
+    （≥3 列）⇒ 与 §五 定义行撞号误报。判据本意一直是「清单不是定义」，此处显式排除。
+    """
+    for head in (STRUCT_LIST_HEAD, UNVER_LIST_HEAD):
+        if head not in text:
+            continue
+        pre, tail = text.split(head, 1)
+        cut = re.search(r"^#{1,4} ", tail, re.M)
+        text = pre + (tail[cut.start():] if cut else "")
+    return text
+
+
 def ac_id_collisions(domains: list[Path]) -> list[str]:
     """AC 号**定义**跨文件 / 同文件重复（域级 PRD 是 AC 的应然资产落点）。
 
-    只数**定义行**（`^| AC-… |`）：引用（跨域回指 / 结构类清单 / 规则→AC 列）不是撞号。
+    只数**定义行**（`^| AC-… |`）：引用（跨域回指 / 结构类清单 / 不可验清单 / 规则→AC 列）
+    不是撞号。清单小节先抹掉（`_mask_conditional_lists`）——清单行即使 ≥3 列也不是定义。
     原 `validators/validate_ledger.py` 的项目侧判据，2026-10-14 随知识库 / 台账子系统退役归位本环。
     """
     where: dict[str, list[str]] = {}
     bad: list[str] = []
     for f in domains:
-        ids = AC_DEF_ROW.findall(f.read_text(encoding="utf-8", errors="replace"))
+        ids = AC_DEF_ROW.findall(_mask_conditional_lists(
+            f.read_text(encoding="utf-8", errors="replace")))
         for i in set(ids):
             where.setdefault(i, []).append(f.name)
         inner = sorted({i for i in ids if ids.count(i) > 1})
@@ -630,6 +655,30 @@ def validate(root: Path) -> Result:
                 ghost = sorted(a for a in listed if a not in declared)
                 if ghost:
                     issues.append(f"{d.name} 不可验清单引用了不存在的 AC：{ghost}")
+                # 2026-11-15（E2E 漏检诊断 S2）：清单 = 四列
+                # `AC ID | 为什么不可验 | 到期版本 | 补偿证据`。缺列 / 到期 / 无补偿证据 ⇒ FAIL——
+                # 「测不了」不能是永久白名单（现场：AC-SYNC-013 以「造数不可行」豁免，搜索精确匹配
+                # 缺陷正好落在该区）。
+                _cur = re.search(r"^version:\s*(\d+(?:\.\d+){1,2})\s*$", t, re.M)
+                _cur_v = _vtuple(_cur.group(1)) if _cur else None
+                for _ln in zone.splitlines():
+                    if not re.match(r"^\|\s*`?AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3}`?\s*\|", _ln):
+                        continue
+                    _cells = [c.strip() for c in _ln.strip().strip("|").split("|")]
+                    _ac = _cells[0].strip("`") if _cells else _ln.strip()
+                    if len(_cells) < 4 or not all(_cells[1:4]):
+                        issues.append(
+                            f"{d.name} 不可验清单缺列（需 `AC ID | 为什么不可验 | 到期版本 | 补偿证据`）：{_ac}")
+                        continue
+                    _exp = _cells[2].strip("`")
+                    if not re.fullmatch(r"\d+(?:\.\d+){1,2}", _exp):
+                        issues.append(f"{d.name} 不可验清单到期版本形态非法：{_ac}={_exp}")
+                    elif _cur_v and _vtuple(_exp) <= _cur_v:
+                        issues.append(
+                            f"{d.name} 不可验清单已到期：{_ac}（到期 {_exp} ≤ 当前 {_cur.group(1)}）")
+                    if not re.search(r"MANUAL-[A-Za-z0-9-]+|E2E-[A-Za-z0-9-]+", _cells[3]):
+                        issues.append(
+                            f"{d.name} 不可验清单缺可解析补偿证据：{_ac}（需 `MANUAL-*` 走查项或 `E2E-*` 用例号）")
             # §五 AC 表列头（契约 §5 三列形态；2026-09-28 补，`3509 §B74`）：表列是契约承诺，
             # 无判据时文本与产物会长期不一致（实测：契约曾要求 6 列、7 份产物全 3 列，无人发现）。
             sec5d = section_of(t, "五") or ""
