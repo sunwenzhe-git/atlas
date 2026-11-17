@@ -396,10 +396,38 @@ def check_skill_budget() -> dict:
                             % (len(skill_files), SKILL_BUDGET_CHARS, "、".join(measured)))}
 
 
+def check_pin_registration() -> dict:
+    """**变异钉登记完整性**：测试里声明的钉必须出现在门册（单向）。
+
+    判定面 = 测试函数 docstring 首段以 `M<id>` 开头的声明；门册侧按字面 + 区间
+    （`M1–M14` 展开）合并。单向只治「新增钉忘登记」；反向的幽灵钉（登记了但代码
+    没有，如曾经的 M20–M24）机器分不清历史与现实，仍归人。
+    """
+    import sys as _sys
+    scripts = str(PKG_ROOT / "scripts")
+    if scripts not in _sys.path:
+        _sys.path.insert(0, scripts)
+    from ledger_snapshot import declared_pin_ids
+
+    gates = PKG_ROOT / "shared" / "gates.md"
+    if not gates.is_file():
+        return {"check": "变异钉登记", "ok": True, "skip": True, "detail": "副本态无 gates.md"}
+    text = gates.read_text(encoding="utf-8")
+    registered = set(re.findall(r"(?<![A-Za-z0-9_])M\d+[a-z]?(?![A-Za-z0-9_])", text))
+    for a, b in re.findall(
+            r"(?<![A-Za-z0-9_])M(\d+)[a-z]?\s*[–\-~]\s*M(\d+)[a-z]?(?![A-Za-z0-9_])", text):
+        registered |= {f"M{i}" for i in range(int(a), int(b) + 1)}
+    miss = sorted(declared_pin_ids(PKG_ROOT) - registered,
+                  key=lambda s: (int(re.sub(r"\D", "", s)), s))
+    return {"check": "变异钉登记", "ok": not miss, "skip": False,
+            "detail": f"测试已声明但门册未登记：{miss}" if miss
+            else "测试侧声明的钉全部在门册出现"}
+
+
 def scan() -> list[dict]:
     return [check_ring_refs_self_marking(), check_template_keys(), check_shared_refs(),
-            check_registry_counts(), check_ledger_tokens(), check_contract_field_refs(),
-            check_veto_word_pins(), check_skill_budget()]
+            check_registry_counts(), check_ledger_tokens(), check_pin_registration(),
+            check_contract_field_refs(), check_veto_word_pins(), check_skill_budget()]
 
 
 def test_contract_field_references_are_declared() -> None:
@@ -435,6 +463,27 @@ def test_registry_counts_match_reality() -> None:
 def test_ledger_tokens_match_source() -> None:
     """派生数字占位必须等于唯一源（`shared/gates.md` / `DESIGN.md`）。"""
     res = check_ledger_tokens()
+    assert res["ok"], res["detail"]
+
+
+def test_m193_declared_pin_must_be_registered(tmp_path, monkeypatch) -> None:
+    """M193：测试 docstring 声明了钉但门册未登记 ⇒ 红（治「加了钉忘写进对应行」）。"""
+    import sys as _sys
+    repo = _mk_ledger_repo(tmp_path)
+    monkeypatch.setattr(_sys.modules[__name__], "PKG_ROOT", repo)
+    assert check_pin_registration()["ok"], "fixture 起点必须绿"
+    (repo / "tests" / "test_y.py").write_text(
+        'def test_pin():\n    """M0：示例钉。"""\n    pass\n', encoding="utf-8")
+    res = check_pin_registration()
+    assert not res["ok"] and "M0" in res["detail"], res["detail"]
+    gates = repo / "shared" / "gates.md"
+    gates.write_text(gates.read_text(encoding="utf-8") + "| x | M0 |\n", encoding="utf-8")
+    assert check_pin_registration()["ok"], "登记后必须复绿"
+
+
+def test_pin_registration_real_repo() -> None:
+    """真实仓：测试侧声明的钉必须全部在门册出现。"""
+    res = check_pin_registration()
     assert res["ok"], res["detail"]
 
 

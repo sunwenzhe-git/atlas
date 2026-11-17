@@ -26,6 +26,7 @@ from pathlib import Path
 TOKEN_RE = re.compile(r"〔数:([^=〕\n]+)=([^〕\n]*)〕")
 TESTS_GLOB = "test_*.py"
 C_DECL_RE = re.compile(r'^\s*c\("', re.M)  # 与 canonical 同口径：只认双引号 c("
+PIN_DECL_RE = re.compile(r"^\s*(M\d+[a-z]?)")
 
 DEFAULT_PATHS = ("docs/map/index.md", "shared/gates.md")
 
@@ -125,6 +126,24 @@ def derive(root: Path) -> dict[str, str]:
         facts["变异编号上限"] = f"M{best[0]}{best[1]}"
     # 无钉的空仓不出键：真实仓若本键缺失，正文占位会按「未知键」当场炸，不会静默放过。
     return facts
+
+
+def declared_pin_ids(root: Path) -> set[str]:
+    """测试侧声明的变异钉：测试函数 docstring 首段以 `M<id>` 开头的那些。
+
+    约定即登记面（新增钉写 docstring 是既有做法），只取首段是为了避开正文里的
+    「承 M10 教训」这类引用，不把它们误算成新钉。
+    """
+    ids: set[str] = set()
+    for p in sorted(_require_dir(root, "tests").glob(TESTS_GLOB)):
+        for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
+            if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name.startswith("test_")):
+                doc = ast.get_docstring(node)
+                m = PIN_DECL_RE.match(doc) if doc else None
+                if m:
+                    ids.add(m.group(1))
+    return ids
 
 
 def rewrite(text: str, facts: dict[str, str]) -> tuple[str, list[tuple[str, str, str]]]:
