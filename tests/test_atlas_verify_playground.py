@@ -49,16 +49,34 @@ def _load_pw_runner():
     return mod
 
 
-def _pw_ready(tmp: Path) -> bool:
-    """真跑前置 = 模块可解析 **加** 浏览器在(D124 两件事);只读探测,不动全局。"""
-    pw = _load_pw_runner()
-    d = tmp / "probe-scripts"
-    d.mkdir(parents=True, exist_ok=True)
-    ok, _ = pw.probe(d)
-    if not ok:
-        return False
-    browser_ok, _ = pw.probe_browser(d)
-    return browser_ok
+def _pw_skip_reason() -> str | None:
+    """真跑前置不满足时返回**可读原因**（缺模块 / 缺浏览器分别说明），满足返回 None。
+
+    2026-11-17：此前 `_pw_ready()` 定义了却从未接进 skipif，缺 Playwright 的机器上
+    run 步直接红、docstring 承诺的「不假装绿」没兑现。这里把判据接进 pytestmark，
+    且 skip 原因必须写明缺什么。
+    """
+    try:
+        pw = _load_pw_runner()
+    except Exception as exc:  # 连支持模块都加载不了时，不许打断 collection
+        return (f"Playwright 支持模块不可加载（{exc.__class__.__name__}: {exc}）"
+                "——真跑级测试如实跳过，不算通过")
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td) / "probe-scripts"
+        d.mkdir(parents=True, exist_ok=True)
+        try:
+            ok, why = pw.probe(d)
+            if not ok:
+                return (f"缺少 Playwright 依赖（probe: {why}）"
+                        "——真跑级测试如实跳过，不算通过")
+            browser_ok, why = pw.probe_browser(d)
+            if not browser_ok:
+                return (f"缺少 Playwright 浏览器（probe_browser: {why}）"
+                        "——真跑级测试如实跳过，不算通过")
+        except Exception as exc:
+            return (f"Playwright 探测失败（{exc.__class__.__name__}: {exc}）"
+                    "——真跑级测试如实跳过，不算通过")
+    return None
 
 
 def _free_port() -> int:
@@ -145,9 +163,16 @@ def _archive(root: Path) -> Path | None:
 # 自指守卫:install.sh 把本文件打进装配副本(.atlas/tests/)——副本态再跑会递归装仓
 # (2026-10-25 实测:setup ERROR ×2)。真跑回归只在**源包态**运行(有 install.sh);
 # 副本态 = 已在被执行的采纳仓内,如实 skip。
-pytestmark = pytest.mark.skipif(
-    not (PKG_ROOT / "install.sh").is_file(),
-    reason="装配副本态(无 install.sh)= 采纳仓内,真跑回归只在源包态运行")
+# 真跑前置(D124 两件事):Playwright 模块可解析 + 浏览器就位,任一不满足 ⇒ skip 并写明缺什么。
+_PW_SKIP_REASON = _pw_skip_reason()
+pytestmark = [
+    pytest.mark.skipif(
+        not (PKG_ROOT / "install.sh").is_file(),
+        reason="装配副本态(无 install.sh)= 采纳仓内,真跑回归只在源包态运行"),
+    pytest.mark.skipif(
+        _PW_SKIP_REASON is not None,
+        reason=_PW_SKIP_REASON or "Playwright 模块与浏览器均已就位"),
+]
 
 @pytest.mark.skipif(not ASSETS.is_dir(), reason="固化资产缺失")
 def test_playground_full_green_batch_and_short_circuit(playground) -> None:
