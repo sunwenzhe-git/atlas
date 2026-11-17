@@ -99,7 +99,7 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 - `scripts/atlas_report.py`:§15 自感知上报(四段式零业务上下文,`--trigger user` 不冒充自动感知)。
 - `scripts/release.py`:发版流程(版本串多处落点 + npm prerelease tag 纪律 + GitHub Release 跟随 tag);发版 skill 为用户级安装,不随源包分发。
 
-## 数字快照(v0.3.0-beta.2)
+## 数字快照
 
 | 量 | 值 | 出处 |
 |---|---|---|

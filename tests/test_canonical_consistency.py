@@ -285,10 +285,11 @@ def check_ledger_tokens() -> dict:
         facts = derive(PKG_ROOT)
     except SnapshotError as e:
         return {"check": "派生数字占位对账", "ok": False, "skip": False, "detail": str(e)}
-    for rel in ("shared/gates.md", "DESIGN.md"):
-        p = PKG_ROOT / rel
+    for p in [PKG_ROOT / "shared" / "gates.md", PKG_ROOT / "DESIGN.md",
+              *sorted((PKG_ROOT / "docs" / "map").glob("*.md"))]:
         if not p.is_file():
             continue  # 副本态缺件（与本节其它子项同口径，非通过）
+        rel = p.relative_to(PKG_ROOT).as_posix()
         try:
             _new, drifts = rewrite(p.read_text(encoding="utf-8"), facts)
         except SnapshotError as e:

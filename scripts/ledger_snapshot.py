@@ -98,6 +98,15 @@ def derive(root: Path) -> dict[str, str]:
     facts["最大单件行数"] = str(len(biggest.read_text(encoding="utf-8").splitlines()))
     for p in test_files:
         facts[f"用例数.{p.name}"] = str(count_tests(p))
+    # 变异编号上限：钉子定义在 tests/；门册自身的提及不参与派生（否则读到占位里的旧值，自我循环）
+    best: tuple[int, str] = (0, "")
+    for p in test_files:
+        for m in re.finditer(r"(?<![A-Za-z0-9_])M(\d+)([a-z]?)(?![A-Za-z0-9_])",
+                             p.read_text(encoding="utf-8")):
+            best = max(best, (int(m.group(1)), m.group(2)))
+    if best[0]:
+        facts["变异编号上限"] = f"M{best[0]}{best[1]}"
+    # 无钉的空仓不出键：真实仓若本键缺失，正文占位会按「未知键」当场炸，不会静默放过。
     return facts
 
 
