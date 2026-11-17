@@ -202,6 +202,8 @@ def test_regex_self_check_rejects_path_line_counts():
 # ---------------- 阶段 2a：changelog_guard（shadow） ----------------
 
 # 历史回放（2026-11-14 实测；判据 = 批次 range 净 diff，不参与下列夹具）：
+# 注：以下实测是**旧「两份各一行」口径**；2026-11-17 B 决策后判据已收敛为 CHANGELOG.md 单份，
+# 样本只用于说明「触装配面 feat/fix 才要求记账」与「同批补账也算数」，不再代表双份要求。
 # 1) `c6ff399^..ac891d3`（11-12 批，14 笔触装配面 feat/fix）：根 CHANGELOG 缺
 #    `[Unreleased]` 段、guide 段内 0 行 ⇒ **would-flag**。
 # 2) `v0.2.0-beta.31..6b4e8c6`：**PASS**——`cad2d5d`（11-08 01:10）已在同批内给
@@ -258,7 +260,6 @@ def test_guard_flags_missing_changelog_in_shadow(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "[would-flag]" in out and "feat/fix 1 笔" in out
     assert "CHANGELOG.md：0 行新增" in out
-    assert "docs/guide/changelog.md：0 行新增" in out
     assert "shadow" in out
 
 
@@ -268,11 +269,10 @@ def test_guard_enforce_exits_1(tmp_path):
     assert cg.main(["--root", str(repo), "--range", "HEAD~1..HEAD", "--enforce"]) == 1
 
 
-def test_guard_passes_when_both_have_added_lines(tmp_path, capsys):
+def test_guard_passes_with_root_line(tmp_path, capsys):
     repo = _mk_guard_repo(tmp_path / "repo")
     _guard_commit(repo, "feat(scripts): 带 changelog",
-                  {"scripts/a.py": "x = 2\n", "CHANGELOG.md": GUARD_NEW,
-                   "docs/guide/changelog.md": GUARD_NEW})
+                  {"scripts/a.py": "x = 2\n", "CHANGELOG.md": GUARD_NEW})
     assert cg.main(["--root", str(repo), "--range", "HEAD~1..HEAD"]) == 0
     out = capsys.readouterr().out
     assert "PASS" in out and "[would-flag]" not in out
@@ -287,29 +287,29 @@ def test_guard_header_only_section_is_flagged(tmp_path, capsys):
     assert cg.main(["--root", str(repo), "--range", "HEAD~1..HEAD"]) == 0
     out = capsys.readouterr().out
     assert "[would-flag]" in out
-    assert "CHANGELOG.md：0 行新增" in out and "docs/guide/changelog.md：0 行新增" in out
+    assert "CHANGELOG.md：0 行新增" in out
 
 
-def test_guard_passes_when_in_batch_catchup_fills_both(tmp_path, capsys):
-    """样本 2/3 的合成版：feat 提交没写账，同批后续 docs 补写两份 ⇒ 净 diff PASS。"""
+def test_guard_passes_when_in_batch_catchup_fills_root(tmp_path, capsys):
+    """样本 2/3 的合成版：feat 提交没写账，同批后续 docs 补写根 CHANGELOG ⇒ 净 diff PASS。"""
     repo = _mk_guard_repo(tmp_path / "repo")
     _guard_commit(repo, "feat(scripts): 只改代码", {"scripts/a.py": "x = 2\n"})
-    _guard_commit(repo, "docs(changelog): 同批补两份",
+    _guard_commit(repo, "docs(changelog): 同批补账",
                   {"CHANGELOG.md": GUARD_NEW, "docs/guide/changelog.md": GUARD_NEW})
     assert cg.main(["--root", str(repo), "--range", "HEAD~2..HEAD"]) == 0
     out = capsys.readouterr().out
     assert "PASS" in out and "[would-flag]" not in out
 
 
-def test_guard_synthetic_single_file_is_flagged(tmp_path, capsys):
-    """单份形态 = **合成夹具**（同批只有根 CHANGELOG 有新增、guide 零新增）。"""
+def test_guard_root_only_is_the_authority(tmp_path, capsys):
+    """B 决策：`CHANGELOG.md` 为权威，guide 只作发版记录、不参与每批记账。"""
     repo = _mk_guard_repo(tmp_path / "repo")
-    _guard_commit(repo, "feat(scripts): 只补一份",
+    _guard_commit(repo, "feat(scripts): 只补根账",
                   {"scripts/a.py": "x = 2\n", "CHANGELOG.md": GUARD_NEW})
     assert cg.main(["--root", str(repo), "--range", "HEAD~1..HEAD"]) == 0
     out = capsys.readouterr().out
-    assert "CHANGELOG.md：2 行新增" in out
-    assert "docs/guide/changelog.md：0 行新增" in out
+    assert "PASS" in out and "CHANGELOG.md +2 行" in out
+    assert "docs/guide/changelog.md" not in out
 
 
 def test_guard_passes_pure_docs_batch(tmp_path, capsys):

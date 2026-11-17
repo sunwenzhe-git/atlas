@@ -2,9 +2,9 @@
 """批次 changelog 前置守卫（`RFC-20261114-04` 阶段 2a：shadow 模式）。
 
 判据（与 `shared/closeout.md` §1「批次收口 changelog 规则」逐字对齐）：
-  批次 range 内若存在**触装配面的 `feat` / `fix` 提交**，则 `CHANGELOG.md` 与
-  `docs/guide/changelog.md` 两份的 `[Unreleased]` 段内各有 ≥1 行新增
-  （「段在但段内零新增」同样不合格）。
+  批次 range 内若存在**触装配面的 `feat` / `fix` 提交**，则 `CHANGELOG.md` 的
+  `[Unreleased]` 段内须有 ≥1 行新增（**每批一行**；「段在但段内零新增」同样不合格）。
+  `docs/guide/changelog.md` 只作发版记录，不参与每批记账（2026-11-17 B 决策）。
 
 量法：`git diff -U0 <range> -- <changelog>` 的 `+` 行，按 post-image 行号落进
 HEAD 版 `[Unreleased]` 段体（不含段标题、不含空行）才计数——与 RFC §2.1 的
@@ -40,7 +40,7 @@ DETECT_COVER_DIRS = tuple(ASSEMBLY_COVER_DIRS) + ("bin",)
 DETECT_COVER_FILES = tuple(ASSEMBLY_COVER_FILES) + ("install.py", "install.sh", "package.json")
 DETECT = frozenset(DETECT_COVER_DIRS) | frozenset(DETECT_COVER_FILES)
 
-CHANGELOGS = ("CHANGELOG.md", "docs/guide/changelog.md")
+CHANGELOGS = ("CHANGELOG.md",)
 FEATFIX_RE = re.compile(r"^(feat|fix)(\([^)]*\))?!?:")
 HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 UNRELEASED_RE = re.compile(r"^##\s*\[Unreleased\]", re.I)
@@ -199,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     if not bad:
         detail = " / ".join(f"{path} +{stats[path]['added']} 行" for path in CHANGELOGS)
         print(f"PASS：range {args.rng}（{count} 提交，触装配面 feat/fix {len(triggers)} 笔）"
-              f"——两份 [Unreleased] 均有新增（{detail}）")
+              f"——CHANGELOG.md [Unreleased] 有新增（{detail}）")
         return 0
 
     print(f"[would-flag] range {args.rng}（{count} 提交，触装配面 feat/fix {len(triggers)} 笔）")
