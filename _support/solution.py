@@ -91,6 +91,9 @@ case_id = _load_sibling("case_id", "_atlas_solution_case_id")
 _LAYOUT = _load_sibling("layout", "_atlas_solution_layout")
 # 封条单源（C 批）：路径宇宙 / 续签链 / 状态机 / 写侧。
 _SEAL = _load_sibling("solution_seal", "_atlas_solution_seal")
+# semver 比较单源（2026-11-17 P1）：与 `scripts/atlas_solution.py` 共用一份实现，
+# 不可解析 ⇒ False（fail-closed）。见 `_support/semver.py` 顶部说明。
+_SEMVER = _load_sibling("semver", "_atlas_semver")
 
 # AC ID 文法单源（`AC-V2-DP-01`：前缀可含连字符段，序号 2–3 位；`AC-SYNC-006` 等
 # 3 位旧号继续可用，4 位及以上仍非法）。`validate_manifest` 的 `requirements[].acs`
@@ -111,27 +114,21 @@ def manifest_path(root: Path) -> Path:
 # **只用来定位工具自身的版本来源，绝不读被检查仓 `<root>/package.json`**（v11/重要 3）。
 _TOOL_PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 
-_SEMVER_RE = re.compile(
-    r"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$")
-
-
 def parse_semver(raw: str) -> tuple[int, int, int, str] | None:
-    """(major, minor, patch, prerelease)；不可解析 ⇒ None（含装配摘要形态）。"""
-    m = _SEMVER_RE.match((raw or "").strip())
-    if m is None:
+    """(major, minor, patch, prerelease)；不可解析 ⇒ None（含装配摘要形态）。
+
+    实现单源在 `_support/semver.py`；这里只保留 4 元组形态的历史调用面。
+    """
+    parsed = _SEMVER.parse(raw)
+    if parsed is None:
         return None
-    return int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4) or ""
+    (major, minor, patch), pre = parsed
+    return major, minor, patch, ".".join(pre)
 
 
 def semver_lt(raw: str, bound: tuple[int, int, int]) -> bool:
-    """`raw < bound`（同版本时预发布视为更小）；`raw` 不可解析 ⇒ False。"""
-    parsed = parse_semver(raw)
-    if parsed is None:
-        return False
-    base, pre = parsed[:3], parsed[3]
-    if base != bound:
-        return base < bound
-    return bool(pre)
+    """`raw < bound`（同版本时预发布视为更小）；`raw` 不可解析 ⇒ False（fail-closed）。"""
+    return _SEMVER.lt(raw, "%d.%d.%d" % tuple(bound[:3]))
 
 
 def resolve_reader_version(root: Path) -> tuple[str, list[dict]]:

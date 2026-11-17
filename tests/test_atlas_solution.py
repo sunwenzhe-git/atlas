@@ -1047,6 +1047,39 @@ def test_m6_grace_flag_is_version_gated(tmp_path: Path) -> None:
     assert cli._allow_dangling_acs_enabled("0.4.0-beta.1") is True
 
 
+def test_semver_lt_is_single_source_across_kernel_and_cli() -> None:
+    """2A 钉：两处调用路径对同一组输入必须同结论（含空串 / 非版本串 / 前缀 v / 预发布）。
+
+    2026-11-17 前两份实现分叉：不可解析时内核判 False、CLI 退回字符串比较。
+    现统一为 `_support/semver.lt`，不可解析 ⇒ False（fail-closed）。
+    """
+    core = cli._load_solution()
+    cases = [
+        # (raw, 内核 bound, CLI bound, 期望)
+        ("0.3.0", (0, 4, 0), "0.4.0", True),
+        ("0.3.9", (0, 4, 0), "0.4.0", True),
+        ("v0.3.9", (0, 4, 0), "0.4.0", True),
+        ("0.4.0-beta.1", (0, 4, 0), "0.4.0", True),
+        ("0.4.0-rc.1", (0, 4, 0), "0.4.0", True),
+        ("0.4.0", (0, 4, 0), "0.4.0", False),
+        ("0.4.0+build.5", (0, 4, 0), "0.4.0", False),
+        ("0.4.1", (0, 4, 0), "0.4.0", False),
+        ("", (0, 4, 0), "0.4.0", False),
+        ("0.4", (0, 4, 0), "0.4.0", False),
+        ("not-a-version", (0, 4, 0), "0.4.0", False),
+        ("2026-11-17-abc1234", (0, 4, 0), "0.4.0", False),  # 装配摘要形态
+    ]
+    for raw, kernel_bound, cli_bound, expected in cases:
+        assert core.semver_lt(raw, kernel_bound) is expected, f"内核路径: {raw!r}"
+        assert cli.semver_lt(raw, cli_bound) is expected, f"CLI 路径: {raw!r}"
+        assert cli._allow_dangling_acs_enabled(raw) is expected, f"宽限门: {raw!r}"
+    # 预发布排序只有字符串接口能表达，钉单源实现本身（数字段按数值比较）
+    assert cli.semver_lt("0.4.0-beta.2", "0.4.0-beta.10") is True
+    assert cli.semver_lt("0.4.0-beta.10", "0.4.0-beta.2") is False
+    assert cli.semver_lt("0.4.0-beta.2", "0.4.0-beta.2") is False
+    assert cli.semver_lt("0.4.0", "0.4.0-beta.10") is False
+
+
 # ---------------------------------------------------------------- B-0（RFC-20261111-03）
 
 V2_MANIFEST = """\

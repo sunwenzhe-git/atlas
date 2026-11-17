@@ -46,6 +46,23 @@ def _load_solution_task():
     return mod
 
 
+_SEMVER_MOD = None
+
+
+def _load_semver():
+    """semver 比较单源：`_support/semver.py`（与内核共用一份，2026-11-17 P1）。"""
+    global _SEMVER_MOD
+    if _SEMVER_MOD is None:
+        path = PKG_ROOT / "_support" / "semver.py"
+        spec = importlib.util.spec_from_file_location("_atlas_semver_cli", path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"无法加载 {path}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _SEMVER_MOD = mod
+    return _SEMVER_MOD
+
+
 # ---------------------------------------------------------------- task acceptance
 
 AC_LINE_RE = re.compile(r"^[ \t]*atlas-acceptance:[ \t]*(.+?)\s*$")
@@ -188,42 +205,14 @@ def _package_version() -> str:
         return "0.0.0"
 
 
-_SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$")
-
-
-def _semver_parts(version: str):
-    m = _SEMVER.match(version.strip())
-    if m is None:
-        return None
-    return (int(m.group(1)), int(m.group(2)), int(m.group(3))), \
-        (m.group(4).split(".") if m.group(4) else [])
-
-
-def _pre_lt(a: list[str], b: list[str]) -> bool:
-    if not a:
-        return False
-    if not b:
-        return True
-    for x, y in zip(a, b):
-        if x == y:
-            continue
-        xn, yn = x.isdigit(), y.isdigit()
-        if xn and yn:
-            return int(x) < int(y)
-        if xn != yn:
-            return xn
-        return x < y
-    return len(a) < len(b)
-
-
 def semver_lt(a: str, b: str) -> bool:
-    """严格 semver 比较（预发布 < 同版本正式版）；不可解析时退回字符串比较。"""
-    pa, pb = _semver_parts(a), _semver_parts(b)
-    if pa is None or pb is None:
-        return a.strip() < b.strip()
-    if pa[0] != pb[0]:
-        return pa[0] < pb[0]
-    return _pre_lt(pa[1], pb[1])
+    """`a < b`；实现单源 `_support/semver.lt`。
+
+    不可解析（空串 / 非版本串 / 装配摘要）⇒ **False**（fail-closed，不退回字符串比较）。
+    2026-11-17 P1 收敛前，这里退回字符串比较、内核判 False，同一输入会给出相反结论。
+    实际入参是 `package.json` 的合法版本（`_package_version`），故无外部行为变化。
+    """
+    return _load_semver().lt(a, b)
 
 
 def _allow_dangling_acs_enabled(version: str) -> bool:
