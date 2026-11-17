@@ -12,7 +12,11 @@
 **只读**：不接管成员执行、不写成员索引/账本；成员 `review_state` 按**成员根**重算，
 结果只在内存/`--json` 中展示，不落盘。唯一的写动作是显式 `--snapshot` 写父仓自己的
 `<assets_root>/e2e/reviews/aggregate/`（保留名，非成员状态第二份账本）。
-纯标准库；索引/分片解析复用既有校验器（同一份解析，不另写）。
+纯标准库。**已知分层倒置（勿模仿）**：索引/分片解析目前直接 `load_module` 校验器
+`validators/validate_e2e_index`（处数见棘轮清单），形成 `_support → validators` 的反向依赖，
+靠惰性加载掩盖环；正在按 2026-11-17 排序 P3（2B）收敛到
+`_support/e2e_index_core.py`。在此之前**不要**新增同类依赖——棘轮钉在
+`tests/test_shared_kernel.py::test_kernel_reverse_dependencies_are_ratcheted`。
 """
 from __future__ import annotations
 

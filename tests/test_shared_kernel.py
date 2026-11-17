@@ -252,6 +252,36 @@ def test_definitions_are_single_sourced() -> None:
     assert not bad, f"共享函数出现第二处定义（单源纪律被破坏）：{bad}"
 
 
+def test_kernel_reverse_dependencies_are_ratcheted() -> None:
+    """分层棘轮（2026-11-17 F3）：`_support/` 不得加载 `validators/`，现存处数只许减不许增。
+
+    这是**已知的分层倒置**（内核 → 校验器），靠惰性加载掩盖环，不是设计意图。
+    本批不拆（抽 `_support/e2e_index_core.py` 属排序 P3 / 2B），只把现状钉死：
+    数量或位置（文件 + 校验器名）任何变化 ⇒ 红；要动就先拆掉旧的，别扩清单。
+    """
+    allowlist = {
+        ("_support/solution_e2e.py", "validate_e2e_index"): (
+            6,
+            "索引/分片解析复用校验器的 tables / MAIN_COLUMNS / gather_shards（同一份解析，"
+            "不另写）；拆到 _support/e2e_index_core.py 属 2026-11-17 排序 P3（2B），"
+            "会同时改 validator 顶部 1 段与 solution_e2e 6 处调用，本批不拆",
+        ),
+    }
+    edges: dict[tuple[str, str], int] = {}
+    pattern = re.compile(
+        r"""(?:load_module|_load_sibling)\(\s*['"]((?:validate_)\w+)['"]""")
+    for f in sorted((PKG_ROOT / "_support").glob("*.py")):
+        for name in pattern.findall(f.read_text(encoding="utf-8")):
+            key = (f"_support/{f.name}", name)
+            edges[key] = edges.get(key, 0) + 1
+    expected = {key: count for key, (count, _) in allowlist.items()}
+    assert edges == expected, (
+        "反向依赖清单变了：新增 / 移动 `_support → validators` 都必须先拆旧的，不要扩清单。\n"
+        f"  实际: {edges}\n  允许: {expected}")
+    for key, (count, reason) in allowlist.items():
+        assert count > 0 and reason.strip(), f"{key} 的登记必须写明为什么现在拆不掉"
+
+
 def test_consumer_aliases_are_the_kernel_objects() -> None:
     """消费者暴露的别名必须就是内核函数对象（防「引用另一份实现」的再引入）。"""
     gen = _load("gen_e2e_scripts", "scripts/gen_e2e_scripts.py")
