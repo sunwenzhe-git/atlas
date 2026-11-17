@@ -16,6 +16,19 @@ CI 按锁还原由流水线自行 clone + checkout 承担（见 `shared/solution
 这些属于 Phase 2/3；遇到 `mode: unified` 必须显式拒绝，不得静默降级。
 
 契约正文见 `shared/solution.md`。
+
+分节地图（2026-11-17 P4/X2，仅索引；分节以 `# ----` 为准，不写行号以免漂）：
+  §0  模块头     SolutionError / _load_sibling / 清单·锁常量
+  §1  manifest   manifest_path
+  §2  reader     load_manifest / reader_version 三级回落 / semver / _assets_root / _valid_task_slug
+  §3  git        _git* / _is_git / _head / member_state
+  §4  契约锁     contract_states / 锁摘要工具
+  §5  definition read_lock / write_lock / definition 链与 PRD front matter
+  §6  init/adopt init_solution / adopt_solution / 安装骨架
+  §7  status     status / 锁成员与 acceptance_cutover 检查
+  §8  B-0        ⓪ 层错误类型 / path_at / 历史前缀纯函数
+  §9  D 批       check_solution / AC crosswalk / 契约检查
+  §10 封条写侧   select_seal_path / freeze_seal / render_*
 """
 from __future__ import annotations
 
