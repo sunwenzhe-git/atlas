@@ -4,7 +4,7 @@
 
 ---
 
-## [Unreleased]
+## [v0.3.0-beta.4] - 2026-11-17
 
 ### 🧭 `atlas upgrade` 跟着运行路径装，不再诱导 sudo
 
