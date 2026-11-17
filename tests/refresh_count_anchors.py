@@ -57,7 +57,7 @@ HTML_COUNT_RES = (
     (re.compile(r"契约 ×(\d+)"), "共享契约"),
     (re.compile(r"内核 ×(\d+)"), "共享内核"),
 )
-# `shared/gates.md` 里由 canonical 机器判的计数形态：本器只数不写
+# `shared/gates.md` 里的计数形态：占位行归 `ledger_snapshot`，未转占位的只报不写
 GATES_COUNT_RES = (
     re.compile(r"(\d+)\s*个\**\s*测试文件"),
     re.compile(r"移除后\s*\**(\d+)/(\d+)\**"),
@@ -216,10 +216,17 @@ def collect_plan(root: Path) -> Plan:
     gates = root / "shared" / "gates.md"
     if gates.is_file():
         g = _read(gates)
-        n = sum(len(rx.findall(g)) for rx in GATES_COUNT_RES)
-        if n:
+        hits = [m.group(0) for rx in GATES_COUNT_RES for m in rx.finditer(g)]
+        tokenized = len(re.findall(r"〔数:", g))
+        other = [h for h in hits if "〔数:" not in h]
+        if tokenized:
             plan.out_of_scope.append(
-                f"shared/gates.md 计数 {n} 处（canonical 机器判，本器不碰）")
+                f"shared/gates.md 计数 {tokenized} 处已转占位"
+                "（由 scripts/ledger_snapshot.py 管，本器不写）")
+        if other:
+            plan.out_of_scope.append(
+                f"shared/gates.md 计数 {len(other)} 处未转占位"
+                "（须先登记派生键再转占位，本器不写）")
     return plan
 
 

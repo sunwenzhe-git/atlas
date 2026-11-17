@@ -18,8 +18,9 @@
 互相否定」需要读懂句意）⇒ 归人（`shared/closeout.md` 步骤 1 门自检 + 独立复核）。
 
 变异证明：M7 契约里写一个**不带标记**的幽灵环引用 ⇒ 红；M8 模板加一个契约未声明的子键 ⇒ 红；
-M9 契约里引用一个不存在的 shared 文件 ⇒ 红；M10 逐文件计数喂「字符串字面量内嵌幽灵 `def test_`」
-的登记数 ⇒ 红（量具按 pytest 实收口径，不数字符串里的假用例）。
+M9 契约里引用一个不存在的 shared 文件 ⇒ 红；M20′/M23′/M24′ 派生占位写回旧值 ⇒ 红
+（M24′ 吸收 M10：逐文件用例数量具按 AST 实收口径，不数字符串里的幽灵 `def test_`）；
+M22′ 2.2 校验器数与 `VALIDATORS` 长度不符 ⇒ 红。
 """
 from __future__ import annotations
 
@@ -219,36 +220,22 @@ def _collected_test_count(pf: Path) -> int:
 
 
 def check_registry_counts() -> dict:
-    """**门总账里的计数必须与实况一致**（`3509 §B105` 的教训：写死计数无对账）。
+    """**门总账的状态/清单对账**（计数类已改派生占位，判据见 `check_ledger_tokens`）。
 
-    2026-09-28 独立审计拒收的直接原因之一：`gates.md` 写着「自检 31 项」「14 个测试文件 / 14/14」，
-    而实况是 35 条 `check` 声明、16 个测试文件 —— **计数类陈述无门可判**。本判据把这三处钉住。
+    2026-09-28 独立审计的教训是「写死计数无对账」，当时用固定句式白名单兜底；但白名单
+    只认写法、不认事实（2026-11-17 实测：同一事实的其它副本 77 vs 80 不被锁、句式漂移后
+    「移除后 N/N」与「当前 N)」静默 0 命中）。现分工：计数进 `〔数:key=value〕` 由
+    `check_ledger_tokens` 判；本判据只留不可派生的两类——`DESIGN.md §13` 禁状态词、
+    校验器清单集合对账。
     """
-    gates = (PKG_ROOT / "shared" / "gates.md").read_text(encoding="utf-8")
     # `install.py` 是**源包专属件**（不装配进 `.atlas/`）⇒ 副本态跳过该子项（显式，不静默）。
     # 2026-11-03（RFC-20261103-04 第 4 步）：自检声明随装配单源迁至 install.py（`c(...)`）。
     install_file = PKG_ROOT / "install.py"
     install = install_file.read_text(encoding="utf-8") if install_file.is_file() else ""
-    n_tests = len(list((PKG_ROOT / "tests").glob("test_*.py")))
-    n_checks = len(re.findall(r'^\s*c\("', install, re.M))
     bad: list[str] = []
-    for m in re.finditer(r"(\d+)\s*个\**\s*测试文件", gates):
-        if int(m.group(1)) != n_tests:
-            bad.append(f"「{m.group(1)} 个测试文件」≠ 实际 {n_tests}")
-    for m in re.finditer(r"移除后\s*\**(\d+)/(\d+)\**", gates):
-        if int(m.group(1)) != n_tests or int(m.group(2)) != n_tests:
-            bad.append(f"「{m.group(1)}/{m.group(2)}」≠ 实际 {n_tests}/{n_tests}")
-    if install:
-        for m in re.finditer(r"自检（\**(\d+)\s*条\s*(?:`check`|`c\(\)`)\s*声明", gates):
-            if int(m.group(1)) != n_checks:
-                bad.append(f"「自检 {m.group(1)} 条 check 声明」≠ 实际 {n_checks}")
-    # 校验器行数：`gates.md` 的「数量 = … 当前 N」必须 = `atlas_check.VALIDATORS` 长度
-    ac = (PKG_ROOT / "scripts" / "atlas_check.py").read_text(encoding="utf-8")
-    vm = re.search(r"^VALIDATORS = \(([^)]*)\)", ac, re.M)
-    n_validators = len([x for x in vm.group(1).split(",") if x.strip()]) if vm else -1
-    for m in re.finditer(r"当前\s*(\d+)\s*\)", gates):
-        if int(m.group(1)) != n_validators:
-            bad.append(f"「校验器数量 当前 {m.group(1)}」≠ 实际 {n_validators}")
+    # 计数类判据已移交派生占位（`〔数:key=value〕`，判据见 `check_ledger_tokens`）：
+    # 固定句式白名单只认写法、不认事实，实测漏掉「同一事实的其它副本」（77 vs 80、
+    # 移除后 N/N 句式漂移后静默 0 命中）。本节只留两类不可派生的对账。
     # 状态复述必漂（`3509 §126` 审计教训）：DESIGN.md §13 只准放指针，不得写推进状态。
     # `DESIGN.md` 与 `install.sh` 同为**源包专属件**（不装配进 `.atlas/`）⇒ 副本态显式跳过。
     design_file = PKG_ROOT / "DESIGN.md"
@@ -258,23 +245,7 @@ def check_registry_counts() -> dict:
         for w in ("未落地", "落地未做", "尚无批次号", "已落地"):
             if w in sec13:
                 bad.append(f"DESIGN.md §13 出现推进状态词「{w}」（本节只准放指针，状态归 `3509` 批 6 登记）")
-    # 逐文件「N 条」：`gates.md` 里的 `tests/<file>.py` 后随的「N 条」必须 = 该文件 pytest 实收用例数
-    # （2026-09-28 第三轮审计：此处曾写「55 条」而实为 54 —— 白名单只盯固定句式会漏逐文件计数）
-    for m in re.finditer(r"`tests/([\w.]+\.py)`[^|]{0,80}?(\d+)\s*条", gates):
-        f, n = m.group(1), int(m.group(2))
-        pf = PKG_ROOT / "tests" / f
-        if not pf.is_file():
-            bad.append(f"gates.md 引用了不存在的测试文件 tests/{f}")
-            continue
-        real = _collected_test_count(pf)
-        if n != real:
-            bad.append(f"「tests/{f} {n} 条」≠ 实际 {real}")
-    # 同一类：`DESIGN.md` 里若写死「N 个校验器」，必须 = `validators/validate_*.py` 数
-    n_vfiles = len(list((PKG_ROOT / "validators").glob("validate_*.py")))
-    for m in re.finditer(r"(\d+)\s*个校验器", design):
-        if int(m.group(1)) != n_vfiles:
-            bad.append(f"DESIGN.md 写「{m.group(1)} 个校验器」≠ 实际 {n_vfiles}")
-    # **清单内容对账**（2026-10-12 单源批）：`DESIGN.md` 的 `validate_{a,b,…}.py` 花括号清单
+    # 同一类：DESIGN.md 的校验器**清单内容**对账（计数已改派生占位，不再按数字判）。
     # 必须 = `validators/validate_*.py` 文件名集合 —— 原判据只数个数，数量对、清单漏列一个
     # 名字照样绿（「数量对、内容错」是计数门唯一能骗过它的形态）。
     vm2 = re.search(r"`validate_\{([^}]*)\}\.py`", design)
@@ -286,13 +257,47 @@ def check_registry_counts() -> dict:
             bad.append(f"DESIGN.md 校验器清单与实况不符：漏列={miss} 多列={extra}")
     skips = []
     if not install:
-        skips.append("副本态无 `install.py` ⇒ 自检项数子项跳过")
+        skips.append("副本态无 `install.py` ⇒ 自检相关子项跳过")
     if not design:
-        skips.append("副本态无 `DESIGN.md` ⇒ §13 状态词子项跳过")
+        skips.append("副本态无 `DESIGN.md` ⇒ §13 状态词与清单子项跳过")
     skipped = ("；" + "；".join(skips) + "（都不是通过）") if skips else ""
-    return {"check": "门总账计数/状态对账", "ok": not bad, "skip": False,
-            "detail": ("；".join(bad) + "（写死计数/复述状态必须随实况改，`3509 §B105`/`§125`）" if bad
-                       else f"计数与状态与实际一致（测试文件 {n_tests}；自检 {n_checks} 条；校验器 {n_validators}；§13 无状态词）{skipped}")}
+    return {"check": "门总账状态/清单对账", "ok": not bad, "skip": False,
+            "detail": ("；".join(bad) + "（复述状态/清单必须随实况改，`3509 §125`）" if bad
+                       else f"§13 无状态词、校验器清单一致；计数类已改派生占位（见 check_ledger_tokens）{skipped}")}
+
+
+def check_ledger_tokens() -> dict:
+    """**派生数字占位 ⇔ 唯一源**（`shared/gates.md` / `DESIGN.md`）。
+
+    判据从「手抄数字与实况一致」改为「重渲染后逐字节不变」：正文只准出现
+    `〔数:key=value〕`，value 必须等于 `scripts/ledger_snapshot.derive` 的输出。
+    与句式白名单的差别：机器认 key 不认写法，新增数字只要登记成键就自动被覆盖；
+    缺源/未知键由生成器响亮失败（不静默 0、不静默放过）。
+    """
+    import sys as _sys
+    scripts = str(PKG_ROOT / "scripts")
+    if scripts not in _sys.path:
+        _sys.path.insert(0, scripts)
+    from ledger_snapshot import SnapshotError, derive, rewrite
+
+    bad: list[str] = []
+    try:
+        facts = derive(PKG_ROOT)
+    except SnapshotError as e:
+        return {"check": "派生数字占位对账", "ok": False, "skip": False, "detail": str(e)}
+    for rel in ("shared/gates.md", "DESIGN.md"):
+        p = PKG_ROOT / rel
+        if not p.is_file():
+            continue  # 副本态缺件（与本节其它子项同口径，非通过）
+        try:
+            _new, drifts = rewrite(p.read_text(encoding="utf-8"), facts)
+        except SnapshotError as e:
+            bad.append(f"{rel}：{e}")
+            continue
+        bad += [f"{rel}〔数:{key}〕写 {old} ≠ 源 {new}" for key, old, new in drifts]
+    return {"check": "派生数字占位对账", "ok": not bad, "skip": False,
+            "detail": "；".join(bad) if bad
+            else "占位全部等于唯一源（`ledger_snapshot.derive`）"}
 
 
 # ------------------------------------------------------------------ 判据 ⑦（D79 ③）
@@ -392,8 +397,8 @@ def check_skill_budget() -> dict:
 
 def scan() -> list[dict]:
     return [check_ring_refs_self_marking(), check_template_keys(), check_shared_refs(),
-            check_registry_counts(), check_contract_field_refs(), check_veto_word_pins(),
-            check_skill_budget()]
+            check_registry_counts(), check_ledger_tokens(), check_contract_field_refs(),
+            check_veto_word_pins(), check_skill_budget()]
 
 
 def test_contract_field_references_are_declared() -> None:
@@ -417,39 +422,105 @@ def test_shared_references_resolve() -> None:
 
 
 def test_registry_counts_match_reality() -> None:
-    """`gates.md` 的计数陈述 + `DESIGN.md §13` 的状态词禁令必须成立（`3509 §B105` / `§125`）。
+    """`DESIGN.md §13` 状态词禁令 + 校验器清单对账必须成立（计数类见 `test_ledger_tokens_match_source`）。
 
-    本判据是**固定句式白名单**（只覆盖已出现过的写法）—— `§126` 已指出这一局限：
-    它判不了「换了写法的计数陈述」或其它文档里的状态矛盾；新增写法时须同步扩白名单。
+    计数已改派生占位：固定句式白名单判不了「换了写法的计数陈述」，也无法锁住同一事实的
+    其它副本——这两点正是 2026-11-17 账本设计案把它们移出本判据的原因。
     """
     res = check_registry_counts()
     assert res["ok"], res["detail"]
 
 
-def test_registry_count_gauge_counts_real_tests_not_literals(tmp_path, monkeypatch) -> None:
-    """M10：逐文件计数的量具必须是 pytest 实收口径（M10 钉子，喂坏输入必红）。
+def test_ledger_tokens_match_source() -> None:
+    """派生数字占位必须等于唯一源（`shared/gates.md` / `DESIGN.md`）。"""
+    res = check_ledger_tokens()
+    assert res["ok"], res["detail"]
 
-    坏输入形态：坏输入 fixture 把被测写法整文件内嵌进三引号字符串（真实案例
-    `tests/test_validate_ac_alignment.py`，正则量具曾全仓数出 348 而实收 341）——
-    字符串里的顶格 `def test_` 永不收集，登记数若按它写就该红。
-    """
-    import sys
-    (tmp_path / "shared").mkdir()
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts" / "atlas_check.py").write_text(
-        'VALIDATORS = (\n    "validate_x",\n)\n', encoding="utf-8")
-    (tmp_path / "tests" / "test_x.py").write_text(
+
+def _mk_ledger_repo(tmp: Path) -> Path:
+    """最小源包：派生键齐备 + gates/DESIGN 各带占位。"""
+    (tmp / "scripts").mkdir()
+    (tmp / "validators").mkdir()
+    (tmp / "tests").mkdir()
+    (tmp / "skills" / "s1").mkdir(parents=True)
+    (tmp / "rings" / "structure").mkdir(parents=True)
+    (tmp / "shared").mkdir()
+    (tmp / "_support").mkdir()
+    (tmp / "scripts" / "atlas_check.py").write_text(
+        'VALIDATORS = (\n    "validate_a",\n    "validate_b",\n)\n', encoding="utf-8")
+    (tmp / "validators" / "validate_a.py").write_text("", encoding="utf-8")
+    (tmp / "validators" / "validate_b.py").write_text("", encoding="utf-8")
+    (tmp / "tests" / "test_x.py").write_text(
         'def test_real():\n    pass\n\n\n_SAMPLE = """\ndef test_phantom():\n    pass\n"""\n',
         encoding="utf-8")
-    gates = tmp_path / "shared" / "gates.md"
-    monkeypatch.setattr(sys.modules[__name__], "PKG_ROOT", tmp_path)
-    gates.write_text("| 门 | 取证：`tests/test_x.py` **2 条**本轮跑绿 |\n", encoding="utf-8")
-    res = check_registry_counts()
-    assert not res["ok"], f"登记数按幽灵正则口径（2 条）必须红：{res['detail']}"
-    gates.write_text("| 门 | 取证：`tests/test_x.py` **1 条**本轮跑绿 |\n", encoding="utf-8")
-    res = check_registry_counts()
-    assert res["ok"], f"登记数按实收口径（1 条）必须绿：{res['detail']}"
+    (tmp / "rings" / "structure" / "reference.md").write_text("", encoding="utf-8")
+    (tmp / "shared" / "g.md").write_text("", encoding="utf-8")
+    (tmp / "_support" / "k.py").write_text("", encoding="utf-8")
+    (tmp / "install.py").write_text('c("a", "b")\n', encoding="utf-8")
+    (tmp / "DESIGN.md").write_text(
+        "## 12. 决策\n\n〔数:校验器文件=2〕 个校验器\n\n"
+        "## 13. 待实现事项\n\n见 `validators/validate_{a,b}.py`。\n\n## 14. 后记\n",
+        encoding="utf-8")
+    (tmp / "shared" / "gates.md").write_text(
+        "| 门 | 取证 |\n|---|---|\n"
+        "| `check-all` | **〔数:出厂测试文件=1〕 个**测试文件 |\n"
+        "| `x` | `tests/test_x.py` **〔数:用例数.test_x.py=1〕 条** |\n",
+        encoding="utf-8")
+    return tmp
+
+
+def _stale(repo: Path, rel: str, old: str, new: str) -> None:
+    p = repo / rel
+    text = p.read_text(encoding="utf-8")
+    assert old in text, f"fixture 缺占位 {old}"
+    p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+def test_m20_count_token_stale_must_fail(tmp_path, monkeypatch) -> None:
+    """M20′：计数占位写回旧值必须红（治「门册计数与实况不符仍绿」）。"""
+    import sys as _sys
+    repo = _mk_ledger_repo(tmp_path)
+    monkeypatch.setattr(_sys.modules[__name__], "PKG_ROOT", repo)
+    assert check_ledger_tokens()["ok"], "fixture 起点必须绿"
+    _stale(repo, "shared/gates.md", "〔数:出厂测试文件=1〕", "〔数:出厂测试文件=99〕")
+    res = check_ledger_tokens()
+    assert not res["ok"] and "出厂测试文件" in res["detail"], res["detail"]
+
+
+def test_m22_validator_count_drift_must_fail(tmp_path, monkeypatch) -> None:
+    """M22′：2.2 的校验器计数与 `VALIDATORS` 长度不符必须红（由 `check_gates_gates_are_scheduled` 判）。"""
+    import sys as _sys
+    repo = _mk_ledger_repo(tmp_path)
+    monkeypatch.setattr(_sys.modules[__name__], "PKG_ROOT", repo)
+    gates = repo / "shared" / "gates.md"
+    gates.write_text("### 2.1 x\n| `validators/validate_a.py` | y |\n"
+                     "### 2.2 x\n数量 = `atlas_check.VALIDATORS` 长度，当前 1；\n", encoding="utf-8")
+    res = check_gates_gates_are_scheduled()
+    assert not res["ok"] and "当前 1" in res["detail"], res["detail"]
+    gates.write_text(gates.read_text(encoding="utf-8").replace("当前 1；", "当前 2；"),
+                     encoding="utf-8")
+    assert check_gates_gates_are_scheduled()["ok"], "写回正确值必须复绿"
+
+
+def test_m23_design_validator_token_stale_must_fail(tmp_path, monkeypatch) -> None:
+    """M23′：`DESIGN.md` 校验器数占位写回必须红。"""
+    import sys as _sys
+    repo = _mk_ledger_repo(tmp_path)
+    monkeypatch.setattr(_sys.modules[__name__], "PKG_ROOT", repo)
+    _stale(repo, "DESIGN.md", "〔数:校验器文件=2〕", "〔数:校验器文件=5〕")
+    res = check_ledger_tokens()
+    assert not res["ok"] and "校验器文件" in res["detail"], res["detail"]
+
+
+def test_m24_per_file_token_must_match_gauge(tmp_path, monkeypatch) -> None:
+    """M24′：逐文件用例数占位写回必须红（吸收 M10：字符串里的幽灵 `def test_` 不得计入）。"""
+    import sys as _sys
+    repo = _mk_ledger_repo(tmp_path)
+    monkeypatch.setattr(_sys.modules[__name__], "PKG_ROOT", repo)
+    assert check_ledger_tokens()["ok"], "fixture 起点必须绿（实收 1 条，非字符串里的 2 条）"
+    _stale(repo, "shared/gates.md", "〔数:用例数.test_x.py=1〕", "〔数:用例数.test_x.py=2〕")
+    res = check_ledger_tokens()
+    assert not res["ok"] and "test_x.py" in res["detail"], res["detail"]
 
 
 
