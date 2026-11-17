@@ -7,11 +7,13 @@
 
 只写三类（其余一律跳过并打印）：
   1. md 里的 `path`(N 行) 括注与 `| `path` | N |` 表格行数；
-  2. `docs/map/index.md`「## 数字快照」的实收键数字（键表复用 `_derive_snapshot`）；
+  2. `docs/map/index.md`「## 数字快照」里**尚未转占位**的实收键数字；
   3. `docs/map/atlas-map.html` 文件条目的 `N 行` 与 `×N` / `N 文件` 计数。
 
 明确不写：
   * `path:line` 行号锚——那个锚类的唯一写者是 `tests/test_map_anchors.py --fix`；
+  * `docs/map/index.md` 的 `〔数:…〕` 占位——唯一写者是 `scripts/ledger_snapshot.py --write`
+    （一个锚类只准一个写者）；
   * `shared/gates.md` 与 canonical 计数——打印「范围外 N 处」，归机器判 + 人工改；
   * 版本串——只报告，版本是发版动作。
 
@@ -156,6 +158,10 @@ def _collect_snapshot(plan: Plan, root: Path, derived: dict[str, int]) -> None:
     for m in SNAP_ROW_RE.finditer(section):
         name, val = m.group(1).strip(), m.group(2)
         if name in ("量", "---"):
+            continue
+        if "〔数:" in m.group(0):
+            plan.out_of_scope.append(
+                f"docs/map/index.md「{name}」行（占位由 scripts/ledger_snapshot.py 管，本器不写）")
             continue
         if name not in derived:
             plan.out_of_scope.append(f"docs/map/index.md「{name}」行（无机器判据，本器不写）")

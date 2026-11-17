@@ -32,6 +32,11 @@ from pathlib import Path
 PKG_ROOT = Path(__file__).resolve().parents[1]
 MAP_DIR = PKG_ROOT / "docs" / "map"
 
+SCRIPTS_DIR = PKG_ROOT / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+from ledger_snapshot import SnapshotError, derive, rewrite  # noqa: E402
+
 # atlas 自有源码的校验值域（锚指这些顶层才算「本仓可判」）
 OWNED_PREFIXES = (
     "adapters/", "scripts/", "shared/", "tests/", "apply/", "rings/",
@@ -271,22 +276,29 @@ def _derive_snapshot(repo: Path) -> dict[str, int]:
 
 
 def check_snapshot(repo: Path) -> list[dict]:
-    idx = (repo / "docs" / "map" / "index.md").read_text(encoding="utf-8")
-    section = idx[idx.index("## 数字快照"):]
-    section = section[:section.index("\n## ")] if "\n## " in section else section
-    derived = _derive_snapshot(repo)
-    out: list[dict] = []
-    for m in re.finditer(r"^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|", section, re.M):
-        name, val = m.group(1).strip(), m.group(2)
-        if name in ("量", "---") or name not in derived:
-            continue  # 编排门行 8 类需语义识别：显式不校验（盲区）
-        num = re.search(r"(\d+)\s*行", val) or re.search(r"(\d+)", val)
-        if not num or int(num.group(1)) != derived[name]:
-            out.append({"sev": "FAIL", "code": "snapshot_drift",
-                        "where": "docs/map/index.md",
-                        "msg": f"数字快照「{name}」文档 {num.group(1) if num else '无数字'}"
-                               f" ≠ 实况 {derived[name]}"})
-    return out
+    """index.md「数字快照」⇔ 派生层：正文只存 `〔数:key=value〕`，门判重渲染后逐字节不变。
+
+    与句式白名单的区别：机器认 key，不认写法；新增数字只要登记成键就自动被覆盖。
+    盲区：`编排门行` 是叙事行（9 类门清单），无机器判据，不属派生键，本函数不管。
+    """
+    idx = repo / "docs" / "map" / "index.md"
+    if not idx.is_file():
+        return []
+    text = idx.read_text(encoding="utf-8")
+    if "## 数字快照" not in text:
+        return [{"sev": "FAIL", "code": "snapshot_drift", "where": "docs/map/index.md",
+                 "msg": "缺「## 数字快照」段——派生层无从对账（fail-closed）"}]
+    try:
+        _new, drifts = rewrite(text, derive(repo))
+    except SnapshotError as e:
+        return [{"sev": "FAIL", "code": "snapshot_drift", "where": "docs/map/index.md",
+                 "msg": str(e)}]
+    if "〔数:" not in text:
+        return [{"sev": "FAIL", "code": "snapshot_drift", "where": "docs/map/index.md",
+                 "msg": "数字快照段无受管占位——数字重新变成手抄副本"}]
+    return [{"sev": "FAIL", "code": "snapshot_drift", "where": "docs/map/index.md",
+             "msg": f"数字快照〔数:{key}〕写 {old} ≠ 源 {new}"}
+            for key, old, new in drifts]
 
 
 def fix_drifts(repo: Path) -> int:

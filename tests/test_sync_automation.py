@@ -28,6 +28,7 @@ for extra in (HERE, HERE.parent / "scripts"):
         sys.path.insert(0, str(extra))
 
 import changelog_guard as cg  # noqa: E402
+import ledger_snapshot as ls  # noqa: E402
 import refresh_count_anchors as rca  # noqa: E402
 from test_map_anchors import check_freshness, check_snapshot, collect_docs  # noqa: E402
 
@@ -39,14 +40,15 @@ INDEX_MD = """# 地图
 
 | 量 | 值 | 出处 |
 |---|---|---|
-| 校验器 | 9(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py` |
+| 校验器 | 〔数:校验器=2〕(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py` |
 | 编排门行 | 9 类(validators / 对齐测试) | `scripts/atlas_check.py` |
-| 出厂测试文件 | 9 | `tests/` |
-| skills | 9 | `skills/` |
-| 环 | 9 | `rings/` |
-| 共享契约 | 9 | `shared/` |
-| 共享内核 | 9 | `_support/` |
-| 最大单件 | `scripts/big.py` 9 行 | — |
+| 出厂测试文件 | 〔数:出厂测试文件=1〕 | `tests/` |
+| skills | 〔数:skills=1〕 | `skills/` |
+| 环 | 〔数:环=1〕 | `rings/` |
+| 共享契约 | 〔数:共享契约=1〕 | `shared/` |
+| 共享内核 | 〔数:共享内核=1〕 | `_support/` |
+| install.py 自检声明 | 〔数:自检声明=2〕 条 | `install.py` |
+| 最大单件 | `〔数:最大单件文件=scripts/big.py〕` 〔数:最大单件行数=5〕 行 | — |
 
 `big`(`scripts/big.py:1`) 与 `scripts/big.py`(9 行)
 """
@@ -72,6 +74,7 @@ def _mk_repo(tmp: Path, *, html: str = HTML, commit: bool = True) -> Path:
     """最小源包夹具（8 个实收键 + 行数锚 + html 计数锚都在场）。"""
     (tmp / "docs" / "map").mkdir(parents=True)
     (tmp / "scripts").mkdir()
+    (tmp / "validators").mkdir()
     (tmp / "tests").mkdir()
     (tmp / "skills" / "s1").mkdir(parents=True)
     (tmp / "rings" / "structure").mkdir(parents=True)
@@ -84,6 +87,7 @@ def _mk_repo(tmp: Path, *, html: str = HTML, commit: bool = True) -> Path:
     (tmp / "shared" / "global-rules.md").write_text("# g\n", encoding="utf-8")
     (tmp / "_support" / "k.py").write_text("x = 1\n", encoding="utf-8")
     (tmp / "install.sh").write_text("check one\ncheck two\n", encoding="utf-8")
+    (tmp / "install.py").write_text('c("a", "b")\nc("c", "d")\n', encoding="utf-8")
     (tmp / "package.json").write_text('{"version": "1.2.3"}\n', encoding="utf-8")
     (tmp / "docs" / "map" / "index.md").write_text(INDEX_MD, encoding="utf-8")
     (tmp / "docs" / "map" / "atlas-map.html").write_text(html, encoding="utf-8")
@@ -110,6 +114,7 @@ def test_write_refreshes_anchors_and_cross_tool_is_green(tmp_path, capsys):
         f.write("y = 3\ny = 4\ny = 5\n")
     before = _docs_text(repo)
 
+    assert ls.main(["--root", str(repo), "--write"]) == 0, "占位由派生数字生成器写"
     assert rca.main(["--root", str(repo), "--write"]) == 0
 
     assert not collect_docs(repo), "写后锚存活必须全绿"
@@ -148,6 +153,7 @@ def test_gates_counts_are_out_of_scope(tmp_path, capsys):
     _git(repo, "commit", "-q", "-m", "gates")
     before = gates.read_text(encoding="utf-8")
 
+    assert ls.main(["--root", str(repo), "--write"]) == 0  # gates.md 进 shared/ 后契约数变 2
     assert rca.main(["--root", str(repo), "--write"]) == 0
     out = capsys.readouterr().out
     assert "范围外" in out and "shared/gates.md" in out, "canonical 计数必须显式报范围外"
@@ -158,6 +164,8 @@ def test_dirty_tree_warns_but_writes_worktree_value(tmp_path, capsys):
     repo = _mk_repo(tmp_path / "repo")
     with (repo / "scripts" / "big.py").open("a", encoding="utf-8") as f:
         f.write("y = 9\n")
+    assert ls.main(["--root", str(repo), "--write"]) == 0
+    capsys.readouterr()
     assert rca.main(["--write", "--root", str(repo)]) == 0
     out = capsys.readouterr().out
     assert "[WARN]" in out and "脏树" in out
