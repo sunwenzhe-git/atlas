@@ -97,6 +97,7 @@ python3 .atlas/scripts/atlas_check.py --root . --fast   # 门一行一门：ok|F
 ```
 
 - 结果里 `SKIP` 是**一等结论**（“未走到这一步”），不是通过；红/绿结论以门自己的输出为准。
+- 接手 / 换机：`duty-review/env-reds.md` 的条目是**上一台机器**的状态；换机后同红不复现 ⇒ 按该文件 §3「换机后不复现」删行。
 
 ---
 
@@ -104,6 +105,7 @@ python3 .atlas/scripts/atlas_check.py --root . --fast   # 门一行一门：ok|F
 
 - 改契约 / 模板 / 校验器：先改 `atlas/`（canonical），再重跑 `install.sh` 同步到目标项目（已装配过的目标需 `ATLAS_ALLOW_OVERWRITE=1`）。
 - 跑回归：`python3 check-all.py`（或 `--only atlas`）。
+- 回归出红：先过 `duty-review/env-reds.md`（判定与登记口径见该文件 §1–§3）；命中既有环境红 ⇒ 引用 `ENV-xx`，不当本批引入；不命中 ⇒ 按新红排查，证明非本批引入后再登记。
 - **容器与装配面是同一条判据面**：`install.sh` 的自检只检查“它在装配时声称会落下的文件” ⇔ 包内确实存在（`tests/test_install_selfcheck.py`）。新增/删除包内件时它必须一起绿，否则新项目开户会以“装配失败”退出。
 
 ### 机器校验命令（改过 `product/` 后跑）
