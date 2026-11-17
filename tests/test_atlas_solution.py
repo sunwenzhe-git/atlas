@@ -2718,16 +2718,21 @@ def test_b_v1_init_rejects_anchor_review_without_v2(
 
 
 def test_b_prd_schema_gate_unarmed_warns(tmp_path: Path, monkeypatch) -> None:
-    """读者 ≥0.4.0 但 `PRD_SCHEMA_2_FROM` 未填 ⇒ `prd_schema_gate_unarmed` WARN。"""
+    """`PRD_SCHEMA_2_FROM` 两侧各验一次：填了日期不出 WARN，未填才出。
+
+    先设明确日期、再设回 `None`，让两次赋值都真正改变状态——否则「设回默认 None」
+    打不中也不红，等于没验（2026-11-17 审计）。两侧都有区分度，互不重复。
+    """
     root = _refreshed_root(tmp_path, monkeypatch)
-    monkeypatch.setattr(core, "PRD_SCHEMA_2_FROM", None)
-    rows = [c for c in core.check_solution(root)["checks"]
-            if "prd_schema_gate_unarmed" in c["detail"]]
-    assert len(rows) == 1 and rows[0]["status"] == "WARN", rows
 
     monkeypatch.setattr(core, "PRD_SCHEMA_2_FROM", "2026-11-11")
     assert not [c for c in core.check_solution(root)["checks"]
                 if "prd_schema_gate_unarmed" in c["detail"]]
+
+    monkeypatch.setattr(core, "PRD_SCHEMA_2_FROM", None)
+    rows = [c for c in core.check_solution(root)["checks"]
+            if "prd_schema_gate_unarmed" in c["detail"]]
+    assert len(rows) == 1 and rows[0]["status"] == "WARN", rows
 
 
 def test_b_shallow_repo_is_chain_unverifiable_hard_fail(
