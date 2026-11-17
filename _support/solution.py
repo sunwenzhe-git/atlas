@@ -227,6 +227,29 @@ def _scalar(raw: str):
     return v
 
 
+# 基础路径助手（2026-11-17 P4/X1）：被 §2 自身与后续各节共用。放在 §2 顶部，
+# 使 §2 不再反向调用 §6/§9；后续节的调用属于向下依赖，不再是分层倒置。
+def _valid_task_slug(slug: str) -> bool:
+    if not slug or "/" in slug or "\\" in slug or ".." in slug:
+        return False
+    if re.match(r"^\d{2}-\d{2}-", slug):
+        return False
+    return True
+
+
+def _assets_root(root: Path) -> str:
+    """资产根：读 `atlas.config.yaml` 的 `assets_root:`，缺省 `product`。"""
+    config = root / CONFIG_NAME
+    if config.is_file():
+        for line in config.read_text(encoding="utf-8", errors="replace").splitlines():
+            s = line.strip()
+            if s.startswith("assets_root:"):
+                v = _scalar(s.split(":", 1)[1])
+                if isinstance(v, str) and v:
+                    return v
+    return "product"
+
+
 _URL_SCHEMES = ("http", "https", "ssh", "git", "file")
 _CREDENTIAL_QUERY = re.compile(
     r"(?:^|[?&])(?:access_token|private_token|token|auth|key|sig|signature|"
@@ -1792,14 +1815,6 @@ def _member_entries(members: list[tuple], root: Path | None = None) -> list[dict
                     "url": _validate_url(url, f"member {name}.url"),
                     "assets": "member", "kind": kind or "fullstack"})
     return out
-
-
-def _valid_task_slug(slug: str) -> bool:
-    if not slug or "/" in slug or "\\" in slug or ".." in slug:
-        return False
-    if re.match(r"^\d{2}-\d{2}-", slug):
-        return False
-    return True
 
 
 def _yaml_value(value: str) -> str:
@@ -3779,18 +3794,6 @@ def has_apply_seal(root: Path) -> bool:
     if not base.is_dir():
         return False
     return any(base.rglob("*.seal.json"))
-
-
-def _assets_root(root: Path) -> str:
-    config = root / CONFIG_NAME
-    if config.is_file():
-        for line in config.read_text(encoding="utf-8", errors="replace").splitlines():
-            s = line.strip()
-            if s.startswith("assets_root:"):
-                v = _scalar(s.split(":", 1)[1])
-                if isinstance(v, str) and v:
-                    return v
-    return "product"
 
 
 # ---------------------------------------------------------------- 封条写侧（C 批）
