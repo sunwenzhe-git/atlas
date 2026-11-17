@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""账本单一源：派生数字生成器（2026-11-17 账本设计案 方案乙 · 步 1）。
+
+问题定义（`2026-11-17/design-defect-audit` F1）：同一条计数事实在 `shared/gates.md` /
+`docs/map/index.md` / `atlas-map.html` / 章节散文里有多份手抄副本，而门只锁其中一部分句式。
+实测「门全绿但账本自相矛盾」三例：版本串 7 处停在旧版、`docs/map/gates.md` 的「77 个测试文件」
+与实况 80 不符、同文件 M162/M164 与实际最大 M176b 不符。
+
+本器把「可算的数字」收敛到唯一源，正文用 `〔数:key=value〕` 标注：
+  * 机器只认 key（与句式无关），value 是给人看的现值；
+  * 缺源即炸、未知键即炸（不静默 0、不静默原样放过）；
+  * `--write` 按源改写 value；`--check` 只报漂移（exit 1），不落盘。
+
+明确不派生（判断性内容，生成即降质）：门册的「不查什么」/取证等级/缺口、DESIGN 决策理由、
+changelog 措辞、QUEUE 判断。
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import json
+import re
+import sys
+from pathlib import Path
+
+TOKEN_RE = re.compile(r"〔数:([^=〕\n]+)=([^〕\n]*)〕")
+TESTS_GLOB = "test_*.py"
+C_DECL_RE = re.compile(r'^\s*c\("', re.M)  # 与 canonical 同口径：只认双引号 c("
+
+DEFAULT_PATHS = ("docs/map/index.md", "shared/gates.md")
+
+
+class SnapshotError(RuntimeError):
+    """源缺失或键未登记——必须响亮失败，不得以 0 或原样占位蒙混。"""
+
+
+def _require_dir(root: Path, rel: str) -> Path:
+    p = root / rel
+    if not p.is_dir():
+        raise SnapshotError(f"缺源目录 {rel}：派生层无法计算（不静默 0）")
+    return p
+
+
+def _require_file(root: Path, rel: str) -> Path:
+    p = root / rel
+    if not p.is_file():
+        raise SnapshotError(f"缺源文件 {rel}：派生层无法计算（不静默 0）")
+    return p
+
+
+def count_tests(path: Path) -> int:
+    """逐文件用例数（AST 实收口径，与 `test_canonical_consistency._collected_test_count` 同口径）。
+
+    不得用 `^def test_` 正则——坏输入 fixture 会把被测写法整文件内嵌进三引号字符串，
+    正则会数进永不收集的幽灵用例（2026-09-28 审计教训）。
+    """
+    n = 0
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            n += sum(1 for m in node.body
+                     if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
+                     and m.name.startswith("test_"))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
+            n += 1
+    return n
+
+
+def _validators(root: Path) -> int:
+    src = _require_file(root, "scripts/atlas_check.py").read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Assign) and any(
+                getattr(t, "id", "") == "VALIDATORS" for t in node.targets):
+            return len(node.value.elts)
+    raise SnapshotError("scripts/atlas_check.py 无 VALIDATORS 赋值：校验器数无法计算")
+
+
+def derive(root: Path) -> dict[str, str]:
+    """从唯一源算出全部派生键（值一律为字符串，便于正文内联）。"""
+    root = root.resolve()
+    facts: dict[str, str] = {}
+    facts["校验器"] = str(_validators(root))
+    facts["校验器文件"] = str(len(list(_require_dir(root, "validators").glob("validate_*.py"))))
+    test_files = sorted(_require_dir(root, "tests").glob(TESTS_GLOB))
+    if not test_files:
+        raise SnapshotError("tests/ 下无测试文件：派生层无法计算（不静默 0）")
+    facts["出厂测试文件"] = str(len(test_files))
+    facts["自检声明"] = str(len(C_DECL_RE.findall(
+        _require_file(root, "install.py").read_text(encoding="utf-8"))))
+    facts["skills"] = str(len([d for d in _require_dir(root, "skills").iterdir() if d.is_dir()]))
+    facts["环"] = str(len(list(_require_dir(root, "rings").glob("*/reference.md"))))
+    facts["共享契约"] = str(len(list(_require_dir(root, "shared").glob("*.md"))))
+    facts["共享内核"] = str(len(list(_require_dir(root, "_support").glob("*.py"))))
+    scripts = sorted(_require_dir(root, "scripts").glob("*.py"))
+    if not scripts:
+        raise SnapshotError("scripts/ 下无 .py：最大单件无法计算（不静默 0）")
+    biggest = max(scripts, key=lambda p: len(p.read_text(encoding="utf-8").splitlines()))
+    facts["最大单件文件"] = f"scripts/{biggest.name}"
+    facts["最大单件行数"] = str(len(biggest.read_text(encoding="utf-8").splitlines()))
+    for p in test_files:
+        facts[f"用例数.{p.name}"] = str(count_tests(p))
+    return facts
+
+
+def rewrite(text: str, facts: dict[str, str]) -> tuple[str, list[tuple[str, str, str]]]:
+    """按源改写全部占位；返回 (新文本, 漂移清单[(key, 旧值, 新值)])。
+
+    未知键当场抛错：正文写了没登记的 key = 门永远看不到的假派生面。
+    """
+    drifts: list[tuple[str, str, str]] = []
+
+    def _sub(m: re.Match[str]) -> str:
+        key, old = m.group(1), m.group(2)
+        if key not in facts:
+            raise SnapshotError(
+                f"未知数字键「{key}」：正文占位必须先在 derive() 里登记"
+                f"（已知键：{', '.join(sorted(facts))}）")
+        new = facts[key]
+        if new != old:
+            drifts.append((key, old, new))
+        return f"〔数:{key}={new}〕"
+
+    return TOKEN_RE.sub(_sub, text), drifts
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="派生数字生成器（账本单一源；缺省只打印源值）")
+    ap.add_argument("paths", nargs="*", help=f"待对账正文（缺省：{' '.join(DEFAULT_PATHS)}）")
+    ap.add_argument("--root", default=str(Path(__file__).resolve().parents[1]))
+    ap.add_argument("--write", action="store_true", help="按源改写占位值（缺省只报告）")
+    ap.add_argument("--json", action="store_true", help="打印全部派生键值")
+    args = ap.parse_args(argv)
+
+    root = Path(args.root).resolve()
+    try:
+        facts = derive(root)
+    except SnapshotError as e:
+        print(f"FAIL：{e}")
+        return 2
+
+    if args.json:
+        print(json.dumps(facts, ensure_ascii=False, indent=1, sort_keys=True))
+        return 0
+
+    targets = [Path(p) if Path(p).is_absolute() else root / p
+               for p in (args.paths or DEFAULT_PATHS)]
+    total = 0
+    try:
+        for p in targets:
+            if not p.is_file():
+                print(f"SKIP：{p} 不在场")
+                continue
+            text = p.read_text(encoding="utf-8")
+            new_text, drifts = rewrite(text, facts)
+            rel = p.relative_to(root).as_posix() if root in p.parents else str(p)
+            for key, old, new in drifts:
+                total += 1
+                print(f"[漂移] {rel} 〔数:{key}〕 写 {old} ≠ 源 {new}")
+            if args.write and drifts:
+                p.write_text(new_text, encoding="utf-8")
+    except SnapshotError as e:
+        print(f"FAIL：{e}")
+        return 2
+
+    if args.write:
+        print(f"已按源改写 {total} 处占位")
+        return 0
+    print(f"派生数字：{'全对齐' if not total else str(total) + ' 处漂移'}")
+    return 0 if not total else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
