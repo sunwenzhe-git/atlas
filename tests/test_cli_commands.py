@@ -68,6 +68,92 @@ def test_cli_upgrade_dry_run_with_custom_tag():
     assert "atlas-project-harness@beta" in res.stdout
 
 
+def _make_fake_install(tmp_path: Path) -> tuple[Path, Path]:
+    """在 `<tmp>/n/lib/node_modules/` 造一份"正在运行"的安装（posix 全局布局）。"""
+    prefix = tmp_path / "n"
+    root = prefix / "lib" / "node_modules" / "atlas-project-harness"
+    (root / "bin").mkdir(parents=True)
+    shutil.copy(ATLAS_BIN, root / "bin" / "atlas.js")
+    shutil.copy(PLATFORM_JS, root / "bin" / "platform.js")
+    (root / "package.json").write_text(
+        (PKG_ROOT / "package.json").read_text(encoding="utf-8"), encoding="utf-8")
+    return root, prefix
+
+
+def _fake_npm(tmp_path: Path, configured_prefix: str, log: Path) -> Path:
+    """假 npm：记录调用参数；`config get prefix` 返回指定值；不联网。"""
+    bindir = tmp_path / "fakebin"
+    bindir.mkdir()
+    npm = bindir / "npm"
+    npm.write_text(
+        "#!/bin/sh\n"
+        f'echo "$@" >> "{log}"\n'
+        'if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then\n'
+        f"  echo '{configured_prefix}'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8")
+    npm.chmod(0o755)
+    return bindir
+
+
+def _run_with_fake_npm(script: Path, bindir: Path) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
+    return subprocess.run(["node", str(script), "upgrade", "--tag", "beta"],
+                          cwd=script.parent.parent, capture_output=True, text=True, env=env)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="posix 全局布局；Windows 布局单列")
+def test_cli_upgrade_installs_into_running_prefix_on_mismatch(tmp_path: Path):
+    root, prefix = _make_fake_install(tmp_path)
+    log = tmp_path / "npm.log"
+    bindir = _fake_npm(tmp_path, "/usr/local", log)
+    res = _run_with_fake_npm(root / "bin" / "atlas.js", bindir)
+    assert res.returncode == 0, res.stderr
+    calls = [c for c in log.read_text(encoding="utf-8").splitlines() if c.startswith("install")]
+    assert len(calls) == 1
+    assert f"--prefix {prefix}" in calls[0]
+    assert "/usr/local" not in calls[0]
+    assert str(root) in res.stdout and "/usr/local" in res.stdout
+    assert "两份安装" in res.stdout
+    assert "sudo npm" not in res.stdout + res.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="posix 全局布局；Windows 布局单列")
+def test_cli_upgrade_single_install_when_prefix_matches(tmp_path: Path):
+    root, prefix = _make_fake_install(tmp_path)
+    log = tmp_path / "npm.log"
+    bindir = _fake_npm(tmp_path, str(prefix), log)
+    res = _run_with_fake_npm(root / "bin" / "atlas.js", bindir)
+    assert res.returncode == 0, res.stderr
+    calls = [c for c in log.read_text(encoding="utf-8").splitlines() if c.startswith("install")]
+    assert len(calls) == 1
+    assert f"--prefix {prefix}" in calls[0]
+    assert "两份安装" not in res.stdout
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="posix 权限语义；Windows 另行覆盖")
+def test_cli_upgrade_refuses_unwritable_prefix_without_sudo(tmp_path: Path):
+    root, _ = _make_fake_install(tmp_path)
+    log = tmp_path / "npm.log"
+    bindir = _fake_npm(tmp_path, "/usr/local", log)
+    modules = root.parent
+    modules.chmod(0o555)
+    try:
+        res = _run_with_fake_npm(root / "bin" / "atlas.js", bindir)
+    finally:
+        modules.chmod(0o755)
+    assert res.returncode != 0
+    assert "不可写" in res.stderr
+    assert "npm config set prefix" in res.stderr
+    assert "sudo npm install" not in res.stdout + res.stderr
+    installs = [c for c in log.read_text(encoding="utf-8").splitlines()
+                if c.startswith("install")] if log.exists() else []
+    assert installs == []
+
+
 def test_cli_update_fails_on_uninitialized_project():
     with tempfile.TemporaryDirectory() as tmpdir:
         res = run_cmd(["node", str(ATLAS_BIN), "update", "--target", tmpdir])

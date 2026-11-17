@@ -109,6 +109,48 @@ function exitWithResult(res, tool) {
   process.exit(typeof res.status === 'number' ? res.status : 1);
 }
 
+/**
+ * 从正在运行的安装路径反推 npm 全局 prefix。
+ * POSIX: `<prefix>/lib/node_modules/<pkg>`；Windows: `<prefix>/node_modules/<pkg>`。
+ * 源码树（不在 node_modules 下）返回 null。
+ */
+function installPrefixFrom(pkgRoot) {
+  const marker = `${path.sep}node_modules${path.sep}`;
+  const idx = pkgRoot.lastIndexOf(marker);
+  if (idx < 0) return null;
+  const parts = pkgRoot.slice(0, idx).split(path.sep);
+  if (parts[parts.length - 1] === 'lib') parts.pop();
+  const prefix = parts.join(path.sep);
+  return prefix || path.sep;
+}
+
+function npmGlobalPrefix(npmCmd) {
+  const res = spawnSync(npmCmd, ['config', 'get', 'prefix'], {
+    encoding: 'utf8',
+    env: process.env,
+  });
+  if (res.status !== 0 || !res.stdout) return null;
+  const out = res.stdout.trim();
+  return out || null;
+}
+
+function samePath(a, b) {
+  try {
+    return fs.realpathSync(a) === fs.realpathSync(b);
+  } catch (_) {
+    return path.resolve(a) === path.resolve(b);
+  }
+}
+
+function isWritableDir(dir) {
+  try {
+    fs.accessSync(dir, fs.constants.W_OK);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 switch (command) {
   case 'init': {
     const passthroughArgs = args.slice(1);
@@ -286,7 +328,8 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
   -h, --help    查看帮助信息
 
 说明:
-  atlas upgrade 会调用 npm install -g 升级全局包 atlas-project-harness。
+  atlas upgrade 默认升级"当前正在运行的那份"安装（按它所在的 npm prefix 安装），
+  不会因为机器上另有一份全局包就去改系统目录；不会建议或要求 sudo。
   升级成功后，可进入项目目录运行 atlas update 刷新项目内的工程线束与模板。
 `);
         process.exit(0);
@@ -301,13 +344,44 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
 
     const pkg = require(path.join(PKG_ROOT, 'package.json'));
     const targetPkg = `${pkg.name}@${tag}`;
+    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
+    // 目标 prefix 以「正在运行的这份」为准；npm 默认 prefix 只用于诊断，
+    // 避免机器上有两份安装时把包装到另一份（常见是 root 所有的 /usr/local）。
+    const ownPrefix = installPrefixFrom(PKG_ROOT);
+    const npmPrefix = npmGlobalPrefix(npmCmd);
 
     console.log(`\n[Atlas Upgrade] 准备升级全局 CLI (${pkg.name})...`);
     console.log(`  当前版本 : v${pkg.version}`);
     console.log(`  目标包   : ${targetPkg}`);
+    console.log(`  安装路径 : ${PKG_ROOT}`);
+    if (ownPrefix) {
+      console.log(`  生效 prefix: ${ownPrefix}`);
+      if (npmPrefix && !samePath(npmPrefix, ownPrefix)) {
+        console.log(`  注意: npm 默认 prefix 是 ${npmPrefix}，与正在运行的这份不一致（可能有两份安装）。`);
+        console.log(`  本次只升级正在运行的那份，不动 ${npmPrefix}。`);
+      }
+    } else {
+      console.log(`  注意: 当前运行的是源码树而非 npm 全局安装；将按 npm 默认 prefix`
+        + `${npmPrefix ? `（${npmPrefix}）` : ''}安装，可能新增一份。`);
+    }
 
-    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-    const installArgs = ['install', '-g', targetPkg];
+    const installArgs = ['install', '-g'];
+    if (ownPrefix) {
+      const modulesDir = path.dirname(PKG_ROOT);
+      if (!isWritableDir(modulesDir)) {
+        console.error(`\n[Atlas Upgrade] ❌ 目标目录不可写: ${modulesDir}`);
+        console.error(`  不要用 sudo：那会把包装进系统目录，和当前运行的这份形成两份安装。`);
+        console.error(`  可选处置：`);
+        console.error(`    1) 若用 nvm/fnm 管理 node，重装后直接执行: ${npmCmd} install -g ${targetPkg}`);
+        console.error(`    2) 改用用户级 prefix: npm config set prefix ~/.npm-global，`
+          + `并把 ~/.npm-global/bin 加入 PATH 后重装`);
+        console.error(`    3) 若这份由 install.sh 安装，改用 install.sh 更新\n`);
+        process.exit(2);
+      }
+      installArgs.push('--prefix', ownPrefix);
+    }
+    installArgs.push(targetPkg);
 
     if (isDryRun) {
       console.log(`  [dry-run] 将执行命令: ${npmCmd} ${installArgs.join(' ')}\n`);
@@ -327,7 +401,8 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
     } else {
       console.error(`\n[Atlas Upgrade] ❌ 升级失败 (退出码: ${res.status})。`);
       console.error(`常见原因与排查建议:`);
-      console.error(`  1. 权限不足: 全局安装可能需要管理员权限，可尝试: sudo npm install -g ${targetPkg}`);
+      console.error(`  1. 权限不足: 不要用 sudo（会装到系统目录、与当前运行的那份并存）；`
+        + `改用用户级 prefix（npm config set prefix ~/.npm-global）或 nvm/fnm 后重试`);
       console.error(`  2. 网络或代理问题: 请检查 npm 源或网络代理设置（如 http_proxy）\n`);
     }
 

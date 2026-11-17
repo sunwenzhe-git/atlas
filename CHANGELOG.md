@@ -4,6 +4,12 @@
 
 ---
 
+## [Unreleased]
+
+### 🧭 `atlas upgrade` 跟着运行路径装，不再诱导 sudo
+
+* 机器上有两份安装时（例如用户 prefix `~/n` 与系统 `/usr/local`），`upgrade` 原先固定按 npm 默认 prefix 安装，撞上 root 所有的目录报 EACCES，并建议 `sudo npm install -g`。现在优先升级**正在运行的那份**（按它所在的 prefix 传 `--prefix`）；检测到默认 prefix 不一致时打印两份路径、标明哪份生效，只动正在运行的那份；目标不可写时给出非 sudo 处置（用户级 prefix / nvm/fnm / install.sh）。源码树运行时明确提示会按 npm 默认 prefix 新增一份。
+
 ## [v0.3.0-beta.3] - 2026-11-17
 
 ### 🛡 清单版本门：0.3.0 预发布不再被误判成旧读者
