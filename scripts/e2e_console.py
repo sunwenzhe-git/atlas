@@ -1351,6 +1351,25 @@ def resolve_pw(root: Path, *, repair: bool = False) -> tuple[Path | None, Path |
 # ---------------------------------------------------------------- 账本（append-only 唯一真相源）
 
 class Ledger:
+    # E1 退役日：原型环于 2026-09-27 退役（`3508 §92`；`product/prototype/` 目录 2026-09-30 物理删除）。
+    # 缺 `source` 的旧事件按此归因：早于该日 ⇒ `prototype`（E0 存量，读法不变）；之后或无法判定
+    # ⇒ `unknown`（缺字段是漏写，不是退役来源）。
+    # 为什么取 09-27 而不是目录删除日 09-30：写侧 `append` 恒写 `source`，缺字段只可能是旧账；
+    # 现有数据在两个切点下等价，差别只在「退役后仍用旧版写入」这一假想情形。取退役日本身
+    # 是为了让后来人能追到 `3508 §92`，而不是又一个无法追溯的魔数。
+    PROTOTYPE_RETIRED_AT = "2026-09-27"
+
+    @staticmethod
+    def event_source(event: dict) -> str:
+        """事件来源：有 `source` 用原值；缺字段按 E1 切点归因，绝不把新事件算进退役来源。"""
+        src = event.get("source")
+        if src:
+            return str(src)
+        ts = event.get("ts") or ""
+        if not ts:
+            return "unknown"
+        return "prototype" if ts < Ledger.PROTOTYPE_RETIRED_AT else "unknown"
+
     def __init__(self, root: Path, actor: str):
         self.layout = load_layout(root)
         self.dir = self.layout.console_dir
@@ -1443,9 +1462,9 @@ class Ledger:
         self.ledger.write_text("\n".join(lines), encoding="utf-8")
 
     def last_submit(self, source: str) -> dict | None:
-        """某个来源最近一次提交的快照（旧事件没有 source 字段 ⇒ 视为 prototype）。"""
+        """某个来源最近一次提交的快照（缺 `source` 的旧事件按 E1 切点归因，见 `event_source`）。"""
         for e in reversed(self.read()):
-            if e.get("kind") == "submit" and e.get("source", "prototype") == source:
+            if e.get("kind") == "submit" and self.event_source(e) == source:
                 return e
         return None
 
@@ -1462,7 +1481,7 @@ class Ledger:
         ts = actor = None
         scope: list = []
         for e in self.read():
-            if e.get("kind") != "submit" or e.get("source", "prototype") != source:
+            if e.get("kind") != "submit" or self.event_source(e) != source:
                 continue
             merged.update(_snap_cases(e))
             ts = e.get("ts") or ts

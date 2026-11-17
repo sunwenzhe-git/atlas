@@ -445,7 +445,7 @@ def read_member_summary(root: Path, member: dict) -> dict:
     ledger = cons.Ledger(path, "只读视图")
     committed = ledger.committed_snapshot("app", current)
     submits = [e for e in ledger.read()
-               if e.get("kind") == "submit" and e.get("source", "prototype") == "app"]
+               if e.get("kind") == "submit" and cons.Ledger.event_source(e) == "app"]
     review = _empty_review()
     for row in parsed["rows"]:
         cid = row["用例ID"]

@@ -1063,6 +1063,37 @@ def test_committed_snapshot_merges_partial_submits() -> None:
         assert set(ledger.committed_snapshot("prototype")["cases"]) == {"C"}
 
 
+def test_event_source_missing_key_uses_e1_cutoff() -> None:
+    """F8：缺 `source` 不等于 prototype —— 只有早于 E1（2026-09-27）的旧账才归退役来源。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    src = cons.Ledger.event_source
+    assert src({"source": "app"}) == "app"
+    assert src({"ts": "2026-09-01T10:00:00+08:00"}) == "prototype"
+    assert src({"ts": "2026-09-27T10:00:00+08:00"}) == "unknown"
+    assert src({"ts": "2026-11-17T10:00:00+08:00"}) == "unknown"
+    # 无 ts ⇒ 无法证明是旧账，不得倒向退役来源
+    assert src({}) == "unknown"
+
+
+def test_ledger_read_side_keeps_legacy_prototype_and_isolates_new_missing_source() -> None:
+    """读侧三处（last_submit / committed_snapshot / 汇总）共用同一归因，旧账可读、新漏写不冒充。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as td:
+        ledger = cons.Ledger(Path(td), "tester")
+        ledger.append({"kind": "submit", "ts": "2026-09-01T10:00:00+08:00",
+                       "cases": {"OLD": {"ok": True}}})
+        ledger.append({"kind": "submit", "ts": "2026-11-17T10:00:00+08:00",
+                       "cases": {"NEW": {"ok": True}}})
+        ledger.append({"kind": "submit", "source": "app", "cases": {"APP": {"ok": True}}})
+
+        assert set(ledger.committed_snapshot("prototype")["cases"]) == {"OLD"}
+        assert set(ledger.committed_snapshot("app")["cases"]) == {"APP"}
+        assert set(ledger.committed_snapshot("unknown")["cases"]) == {"NEW"}
+        assert set(ledger.last_submit("prototype")["cases"]) == {"OLD"}
+        assert set(ledger.last_submit("unknown")["cases"]) == {"NEW"}
+        assert set(ledger.last_submit("app")["cases"]) == {"APP"}
+
+
 # ── 2026-10-21 D128：评审绑定提交指纹与陈旧度（stale）判定 ────────────────────────
 def test_scripts_hash_excludes_runtime_artifacts_and_whitelists_scripts() -> None:
     """D128：scripts_hash 必须对源码脚本敏感、对运行期产物免疫（变异 M175）。"""
