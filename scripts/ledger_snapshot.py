@@ -74,6 +74,16 @@ def _validators(root: Path) -> int:
     raise SnapshotError("scripts/atlas_check.py 无 VALIDATORS 赋值：校验器数无法计算")
 
 
+def _orchestrator_rows(text: str) -> int | None:
+    """`shared/gates.md` §2.2 表的编排层数据行数（表头与分隔线不计）。"""
+    parts = re.split(r"^### 2\.2", text, maxsplit=1, flags=re.M)
+    if len(parts) < 2:
+        return None
+    body = re.split(r"^### ", parts[1], maxsplit=1, flags=re.M)[0]
+    rows = [l for l in body.splitlines() if l.startswith("|")]
+    return len(rows) - 2 if len(rows) > 2 else None
+
+
 def derive(root: Path) -> dict[str, str]:
     """从唯一源算出全部派生键（值一律为字符串，便于正文内联）。"""
     root = root.resolve()
@@ -96,6 +106,13 @@ def derive(root: Path) -> dict[str, str]:
     biggest = max(scripts, key=lambda p: len(p.read_text(encoding="utf-8").splitlines()))
     facts["最大单件文件"] = f"scripts/{biggest.name}"
     facts["最大单件行数"] = str(len(biggest.read_text(encoding="utf-8").splitlines()))
+    # 门册 §2.2 编排层数据行数（不含表头/分隔线）；副本态无该节则不出键，
+    # 真实仓若本键缺失而正文有占位，会按「未知键」当场炸，不静默放过。
+    gates_file = root / "shared" / "gates.md"
+    if gates_file.is_file():
+        rows = _orchestrator_rows(gates_file.read_text(encoding="utf-8"))
+        if rows is not None:
+            facts["编排门行"] = str(rows)
     for p in test_files:
         facts[f"用例数.{p.name}"] = str(count_tests(p))
     # 变异编号上限：钉子定义在 tests/；门册自身的提及不参与派生（否则读到占位里的旧值，自我循环）

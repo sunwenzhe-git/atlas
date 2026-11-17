@@ -55,7 +55,7 @@ INDEX_MD = """# 地图
 
 HTML = """<div>
   {id:'g-test', title:'出厂测试 ×9',
-   tip:{sum:'tests/ 9 文件,含钉子。',files:[['tests/','出厂测试套件目录:9 个测试文件']]}},
+   tip:{sum:'tests/ 9 文件,含钉子。',files:[['tests/','出厂测试套件目录:1 个测试文件']]}},
   {id:'shared', sub:'shared/ 契约 ×9'},
   {id:'kernel', sub:'_support/ 内核 ×9'},
   files:[['scripts/big.py','big 5 行:说明']],
