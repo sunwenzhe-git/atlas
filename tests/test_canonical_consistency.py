@@ -544,10 +544,11 @@ def test_m22_validator_count_drift_must_fail(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(_sys.modules[__name__], "PKG_ROOT", repo)
     gates = repo / "shared" / "gates.md"
     gates.write_text("### 2.1 x\n| `validators/validate_a.py` | y |\n"
-                     "### 2.2 x\n数量 = `atlas_check.VALIDATORS` 长度，当前 1；\n", encoding="utf-8")
+                     "### 2.2 x\n数量 = `atlas_check.VALIDATORS` 长度，当前 〔数:校验器=1〕；\n",
+                     encoding="utf-8")
     res = check_gates_gates_are_scheduled()
     assert not res["ok"] and "当前 1" in res["detail"], res["detail"]
-    gates.write_text(gates.read_text(encoding="utf-8").replace("当前 1；", "当前 2；"),
+    gates.write_text(gates.read_text(encoding="utf-8").replace("〔数:校验器=1〕", "〔数:校验器=2〕"),
                      encoding="utf-8")
     assert check_gates_gates_are_scheduled()["ok"], "写回正确值必须复绿"
 
@@ -604,9 +605,10 @@ def check_gates_gates_are_scheduled() -> dict:
     if missing:
         return {"ok": False,
                 "detail": f"2.1 登记但未被 atlas_check 调度：{missing}（§B120：在册不在跑 = 门失效）"}
-    mc = re.search(r"数量 = `atlas_check\.VALIDATORS` 长度，当前 (\d+)", gates)
+    mc = re.search(r"数量 = `atlas_check\.VALIDATORS` 长度，当前 〔数:校验器=(\d+)〕", gates)
     if not mc:
-        return {"ok": False, "detail": "gates.md 2.2 无「数量 = VALIDATORS 长度，当前 N」陈述 —— 判据失效"}
+        return {"ok": False,
+                "detail": "gates.md 2.2 无「数量 = VALIDATORS 长度，当前 〔数:校验器=N〕」陈述 —— 判据失效"}
     if int(mc.group(1)) != len(scheduled):
         return {"ok": False,
                 "detail": f"2.2 计数陈述「当前 {mc.group(1)}」≠ VALIDATORS 长度 {len(scheduled)}"}
