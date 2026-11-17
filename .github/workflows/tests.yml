@@ -11,10 +11,12 @@ permissions:
 
 jobs:
   posix:
-    name: POSIX baseline (CLI + wiring)
+    name: POSIX batch preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 批次基线（github.event.before / PR base.sha）必须在本地存在
 
       - uses: actions/setup-python@v5
         with:
@@ -27,10 +29,22 @@ jobs:
       - name: Install pytest
         run: python -m pip install --upgrade pytest
 
-      # 出厂全量门禁仍以本地 `python3 -m pytest tests/` 为准（含 Playwright/真跑面）；
-      # CI 这里只跑与平台入口强相关的两组，保证 Windows 有同口径对照基线。
-      - name: Run CLI and wiring tests
-        run: python -m pytest tests/test_cli_commands.py tests/test_project_wiring.py -q
+      # 出厂全量门禁仍以本地 `python3 -m pytest tests/` 为准（含 Playwright/真跑面）。
+      # 这里跑的是与本地同一条批次入口 `scripts/preflight.py`：按本批改动文件挑测试，
+      # 不另写一套判据；Windows 两个 job 继续跑固定 CLI/wiring 基线作为平台对照。
+      - name: Resolve batch base
+        run: |
+          base="${{ github.event.before }}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          fi
+          case "$base" in
+            ""|0000000000000000000000000000000000000000) base="HEAD~1" ;;
+          esac
+          echo "PREFLIGHT_BASE=$base" >> "$GITHUB_ENV"
+
+      - name: Batch preflight (same entry as local)
+        run: python3 scripts/preflight.py --base "$PREFLIGHT_BASE"
 
   windows:
     name: Windows smoke (Git Bash / CLI)
