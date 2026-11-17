@@ -375,6 +375,7 @@ def check_freshness(repo: Path) -> list[dict]:
                 _claim(re.sub(r":\d+$", "", entry), int(dm.group(1)), "docs/map/atlas-map.html")
         for pat, key in ((r"出厂测试 ×(\d+)", "出厂测试文件"),
                          (r"tests/ (\d+) 文件", "出厂测试文件"),
+                         (r"(\d+)\s*个测试文件", "出厂测试文件"),
                          (r"契约 ×(\d+)", "共享契约"),
                          (r"内核 ×(\d+)", "共享内核")):
             for cm in re.finditer(pat, html):
