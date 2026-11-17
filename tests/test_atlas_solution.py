@@ -1998,6 +1998,35 @@ def test_b_reader_gate_unknown_accepts_both(tmp_path: Path, monkeypatch) -> None
         assert core.load_manifest(root)["version"] == version
 
 
+def test_b_reader_gate_prerelease_reads_v2(tmp_path: Path, monkeypatch) -> None:
+    """0.3.0 的预发布是 v2 引入线内的读者：`beta.N < 0.3.0` 不得被当成旧读者。
+
+    2026-11-17 跨网复验：全局装 0.3.0-beta.2 在 v2 清单上 `solution check` 直接 exit 2。
+    修的是门的边界（`0.3.0-0`），**不是** semver 比较本身。
+    """
+    root = make_repo(tmp_path / "root")
+    (root / "web").mkdir()
+    (root / core.CONFIG_NAME).write_text(
+        "version: 1\nlayout:\n  assets_root: product\n", encoding="utf-8")
+    (root / core.MANIFEST_NAME).write_text(
+        "version: 2\nsolution: demo\nmode: federated\n"
+        "definition:\n  domain: demo\n  path: product/prd/solution-prd.md\n"
+        "acceptance_cutover: 2027-03-31\n"
+        "members:\n  - name: web\n    path: web\n    assets: member\n",
+        encoding="utf-8")
+    # 正例：整条 0.3.0 预发布线 + 正式版都必须读 v2
+    for version in ("0.3.0-beta.1", "0.3.0-beta.2", "0.3.0-rc.1", "0.3.0"):
+        stub_reader_version(monkeypatch, tmp_path, version)
+        assert core.load_manifest(root)["version"] == 2, version
+    # 反例：0.2.x 仍只读 v1
+    stub_reader_version(monkeypatch, tmp_path, "0.2.9")
+    with pytest.raises(core.SolutionError, match="<0.3.0"):
+        core.load_manifest(root)
+    # 比较器语义不变：beta.2 < 0.3.0 仍为 True；不可解析仍 False（fail-closed）
+    assert core.semver_lt("0.3.0-beta.2", (0, 3, 0)) is True
+    assert core.semver_lt("garbage", (0, 3, 0)) is False
+
+
 def test_b_read_lock_rejects_unknown_schema_version(tmp_path: Path) -> None:
     """锁 `schema_version` 只认非 bool 的 int 1 / 2；3、`1.0`、`True`、`"2"` 都不算。
 

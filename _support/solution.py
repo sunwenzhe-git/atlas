@@ -503,19 +503,25 @@ def _cutover_note(value: str, cutover: str | None) -> str:
     return f"acceptance_cutover={value}（可用 --cutover 覆盖）"
 
 
+# v2 清单的引入线：0.3.0 的**任何预发布**都在线内（`0.3.0-beta.N` / `rc.N` 都读得懂 v2）。
+# 不能用正式版号 `0.3.0` 当界——按 semver，`0.3.0-beta.2 < 0.3.0`，会把整条 0.3.x
+# 预发布线误判成"旧读者"并拒掉 v2 清单（2026-11-17 跨网传输复验实测）。
+_V2_MANIFEST_FLOOR = "0.3.0-0"
+
+
 def _manifest_version(raw, root: Path | None = None) -> int:
     """清单 schema 版本门（RFC §5.2 / §5.3）。
 
     判定依据是**读者版本**（工具自身，见 `reader_version`）：
     - 不可判（`""`）：不设门，`{1,2}` 都收——判不出自身版本时不得误拒；
-    - `< 0.3.0`：只收 `1`（v2 清单是 0.3.0 才引入的，旧读者读不懂 `definition`）；
-    - `0.3.x`（B-0 发布带）：`{1,2}`（迁移窗口）；
+    - `< 0.3.0-0`（即 0.2.x 及更早）：只收 `1`（v2 清单是 0.3.0 引入的，旧读者读不懂 `definition`）；
+    - `0.3.0` 线（含 beta / rc 预发布）：`{1,2}`（迁移窗口）；
     - `>= 0.4.0`：只收 `2`，v1 给迁移口令而不是裸拒（0.4.0 不再注册 `migrate`）。
     """
     value = str(raw or "").strip()
     reader = reader_version(Path(root)) if root is not None else ""
     allowed = {"1", "2"}
-    if reader and semver_lt(reader, (0, 3, 0)):
+    if reader and _SEMVER.lt(reader, _V2_MANIFEST_FLOOR):
         allowed = {"1"}
     elif reader and not semver_lt(reader, (0, 4, 0)):
         allowed = {"2"}

@@ -4,6 +4,14 @@
 
 ---
 
+## [Unreleased]
+
+### 🛡 清单版本门：0.3.0 预发布读 v2
+
+* 全局安装 `0.3.0-beta.2` 在 v2 清单仓库上 `atlas solution check` 直接 exit 2（`manifest_schema_unsupported`），并连带打穿父仓 `check --fast` 的 AC 对齐与 apply record 两条检查。根因：门把正式版号 `0.3.0` 当界，而按 semver `0.3.0-beta.2 < 0.3.0`。门改用 0.3.0 预发布线（`0.3.0-0`）；`0.2.x` 仍只读 v1，`0.3.0` 正式版读 v2，不可解析仍不放行。
+
+---
+
 ## [v0.3.0-beta.2] - 2026-11-15
 
 ### 🧪 E2E 文本期门：R3 机器化 + R11 扩面到 `select`（2026-11-15）
