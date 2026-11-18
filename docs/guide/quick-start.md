@@ -52,12 +52,13 @@ atlas init --assets-root docs
 类似 Trellis，Atlas 支持两层解耦的平滑升级机制：
 
 1. **升级全局 CLI（`atlas upgrade`）**：  
-   当 Atlas 官方发布了新版本时，自动通过 npm 拉取最新全局包：
+   当 Atlas 官方发布了新版本时，`upgrade` 会安装到**当前正在运行的那份**所在的 npm prefix（不是 npm 默认 prefix）：
    ```bash
-   atlas upgrade              # 自动升级至 latest 标签
+   atlas upgrade              # 自动升级至 latest 标签（只动正在运行的那份）
    atlas upgrade --tag beta   # 升级至指定标签（如 beta）
-   atlas upgrade --dry-run    # 仅预览升级安装命令
+   atlas upgrade --dry-run    # 仅预览目标 prefix 与安装命令
    ```
+   > 机器上若有两份安装（例如用户 prefix 与 `/usr/local`），它会先打印两份路径、标明生效的那份，只升级生效的那份；目标目录不可写时会退出并给非 sudo 处置——**不要用 `sudo npm install -g`**，那会多出一份系统安装。
 
 2. **刷新项目内工程线束（`atlas update`）**：  
    升级全局 CLI 后，进入你的项目目录，一键安全刷新 `.atlas/` 资产与平台 Skills 瘦桩：

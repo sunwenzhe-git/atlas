@@ -1,6 +1,6 @@
 # 更新日志 (CHANGELOG)
 
-本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 语义化版本规范与 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 变更记录规范。
+本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 语义化版本规范与 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 变更记录规范。本页随发版同步，逐批记账以仓库根 `CHANGELOG.md` 为准；请勿只在本页追加。
 
 ---
 

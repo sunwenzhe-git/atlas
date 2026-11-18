@@ -194,7 +194,7 @@ atlas init --assets-root docs
 5. *（pi 宿主专有）* 落地 `/atlas` 控制台扩展——`/atlas status` 会报**开户态**（「装配 ≠ 开户」），未开户时直接告诉你去跑 `adopt`。非 pi 项目不创建 `.pi/`。
 
 > 🔄 **升级与更新**：
-> - **全局 CLI 自身升级**：运行 `atlas upgrade`（自动通过 npm 拉取最新全局包，支持 `--tag beta` 或 `--dry-run`）。
+> - **全局 CLI 自身升级**：运行 `atlas upgrade`（升级**当前正在运行的那份**安装：按它所在的 npm prefix 安装，不会去改系统目录里的另一份；检测到两份时会打印两边路径与生效那份，目标不可写会退出并给非 sudo 处置。支持 `--tag beta` 或 `--dry-run`）。
 > - **项目内工程线束刷新**：在项目目录下运行 `atlas update`（安全刷新 `.atlas/` 资产与平台 Skills 瘦桩，版本戳对账更新，业务配置严格保护不覆盖）。
 
 ### 3. 核对技术栈画像 (`stack-profile.yaml`，默认在 `product/`)

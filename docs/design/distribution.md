@@ -142,7 +142,7 @@ atlas/
 |---|---|
 | `atlas init` | 一键初始化并装配到当前（或指定）项目 |
 | `atlas update` | 安全刷新项目内的 `.atlas/` 工程线束与平台 Skills |
-| `atlas upgrade` | 拉取 npm 最新全局包升级全局 CLI |
+| `atlas upgrade` | 升级当前正在运行的那份 CLI（按它所在的 npm prefix 安装，不改另一份） |
 | `atlas check` | 运行项目级资产与门禁全套检查 |
 | `atlas console` | 启动 E2E 用例评审控制台 |
 | `atlas report` | 生成流水线报告 |
