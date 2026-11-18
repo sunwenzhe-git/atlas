@@ -11,7 +11,7 @@
 
 ## 1. 前置
 
-1. 靶场可达且**关键 API 实响应**——根路径 200 ≠ 服务就绪(2026-10-25 实测:网关 200、业务微服务悬挂 ⇒ 页面白屏;探针更探不到,先用 curl 打一条真实业务 API 确认有响应);**本地 dev server 不是真跑通道**(采纳仓 `product/e2e/README.md` 的「切测试环境」节才是正统:profile `app_base_url` 临时指向测试环境、**不提交**,`ATLAS_BASE_URL` 只覆盖 prepare 钩子且两者必须一致;登录态按该 README 录制);2. atlas 源包 = 最新发行版(`npm 全局 atlas upgrade`);3. 靶场仓的用例分片与索引在基线 ref 上是绿的或已知态。
+1. 靶场可达且**关键 API 实响应**——根路径 200 ≠ 服务就绪(2026-10-25 实测:网关 200、业务微服务悬挂 ⇒ 页面白屏;探针更探不到,先用 curl 打一条真实业务 API 确认有响应);**本地 dev server 不是真跑通道**(采纳仓 `product/e2e/README.md` 的「切测试环境」节才是正统:profile `app_base_url` 临时指向测试环境、**不提交**,`ATLAS_BASE_URL` 只覆盖 prepare 钩子且两者必须一致;登录态按该 README 录制);2. atlas 源包 = 升级后正在运行的那份 CLI（按它所在的 npm prefix 安装）;3. 靶场仓的用例分片与索引在基线 ref 上是绿的或已知态。
 
 ## 2. 流程(顺序硬)
 
