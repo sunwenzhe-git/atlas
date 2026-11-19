@@ -74,6 +74,14 @@ def mk(root: Path) -> None:
     (root / "backend" / "app").mkdir(parents=True, exist_ok=True)
     (root / "backend" / "app" / "utils.py").write_text("def send_email():\n    pass\n",
                                                        encoding="utf-8")
+    # RFC-20261119-01 (D202)：写入轻量语义透镜测试夹具
+    fras_dir = root / ".trellis" / "spec" / "structure" / "global"
+    fras_dir.mkdir(parents=True, exist_ok=True)
+    (fras_dir / "cognition.fras").write_text(
+        "backend/app/api/routes/login.py[DU5T]: F:登录路由 | R:code:backend/app/utils.py | A:login | S:-\n"
+        "backend/app/api/routes/users.py[DU5T]: F:用户路由 | R:code:backend/app/utils.py | A:createUser | S:-\n",
+        encoding="utf-8"
+    )
     subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(root), "commit", "-qm", "init"], check=True)
 
@@ -105,25 +113,23 @@ def run(root: Path, bin_dir: str, *extra: str, no_cgc: bool = False
 
 
 def test_layering_files_and_determinism(tmp_path) -> None:
-    """分层正确 + 种子同名回环被排除 + 双跑字节一致（确定性 = 批 2 对账门的前提）。"""
+    """FRAS 1-hop 反向候选提取 + 双跑字节一致（确定性 = 批 2 对账门的前提）。"""
     bin_dir = fake_cgc(tmp_path)
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         mk(root)
-        p, j = run(root, bin_dir, "--symbols", "send_email")
+        p, j = run(root, bin_dir, "--paths", "backend/app/utils.py")
         assert p.returncode == 0, p.stderr
         payload = json.loads(j.read_text(encoding="utf-8"))
-        names = [[s["name"] for s in l["symbols"]] for l in payload["layers"]]
-        assert names[0] == ["create_user", "recover_password"], names  # L1 按 (path,name) 序
-        assert names[1] == ["admin_seed", "login_page"], names          # L2；send_email 环被拦
-        assert len(names) == 2, names                                   # L3 空 → 提前收束
-        assert payload["layers"][0]["files"] == [
-            "backend/app/api/routes/login.py", "backend/app/api/routes/users.py"]
-        assert payload["head"] and payload["backend"].startswith("cgc@")
+        assert payload["backend"] == "scope_aware_fras"
+        assert payload["touched_files"] == ["backend/app/utils.py"]
+        # 验证 1-hop 反查结果命中 login.py 与 users.py
+        expected = ["backend/app/api/routes/login.py", "backend/app/api/routes/users.py"]
+        assert sorted(payload["aoci_candidates"]) == expected
         assert "generated_at" not in json.dumps(payload)  # 无时间戳：可复现
 
         # 双跑字节一致
-        p2, j2 = run(root, bin_dir, "--symbols", "send_email")
+        p2, j2 = run(root, bin_dir, "--paths", "backend/app/utils.py")
         assert p2.returncode == 0, p2.stderr
         assert j.read_bytes() == j2.read_bytes()
 
@@ -142,11 +148,14 @@ def test_not_ready_when_graph_section_absent(tmp_path) -> None:
 
 
 def test_not_ready_when_backend_missing(tmp_path) -> None:
+    """未维护语义透镜时，显式 exit 3 + not_ready。"""
     bin_dir = fake_cgc(tmp_path)
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        mk(root)
-        p, j = run(root, bin_dir, "--symbols", "x", no_cgc=True)
+        (root / "product").mkdir(parents=True)
+        (root / "product" / "stack-profile.yaml").write_text("product: 夹具\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        p, j = run(root, bin_dir, "--symbols", "x")
         assert p.returncode == 3, (p.stdout, p.stderr)
         assert json.loads(p.stdout)["status"] == "not_ready"
         assert j is None

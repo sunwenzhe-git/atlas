@@ -120,15 +120,14 @@ evidence:           [ "prd.md:<行/要点>", "routes.md:<行>", "e2e-index.md:<�
 ```
 
 - **证据必须可定位**（`global-rules.md` §6）：每条受影响项都要指回需求卡行 / routes 行 / 页表行。
-- **图谱影响面基准（2026-10-05 图谱批 1）**：profile 声明 `graph.backend` 的项目，推导前先跑
-  `python3 .atlas/scripts/impact_report.py --root . --task <需求ID> --symbols/--paths/--diff-base …`
-  （落 `.trellis/tasks/<ID>/impact.json|md`，用前现刷、确定性可复现；契约见 `shared/stack-profile.md` §3.6）。
-  agent **先读报告再做语义判断**——它给的是 name 级静态调用面（偏宽、保守，无边 ≠ 无人用），
-  是「结构证据约束」的机器侧输入，**不替代**语义判断与下面的兜底交互。未声明 graph 段 ⇒
-  报告器 exit 3 `not_ready`，本步显式跳过（记入执行记录），不阻断 apply。**收口时对账**
-  （B191-1，2026-10-07 起）：`.trellis/tasks/<ID>/impact.json` 存在的需求，收口必跑
+- **影响面基准与语义透镜（2026-11-19 收口，RFC-20261119-01 / D202）**：cgc 外部 AST 图谱已正式退役；
+  项目推导前跑 `python3 .atlas/scripts/impact_report.py --root . --task <需求ID> --paths …`
+  （落 `.trellis/tasks/<ID>/impact.json|md`）。报告器优先读取 `.trellis/spec/structure/**/cognition.fras`
+  单跳反向引用补充进 `aoci_candidates` 独立字段供参考；未维护语义透镜时 ⇒ 报告器 exit 3 `not_ready`，
+  此时预测集取需求卡声明集（`touched_files`）。agent **先读报告再做语义判断**。
+  **收口时对账**（B191-1，2026-10-07 起）：`.trellis/tasks/<ID>/impact.json` 存在的需求，收口必跑
   `python3 .atlas/scripts/impact_reconcile.py --root . --task <ID> --diff-base <ref>` ——
-  预测集 vs 实际 diff 双向差集与基准漂移 ⇒ WARN 指名（漏报/多报双侧留痕 `impact-reconcile.json`）；
+  预测集 vs 实际 diff 双向差集（miss 漏报维持 WARN 级，严格遵从 D79④ 观察窗升档规则，并在收口报告留痕说明）；
   报告缺失 ⇒ SKIP（显式，不是通过）。
 - **禁止**用正则或关键词机械匹配需求文本判语义——regex 只判 token，语义交 agent（`rings/e2e/reference.md` §8 注；D53/E16 反例：Autonoma 用 regex 判句意，680 次重试 / $11 / 零用例）。
 - **兜底交互**：出现以下任一情形，**一次性汇总问用户（≤3 问）**，不得自行拍板：

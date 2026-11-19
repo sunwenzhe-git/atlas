@@ -179,11 +179,12 @@
 
 ## 6. 执行步骤
 
-1. **读 profile**。缺失或字段不全 → 与用户确认后生成（确认门）。**同一次确认里办三件事**：
-   - **探测图谱后端并向用户提议**声明 `graph` 段——**按栈门控**：仅当 `apps[]` 存在 `kind ∈ {backend, fullstack}` 的 app 时才探测并提议；全部 app 为 `frontend` / `mobile` 时**不提议**（实测 cgc 0.6.13：JSX 组件引用不产生调用边，两条消费面对纯 UI 栈近乎零收益；双层判据与如实口径的唯一正文见 `shared/stack-profile.md` §2）。口径必须如实：它换来的只是 `routes` 的文件枚举通道（与 regex 恒等）与 `apply` 影响面基准（对逻辑调用有效、组件叶面失真），不是「跨文件逆向分析」。项目根 `.adapter-out/` 的 git 忽略由接线自动处理（`.gitignore` 存在时追加，无则接线报告提示），无需口头另嘱。
+1. **读 profile**。缺失或字段不全 → 与用户确认后生成（确认门）。**同一次确认里办两件事**：
    - **A 为可选类，先问用户是否纳入**（不纳入整类跳过、不计失败）。
    - **问 D 类形态**：后端有没有机器可读接口描述、**地址在哪**（网关 / 文档站 / 运行时端点都算；
      仓内探测不到 **≠** 没有——§4 D 与 `shared/stack-profile.md` §3.5）。答「有」⇒ 该类别走指针形态、
+     记录 URL 与拉取脚本；答「没有」⇒ 走清单形态（本环产出 `apis.md` 骨架并由 agent 补齐）。
+   （注：cgc 外部 AST 图谱已于 2026-11-19 正式退役，RFC-20261119-01 / D202，不再探测或提议 graph 段）。
      `adapters.api` 置 `null`；答「无」⇒ 才落源码枚举；**未答 ⇒ 不得当「无」**，记 `categories.D`
      并在 §9 点名「未取证」。
 2. **确定范围**。列出本次要刷新的 `(role, app, domain, category)`。
@@ -205,7 +206,7 @@
    - **全局类别** `routes`：整项目调一次 → `<项目根>/.adapter-out/routes.json`。
    - **域级类别** `api` / `models` / `tests`：对每个 app 各调一次 → `<项目根>/.adapter-out/<category>/<app>.json`。
    - 命令：`python3 <脚本> --root <项目根> [--app <name>] --out <上述路径>`。
-   - **文件枚举通道**（2026-10-05 图谱批 1）：profile 声明 `graph.backend` 时 routes 适配器自动走图谱枚举（用前现刷，契约见 `shared/stack-profile.md` §3.6）；后端不可用 ⇒ 适配器**显式降级** regex（stderr WARN + `backend_fallback` 字段）。§9 报告须标注实际通道：`adapter:routes(backend:graph|regex)`。
+   - **文件枚举通道**：routes 适配器统一走 regex 枚举（cgc 图谱通道已于 2026-11-19 退役，RFC-20261119-01 / D202；若存量 profile 声明了 graph 会出声抛退役 WARN）。§9 报告标注：`adapter:routes(backend:regex)`。
 3. **读 JSON 渲染事实表**：`items` 逐行填「可枚举列」；遇到 `api` 的指针形态（有 `spec_entry`、无 `items`）→ 按 §4 D 的「有描述」写法只记真相源入口，**不得**补清单。
 4. **补语义列**：`域` / `用途` / `关键交互`（C）、`请求要点` / `响应要点`（D）等非机械列由 agent 阅读代码后填写；候选域归属按 `_meta.json.domains` 的域→globs 映射。
 5. **标注**：事实类表格包进 `<!-- atlas:facts:begin/end -->`（`global/*.md`、`{current,legacy}/<domain>/*.md`）；标记外的语义说明保留。

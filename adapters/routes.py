@@ -667,15 +667,11 @@ def resolve_relpaths(root: Path, scope, app_path: str | None, backend: str, cfg:
     """
     if backend == "regex":
         return _walk_relpaths(root, scope), "regex", None
-    det = _graph.detect(root, cfg)
-    if det is None:
-        if explicit:
-            _graph.die("--backend graph 显式要求，但 cgc 不可用（未安装或探测失败）")
-        _graph.warn(f"profile 声明了 graph.backend 但 cgc 不可用——显式降级为 regex 枚举"
-                    f"（安装 cgc 或移除 profile 的 graph 段后恢复 graph 通道）")
-        return _walk_relpaths(root, scope), "regex", "cgc 不可用（未安装或探测失败）"
-    _graph.ensure_index(root, cfg, version=det["version"])
-    return _prune(_graph.file_paths(root, prefix=app_path, cfg=cfg), scope), "graph", None
+    # RFC-20261119-01 (D202)：外部 AST 图谱已正式退役
+    if explicit:
+        _graph.die("--backend graph 显式要求，但图谱后端已退役（RFC-20261119-01 / D202）")
+    _graph.warn("profile 声明了 graph.backend 但图谱后端已退役——显式降级为 regex 枚举")
+    return _walk_relpaths(root, scope), "regex", "cgc 图谱后端已退役（显式降级为 regex）"
 
 
 def _prune(relpaths: list[str], scope) -> list[str]:

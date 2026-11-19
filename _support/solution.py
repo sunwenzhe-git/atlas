@@ -3330,7 +3330,7 @@ def check_solution(root: Path, strict: bool = False,
     rc, cfg_out, _ = _git(root, "config", "--get", "status.showUntrackedFiles")
     if rc == 0 and cfg_out.strip().lower() == "no":
         add("git 配置", level,
-            "status.showUntrackedFiles=no 会盲掉 _graph / atlas_check / e2e_console")
+            "status.showUntrackedFiles=no 会盲掉 atlas_check / e2e_console")
     if data.get("unknown"):
         add("清单未知键", "WARN", "；".join(data["unknown"]))
     if data.get("requirements"):

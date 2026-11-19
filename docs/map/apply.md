@@ -13,7 +13,7 @@
 
 | 文件 | 角色 |
 |---|---|
-| `apply/reference.md`(331 行) | 执行契约本体(安装后位于 `.atlas/apply/reference.md`),四模式 / 三问门 / 影响面 / 增量边界全在这 |
+| `apply/reference.md`(330 行) | 执行契约本体(安装后位于 `.atlas/apply/reference.md`),四模式 / 三问门 / 影响面 / 增量边界全在这 |
 | `skills/atlas-apply/` | agent 执行入口(skill 薄桩) |
 | `patches/workflow-plan-apply/` | 把 apply 挂进 Trellis 工作流的锚点式补丁 |
 | `scripts/write_claim.py`(204 行) | 并发写面仲裁的 claim 钩子(M3,RFC-20261022-01) |

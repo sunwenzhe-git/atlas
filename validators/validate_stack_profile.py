@@ -217,6 +217,8 @@ def validate(root: Path) -> Result:
         pinned = graph.get("pinned")
         ok_pin = pinned is None or bool(re.fullmatch(r"\d+\.\d+\.\d+\S*", str(pinned)))
         res.add("graph.pinned 形态", "PASS" if ok_pin else "FAIL", f"值={pinned}（语义版本形态）")
+        res.add("graph 段退役提示", "WARN",
+                "graph 代码图谱后端已于 2026-11-19 退役（RFC-20261119-01 / D202），请从 stack-profile.yaml 中移除本段")
     elif graph is not None and not isinstance(graph, dict):
         res.add("graph 段形态", "FAIL", f"值={graph!r}（应为映射或 null）")
     else:

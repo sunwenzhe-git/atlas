@@ -5,7 +5,7 @@
 
 ## 它不是什么
 
-- 不是适配器本体:`_graph.py` 不被 `stack-profile.adapters` 解析(`adapters/_graph.py:37` 自述),它是图谱后端(cgc)的全线唯一接触面。
+- 不是适配器本体:`_graph.py` 不被 `stack-profile.adapters` 解析(`adapters/_graph.py:32` 自述),它是图谱后端(cgc)的全线唯一接触面。
 - 不是必选项:项目不声明 `graph` 段 ⇒ 整个子系统静默不启用(报告器 exit 3 `not_ready`,apply 显式跳过不阻断)。
 - 不做影响面语义判断:它给的是 **name 级静态调用面(偏宽、保守,无边 ≠ 无人用)**,是 apply 影响面推导的「结构证据约束」输入,不替代 agent 语义判断(`apply/reference.md:124`)。
 
@@ -13,8 +13,8 @@
 
 | 文件 | 行数 | 角色 |
 |---|---|---|
-| `adapters/_graph.py` | 397 | ACL 本体:profile 声明解析 / 后端探测 / 新鲜度与索引 / 四个查询接口 |
-| `scripts/impact_report.py` | 224 | 消费者①:按需求出影响面预测报告(BFS 分层) |
+| `adapters/_graph.py` | 332 | ACL 本体:profile 声明解析 / 后端探测 / 新鲜度与索引 / 四个查询接口 |
+| `scripts/impact_report.py` | 222 | 消费者①:按需求出影响面预测报告(BFS 分层) |
 | `scripts/impact_reconcile.py` | 149 | 消费者②:收口时预测集 ⇔ 实际 diff 双向对账 |
 
 配套契约:`shared/stack-profile.md` §2(`graph` 段 schema)与 §3.6(影响面报告契约);`shared/gates.md` 2.1 的 `impact_reconcile` 行。落点纪律:全部中间产物落项目根 `.adapter-out/`(运行态,`.gitignore` 应含该行——project-wiring 补丁第 5 触点自动追加)。
@@ -23,7 +23,7 @@
 
 ### 1. 声明:stack-profile 的 graph 段
 
-`product/stack-profile.yaml` 可选段,`load_graph_config`(`adapters/_graph.py:109`)解析:
+`product/stack-profile.yaml` 可选段,`load_graph_config`(`adapters/_graph.py:71`)解析:
 
 ```yaml
 graph:
@@ -35,11 +35,11 @@ graph:
 
 ### 2. 后端探测与降级纪律
 
-`detect()`(`adapters/_graph.py:28`):找 `cgc` 可执行 + 解析版本号;不可用 ⇒ 返回 None,由**调用方**决定响亮降级——适配器显式 WARN + 回退正则、报告器显式 `not_ready`。本层绝不静默(`_graph.py:27-29`)。子命令超时三档:VERSION 15s / QUERY 120s / INDEX 900s(`_graph.py:57-59`)——「宁可响亮超时,不可无限等待」。
+`detect()`(`adapters/_graph.py:28`):找 `cgc` 可执行 + 解析版本号;不可用 ⇒ 返回 None,由**调用方**决定响亮降级——适配器显式 WARN + 回退正则、报告器显式 `not_ready`。本层绝不静默(`_graph.py:27-29`)。子命令超时三档:VERSION 15s / QUERY 120s / INDEX 900s(`_graph.py:45`)——「宁可响亮超时,不可无限等待」。
 
 ### 3. 用前现刷(freshness)——本子系统最核心的设计
 
-`freshness_key()`(`adapters/_graph.py:186`)算**代码态指纹 = sha1(HEAD + 脏文件集)**,排掉 `.adapter-out` 自身(否则「写标记 ⇒ 键变 ⇒ 再索引」自激振荡)。`ensure_index()`(`adapters/_graph.py:8`)消费前先比对:
+`freshness_key()`(`adapters/_graph.py:186`)算**代码态指纹 = sha1(HEAD + 脏文件集)**,排掉 `.adapter-out` 自身(否则「写标记 ⇒ 键变 ⇒ 再索引」自激振荡)。`ensure_index()`(`adapters/_graph.py:151`)消费前先比对:
 
 - 键一致 ⇒ 微秒级直接返回(fresh);
 - 不一致 ⇒ `cgc index --force` **全量重建**,成功后写标记 `.adapter-out/_graph_index.json`;
@@ -49,7 +49,7 @@ graph:
 
 ### 4. 查询接口(4 个,全部确定性)
 
-`adapters/_graph.py:304-397`:`query`(裸 Cypher,调用方负责 ORDER BY)、`file_paths`、`symbols_in_files`、`callers`(一跳直接调用方)。纪律:接触面只走 CLI 不走 Python import;`COLUMNS=20000` 防 rich 渲染硬换行 JSON(`_graph.py:278`);根外路径丢弃(cgc 全局库可能跨仓,不得污染);Python 侧再排一次序兜底(`_graph.py:391`)。
+`adapters/_graph.py:213-332`:`query`(裸 Cypher,调用方负责 ORDER BY)、`file_paths`、`symbols_in_files`、`callers`(一跳直接调用方)。纪律:接触面只走 CLI 不走 Python import;`COLUMNS=20000` 防 rich 渲染硬换行 JSON(`_graph.py:240`);根外路径丢弃(cgc 全局库可能跨仓,不得污染);Python 侧再排一次序兜底(`_graph.py:258`)。
 
 ### 5. 消费者①:影响面报告 `impact_report.py`
 

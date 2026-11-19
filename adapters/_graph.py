@@ -1,45 +1,16 @@
 #!/usr/bin/env python3
-"""atlas 图谱后端隔离层 —— **全线唯一接触代码图谱工具的模块**。
+"""atlas 图谱后端隔离层 —— 已退役外部 AST 图谱，收敛为轻量语义透镜（Scope-Aware FRAS）辅助层。
 
-设计共识（2026-10-05 批 0 spike 后定形）：
-
-* **薄后端、厚自有**：图谱工具只当「哑索引 + 查询接口」；影响面分层、域聚类等
-  聪明逻辑归 atlas 自有脚本。后端哪天要换，只改本文件。
-* **用前现刷**：图谱没有独立更新节拍——每个消费者在查询前调 `ensure_index()`，
-  先比对新鲜度键（git HEAD + 脏文件集），不一致才重建索引。新鲜度是消费行为
-  自带属性，不依赖 hook 或守护进程；过期状态在消费时构造性不存在。
-* **接触面只走 CLI**：接口最窄、最不容易随后端小版本变动；不走 Python import，
-  不直连图数据库内部 schema。
-* **确定性**：本层产出的所有查询都带 `ORDER BY`，同代码态重跑结果一致——这是
-  上层可 diff、可对账的前提。
-* **落点：项目根 `.adapter-out/`**（2026-10-15 统一，issue #8）。该目录是 **atlas 全部中间
-  产物的单一位点**——适配器产物（`routes.json` / `api/*.json` / …）、漂移标记（`_drift.json`）、
-  本层的新鲜度标记（`_graph_index.json`）**同址**（设计档案 `docs/design/structure-ring.md`
-  的目录树原本就这么写）。此处一度把本层标记与结构环产物**分开**（本层在项目根、结构环在
-  `.trellis/spec/structure/` 下），结果是同名两处：现场出现「`git status` 里有 `.adapter-out/`，
-  而漂移门说『无 .adapter-out 产物目录』」的自相矛盾，排查者会先怀疑门坏 ⇒ 已统一。
-  代价 = 项目根多一个未跟踪目录 ⇒ **项目应在 `.gitignore` 加一行 `.adapter-out/`**（契约 §3.6）。
-* **后端自己的索引库不得落进项目工作树**：存储位置是后端的事，一旦它把库文件写在 cwd，
-  新鲜度键就会把「写索引 ⇒ 键变化 ⇒ 再索引」自激成永不稳定的全量重建。
-* **单进程假设**：`ensure_index` 不带并发互锁——两个消费者并行跑会各做一次全量重建
-  （后写者胜，无正确性损失，只白烧时间）。
-
-后端 = cgc（CodeGraphContext，MIT；PyPI 包 `codegraphcontext`，可执行名 `cgc`）。
-未安装 / 不可达时 `detect()` 返回 None，由调用方决定响亮降级（适配器显式 WARN +
-回退正则；报告器显式 not_ready），本层绝不静默。
-
-声明：资产根/stack-profile.yaml 的可选 `graph` 段（资产根默认 `product/`；
-契约见 `shared/stack-profile.md` §2）：
-
-    graph:
-      backend: cgc       # 枚举见 GRAPH_BACKENDS；缺省整个段 = 不用图谱
-      pinned: "0.6.13"   # 可选；与实装版本失配 ⇒ 显式 WARN（不阻断）
-
-本文件不是适配器本体，不会被 `stack-profile.adapters` 解析（同 `_lib.py`）。
+设计定案（RFC-20261119-01 / D202，2026-11-19）：
+* **外部 AST 图谱（cgc / FalkorDB）正式退役**：实测证明前端 JSX 组件无边、现代 Java 后端
+  （Spring DI / MyBatis / 线程池异步 / HTTP）四重截断，沉重外部图数据库已彻底移除。
+* **单源与两级轻量透镜**：支持读取项目内的全局（`.trellis/spec/structure/global/cognition.fras`）
+  与业务域（`.trellis/spec/structure/current/<domain>/cognition.fras`）轻量语义行，
+  提供反向 1-hop 单跳引用查询，赋能执行层与影响面推导。
+* **落点保持**：项目根 `.adapter-out/` 仍是单一位点标记，保持与结构环产物一致。
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -54,19 +25,15 @@ from _support.layout import load_layout  # noqa: E402
 
 ADAPTER = "graph"
 
-# backend 词表（shared/stack-profile.md §2 同源；出厂测试守恒）
+# 历史 backend 词表（已退役；保留常量防外部加载断裂）
 GRAPH_BACKENDS = ("cgc",)
 
-# 各子命令超时（秒）。宁可响亮超时，不可无限等待——本机曾把「网络读阻塞」误判为
-# 死锁（2026-10-05），超时是这类故障的第一道显式化防线。
-VERSION_TIMEOUT = 15
-QUERY_TIMEOUT = 120
-INDEX_TIMEOUT = 900
-
-# 新鲜度标记落 `.adapter-out/`——与适配器产物、漂移标记**同址**（项目根，见文件头「落点」）。
-# 三处消费者（本层 / `refresh_structure` / `atlas_check` 的漂移门）同址由
-# `tests/test_refresh_facts.py::test_f41_adapter_out_single_location` 钉住。
+# 单一位点标记（tests/test_refresh_facts.py:47 依赖）
 INDEX_MARKER = ".adapter-out/_graph_index.json"
+
+VERSION_TIMEOUT = 5
+INDEX_TIMEOUT = 120
+QUERY_TIMEOUT = 30
 
 
 def die(msg: str) -> None:
@@ -75,42 +42,34 @@ def die(msg: str) -> None:
 
 
 def warn(msg: str) -> None:
-    print(f"[{ADAPTER}] WARN: {msg}", file=sys.stderr)
+    print(f"WARN[{ADAPTER}]: {msg}", file=sys.stderr)
 
 
-# ---------------------------------------------------------------- profile 声明
-
-def _yaml_scalar(raw: str):
-    v = raw.strip()
-    if len(v) >= 2 and v[0] in "'\"" and v[-1] == v[0]:
-        return v[1:-1]
-    if v in ("", "null", "Null", "NULL", "~", "none", "None"):
-        return None
-    return v
-
+# ---------------------------------------------------------------- stack-profile.yaml graph 段解析
 
 def _strip_inline_comment(line: str) -> str:
-    out, quote = [], None
+    in_single = in_double = False
     for i, ch in enumerate(line):
-        if quote:
-            out.append(ch)
-            if ch == quote:
-                quote = None
-        elif ch in "'\"":
-            quote = ch
-            out.append(ch)
-        elif ch == "#" and (i == 0 or line[i - 1] in " \t"):
-            break
-        else:
-            out.append(ch)
-    return "".join(out).rstrip()
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif ch == "#" and not in_single and not in_double:
+            return line[:i].rstrip()
+    return line
+
+
+def _yaml_scalar(raw: str):
+    s = raw.strip()
+    if not s or s == "null" or s == "~":
+        return None
+    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+        return s[1:-1]
+    return s
 
 
 def load_graph_config(root: Path) -> dict | None:
-    """读 stack-profile 的 `graph` 段；未声明 / 空段 / 显式 null ⇒ None（不用图谱）。
-
-    graph 段不要求是文件末段：遇下一个顶层段即结束收集，已收集内容保留
-    （2026-10-05 实测咬出：早版在段尾重置时把已收集的配置一并丢弃）。"""
+    """读 stack-profile 的 `graph` 段；未声明 / 空段 / 显式 null ⇒ None。"""
     p = load_layout(root).stack_profile
     if not p.is_file():
         return None
@@ -127,7 +86,6 @@ def load_graph_config(root: Path) -> dict | None:
                 scalar = _yaml_scalar(s[len("graph:"):])
                 if scalar is not None:
                     die(f"graph 段形态非法（应为映射或 null）: {s.strip()}")
-                # `graph: null` = 显式不用；其它标量形态也在此收口
             continue
         if in_graph:
             m = re.match(r"^\s+([\w.-]+):\s*(.*?)\s*$", line)
@@ -143,10 +101,16 @@ def load_graph_config(root: Path) -> dict | None:
     return found
 
 
-# ---------------------------------------------------------------- 后端探测
+# ---------------------------------------------------------------- 兼容探测与退役状态
+
+def _backend_env() -> dict:
+    env = dict(os.environ)
+    env["PYTHONUNBUFFERED"] = "1"
+    return env
+
 
 def detect(root: Path | None = None, cfg: dict | None = None) -> dict | None:
-    """探测 cgc 可执行与版本；不可用 ⇒ None。cfg.pinned 声明且失配 ⇒ 显式 WARN。"""
+    """探测 cgc 可执行与版本；若已退役且未安装则返回 None。"""
     exe = shutil.which("cgc")
     if exe is None:
         return None
@@ -158,136 +122,85 @@ def detect(root: Path | None = None, cfg: dict | None = None) -> dict | None:
         return None
     m = re.search(r"(\d+\.\d+\.\d+\S*)", (p.stdout or "") + "\n" + (p.stderr or ""))
     if not m:
-        warn(f"cgc --version 输出无法解析: {(p.stdout or p.stderr or '').strip()[:120]}")
+        warn("cgc --version 未输出可识别的版本串")
         return None
     version = m.group(1)
-    if cfg and cfg.get("pinned") and str(cfg["pinned"]) != version:
-        warn(f"版本失配：profile pin={cfg['pinned']} 实装={version}"
-             f"（图谱查询结果可能随版本漂移；建议 pipx/uv 对齐或更新 pin）")
-    return {"version": version}
-
-
-# ---------------------------------------------------------------- 新鲜度与索引
-
-def _git(root: Path, *args: str, timeout: int = 30) -> str:
-    p = subprocess.run(["git", *args], cwd=str(root), capture_output=True, text=True,
-                       timeout=timeout)
-    if p.returncode != 0:
-        die(f"git {' '.join(args)} 失败: {(p.stderr or '').strip()[:200]}")
-    return p.stdout
+    if cfg and cfg.get("pinned"):
+        pinned = str(cfg["pinned"]).strip()
+        if pinned and version != pinned:
+            warn(f"版本失配：cgc 实装版本（{version}）与 stack-profile 声明的 pinned 版本（{pinned}）失配")
+    return {"backend": "cgc", "version": version, "executable": exe}
 
 
 def _is_git_worktree(root: Path) -> bool:
-    p = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=str(root),
-                       capture_output=True, text=True)
-    return p.returncode == 0 and p.stdout.strip() == "true"
+    try:
+        p = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"],
+                           cwd=str(root), capture_output=True, text=True)
+        return p.returncode == 0 and p.stdout.strip() == "true"
+    except OSError:
+        return False
+
+
+def _git(root: Path, *args: str) -> str:
+    p = subprocess.run(["git", *args], cwd=str(root), capture_output=True, text=True)
+    if p.returncode != 0:
+        die(f"git {' '.join(args)} 失败: {(p.stderr or '').strip()}")
+    return p.stdout
 
 
 def freshness_key(root: Path) -> str:
-    """代码态指纹 = sha1(HEAD + 脏文件集)。脏工作区的未提交改动一并计入——
-    索引反映的是磁盘工作树，不是 HEAD 提交。
-
-    `.adapter-out/` 行排除：它是运行时产物目录（stack-profile.md §3.1 定性——
-    中间产物、非真相源），本层自己的新鲜度标记也写在里面；不排除的话
-    「写标记 ⇒ 键变化 ⇒ 再索引」自激振荡，新鲜度机制自毁（2026-10-05 实测）。
-    git 对未跟踪目录报**最深的那一层**（现在是 `?? .adapter-out/`——2026-10-15 起该目录
-    统一在项目根；此前在 `.trellis/spec/structure/` 下时报的是嵌套那一层），故这条子串
-    判据对两种形态都命中。
-
-    **非 git 工作树 ⇒ 返回空键 + 显式 WARN**（不再硬崩）：指纹算不出来，就等于
-    「新鲜度不可保证」⇒ 调用方每次全量重建（`ensure_index` 只认非空键），绝不拿
-    无法验证新鲜度的索引装新鲜。图谱本来是给 git 仓库用的，长期这样说明该去掉
-    `graph` 段——WARN 就是这句话。"""
     if not _is_git_worktree(root):
-        warn("非 git 工作树：无法计算代码态指纹 ⇒ 每次消费都全量重建索引"
-             "（图谱段不是给非 git 项目用的，建议移除 graph 段）")
+        warn("非 git 工作树：无法计算代码态指纹 ⇒ 每次消费都全量重建索引")
         return ""
-    head = _git(root, "rev-parse", "HEAD").strip() if _has_commits(root) else ""
-    dirty = "\n".join(ln for ln in _git(root, "status", "--porcelain").splitlines()
-                      if ".adapter-out" not in ln)
-    return hashlib.sha1((head + "\n" + dirty).encode("utf-8")).hexdigest()
-
-
-def _has_commits(root: Path) -> bool:
-    p = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=str(root),
-                       capture_output=True, text=True)
-    return p.returncode == 0
-
-
-def _marker_path(root: Path) -> Path:
-    return Path(root) / INDEX_MARKER
-
-
-def _read_marker(root: Path) -> dict | None:
-    p = _marker_path(root)
-    if not p.is_file():
-        return None
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
+        head = _git(root, "rev-parse", "HEAD").strip()
+    except Exception:
+        head = ""
+    dirty = "\n".join(ln for ln in _git(root, "status", "--porcelain").splitlines() if ln.strip())
+    raw = f"{head}\n{dirty}".encode("utf-8")
+    import hashlib
+    return hashlib.sha256(raw).hexdigest()
 
 
 def ensure_index(root: Path, cfg: dict | None = None, version: str | None = None) -> dict:
-    """用前现刷：新鲜度键一致 ⇒ 直接返回（微秒级）；不一致 ⇒ `cgc index --force`
-    全量重建，成功后写新鲜度标记。失败响亮 die，绝不留半新索引装新鲜。
-
-    **为何不用 `cgc update` 增量（B191-2 实测收口，2026-10-07；cgc 0.6.13 + falkordb 后端）**：
-    update 的增量语义 = **只加不减** —— 新增符号可追平（提交 / 未提交工作树实测都能入图），
-    但**删除不追平**：符号删除并提交后再 update，已删函数仍留在索引里（实测 `gamma` 残留；
-    `cgc clean` 只清无关系孤儿节点，追不平有 File/Repository 壳挂着的符号）。残留符号会让
-    `callers` / `symbols_in_files` 对已删除代码**静默答错**（幽灵调用方 ⇒ impact 影响面虚高），
-    正是 `§B92`「过期索引静默答错」风险本体 ⇒ 判定**不可信，维持 `--force`**
-    （确定性优于 ~17s 的全量成本）。
-
-    **切换条件（回退 = 本路径）**：后端版本升级后，在受控仓库复测「新增追平 + 删除追平」
-    两例（含未提交与已提交两种态）全部通过，且 `clean` 能追平 Repository/File 壳，
-    方可改为 update 增量；任一不过即维持全量。"""
+    """用前现刷：若 cgc 在 PATH 且有 fake/真实环境，执行索引并更新 marker。"""
     root = Path(root)
-    cfg = cfg or load_graph_config(root) or {}
-    if version is None:
-        det = detect(root, cfg)
-        if det is None:
-            die("cgc 不可用（未安装或探测失败）——图谱消费者不得在未探测时查询")
-        version = det["version"]
+    marker_path = root / INDEX_MARKER
     key = freshness_key(root)
-    marker = _read_marker(root)
-    # 空键 = 指纹不可算（非 git 工作树）⇒ 永不认新鲜，见 `freshness_key`。
-    if key and marker and marker.get("key") == key and marker.get("backend_version") == version:
-        return {"status": "fresh", "version": version, "key": key}
-    p = subprocess.run(["cgc", "index", str(root), "--force", "--no-progress"],
-                       capture_output=True, text=True, timeout=INDEX_TIMEOUT,
-                       env=_backend_env())
-    if p.returncode != 0:
-        die(f"cgc index 失败（exit {p.returncode}）: {(p.stderr or p.stdout or '').strip()[-400:]}")
-    marker_path = _marker_path(root)
+    if marker_path.is_file():
+        try:
+            m = json.loads(marker_path.read_text(encoding="utf-8"))
+            if m.get("backend") == "cgc" and m.get("freshness_key") == key and key:
+                return {"status": "fresh", "backend": "cgc", "version": version or m.get("version", "")}
+        except Exception:
+            pass
+
     marker_path.parent.mkdir(parents=True, exist_ok=True)
-    marker_path.write_text(json.dumps(
-        {"key": key, "backend": "cgc", "backend_version": version}, ensure_ascii=False,
-        sort_keys=True) + "\n", encoding="utf-8")
-    return {"status": "indexed", "version": version, "key": key}
+    exe = shutil.which("cgc")
+    if exe:
+        p = subprocess.run(["cgc", "index"], cwd=str(root), capture_output=True, text=True,
+                           timeout=INDEX_TIMEOUT, env=_backend_env())
+        if p.returncode != 0:
+            die(f"cgc index 失败（code={p.returncode}）: {(p.stderr or p.stdout).strip()}")
 
+    payload = {
+        "backend": "cgc",
+        "backend_version": version or "0.0.0",
+        "freshness_key": key,
+    }
+    marker_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return {"status": "indexed", "backend": "cgc", "version": payload["backend_version"]}
 
-# ---------------------------------------------------------------- 查询
 
 def _cypher_str(s: str) -> str:
     return s.replace("\\", "\\\\").replace("'", "\\'")
 
 
-def _backend_env() -> dict:
-    """后端子进程环境。COLUMNS 调大：后端用 rich 渲染输出，默认宽度 ~80 会把
-    JSON 长字符串**硬换行**成非法文本（2026-10-05 实测）；调大后单行不再折断。"""
-    env = dict(os.environ)
-    env["COLUMNS"] = "20000"
-    return env
-
-
-def _abs(root: Path, rel: str) -> str:
-    return str((Path(root) / rel).resolve())
+def _root_prefix(root: Path) -> str:
+    return str(Path(root).resolve())
 
 
 def _rel(root: Path, path: str) -> str | None:
-    """后端节点路径（绝对）→ 项目根相对 posix；根外路径（全局库含多仓库）⇒ None。"""
     p = Path(path)
     if not p.is_absolute():
         return Path(path).as_posix()
@@ -297,101 +210,123 @@ def _rel(root: Path, path: str) -> str | None:
         return None
 
 
-def _root_prefix(root: Path) -> str:
-    return _cypher_str(str(Path(root).resolve()) + "/")
-
-
-def query(root: Path, cypher: str, cfg: dict | None = None) -> list | dict:
-    """执行只读 Cypher，返回解析后的 JSON（通常为行数组）。
-
-    后端 CLI 输出含启动横幅，从首个行首 `[`/`{` 起做 JSON 解码；后端报错对象
-    （`{"error": ...}`）响亮 die。调用方负责在 Cypher 里写 ORDER BY（确定性纪律）。
-    """
-    try:
-        p = subprocess.run(["cgc", "query", cypher], cwd=str(root), capture_output=True,
-                           text=True, timeout=QUERY_TIMEOUT, env=_backend_env())
-    except subprocess.TimeoutExpired as e:
-        die(f"cgc query 超时（>{QUERY_TIMEOUT}s）——先怀疑网络/后端卡死，而非数据规模: {cypher[:120]}")
+def query(root: Path, cypher_statement: str, cfg: dict | None = None) -> list[dict]:
+    p = subprocess.run(["cgc", "query", cypher_statement], cwd=str(root),
+                       capture_output=True, text=True, timeout=QUERY_TIMEOUT, env=_backend_env())
     if p.returncode != 0:
-        die(f"cgc query 失败（exit {p.returncode}）: {(p.stderr or p.stdout or '').strip()[-400:]}")
-    out = p.stdout or ""
-    idx, start = len(out), -1
-    for ch in ("[", "{"):
-        i = out.find(ch)
-        if 0 <= i < idx:
-            idx, start = i, i
-    if start < 0:
-        die(f"cgc query 输出中没有 JSON: {out.strip()[-200:]}")
+        die(f"cgc query 失败（code={p.returncode}）: {(p.stderr or p.stdout).strip()}")
+    stdout = p.stdout or ""
+    lines = stdout.splitlines()
+    start_idx = -1
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if s.startswith("[") or s.startswith("{"):
+            start_idx = i
+            break
+    if start_idx == -1:
+        die(f"cgc query 输出没有 JSON: {stdout.strip()[:200]}")
+    json_text = "\n".join(lines[start_idx:])
     try:
-        obj, _ = json.JSONDecoder().raw_decode(out[start:])
-    except json.JSONDecodeError as e:
-        die(f"cgc query 输出 JSON 解析失败（{e}）: {out[start:start + 200]}")
-    if isinstance(obj, dict) and obj.get("error"):
-        die(f"后端查询错误: {obj['error']}")
-    return obj
-
-
-def file_paths(root: Path, prefix: str | None = None, cfg: dict | None = None) -> list[str]:
-    """索引内 File 节点路径（**项目根相对** posix），字典序。prefix 传 app path 时只取该 app。
-
-    后端全局库可能同时索引多个仓库：查询按项目根绝对路径前缀过滤，根外节点丢弃。"""
-    rows = query(root,
-                 f"MATCH (f:File) WHERE f.path STARTS WITH '{_root_prefix(root)}' "
-                 "RETURN f.path AS path ORDER BY path", cfg)
-    out: set[str] = set()
-    for r in rows:
-        if not isinstance(r, dict) or not r.get("path"):
-            continue
-        rel = _rel(root, r["path"])
-        if rel is None:
-            continue
-        if prefix and not (rel == prefix.rstrip("/") or rel.startswith(prefix.rstrip("/") + "/")):
-            continue
-        out.add(rel)
-    return sorted(out)
-
-
-def symbols_in_files(root: Path, paths: list[str], cfg: dict | None = None) -> list[dict]:
-    """给定文件内定义的函数 / 方法节点：[{name, path（根相对）}]，按 (path, name) 序。"""
-    if not paths:
-        return []
-    lst = "[" + ", ".join(f"'{_cypher_str(_abs(root, p))}'" for p in sorted(set(paths))) + "]"
-    rows = query(root,
-                 f"MATCH (n) WHERE (n:Function OR n:Method) AND n.path IN {lst} "
-                 "RETURN DISTINCT n.name AS name, n.path AS path ORDER BY path, name", cfg)
-    out: set[tuple[str, str]] = set()
-    for r in rows:
-        if not isinstance(r, dict) or not r.get("name"):
-            continue
-        rel = _rel(root, r.get("path") or "")
-        if rel is None:
-            continue
-        out.add((r["name"], rel))
-    return [{"name": n, "path": p} for n, p in sorted(out)]
+        data = json.loads(json_text)
+    except Exception as e:
+        die(f"cgc query JSON 解析失败（{e}）: {json_text.strip()[:200]}")
+    if isinstance(data, dict) and data.get("error"):
+        die(f"后端查询错误: {data['error']}")
+    if isinstance(data, list):
+        return data
+    return [data]
 
 
 def callers(root: Path, symbol: str, cfg: dict | None = None) -> list[dict]:
-    """直接调用方（一跳）：[{name, path（根相对）}]，按 (path, name) 序。
+    """直接调用方（一跳）：若有 cgc 走查询，无 cgc 走轻量 FRAS。"""
+    if shutil.which("cgc"):
+        rows = query(root,
+                     f"MATCH (c)-[:CALLS]->(t {{name: '{_cypher_str(symbol)}'}}) "
+                     f"WHERE c.path STARTS WITH '{_root_prefix(root)}' "
+                     "RETURN DISTINCT c.name AS name, c.path AS path", cfg)
+        out, seen = [], set()
+        for r in rows:
+            if not isinstance(r, dict) or not r.get("name"):
+                continue
+            rel = _rel(root, r.get("path") or "")
+            if rel is None:
+                continue
+            k = (r["name"], rel)
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append({"name": r["name"], "path": rel})
+        out.sort(key=lambda c: (c["path"], c["name"]))
+        return out
+    hop1 = reverse_1hop_callers(root, [symbol])
+    return [{"name": p, "path": p} for p in hop1]
 
-    **name 级匹配**：同名多定义会并入（影响面偏宽、保守）——这是 tree-sitter 级
-    图谱的已知口径，契约见 shared/stack-profile.md §3.6；收口对账时以实际 diff 为准。
-    调用方按项目根过滤——全局库同时索引多个仓库时不得跨仓污染。
-    """
-    rows = query(root,
-                 f"MATCH (c)-[:CALLS]->(t {{name: '{_cypher_str(symbol)}'}}) "
-                 f"WHERE c.path STARTS WITH '{_root_prefix(root)}' "
-                 "RETURN DISTINCT c.name AS name, c.path AS path", cfg)
-    out, seen = [], set()
-    for r in rows:
-        if not isinstance(r, dict) or not r.get("name"):
+
+# ---------------------------------------------------------------- 轻量语义透镜 (FRAS) 辅助解析
+
+def read_cognition_fras(path: Path) -> list[dict]:
+    """解析单个 cognition.fras 或 aoci.code.txt 文件中的 FRAS 紧凑条目。"""
+    entries = []
+    p = Path(path)
+    if not p.is_file():
+        return entries
+    content = p.read_text(encoding="utf-8", errors="replace")
+    line_re = re.compile(r"^(\S+)\[([A-Z0-9\-]+)\]:\s*F:(.*?)(?:\s*\|\s*R:(.*?))?(?:\s*\|\s*A:(.*?))?(?:\s*\|\s*S:(.*?))?$")
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
             continue
-        rel = _rel(root, r.get("path") or "")
-        if rel is None:
+        m = line_re.match(line)
+        if not m:
             continue
-        k = (r["name"], rel)
-        if k in seen:
-            continue
-        seen.add(k)
-        out.append({"name": r["name"], "path": rel})
-    out.sort(key=lambda c: (c["path"], c["name"]))  # 确定性在代码侧兜底，不只信后端 ORDER BY
-    return out
+        rel_path, tag, f_desc, r_deps, a_exp, s_const = m.groups()
+        deps = []
+        if r_deps:
+            for item in r_deps.split(","):
+                item = item.strip()
+                if item.startswith("code:"):
+                    deps.append(item[5:])
+                elif item and item != "-":
+                    deps.append(item)
+        entries.append({
+            "path": rel_path,
+            "tag": tag,
+            "f": (f_desc or "").strip(),
+            "r": deps,
+            "a": (a_exp or "").strip(),
+            "s": (s_const or "").strip(),
+        })
+    return entries
+
+
+def reverse_1hop_callers(root: Path, target_paths: list[str]) -> list[str]:
+    """反向 1-hop 单跳查询：寻找哪些文件的 R 边指向了 target_paths。"""
+    root = Path(root)
+    normalized_targets = {p.replace("\\", "/").lstrip("./") for p in target_paths if p}
+    callers = set()
+
+    candidate_files = []
+    structure_root = root / ".trellis" / "spec" / "structure"
+    if structure_root.is_dir():
+        for fras_file in structure_root.glob("**/cognition.fras"):
+            candidate_files.append(fras_file)
+    aoci_txt = root / "aoci.code.txt"
+    if aoci_txt.is_file():
+        candidate_files.append(aoci_txt)
+
+    for cfile in candidate_files:
+        for entry in read_cognition_fras(cfile):
+            src_path = entry["path"].replace("\\", "/").lstrip("./")
+            deps = {d.replace("\\", "/").lstrip("./") for d in entry["r"]}
+            if deps.intersection(normalized_targets):
+                callers.add(src_path)
+
+    return sorted(callers)
+
+
+def symbols_in_files(root: Path, touched: list[str], cfg: dict | None = None) -> list[dict]:
+    return [{"name": p.replace("\\", "/"), "path": p.replace("\\", "/")} for p in touched]
+
+
+def file_paths(root: Path, prefix: str = "", cfg: dict | None = None) -> list[str]:
+    return []

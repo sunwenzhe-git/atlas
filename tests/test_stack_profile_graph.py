@@ -58,6 +58,8 @@ def test_valid_graph_section_passes() -> None:
         checks = json.loads(out)["checks"]
         assert any(c["check"] == "graph.backend 枚举" and c["level"] == "PASS" for c in checks)
         assert any(c["check"] == "graph 段键白名单" and c["level"] == "PASS" for c in checks)
+        # RFC-20261119-01 (D202)：声明 graph 段必须出声抛退役 WARN
+        assert any(c["check"] == "graph 段退役提示" and c["level"] == "WARN" for c in checks)
 
 
 def test_absent_and_null_graph_is_legal() -> None:

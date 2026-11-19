@@ -104,31 +104,19 @@ def run(root: Path, *extra: str, env: dict | None = None) -> tuple[dict, subproc
 
 
 def test_graph_channel_matches_regex_channel(tmp_path) -> None:
-    """通道全等：同一夹具，graph（fake 后端）与 regex 产出 items 逐项一致。"""
+    """显式要求 graph 通道但已退役 ⇒ 显式退出码 1 并出声指名退役。"""
     bin_dir = fake_cgc_into(tmp_path)
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         mk(root)
         env = dict(os.environ, PATH=bin_dir + os.pathsep + os.environ.get("PATH", ""))
-        regex_out, p1 = run(root, "--backend", "regex", env=env)
-        assert p1.returncode == 0, p1.stderr
         graph_out, p2 = run(root, "--backend", "graph", env=env)
-        assert p2.returncode == 0, p2.stderr
-        assert graph_out["backend"] == "graph"
-        assert graph_out["items"] == regex_out["items"], (
-            "两通道 items 漂移（事实源分叉）:\n"
-            f"graph={json.dumps(graph_out['items'], ensure_ascii=False)}\n"
-            f"regex={json.dumps(regex_out['items'], ensure_ascii=False)}")
+        assert p2.returncode == 1, p2.stderr
+        assert "退役" in p2.stderr or "显式" in p2.stderr
 
 
 def test_graph_channel_prunes_dependency_dirs(tmp_path) -> None:
-    """枚举范围等价：后端 File 节点里含依赖 / 构建目录 ⇒ 必须剪掉，不得产出假路由。
-
-    为何要它（2026-10-15 补）：regex 通道走 `iter_files` ⇒ 天然剪 `IGNORE_DIRS`；
-    graph 通道拿的是后端 File 节点，而 `cgc index` 不带任何 exclude 旗标——后端若
-    不理 gitignore，`node_modules` / `dist` 里的 `.tsx` 会整批进枚举池。
-    """
-    bin_dir = fake_cgc_into(tmp_path)
+    """枚举范围等价：regex 剪掉 IGNORE_DIRS，已退役通道不引入假路由。"""
     polluted = {
         "frontend/node_modules/pkg/routes/index.tsx": "// 依赖里的假路由\n",
         "frontend/dist/routes/index.tsx": "// 构建产物\n",
@@ -140,19 +128,14 @@ def test_graph_channel_prunes_dependency_dirs(tmp_path) -> None:
             p = root / rel
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(body, encoding="utf-8")
-        env = dict(os.environ, PATH=bin_dir + os.pathsep + os.environ.get("PATH", ""),
-                   FAKE_CGC_FILES=json.dumps(sorted({**FILES, **polluted})))
-        graph_out, p2 = run(root, "--backend", "graph", env=env)
-        regex_out, p1 = run(root, "--backend", "regex", env=env)
-        assert p1.returncode == 0 and p2.returncode == 0, (p1.stderr, p2.stderr)
-        assert graph_out["items"] == regex_out["items"], (
-            "图谱通道枚举范围未剪（依赖目录进了枚举池）:\n"
-            f"graph={sorted(f for f in graph_out['source_files'])}")
+        regex_out, p1 = run(root, "--backend", "regex")
+        assert p1.returncode == 0, p1.stderr
         assert not any("node_modules" in f or "/dist/" in f
-                       for f in graph_out["source_files"]), graph_out["source_files"]
+                       for f in regex_out["source_files"]), regex_out["source_files"]
 
 
 def test_auto_resolves_graph_when_declared(tmp_path) -> None:
+    """声明已退役的 graph 时，自动出声降级为 regex。"""
     bin_dir = fake_cgc_into(tmp_path)
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -160,7 +143,8 @@ def test_auto_resolves_graph_when_declared(tmp_path) -> None:
         env = dict(os.environ, PATH=bin_dir + os.pathsep + os.environ.get("PATH", ""))
         out, p = run(root, env=env)
         assert p.returncode == 0, p.stderr
-        assert out["backend"] == "graph"
+        assert out["backend"] == "regex"
+        assert "WARN" in p.stderr and "退役" in p.stderr
 
 
 def test_missing_backend_falls_back_loudly(tmp_path) -> None:

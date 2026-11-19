@@ -177,26 +177,24 @@ def main() -> int:
     if not root.is_dir():
         die(f"--root 不是目录: {root}")
 
-    cfg = _graph.load_graph_config(root)
-    if cfg is None:
-        return not_ready("profile 未声明 graph 段（可选能力；声明见 shared/stack-profile.md §2）")
-    det = _graph.detect(root, cfg)
-    if det is None:
-        return not_ready("cgc 不可用（未安装或探测失败）——图谱消费者显式跳过，不静默")
+    # RFC-20261119-01 (D202)：外部 AST 图谱已退役。
+    # 优先检测本地是否存在轻量语义透镜（global/cognition.fras 或 current/*/cognition.fras 或 aoci.code.txt）
+    seeds, inputs, _touched = collect_seed_symbols(root, args, {})
+    if not _touched and not seeds:
+        die("输入为空：--symbols / --paths / --diff-base 至少给一种且命中目标文件")
 
-    _graph.ensure_index(root, cfg, version=det["version"])
-    seeds, inputs, _touched = collect_seed_symbols(root, args, cfg)
-    if not seeds:
-        die("输入为空：--symbols / --paths / --diff-base 至少给一种且命中符号"
-            "（paths/diff 文件里没有可索引符号时，用 --symbols 显式给）")
+    # 反向 1-hop 查询
+    aoci_candidates = _graph.reverse_1hop_callers(root, _touched)
 
-    layers = bfs_layers(root, seeds, args.depth, cfg)
+    # 若没有任何 FRAS/AOCI 语义透镜，显式返回 not_ready（保持三态契约，预测集回退至声明集）
+    has_fras = bool(list((root / ".trellis" / "spec" / "structure").glob("**/cognition.fras"))) or (root / "aoci.code.txt").is_file()
+    if not has_fras:
+        return not_ready("未维护语义透镜（cognition.fras）；影响面基准显式跳过，预测集取需求卡声明集（RFC-20261119-01 / D202）")
+
     payload = {
         "category": "impact",
-        # B191-1（2026-10-07）：种子改动文件入 payload —— 对账器（impact_reconcile）的
-        # predicted 集需要它；此前 touched 只活在 collect_seed_symbols 返回值里。
         "touched_files": sorted(_touched),
-        "backend": f"cgc@{det['version']}",
+        "backend": "scope_aware_fras",
         "head": git(root, "rev-parse", "HEAD").strip() if subprocess.run(
             ["git", "rev-parse", "--verify", "HEAD"], cwd=str(root),
             capture_output=True).returncode == 0 else "",
@@ -204,13 +202,13 @@ def main() -> int:
         "depth": args.depth,
         "seeds": seeds,
         "inputs": inputs,
+        "aoci_candidates": aoci_candidates,
         "layers": [
             {
-                "symbols": [{"name": c["name"], "path": c["path"]} for c in layer],
-                "files": sorted({c["path"] for c in layer if c["path"]}),
+                "symbols": [{"name": p, "path": p} for p in aoci_candidates],
+                "files": sorted(aoci_candidates),
             }
-            for layer in layers
-        ],
+        ] if aoci_candidates else [],
     }
     out_dir = Path(args.out).resolve() if args.out else root / ".trellis" / "tasks" / args.task
     render(out_dir, payload)
