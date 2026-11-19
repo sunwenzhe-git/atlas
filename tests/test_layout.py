@@ -111,7 +111,7 @@ def test_comments_and_quotes(tmp_path: Path) -> None:
         ("version: 1\nlayout:\n  assets_root: ../docs\n", "不得包含空段"),
         ("version: 1\nlayout:\n  assets_root: docs/./adr\n", "不得包含空段"),
         ("version: 1\nlayout:\n  assets_root: .atlas\n", "不得落在 .atlas"),
-        ("version: 1\nlayout:\n  assets_root: .trellis/adr\n", "不得落在 .trellis"),
+        ("version: 1\nlayout:\n  assets_root: .atlas/adr\n", "不得落在 .atlas"),
         ("version: 1\nlayout:\n  assets_root: docs\\adr\n", "POSIX"),
     ],
 )

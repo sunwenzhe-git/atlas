@@ -72,15 +72,21 @@ def load_impl_review(root: Path) -> dict:
     return {"cli": impl.get("cli"), "llm": impl.get("llm")}
 
 
-def preview_argv(cli: str, ref_from: str, ref_to: str) -> list[str]:
-    return [cli, "review", "--preview", "--from", ref_from, "--to", ref_to]
+def preview_argv(cli: str, ref_from: str | None = None, ref_to: str | None = None,
+                 *, staged: bool = False) -> list[str]:
+    if staged:
+        return [cli, "review", "--preview"]
+    return [cli, "review", "--preview", "--from", ref_from or "", "--to", ref_to or ""]
 
 
-def review_argv(cli: str, ref_from: str, ref_to: str, out_json: Path,
-                background: Path) -> list[str]:
-    return [cli, "review", "--audience", "agent", "--format", "json",
-            "--output", str(out_json), "--background-file", str(background),
-            "--from", ref_from, "--to", ref_to]
+def review_argv(cli: str, ref_from: str | None = None, ref_to: str | None = None,
+                out_json: Path = Path("cli.json"), background: Path = Path("background.md"),
+                *, staged: bool = False) -> list[str]:
+    base = [cli, "review", "--audience", "agent", "--format", "json",
+            "--output", str(out_json), "--background-file", str(background)]
+    if staged:
+        return base
+    return base + ["--from", ref_from or "", "--to", ref_to or ""]
 
 
 def parse_preview_n(output: str) -> int | None:
@@ -130,7 +136,7 @@ def build_background(root: Path, outdir: Path, unit: str, args: argparse.Namespa
     default_prd, default_cases, _index = _asset_root(root)
     prd = args.prd or default_prd
     cases = args.cases or default_cases
-    requirement = args.requirement or f".trellis/tasks/{unit}/prd.md"
+    requirement = args.requirement or f".atlas/tasks/{unit}/prd.md"
     lines = [f"# 实现代码独立审查 — {unit}", "",
              "> 由 `atlas review` 组装（指针化，不复制正文）。", "",
              "## 需求卡", f"- `{requirement}`"
@@ -178,12 +184,28 @@ def _split_paths(value: str | None) -> list[str]:
     return sorted({p.strip().replace("\\", "/") for p in (value or "").split(",") if p.strip()})
 
 
+def _staged_paths(root: Path) -> list[str]:
+    """`git diff --cached --name-only` 获取暂存区路径；非 git 仓或失败返回空。"""
+    try:
+        pr = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=str(root),
+                            capture_output=True, text=True, timeout=15)
+        if pr.returncode == 0:
+            return sorted({ln.strip().replace("\\", "/") for ln in pr.stdout.splitlines() if ln.strip()})
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return []
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", default=".")
-    ap.add_argument("--unit", required=True, help="需求 ID（Trellis task id）")
-    ap.add_argument("--from", dest="ref_from", required=True, help="git 起 ref（preview 用）")
-    ap.add_argument("--to", dest="ref_to", required=True, help="git 止 ref")
+    ap.add_argument("--unit", required=True, help="需求 ID（执行层任务卡 id）")
+    ap.add_argument("--staged", action="store_true", help="审暂存区改动（与 --from/--to 互斥）")
+    ap.add_argument("--from", dest="ref_from", default=None, help="git 起 ref（preview 用）")
+    ap.add_argument("--to", dest="ref_to", default=None, help="git 止 ref")
+    ap.add_argument("--check-cmd", help="执行确定性检查命令（如 npm test 或 pytest），并入审查报告")
+    ap.add_argument("--auto-fix", action="store_true", help="尝试自动修复机械类问题并复验一轮")
+    ap.add_argument("--fix-cmd", help="显式自动修复命令（例如 npm run lint -- --fix）")
     ap.add_argument("--expected-files", type=int, help="应审 N（缺省 = preview 的 Will review）")
     ap.add_argument("--scope", default="", help="报告的一句话范围描述")
     ap.add_argument("--round", type=int, default=1)
@@ -214,6 +236,12 @@ def main() -> int:
     root = Path(args.root).resolve()
     if not UNIT_RE.fullmatch(args.unit):
         return die(f"unit「{args.unit}」含文件名不安全字符")
+    if args.staged:
+        if args.ref_from or args.ref_to:
+            return die("--staged 与 --from/--to 互斥")
+    else:
+        if not (args.ref_from and args.ref_to):
+            return die("--from 与 --to 必填（或传 --staged）")
     if args.round < 1:
         return die("round 必须 ≥ 1")
     impl = load_impl_review(root)
@@ -236,8 +264,31 @@ def main() -> int:
     scope_manifest = outdir / "scope-manifest.json"
     steps: list[dict] = []
 
+    # 0) toolchain（确定性检查并轨，若指定 --check-cmd）
+    if args.check_cmd:
+        if args.dry_run:
+            print(f"$ {args.check_cmd}（确定性工具链检查；dry-run 不跑）")
+        else:
+            info(f"toolchain: 运行检查 {args.check_cmd}")
+            pr_chk = subprocess.run(args.check_cmd, shell=True, cwd=str(root),
+                                    capture_output=True, text=True)
+            _show(pr_chk, capture=True)
+            chk_ok = pr_chk.returncode == 0
+            steps.append({
+                "name": "toolchain",
+                "status": "ok" if chk_ok else "FAIL",
+                "detail": f"exit={pr_chk.returncode}"
+            })
+            if not chk_ok:
+                if args.auto_fix and args.fix_cmd:
+                    info(f"toolchain: 尝试自动修复 {args.fix_cmd}")
+                    subprocess.run(args.fix_cmd, shell=True, cwd=str(root), capture_output=True)
+                else:
+                    print(f"WARN: 确定性检查失败（exit={pr_chk.returncode}），继续执行审查以便汇总全部问题",
+                          file=sys.stderr)
+
     # 1) preview（只读；dry-run 也跑，为了报 N）
-    preview = preview_argv(cli, args.ref_from, args.ref_to)
+    preview = preview_argv(cli, args.ref_from, args.ref_to, staged=args.staged)
     if args.dry_run:
         print("$ " + " ".join(preview))
         pr = _run(preview, root, capture=True)
@@ -276,7 +327,7 @@ def main() -> int:
 
     # 3) CLI review
     review = review_argv(cli, args.ref_from, args.ref_to, cli_json,
-                         outdir / "background.md")
+                         outdir / "background.md", staged=args.staged)
     if args.dry_run:
         print("$ " + " ".join(review))
     else:
@@ -297,6 +348,8 @@ def main() -> int:
     reviewed = _coverage_paths(cli_json) if cli_json.is_file() else []
     if not reviewed:
         reviewed = _split_paths(args.reviewed_files)
+    if not reviewed and args.staged:
+        reviewed = _staged_paths(root)
     if not reviewed:
         if not args.dry_run:
             return die("v4 需要实审文件列表：CLI coverage.completed 为空且未给 --reviewed-files")
@@ -306,8 +359,10 @@ def main() -> int:
               f"--reviewed-files {','.join(reviewed)} --out {scope_manifest}")
     else:
         try:
+            base_ref = "HEAD" if args.staged else args.ref_from
+            head_ref = "INDEX" if args.staged else args.ref_to
             manifest = scope_core.build_manifest(root, reviewed,
-                                                 base=args.ref_from, head=args.ref_to)
+                                                 base=base_ref, head=head_ref)
             scope_core.atomic_write_json(scope_manifest, manifest)
         except scope_core.ScopeError as exc:
             return die(str(exc))

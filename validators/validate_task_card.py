@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """任务卡验收断言与 Confirmed 证据状态校验（RFC-20261111-03 §1.3 / §1.5 第 8 条）。
 
-只在成员仓跑：读 `.trellis/tasks/<ID>/prd.md`（含 `archive/<month>/<ID>/prd.md`），
+只在成员仓跑：读 `.atlas/tasks/<ID>/prd.md`（含 `archive/<month>/<ID>/prd.md`），
 解析专用行 `atlas-acceptance:`，与同目录 `solution.md` 指针的 `acs:` 集合比较；
 并判卡内 `Confirmed` / `确认口径` 表的证据状态。
 
@@ -253,15 +253,15 @@ def validate(root: Path, today: date | None = None) -> tuple[list[dict], list[di
     warnings: list[dict] = []
     schema = prd_schema(root)
     cards: list[tuple[Path, str]] = []
-    for path in sorted(root.glob(".trellis/tasks/*/prd.md")):
+    for path in sorted(root.glob(".atlas/tasks/*/prd.md")):
         cards.append((path, "active"))
-    for path in sorted(root.glob(".trellis/tasks/archive/*/*/prd.md")):
+    for path in sorted(root.glob(".atlas/tasks/archive/*/*/prd.md")):
         cards.append((path, "archived"))
     if not cards:
         # 成员侧不读父仓封条，无法区分「尚未建卡」与「有封条却缺卡」；
         # 后者由父仓 `validate_apply_record`（`card_absent`）判 FAIL，这里只 WARN。
         warnings.append({"code": "card_absent",
-                         "message": "无任务卡（.trellis/tasks/*/prd.md 与 archive 均缺失）"})
+                         "message": "无任务卡（.atlas/tasks/*/prd.md 与 archive 均缺失）"})
         return errors, warnings
     for path, status in cards:
         rel = str(path.relative_to(root))
@@ -320,8 +320,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
     root = Path(args.root).resolve()
-    if not (root / ".trellis").is_dir():
-        print("[N/A] 无 .trellis（成员仓未接入任务卡）")
+    if not (root / ".atlas" / "tasks").is_dir():
+        print("[N/A] 无 .atlas/tasks（成员仓未接入任务卡）")
         return 0
     errors, warnings = validate(root)
     for item in errors:

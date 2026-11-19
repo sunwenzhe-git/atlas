@@ -78,7 +78,7 @@ def event_path_tokens(root: Path) -> tuple[tuple[str, tuple[str, ...]], ...]:
                           f"{lay.print_value('e2e_reviews')}/")),
         ("影响面报告", ("impact.json",)),
         ("ADR", (f"{lay.print_value('adr')}/",)),
-        ("结构环", (".trellis/spec/structure/",)),
+        ("结构环", (".atlas/spec/structure/",)),
         ("CI", (".github/",)),
         ("依赖", ("package.json", "bun.lock", "pnpm-lock.yaml", "package-lock.json", "go.mod")),
         ("契约", ("shared/", "rings/", "apply/", "atlas.config.yaml")),

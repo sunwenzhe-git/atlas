@@ -32,7 +32,7 @@ MOD = _load()
 
 
 def _task(root: Path, tid: str = "T1", status: str = "planning") -> Path:
-    d = root / ".trellis" / "tasks" / tid
+    d = root / ".atlas" / "tasks" / tid
     d.mkdir(parents=True, exist_ok=True)
     (d / "task.json").write_text(
         json.dumps({"id": tid, "title": "夹具", "status": status}, ensure_ascii=False),
@@ -253,7 +253,7 @@ def test_no_question_section_skips(tmp_path) -> None:
 
 
 def test_broken_task_record_skips_loudly_and_other_task_still_checked(tmp_path) -> None:
-    broken = tmp_path / ".trellis" / "tasks" / "BAD"
+    broken = tmp_path / ".atlas" / "tasks" / "BAD"
     broken.mkdir(parents=True)
     (broken / "task.json").write_text("{not json", encoding="utf-8")
     (broken / "atlas-apply.md").write_text(APPLY_YES, encoding="utf-8")

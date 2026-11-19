@@ -16,8 +16,8 @@ product: <产品名>
 origin: greenfield   # greenfield | adopt
 
 # 实现。role 决定结构事实的去向：
-#   landing → .trellis/spec/structure/current/  （落地实现）
-#   legacy  → .trellis/spec/structure/legacy/   （事实来源，重构/存量项目才有）
+#   landing → .atlas/spec/structure/current/  （落地实现）
+#   legacy  → .atlas/spec/structure/legacy/   （事实来源，重构/存量项目才有）
 apps:
   - name: <app 标识>
     path: <相对项目根路径>

@@ -52,6 +52,24 @@ GATE_ROW = re.compile(r"^\|\s*\d+\s*\|", re.M)
 GATE_HEADING = re.compile(r"^##[^\n]*待决策登记[^\n]*$", re.M)
 GATE_DECIDED = re.compile(r"已决策")
 NEXT_H2 = re.compile(r"^##\s", re.M)
+ADOPT_DRAFT_RE = re.compile(r"source\s*:\s*adopt-draft\b", re.I)
+ADOPT_CONFIRMED_FALSE_RE = re.compile(r"confirmed\s*:\s*false\b", re.I)
+ADOPT_CONFIRMED_TRUE_RE = re.compile(r"confirmed\s*:\s*true\b", re.I)
+
+
+def adopt_draft_findings(text: str, rel: str) -> list[str]:
+    """静态 AC 草稿未确认就进 PRD ⇒ FAIL（RFC-20261119-03 Phase 3b）。
+
+    机器可判标记：`source: adopt-draft` + `confirmed: true`。缺 `confirmed: true`
+    或显式 `confirmed: false` 都判红；不解析自然语言 AC 表，避免误伤正常 PRD。
+    """
+    if not ADOPT_DRAFT_RE.search(text):
+        return []
+    if ADOPT_CONFIRMED_FALSE_RE.search(text) or not ADOPT_CONFIRMED_TRUE_RE.search(text):
+        return [f"{rel}: adopt-draft 未确认（需 confirmed: true 且由人复核）"]
+    return []
+
+
 FN_RE = re.compile(r"FN-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+")
 R_RE = re.compile(r"\b[A-Z][A-Z0-9]+(?:-[A-Z0-9]+)*-R-\d+")
 # AC 文法：前缀可含连字符段（`AC-V2-DP-*`），序号 2–3 位（`AC-SYNC-006`）。
@@ -936,6 +954,20 @@ def validate(root: Path) -> Result:
                     f"{d}(frontmatter={sorted(dep.get(d, set()))} ≠ 实线={sorted(mer_dep.get(d, set()))})"
                     for d in (real or mism)[:4]))
         res.add("参数4 域间依赖", "PASS" if not issues else "FAIL", "；".join(issues))
+
+    # ---- Adopt AC 确认（RFC-20261119-03 Phase 3b）：静态草稿不得自称已确认
+    if not domains:
+        res.add("Adopt AC 确认", "NA", "无域级 PRD")
+    else:
+        adopt_bad: list[str] = []
+        for d in domains:
+            try:
+                adopt_bad.extend(adopt_draft_findings(
+                    d.read_text(encoding="utf-8"), d.name))
+            except (OSError, UnicodeDecodeError):
+                continue
+        res.add("Adopt AC 确认", "FAIL" if adopt_bad else "PASS",
+                "；".join(adopt_bad[:6]) if adopt_bad else "无未确认的 adopt 草稿")
 
     # ---- AC 号唯一（域级 PRD 内 AC 号跨文件 / 同文件不得重复；2026-10-14 归位自 validate_ledger）
     ac_bad = ac_id_collisions(domains)

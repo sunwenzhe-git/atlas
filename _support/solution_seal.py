@@ -873,10 +873,10 @@ def _resolve_card_file(member_dir: Path, card_path: str) -> Path | None:
     if direct.is_file():
         return direct
     parts = Path(card_path).parts
-    if len(parts) >= 4 and parts[0] == ".trellis" and parts[1] == "tasks":
+    if len(parts) >= 4 and parts[0] == ".atlas" and parts[1] == "tasks":
         task_id, tail = parts[2], Path(*parts[3:]).as_posix()
         hits = sorted(member_dir.glob(
-            f".trellis/tasks/archive/*/{task_id}/{tail}"))
+            f".atlas/tasks/archive/*/{task_id}/{tail}"))
         if hits:
             return hits[-1]
     return None

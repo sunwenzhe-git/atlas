@@ -232,7 +232,7 @@
   每次全量重建（不硬崩，也不拿无法验证新鲜度的索引装新鲜）。
 - **落点 = 项目根 `.adapter-out/`**，与适配器产物、漂移标记**同址**（2026-10-15 统一，issue #8）。
   该目录是 **atlas 全部中间产物的单一位点**；设计档案 `docs/design/structure-ring.md` 的目录树
-  原本就是这么写的，实现一度漂成两处（本层在项目根、结构环产物在 `.trellis/spec/structure/` 下）
+  原本就是这么写的，实现一度漂成两处（本层在项目根、结构环产物在 `.atlas/spec/structure/` 下）
   ⇒ 同名两处，现场出现「`git status` 里有 `.adapter-out/`，而「结构漂移」门说『无 .adapter-out
   产物目录』」的自相矛盾——排查者会先怀疑门坏，而不是去比对基准。统一后该矛盾**构造性消失**，
   且漂移门的 SKIP 文案带实际路径。
@@ -255,6 +255,6 @@
   调用图内，**无边 ≠ 无人用**。故 impact 报告是 **advisory 基准**（apply §4 的结构
   证据之一），收口对账以实际 diff 为准；对账门属批 2，本批不判罚。
 - **产物**：`impact_report.py --root . --task <需求ID>` 落
-  `.trellis/tasks/<ID>/impact.json + impact.md`（`--out` 可指定任意目录）；三态同
+  `.atlas/tasks/<ID>/impact.json + impact.md`（`--out` 可指定任意目录）；三态同
   `gen_e2e_scripts` 先例：前置未声明 / 后端不可用 ⇒ exit 3 `not_ready`；输入为空 ⇒
   exit 1；成功 ⇒ 字节可复现的双文件。

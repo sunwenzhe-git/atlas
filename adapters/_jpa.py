@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -119,14 +120,15 @@ def _annotations_before(text: str, pos: int) -> str:
     prefix = text[max(0, pos - 1200):pos]
     cut = max(prefix.rfind("}"), prefix.rfind(";"))
     tail = prefix[cut + 1:] if cut >= 0 else prefix
-    return "\n".join(ln.strip() for ln in tail.splitlines() if ln.strip().startswith("@"))
+    # 兼容 `@Entity public class C {` 同行书写；注释已由调用方剥离。
+    return "\n".join(re.findall(r"@[A-Za-z_]\w*(?:\s*\([^)]*\))?", tail, re.S))
 
 
-def _fields(body: str) -> list[dict[str, Any]]:
+def _fields(body: str, base_line: int = 1) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     pending: list[str] = []
     skip_depth = 0
-    for line in body.splitlines():
+    for offset, line in enumerate(body.splitlines(), start=base_line):
         s = line.strip()
         if not s:
             continue
@@ -177,6 +179,7 @@ def _fields(body: str) -> list[dict[str, Any]]:
             "relation": relation,
             "enum": typ if _has(ann, "Enumerated") else None,
             "embedded": _has(ann, "Embedded") or _has(ann, "EmbeddedId"),
+            "line": offset,
         })
     return rows
 
@@ -206,7 +209,8 @@ def parse_classes(text: str, rel: str) -> list[dict[str, Any]]:
             "extends": m.group(2),
             "kind": kind,
             "table": _ann_value(ann, "Table") or _ann_value(ann, "TableName") or m.group(1),
-            "fields": _fields(clean[open_pos + 1:close]),
+            "fields": _fields(clean[open_pos + 1:close],
+                              clean.count("\n", 0, open_pos) + 1),
             "rel": rel,
         })
     return defs
@@ -237,8 +241,14 @@ def parse_project(files: list[Path], root: Path) -> tuple[list[dict], list[dict]
         defs.extend(parse_classes(text, rel))
     if not defs:
         return [], [], []
-    by_name = {d["name"]: d for d in defs}
-    embeddables = {d["name"]: d for d in defs if d["kind"] == "embeddable"}
+    name_counts = Counter(d["name"] for d in defs)
+    name_rels: dict[str, list[str]] = {}
+    for d in defs:
+        name_rels.setdefault(d["name"], []).append(d["rel"])
+    # 同名类不静默取最后一个：只有唯一类名才参与父类/内嵌解析。
+    by_name = {d["name"]: d for d in defs if name_counts[d["name"]] == 1}
+    embeddables = {d["name"]: d for d in defs
+                   if d["kind"] == "embeddable" and name_counts[d["name"]] == 1}
     enums_map = _enum_map(texts)
 
     def resolve(defn: dict[str, Any], stack: set[str], prefix: str = "",
@@ -278,11 +288,20 @@ def parse_project(files: list[Path], root: Path) -> tuple[list[dict], list[dict]
         if d["kind"] not in ("entity", "mybatis"):
             continue
         table = d["table"]
+        ambiguous = name_counts[d["name"]] > 1 or (
+            bool(d.get("extends")) and name_counts.get(d["extends"], 0) > 1
+        )
         for row in resolve(d, set(), "", d["kind"] == "mybatis"):
             row = dict(row)
             row.pop("embedded", None)
             row["table"] = table
             row["source_file"] = d["rel"]
+            if ambiguous:
+                row["ambiguous"] = True
+                row["ambiguous_classes"] = sorted(
+                    set(name_rels.get(d["name"], []))
+                    | set(name_rels.get(d.get("extends") or "", []))
+                )
             if row.get("enum") and row["type"] in enums_map:
                 enums.append({
                     "table": table,

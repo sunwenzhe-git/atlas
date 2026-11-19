@@ -318,14 +318,14 @@ def build_parser(version: str | None = None) -> argparse.ArgumentParser:
     p_commit.add_argument("--member", required=True)
     p_commit.add_argument("--paths", nargs="*", default=[])
 
-    p_task = sub.add_parser("task", help="父级 requirement → 成员 Trellis 任务卡（Phase 1 增量）")
+    p_task = sub.add_parser("task", help="父级 requirement → 成员执行层任务卡（Phase 1 增量）")
     task_sub = p_task.add_subparsers(dest="task_cmd", required=True)
     p_tc = task_sub.add_parser("create", help="创建成员任务卡（默认 dry-run）")
     _add_common(p_tc)
     p_tc.add_argument("--requirement", required=True, help="requirements[].id")
     p_tc.add_argument("--member", action="append", default=[], help="只处理指定成员，可重复")
     p_tc.add_argument("--dry-run", action="store_true", help="只打印计划（默认行为）")
-    p_tc.add_argument("--apply", action="store_true", help="真正写入成员 .trellis/tasks")
+    p_tc.add_argument("--apply", action="store_true", help="真正写入成员 .atlas/tasks")
     p_tc.add_argument("--resume", action="store_true", help="已存在且指针一致则跳过/补 context")
     p_tc.add_argument("--update", action="store_true", help="只更新 solution.md 指针")
     p_ts = task_sub.add_parser("status", help="只读查看 requirement → 成员任务")
@@ -616,7 +616,7 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     for item in result["done"]:
                         print(f"[{item['action']}] {item['member']}: {item['task']}")
-                    print("任务已创建但未 start；请在成员仓用 /trellis:start 领取。")
+                    print("任务已创建但未 start；请在成员仓用 atlas workflow dispatch 领取。")
                 return 0
             if args.task_cmd == "acceptance":
                 result = _run_task_acceptance_backfill(

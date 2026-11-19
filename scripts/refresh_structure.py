@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""atlas 结构事实刷新 —— 从 .trellis/spec/structure/_meta.json 重生成「指针层」（tour.md + domains/*.md）。
+"""atlas 结构事实刷新 —— 从 .atlas/spec/structure/_meta.json 重生成「指针层」（tour.md + domains/*.md）。
 
 - 只重生成 `atlas:facts` 标记内的内容；标记外的语义内容原样保留。
 - 事实表（global/*.md、*/<domain>/*.md 的表）由适配器刷新，属下一步（未接适配器时由 AI 维持）。
@@ -19,7 +19,7 @@
   全满足才把 `_meta.json` 的 `baseline.commit` 推进到当前 HEAD——
   ① 推进判定读**本轮刚算出的漂移结果**（drift 标记写盘之后），不读上轮遗留标记；
   ② 无键级漂移；③ 至少一份适配器产物且事实结果非空（空转态不背书）；
-  ④ 产品侧工作树干净（`.atlas/` `.trellis/` `product/` 之外无脏路径——给未审定
+  ④ 产品侧工作树干净（`.atlas/` `.atlas/` `product/` 之外无脏路径——给未审定
   代码背书违背诚实 ratchet）。任一不满足 ⇒ SKIP 并说明理由；冻结时可用
   `--advance-baseline` 显式越过（人工终审后通道；默认显式 `--apply` **永不**推进，
   零变化承诺保持）。SHA 比较归一化（存量存 7 位短 SHA，前缀匹配即同值）。
@@ -49,17 +49,17 @@ DEFAULT_MAX_SPEC = 9400
 # 基线自进的本地写盘豁免前缀（写盘面与装配/元数据自身不算"产品侧脏"）
 # 「产品侧干净」判据的豁免前缀（F26 基线自进前置④）：这些是 atlas 自己的产物 / 中间产物，
 # 不算「未审定的产品侧改动」。
-# `.adapter-out/` 必须在内（2026-10-15，issue #8 移动落点后暴露）：它此前位于 `.trellis/`
-# 之下、被 `.trellis/` 顺带豁免；移到项目根后若仍不豁免，atlas 自己写的中间目录就会被读成
+# `.adapter-out/` 必须在内（2026-10-15，issue #8 移动落点后暴露）：它此前位于 `.atlas/`
+# 之下、被 `.atlas/` 顺带豁免；移到项目根后若仍不豁免，atlas 自己写的中间目录就会被读成
 # 「产品侧有未提交改动」⇒ **基线自进永久冻结**（比原缺陷更难察觉：门不报错，只是再也不前进）。
 def clean_exempt_prefixes(root: Path) -> tuple[str, ...]:
     """「产品侧干净」判据的豁免前缀（F26 基线自进前置④）。
 
-    随配置资产根派生：``.atlas/`` / ``.trellis/`` / ``.adapter-out/`` + 所有资产目录；
+    随配置资产根派生：``.atlas/`` / ``.atlas/`` / ``.adapter-out/`` + 所有资产目录；
     默认布局下与旧常量（含 ``product/``）逐字等价。
     """
     lay = load_layout(root)
-    prefixes = {".atlas/", ".trellis/", ".adapter-out/"}
+    prefixes = {".atlas/", ".atlas/", ".adapter-out/"}
     for p in (lay.assets_root, lay.adr_dir, lay.prd_dir, lay.e2e_dir,
               lay.reviews_dir, lay.reports_dir):
         prefixes.add(p.relative_to(root).as_posix() + "/")
@@ -68,7 +68,7 @@ def clean_exempt_prefixes(root: Path) -> tuple[str, ...]:
 ADAPTER_CATEGORIES = ("routes", "api", "models", "tests")
 # `.adapter-out/` 的**单一位点 = 项目根**（2026-10-15 统一，issue #8）。
 # 适配器产物 / 漂移标记 / 图谱新鲜度标记同址——设计档案 `docs/design/structure-ring.md`
-# 的目录树从一开始写的就是项目根，实现却漂到了 `.trellis/spec/structure/` 下 ⇒ 同名两处，
+# 的目录树从一开始写的就是项目根，实现却漂到了 `.atlas/spec/structure/` 下 ⇒ 同名两处，
 # 而图谱层（`adapters/_graph.py`）写在项目根：现场于是出现「`git status` 里有
 # `.adapter-out/`，漂移门却说『无 .adapter-out 产物目录』」的自相矛盾（排查者会先怀疑门坏）。
 # 统一后该矛盾**构造性消失**；`atlas_check`（漂移门）与 `_graph.py`（标记）都读这一处。
@@ -91,7 +91,7 @@ def die(m: str) -> None:
 
 
 def load_meta(root: Path) -> dict | None:
-    p = root / ".trellis" / "spec" / "structure" / "_meta.json"
+    p = root / ".atlas" / "spec" / "structure" / "_meta.json"
     if not p.is_file():
         return None
     try:
@@ -107,7 +107,7 @@ def load_meta(root: Path) -> dict | None:
 
 
 def read_cfg_int(root: Path, key: str, default: int) -> int:
-    cfg = root / ".trellis" / "config.yaml"
+    cfg = root / ".atlas" / "config.yaml"
     if cfg.is_file():
         try:
             m = re.search(rf"^\s*{key}:\s*(\d+)", cfg.read_text(encoding="utf-8"), re.M)
@@ -163,16 +163,16 @@ def render_tour(root: Path, meta: dict) -> tuple[str, str]:
            test_line.rstrip("\n"), "",
            "## 全局事实（跨域）", "",
            "| 事实 | 出处 |", "|---|---|",
-           "| 目录与模块地图 | `.trellis/spec/structure/global/directory-map.md` |",
-           "| 全站路由总表 | `.trellis/spec/structure/global/routes.md` |", "",
+           "| 目录与模块地图 | `.atlas/spec/structure/global/directory-map.md` |",
+           "| 全站路由总表 | `.atlas/spec/structure/global/routes.md` |", "",
            "## 域速查表", "",
            "| 域 | 中文名 | 涉及 app | 状态 |", "|---|---|---|---|"]
     for d in domains:
         out.append(f"| `{d['id']}` | {d.get('name', '')} | {'、'.join(d.get('apps') or []) or '—'} | {d.get('status', '')} |")
-    out += ["", "> 碰某域代码时，对应 `.trellis/spec/structure/domains/<domain>.md` 会自动注入，含该域结构文档链接。", "",
+    out += ["", "> 碰某域代码时，对应 `.atlas/spec/structure/domains/<domain>.md` 会自动注入，含该域结构文档链接。", "",
             "## 维护约定", "",
             "- **事实区**：标记内由 `refresh_structure.py`（`after_finish` hook）刷新。",
-            "- **语义区**：标记外内容由 AI / `trellis-update-spec` 维护。",
+            "- **语义区**：标记外内容由结构环语义维护（AI / 人工）。",
             "- 技术栈 / 启动、测试 / 运行见 `_meta.json` 的 `truth_carriers`（缺省为项目根 `README.md`）。"]
     return fm, "".join(l + "\n" for l in out)
 
@@ -188,22 +188,22 @@ def render_domain(root: Path, d: dict) -> tuple[Path, str, str]:
     out += ["", "## 改动本域前按需 Read", ""]
     linked = False
     for role in ("current", "legacy"):
-        base = root / ".trellis" / "spec" / "structure" / role / did
+        base = root / ".atlas" / "spec" / "structure" / role / did
         files = sorted(base.glob("*.md")) if base.is_dir() else []
         if not files:
             continue
         linked = True
         out += [f"**{role}**", "", "| 文件 | 路径 |", "|---|---|"]
         for f in files:
-            out.append(f"| {f.stem} | `.trellis/spec/structure/{role}/{did}/{f.name}` |")
+            out.append(f"| {f.stem} | `.atlas/spec/structure/{role}/{did}/{f.name}` |")
         out.append("")
     if not linked:
         out.append("（本域暂无结构文档）")
     out += ["", "## 使用口径", "",
             "- 结构事实给**现状与契约**；方法签名 / 字段名等细节以**源码为最终真值**。",
             "- 改公共契约（API / 表结构）前，先看跨域影响。",
-            "- 任务级深挖：把上表相关的 1–3 份用 Trellis `add-context` 注入 `implement.jsonl`。"]
-    dst = root / ".trellis" / "spec" / "structure" / "domains" / f"{did}.md"
+            "- 任务级深挖：把上表相关的 1–3 份由 `atlas workflow dispatch` 注入派工单。"]
+    dst = root / ".atlas" / "spec" / "structure" / "domains" / f"{did}.md"
     return dst, fm, "".join(l + "\n" for l in out)
 
 
@@ -661,7 +661,7 @@ def maybe_advance_baseline(root: Path, meta: dict, fact_results: list[dict],
     ok3, abbrev = _git(root, "rev-parse", "--abbrev-ref", "HEAD")
     branch = abbrev or branch
     meta["baseline"] = {"branch": branch, "commit": cur}
-    meta_path = root / ".trellis" / "spec" / "structure" / "_meta.json"
+    meta_path = root / ".atlas" / "spec" / "structure" / "_meta.json"
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     log(f"  advanced baseline → {cur[:12]}（ {_meta_note()}）")
 
@@ -688,7 +688,7 @@ def main() -> int:
         return 2
     meta = load_meta(root)
     if meta is None:
-        log("SKIP: 缺少 .trellis/spec/structure/_meta.json（结构环尚未首建，跳过结构事实刷新）")
+        log("SKIP: 缺少 .atlas/spec/structure/_meta.json（结构环尚未首建，跳过结构事实刷新）")
         return 0
     max_total = args.max_chars or read_cfg_int(root, "max_total_chars", DEFAULT_MAX_TOTAL)
     apply = args.apply or args.chain
@@ -720,7 +720,7 @@ def main() -> int:
         log("  facts: 无 .adapter-out 产物，跳过事实表（由 agent / 适配器维持）")
 
     outputs: list[tuple[Path, str]] = []
-    tour_dst = root / ".trellis" / "spec" / "structure" / "tour.md"
+    tour_dst = root / ".atlas" / "spec" / "structure" / "tour.md"
     tour_fm, tour_body = render_tour(root, meta)
     tour = merge_preserve(tour_dst, tour_fm, tour_body)
     outputs.append((tour_dst, tour))
@@ -767,7 +767,7 @@ def refresh_facts(root: Path, meta: dict, apply: bool) -> list[dict]:
 
     返回 results；调用方由结果派生 drifts（本轮最新判定，绝不读上轮遗留标记——F26 前置①）。
     """
-    base = root / ".trellis" / "spec" / "structure"
+    base = root / ".atlas" / "spec" / "structure"
     out_dir = adapter_out_dir(root)
     if not out_dir.is_dir():
         return []

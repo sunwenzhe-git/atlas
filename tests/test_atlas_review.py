@@ -165,7 +165,7 @@ def test_background_is_pointerized(tmp_path: Path) -> None:
     p = run(root, *BASE)
     assert p.returncode == 0, p.stdout + p.stderr
     text = (report_dir(root) / "background.md").read_text(encoding="utf-8")
-    assert ".trellis/tasks/U/prd.md" in text
+    assert ".atlas/tasks/U/prd.md" in text
     assert "§10.4" in text and "MANIFEST.json" in text
     assert "Given" not in text  # 不复制 AC 正文
 
@@ -212,3 +212,38 @@ def test_background_respects_overrides(tmp_path: Path) -> None:
     assert p.returncode == 0, p.stdout + p.stderr
     text = (report_dir(root) / "background.md").read_text(encoding="utf-8")
     assert "custom/req.md" in text and "custom/prd" in text and "custom/cases" in text
+
+
+def test_staged_mode_runs_successfully(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    p = run(root, "--unit", "U", "--staged", "--expected-files", "1", "--scope", "staged-demo")
+    assert p.returncode == 0, p.stdout + p.stderr
+    d = report_dir(root)
+    review = json.loads((d / "review.json").read_text(encoding="utf-8"))
+    assert review["schema_version"] == 4
+    manifest = json.loads((d / "scope-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["base"] == "HEAD" and manifest["head"] == "INDEX"
+    assert "atlas review @" in p.stdout and "ok" in p.stdout
+
+
+def test_staged_mutex_with_from_to(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    p = run(root, "--unit", "U", "--staged", "--from", "main", "--to", "HEAD")
+    assert p.returncode == 2
+    assert "--staged 与 --from/--to 互斥" in p.stderr
+
+
+def test_missing_from_to_without_staged(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    p = run(root, "--unit", "U")
+    assert p.returncode == 2
+    assert "--from 与 --to 必填" in p.stderr
+
+
+def test_toolchain_check_cmd_recorded(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    p = run(root, "--unit", "U", "--staged", "--expected-files", "1",
+            "--check-cmd", "echo toolchain_ok")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "toolchain: 运行检查 echo toolchain_ok" in p.stdout or "toolchain_ok" in p.stdout
+

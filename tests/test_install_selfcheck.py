@@ -71,7 +71,8 @@ HINT_ENTRIES = ("atlas-apply adopt", "atlas-apply all")
 # 包内变量前缀 → 包内相对目录（$ATLAS_DEST = <目标>/.atlas/，逐字镜像包内布局）
 # 非环 skill 白名单（`3509 §95`）：它们不是「环」，不参与环退役对称判据。
 # 2026-11-14：+onegate（RFC-20261114-07 落刀批，协作方法 skill 非资产环）
-NON_RING_SKILLS = ("apply", "design-review", "grill", "release", "onegate")
+# 2026-11-19：+ablate（RFC-20261119-03 Phase 1，按需消融诊断非资产环）
+NON_RING_SKILLS = ("apply", "design-review", "grill", "release", "onegate", "ablate")
 
 
 def _read(path: Path) -> str:
@@ -184,7 +185,10 @@ def check_skill_refs() -> dict:
     if not refs:
         return {"check": "skill 引用可达", "ok": False, "skip": False,
                 "detail": "未找到任何 skill 瘦桩（skills/* 与平台目录均无）——判据失效，fail-closed"}
-    bad = [f'{r["skill"]} → .atlas/{r["ref"]}' for r in refs if not (PKG_ROOT / r["ref"]).exists()]
+    project_state = ("spec/", "tasks/", "runs/", "config.yaml", "VERSION")
+    bad = [f'{r["skill"]} → .atlas/{r["ref"]}' for r in refs
+           if not (PKG_ROOT / r["ref"]).exists()
+           and not r["ref"].startswith(project_state)]
     return {"check": "skill 引用可达", "ok": not bad, "skip": False,
             "detail": ("；".join(bad) + "（重跑 install.sh 可修）" if bad
                        else f"{len(refs)} 条 .atlas/ 引用全部存在")}
@@ -345,8 +349,7 @@ def test_update_guard_refuses_dirty_touchpoints_and_force_overrides() -> None:
         root = Path(td) / "proj"
         (root / ".atlas" / "scripts").mkdir(parents=True)
         (root / ".atlas" / "VERSION").write_text("stamped-by-fixture\n", encoding="utf-8")
-        (root / ".trellis").mkdir()
-        (root / ".trellis" / "workflow.md").write_text("# w\n", encoding="utf-8")
+        (root / ".atlas").mkdir(parents=True, exist_ok=True)
         (root / "AGENTS.md").write_text("# agents\n", encoding="utf-8")
         sh("git", "-C", str(root), "init", "-q")
         sh("git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t", "add", "-A")
@@ -356,7 +359,7 @@ def test_update_guard_refuses_dirty_touchpoints_and_force_overrides() -> None:
         (root / ".atlas" / "VERSION").write_text("dirty local edit\n", encoding="utf-8")
         r = sh("bash", str(PKG_ROOT / "install.sh"),
                "--update", "--target", str(root),
-               "--no-skill", "--no-patch", "--no-wiring")
+               "--no-skill", "--no-wiring")
         assert r[0] == 1, r[1]
         assert "装配触点存在未提交改动" in r[1], r[1]
         # 位置钉：守卫在整包拷贝之前 ⇒ 未提交的 VERSION 未被 rm -rf 卷走
@@ -364,7 +367,7 @@ def test_update_guard_refuses_dirty_touchpoints_and_force_overrides() -> None:
         # --force 放行：整包覆盖（源包拷入），守卫通知可见
         r2 = sh("bash", str(PKG_ROOT / "install.sh"),
                 "--update", "--target", str(root),
-                "--no-skill", "--no-patch", "--no-wiring", "--force")
+                "--no-skill", "--no-wiring", "--force")
         assert r2[0] == 0, r2[1]
         assert "感知到装配触点未提交改动" in r2[1], r2[1]
         stamped = (root / ".atlas" / "VERSION").read_text(encoding="utf-8")
@@ -401,7 +404,6 @@ def test_f54_dry_run_writes_nothing_and_leaves_no_residue_on_fresh_target() -> N
         # ① 存量装配态干跑：VERSION 逐字节不变（旧路径 ⇒ 被真写为源包摘要 ⇒ 红）
         root = Path(td) / "proj"
         (root / ".atlas" / "scripts").mkdir(parents=True)
-        (root / ".trellis").mkdir()
         (root / ".atlas" / "VERSION").write_text(
             "f54-fixture-stamp\n2026-10-16T00:00:00+08:00\nnowhere\n", encoding="utf-8")
         # RFC-20261023-02 ②（B2）：基线 manifest 也是装配态——干跑同样不得动它。
@@ -411,7 +413,7 @@ def test_f54_dry_run_writes_nothing_and_leaves_no_residue_on_fresh_target() -> N
         before_m = (root / ".atlas" / "MANIFEST.json").read_bytes()
         r = sh("bash", str(PKG_ROOT / "install.sh"),
                "--update", "--target", str(root),
-               "--no-skill", "--no-patch", "--no-wiring", "--dry-run")
+               "--no-skill", "--no-wiring", "--dry-run")
         assert r[0] == 0, r[1]
         assert "[dry-run] 装配版本戳" in r[1], r[1]
         assert (root / ".atlas" / "VERSION").read_bytes() == before, "干跑真写了版本戳（恒等铁律破例）"
@@ -420,7 +422,6 @@ def test_f54_dry_run_writes_nothing_and_leaves_no_residue_on_fresh_target() -> N
 
         # ② 全新 target 干跑：不残留 <target>/.atlas/（旧路径 stamp_file mkdir 副作用 ⇒ 红）
         fresh = Path(td) / "fresh"
-        (fresh / ".trellis").mkdir(parents=True)   # 免 .trellis 缺席走 --force 预拦链路
         r2 = sh("bash", str(PKG_ROOT / "install.sh"),
                 "--force", "--dry-run", "--target", str(fresh))
         assert r2[0] == 0, r2[1]
@@ -465,18 +466,16 @@ def test_f55_update_untracked_touchpoint_warns_and_proceeds_tracked_dirty_still_
         root = Path(td) / "proj"
         (root / ".atlas" / "scripts").mkdir(parents=True)
         (root / ".atlas" / "VERSION").write_text("f55-fixture-stamp\nwhen\nnowhere\n", encoding="utf-8")
-        (root / ".trellis").mkdir()
-        (root / ".trellis" / "workflow.md").write_text("# w\n", encoding="utf-8")
         (root / "AGENTS.md").write_text("# agents\n", encoding="utf-8")
         g("git", "init", "-q", cwd=root)
         # 只提交指针文件，**有意不 add .atlas/** —— 拟 issue #22 现场形态（版面产物不入库）
-        g("git", "add", "AGENTS.md", ".trellis/workflow.md", cwd=root)
+        g("git", "add", "AGENTS.md", cwd=root)
         g("git", "commit", "-qm", "init", cwd=root)
 
         # 前半（变异钉 M78）：未跟踪 ⇒ WARN 放行，不再恒拒
         r = sh("bash", str(PKG_ROOT / "install.sh"),
                "--update", "--target", str(root),
-               "--no-skill", "--no-patch", "--no-wiring")
+               "--no-skill", "--no-wiring")
         assert r[0] == 0, r[1]
         assert "未跟踪项" in r[1], r[1]
         assert "装配触点存在未提交改动" not in r[1], r[1]
@@ -488,12 +487,12 @@ def test_f55_update_untracked_touchpoint_warns_and_proceeds_tracked_dirty_still_
         (root / "AGENTS.md").write_text("# agents\n# dirty local edit\n", encoding="utf-8")
         r2 = sh("bash", str(PKG_ROOT / "install.sh"),
                 "--update", "--target", str(root),
-                "--no-skill", "--no-patch", "--no-wiring")
+                "--no-skill", "--no-wiring")
         assert r2[0] == 1, r2[1]
         assert "装配触点存在未提交改动" in r2[1], r2[1]
         r3 = sh("bash", str(PKG_ROOT / "install.sh"),
                 "--update", "--target", str(root),
-                "--no-skill", "--no-patch", "--no-wiring", "--force")
+                "--no-skill", "--no-wiring", "--force")
         assert r3[0] == 0, r3[1]
         assert "感知到装配触点未提交改动" in r3[1], r3[1]
         assert "另有未跟踪项" in r3[1], r3[1]   # 两桶可比可见，拒通知不吞未跟踪面
@@ -502,7 +501,7 @@ def test_f55_update_untracked_touchpoint_warns_and_proceeds_tracked_dirty_still_
         (root / "AGENTS.md").write_text("# agents\n", encoding="utf-8")
         r4 = sh("bash", str(PKG_ROOT / "install.sh"),
                 "--update", "--target", str(root),
-                "--no-skill", "--no-patch", "--no-wiring")
+                "--no-skill", "--no-wiring")
         assert r4[0] == 0, r4[1]
         assert "当前源包" in r4[1], r4[1]
 
@@ -545,9 +544,8 @@ def test_layout_config_first_install_docs_and_update_readonly() -> None:
         return r.returncode, r.stdout.decode("utf-8", errors="replace") + r.stderr.decode("utf-8", errors="replace")
 
     def first(target: Path, *extra: str):
-        (target / ".trellis").mkdir(parents=True)
         return run("bash", str(INSTALL), "--force", "--target", str(target),
-                   "--no-skill", "--no-patch", "--no-wiring", *extra)
+                   "--no-skill", "--no-wiring", *extra)
 
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
@@ -570,7 +568,7 @@ def test_layout_config_first_install_docs_and_update_readonly() -> None:
 
         before = (docs / "atlas.config.yaml").read_bytes()
         rc, out = run("bash", str(INSTALL), "--update", "--target", str(docs),
-                      "--no-skill", "--no-patch", "--no-wiring")
+                      "--no-skill", "--no-wiring")
         assert rc == 0, out
         assert (docs / "atlas.config.yaml").read_bytes() == before
         assert (docs / "docs" / "stack-profile.yaml").is_file()
@@ -583,7 +581,7 @@ def test_layout_config_first_install_docs_and_update_readonly() -> None:
             "version: 1\nlayout:\n  assets_root: ../escape\n", encoding="utf-8")
         n_before = len(list((bad / ".atlas").rglob("*")))
         rc, out = run("bash", str(INSTALL), "--update", "--target", str(bad),
-                      "--no-skill", "--no-patch", "--no-wiring")
+                      "--no-skill", "--no-wiring")
         assert rc == 2, out
         assert len(list((bad / ".atlas").rglob("*"))) == n_before
 

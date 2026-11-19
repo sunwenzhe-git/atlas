@@ -75,29 +75,25 @@ atlas/
 
 **两种等价入口**：CLI `atlas init`（首次装配）/ `atlas update`（安全刷新），或直接跑 `install.sh`。
 
-- 前置检查：目标项目须有 `.trellis/`；若 profile 声明了 `graph.backend: cgc` 但本机未探测到，输出显式 `[WARN]` 提示安装、不阻断装配。
+- 前置检查：Node.js + Python 3.10+；无外部宿主执行器依赖。
 - **整包 → `<目标>/.atlas/`**：`shared/` / `rings/` / `apply/` / `templates/` / `adapters/` / `_support/` / `validators/` / `patches/` / `scripts/` / `tests/`。属包产物，默认刷新。
 - **装配版本戳 `.atlas/VERSION`**：装配时基于源包内容 sha256 合成 16 位摘要，落目标项目 `.atlas/VERSION`（含摘要、时间戳、源包绝对路径）；由 `atlas check` 的「装配版本」门比对检验——源包变动后响亮 WARN 提示重新装配，杜绝静默滞后。
 - **skill 瘦桩**：每个 `skills/atlas-*/` → 各平台 skill 目录（瘦桩 `SKILL.md` 指回 `.atlas/`）；并清理历史单入口 `atlas` skill。
-- **建骨架**：`.trellis/spec/structure/{domains,global}` + `product/e2e/cases`（**不建** `product/prototype/`）；已有内容**永不覆盖**；`stack-profile.yaml` 已存在则保留。
-- **应用 Plan 挂载补丁**：见 §五。
-- **项目接线**（幂等、可重放）：① `AGENTS.md` 在 Trellis 区块**之后**写 `<!-- ATLAS:START/END -->` 指针段；② `.trellis/config.yaml` 幂等登记 `after_finish` hook（`refresh_structure.py`）。
-- 末尾**自检**：各环契约 / apply 契约 / skill 瘦桩 / stack-profile / 目录骨架 / 补丁标记 / 接线指针 / hook。
+- **建骨架**：`.atlas/tasks`、`.atlas/spec/structure/{domains,global}`、`.atlas/spec/conventions` + `product/e2e/cases`（**不建** `product/prototype/`）；已有内容**永不覆盖**；`stack-profile.yaml` 已存在则保留。
+- **项目接线**（幂等、可重放）：`AGENTS.md` 的 `<!-- ATLAS:START/END -->` 指针段 + extractor 测试配置 + `.gitignore` + pi 宿主扩展。
+- 末尾**自检**：各环契约 / apply 契约 / skill 瘦桩 / stack-profile / 执行层骨架 / 接线指针。
 
 ---
 
-## 五、锚点补丁（`patches/`）
+## 五、装配接线（`patches/`）
 
-装配期对 `.trellis/` 做**外科式插入**，用带指纹的开始 / 结束标记包住，幂等可重放：
+需求级步骤由 `atlas workflow plan` / `dispatch` 生成，**不再向宿主模板打补丁**。`patches/` 仅保留：
 
 | 补丁 | 作用 |
 |---|---|
-| `workflow-plan-apply/` | 往 `.trellis/workflow.md` 的 Phase 1 插入 `#### 1.6 项目级资产更新`（调 `atlas apply`）+ 面包屑 enforcement 行 |
-| `workflow-root-cause/` | 首次红灯根因前置排查挂载，确保报错现场不丢失 |
-| `workflow-skill-routing/` | 把 UI 合规、落笔纪律、设计决策追问、前端复用优先挂进 `.trellis/workflow.md` 面包屑；D177 起前端复用直接指向 `shared/frontend-reuse.md` |
-| `project-wiring/` | `AGENTS.md` 指针段 + `after_finish` hook |
+| `project-wiring/` | `AGENTS.md` 指针段 + extractor 测试配置 + `.gitignore` + pi 宿主扩展（幂等） |
 
-**为什么要写成 Plan 的 `[required · once]` 步骤**：Trellis 的「自动」分两层——hook 注入面包屑是**确定性**的，skill description 命中是**概率性**的；且建 task 前必须获得用户同意。所以只有写成强制步骤 + enforcement 行才可靠。
+**为什么步骤写进任务卡**：执行层的「自动」分两层——派工单常驻是**确定性**的，skill description 命中是**概率性**的；只有写成任务卡的 `[required · once]` 步骤 + 派工单常驻行才可靠。
 
 ---
 
@@ -113,20 +109,21 @@ atlas/
 | Pi | `.agents/skills/` | 走 extension + prompts |
 
 - skill frontmatter 只用 `name` + `description`（触发短语写进 description）。
-- 命名避开 Trellis 保留名（`trellis-meta` / `trellis-spec-bootstrap` / `trellis-session-insight` / `trellis-channel`）。
+- 命名避开宿主/平台的保留名（`atlas-*` 之外的内置命名空间）。
 - **skill 名 = `atlas-<环>`**：一个环一个 skill，各 description 只含本环触发词，**不设单入口 skill**。
+- **非环 skill 例外**：`atlas-apply`（跨环编排）、`atlas-grill` / `atlas-design-review`（决策压测与复核）、`atlas-onegate`（协作协议）、`atlas-ablate`（按需消融诊断）不属于资产环，不受「一环节一 skill」约束；命名与装配方式不变。
 
 ---
 
-## 七、需求级挂载（补丁）
+## 七、需求级挂载（任务卡 + 派工单）
 
-`atlas-apply` skill 的 `apply` 模式必须挂进 **Trellis 的 Plan 阶段**，靠 `patches/workflow-plan-apply/` 往 `.trellis/workflow.md` 插入：
+`atlas-apply` skill 的 `apply` 模式由执行层携带：
 
-1. 一个 `#### 1.6 项目级资产更新` 步骤（调 `atlas-apply` 的 `apply`；`[required · once]`）；
-2. 在 `[workflow-state:planning]` 面包屑块里加**一条 enforcement 行**，使其**每轮自动提醒**（Trellis 的 hook 每轮注入面包屑，是确定性的）；
-3. Phase Index 的 Phase 1 步骤清单补一行 `1.6`（人读总览）。
+1. `atlas workflow plan` 在任务卡写入 `#### 1.6 项目级资产更新` 步骤（调 `atlas-apply` 的 `apply`；`[required · once]`）；
+2. `atlas workflow dispatch` 在 `dispatch.md` 写入同一指令与 enforcement 行，使其**每轮可见**；
+3. Phase Index 由任务卡的四列表格承担（人读总览）。
 
-理由同上：只有写成 `[required · once]` 步骤才可靠。回归测试双跑验证插入 / 幂等 / dry-run / 锚点缺失保护。
+理由同上：只有写成 `[required · once]` 步骤才可靠。回归测试覆盖 plan / dispatch / 幂等。
 
 ---
 

@@ -230,8 +230,8 @@ def _safe_rel(raw: str, field: str) -> str:
     p = PurePosixPath(raw.strip())
     if p.is_absolute() or ".." in p.parts or not p.parts:
         raise SolutionError(f"{field} 必须是 solution 内相对路径（拒绝绝对路径与 ..）: {raw!r}")
-    if p.parts[0] in (".atlas", ".trellis", ".git"):
-        raise SolutionError(f"{field} 不能指向 Atlas/Trellis 内部目录: {raw!r}")
+    if p.parts[0] in (".atlas", ".git"):
+        raise SolutionError(f"{field} 不能指向 Atlas 内部目录: {raw!r}")
     return p.as_posix()
 
 
@@ -823,7 +823,7 @@ def _read_json(path: Path) -> dict | None:
 
 
 def _atlas_baseline(member: Path) -> str | None:
-    meta = _read_json(member / ".trellis" / "spec" / "structure" / "_meta.json")
+    meta = _read_json(member / ".atlas" / "spec" / "structure" / "_meta.json")
     if not isinstance(meta, dict):
         return None
     baseline = meta.get("baseline")
@@ -836,7 +836,7 @@ def _has_atlas_assets(member: Path) -> bool:
     return any((member / p).exists() for p in (
         "atlas.config.yaml",
         "product/stack-profile.yaml",
-        ".trellis/spec/structure/_meta.json",
+        ".atlas/spec/structure/_meta.json",
     ))
 
 
@@ -1294,7 +1294,7 @@ def validate_assets_root(root: Path, raw, lexical: bool = True) -> str:
     """资产根校验的**单源**：直接调 `_support/layout.py`，不另立字符集（v19/v20）。
 
     `layout.py` 只禁反斜杠、引号、`#`、换行、绝对路径、`..`、保留首段
-    （`.atlas` / `.trellis`）与 symlink 逃逸；**不禁中文、不禁空格**——`install.py
+    （`.atlas` / `.atlas`）与 symlink 逃逸；**不禁中文、不禁空格**——`install.py
     --assets-root 产品` 走的正是它。检查器若自己写正则，会出现「合法装进去、check
     永久红、append-only 数组又没有出口」。
 
@@ -1802,16 +1802,15 @@ def _install_atlas(root: Path, assets_root: str) -> None:
             "solution 根尚未装配 .atlas，且找不到包内 install.py；"
             "请先运行 atlas init 或从源包运行 atlas solution init"
         )
-    # solution 根不要求 Trellis（Phase 1 成员各自持有 Trellis）；--no-trellis 跳过
-    # Trellis 初始化/骨架，--force 兜底装配器的其他前置。.atlas 目录存在但缺
-    # VERSION/shared/solution.md = 上次装配中途失败：允许覆盖重装。
+    # solution 根只装配 .atlas 线束（--no-skill / --no-wiring），--force 兜底装配器的
+    # 其他前置。.atlas 目录存在但缺 VERSION/shared/solution.md = 上次装配中途失败：
+    # 允许覆盖重装。
     env = os.environ.copy()
     if (root / ".atlas").exists():
         env["ATLAS_ALLOW_OVERWRITE"] = "1"
     p = subprocess.run(
         [sys.executable, str(install_py), "--target", str(root),
-         "--assets-root", assets_root, "--no-skill", "--no-patch", "--no-wiring",
-         "--no-trellis", "--force"],
+         "--assets-root", assets_root, "--no-skill", "--no-wiring", "--force"],
         capture_output=True, text=True, env=env,
     )
     if p.returncode != 0:
@@ -2298,7 +2297,7 @@ def card_tracking_commands(root: Path, data: dict) -> list[str]:
     out: list[str] = []
     for m in data["members"]:
         base = root / m["path"]
-        tasks = base / ".trellis" / "tasks"
+        tasks = base / ".atlas" / "tasks"
         cards: list[Path] = []
         if tasks.is_dir():
             cards += sorted(p for p in tasks.iterdir() if p.is_dir() and p.name != "archive")
@@ -3564,19 +3563,6 @@ def check_solution(root: Path, strict: bool = False,
         if any(p in profile_text for p in _PROFILE_PLACEHOLDERS):
             add("stack-profile.yaml", "WARN",
                 "仍是通用模板（含 <产品名>/<app 标识>），需换成 solution 画像")
-    trellis_cfg = root / ".trellis" / "config.yaml"
-    if trellis_cfg.is_file():
-        trellis_text = trellis_cfg.read_text(encoding="utf-8", errors="replace")
-        missing = [m["path"] for m in data["members"]
-                   if f"path: {m['path']}" not in trellis_text
-                   and f"path: ./{m['path']}" not in trellis_text]
-        if missing:
-            add("Trellis packages", "WARN",
-                "未声明成员：" + "、".join(missing))
-    else:
-        add("Trellis packages", "SKIP",
-            "solution 根无 .trellis/config.yaml（Phase 1 不生成；Phase 2）")
-
     if any(r["status"] == "FAIL" for r in results):
         overall = "FAIL"
     elif any(r["status"] == "WARN" for r in results):

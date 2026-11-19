@@ -31,10 +31,10 @@ const PYTHON = process.env.ATLAS_PYTHON || (process.platform === "win32" ? "pyth
 /**
  * 开户态（2026-10-15 补）：**装配 ≠ 开户**。
  *
- * `atlas init` 只装配线束（`.atlas/` / 资产根骨架（默认 `product/`） / AGENTS.md 指针 / Trellis 接线）；
+ * `atlas init` 只装配线束（`.atlas/` / 资产根骨架（默认 `product/`） / AGENTS.md 指针 / 测试配置）；
  * 「开户」另有产物，且只有该轮真产出才算数：
  *   * `<资产根>/prd/prd.md`                 —— 全局 PRD（`adopt` 最小必填集必产；默认 `product/prd/prd.md`）
- *   * `.trellis/spec/structure/_meta.json` —— 域清单（`structure` 全量的机器视图）
+ *   * `.atlas/spec/structure/_meta.json` —— 域清单（`structure` 全量的机器视图）
  * 骨架期这两个文件都不存在（目录里只有 `.gitkeep`）⇒ **不能拿「目录非空」当信号**。
  * 「半开通」（只有其一）是常态：开户按产物存在与否**断点续跑**（`apply/reference.md` §1）。
  */
@@ -48,7 +48,7 @@ const ONBOARDING_LABEL: Record<Onboarding, string> = {
 
 interface AtlasProjectStatus {
   isAtlasProject: boolean;
-  hasTrellis: boolean;
+  hasStructure: boolean;
   hasStackProfile: boolean;
   onboarding: Onboarding;
   version?: string;
@@ -77,7 +77,7 @@ function detectAtlasStatus(cwd: string): AtlasProjectStatus {
   const prdAbs = layoutValue(cwd, "prd", true) ?? join(cwd, "product", "prd");
   const prdRel = layoutValue(cwd, "prd", false) ?? "product/prd";
   const hasStackProfile = existsSync(stackProfileAbs);
-  const hasTrellis = existsSync(join(cwd, ".trellis"));
+  const hasStructure = existsSync(join(cwd, ".atlas", "spec", "structure", "_meta.json"));
   const layoutReady = !hasConfig || layoutValue(cwd, "assets_root", false) !== null;
   const layoutNote = hasConfig && !layoutReady
     ? "自定义布局未解析（Python 缺席 / 旧装配 / 配置非法），按默认 product 判定"
@@ -86,7 +86,7 @@ function detectAtlasStatus(cwd: string): AtlasProjectStatus {
   // 开户产物 = 上面 Onboarding 注里点名的两个文件
   const hasPrd = existsSync(join(prdAbs, "prd.md"));
   const hasStructureMeta = existsSync(
-    join(cwd, ".trellis", "spec", "structure", "_meta.json"),
+    join(cwd, ".atlas", "spec", "structure", "_meta.json"),
   );
   const onboarding: Onboarding =
     hasPrd && hasStructureMeta ? "done" : hasPrd || hasStructureMeta ? "partial" : "none";
@@ -103,7 +103,7 @@ function detectAtlasStatus(cwd: string): AtlasProjectStatus {
 
   return {
     isAtlasProject: hasAtlasDir || hasStackProfile,
-    hasTrellis,
+    hasStructure,
     hasStackProfile,
     onboarding,
     version,
@@ -123,9 +123,9 @@ export default function (pi: ExtensionAPI) {
     getArgumentCompletions: async (prefix: string) => {
       const subcommands = [
         { value: "check", label: "check", description: "运行 Atlas 确定性门禁体检" },
-        { value: "status", label: "status", description: "查看当前工作区 Atlas 与 Trellis 状态" },
+        { value: "status", label: "status", description: "查看当前工作区 Atlas 状态与结构基线" },
         { value: "console", label: "console", description: "打开可视化 E2E 走查控制台" },
-        { value: "init", label: "init", description: "在当前项目装配 Atlas 与 Trellis 联动" },
+        { value: "init", label: "init", description: "在当前项目装配 Atlas 工作流" },
         { value: "report", label: "report", description: "上报流水线设计缺陷或规则冲突" },
       ];
       return subcommands.filter((s) => s.value.startsWith(prefix));
@@ -141,7 +141,7 @@ export default function (pi: ExtensionAPI) {
             `  - 工作目录: ${ctx.cwd}`,
             `  - Atlas 已装配: ${status.isAtlasProject ? `是 (版本: ${status.version || "dev"})` : "否"}`,
             `  - 开户态: ${ONBOARDING_LABEL[status.onboarding]}`,
-            `  - Trellis 接入: ${status.hasTrellis ? "已接入" : "未检测到 (.trellis/ 缺失)"}`,
+            `  - 结构基线: ${status.hasStructure ? "已就绪" : "未就绪 (.atlas/spec/structure/_meta.json 缺失)"}`,
             `  - 技术栈画像: ${status.hasStackProfile ? `已配置 (${status.stackProfileRel})` : "未配置"}`,
           ];
           if (status.layoutNote) {
@@ -152,7 +152,7 @@ export default function (pi: ExtensionAPI) {
           } else if (status.onboarding !== "done") {
             lines.push(
               ``,
-              `提示: **装配 ≠ 开户** —— 开户产物 = ${status.prdRel}/prd.md 与 .trellis/spec/structure/_meta.json。`,
+              `提示: **装配 ≠ 开户** —— 开户产物 = ${status.prdRel}/prd.md 与 .atlas/spec/structure/_meta.json。`,
               `      现在${ONBOARDING_LABEL[status.onboarding]}；用户说「把项目接入 Atlas 工作流」时`,
               `      直接唤起技能 \`/atlas-apply adopt\`（存量：只登记既有基线 + 开户最小集，`,
               `      不重写老 PRD/用例）。开户按产物存在与否断点续跑，不吃掉已完成的部分。`,
@@ -192,7 +192,7 @@ export default function (pi: ExtensionAPI) {
           try {
             const res = await pi.exec("atlas", ["init", "--target", ctx.cwd], { timeout: 120_000 });
             if (res.code === 0) {
-              ctx.ui.notify("🎉 Atlas 装配成功！已联动配置 Trellis 与 Skills。", "info");
+              ctx.ui.notify("🎉 Atlas 装配成功！已配置 Skills 与项目接线。", "info");
             } else {
               ctx.ui.notify(`装配遇到问题:\n${(res.stderr || res.stdout).slice(0, 400)}`, "error");
             }
@@ -255,7 +255,7 @@ export default function (pi: ExtensionAPI) {
         `\n\n# Atlas: 已装配但尚未开户（装配 ≠ 开户）\n` +
         `This project has the Atlas harness **assembled** but is **not onboarded** ` +
         `(onboarding state: ${status.onboarding}). Onboarding artifacts are ` +
-        `\`${status.prdRel}/prd.md\` and \`.trellis/spec/structure/_meta.json\` — both still missing.\n` +
+        `\`${status.prdRel}/prd.md\` and \`.atlas/spec/structure/_meta.json\` — both still missing.\n` +
         `When the user asks to 「把项目接入 Atlas 工作流」/「接入 Atlas」, run the skill ` +
         `\`atlas-apply adopt\` (existing project: register the baseline + minimal PRD only; ` +
         `do NOT rewrite old PRDs or invent legacy test cases). **Do not** conclude "already ` +
@@ -272,7 +272,7 @@ export default function (pi: ExtensionAPI) {
     const atlasContextNotice = `\n\n# Atlas Project Harness Notice\n` +
       `This project is governed by **Atlas** (.atlas/). ` +
       `All requirements and implementations must adhere to the deterministic specs in \`.atlas/shared/\`, ` +
-      `Trellis plan steps (step 1.6 atlas apply), and verified E2E gates. ` +
+      `the atlas workflow (plan → dispatch → verify → finish), and verified E2E gates. ` +
       `Do not bypass or remove atlas validation gates.\n` +
       `If an Atlas rule or gate itself blocks a legitimate business shape (not your own bug), ` +
       `do not silently work around it (no commented-out rules, no \`--no-verify\`, no weakened ` +

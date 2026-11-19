@@ -6,9 +6,9 @@
 
 ## 0. 一句话
 
-读代码（+ 可选旧实现），产出**结构事实**，直接落在 **`.trellis/spec/structure/`**（Trellis 的路径注入层）——同一份既是项目级事实，又能被 Trellis 任务**原生注入**消费，无需再做一层桥。
+读代码（+ 可选旧实现），产出**结构事实**，直接落在 **`.atlas/spec/structure/`**（执行层的路径注入层）——同一份既是项目级事实，又能被 执行层 任务**原生注入**消费，无需再做一层桥。
 
-- **事实区**由适配器 + 刷新脚本**确定性**维护；**语义区**由 AI / `trellis-update-spec` 维护（见 §8）。
+- **事实区**由适配器 + 刷新脚本**确定性**维护；**语义区**由 AI / 结构环语义区（AI） 维护（见 §8）。
 - **与 PRD 环独立有序**：本环先跑、**提议候选域**；PRD 读本环产物并**定稿域**。两者不自动互相触发。
 
 ---
@@ -20,7 +20,7 @@
 | 代码 | 是 | 目标项目的实际代码树 |
 | `product/stack-profile.yaml` | 是 | 声明 apps、role（landing/legacy）、适配器。缺失时先与用户确认后生成 |
 | 项目根 `README.md`（或 `_meta.json` 声明的 `truth_carriers`） | 是 | A（技术栈 + 启动）与 H（测试 / 运行）的真相源 |
-| 既有 `.trellis/spec/structure/_meta.json` | 否 | 刷新时读，保留已定稿的域 |
+| 既有 `.atlas/spec/structure/_meta.json` | 否 | 刷新时读，保留已定稿的域 |
 
 ---
 
@@ -36,8 +36,8 @@
 
 ### 2.2 域清单（= 域 SSOT，双视图）
 
-- **机器视图**：`.trellis/spec/structure/_meta.json` 的 `domains[]`（字段见 §3.1）。
-- **人读视图**：`.trellis/spec/structure/tour.md` 的**域速查表**（域 id / 中文名 / 涉及 app / globs / 状态）。
+- **机器视图**：`.atlas/spec/structure/_meta.json` 的 `domains[]`（字段见 §3.1）。
+- **人读视图**：`.atlas/spec/structure/tour.md` 的**域速查表**（域 id / 中文名 / 涉及 app / globs / 状态）。
 
 | 字段 | 含义 |
 |---|---|
@@ -51,10 +51,10 @@
 
 ---
 
-## 3. 输出布局（落 `.trellis/spec/structure/`）
+## 3. 输出布局（落 `.atlas/spec/structure/`）
 
 ```
-.trellis/spec/structure/
+.atlas/spec/structure/
 ├── _meta.json              # 机器：product / baseline / apps[] / domains[] / categories
 ├── tour.md                 # L1：paths 块列表 ['**']，全局 router（≤ ~1.5k 字符）
 ├── domains/<domain>.md     # L2：paths 块列表 = 该域 globs，薄指针
@@ -144,7 +144,7 @@
 
 **不入 spec**：先看根 `README.md`；已有「测试 / 运行」说明 → 不动；无 → 经确认门补一节（测试类型 / 位置 / 覆盖范围 / 运行命令 / 现状）。
 
-> **组件清单不做**（增删频繁必漂、无强消费者）；「页面 / 域 → 组件」由 Trellis 侧按路径扫代码现得。
+> **组件清单不做**（增删频繁必漂、无强消费者）；「页面 / 域 → 组件」由 执行层按路径扫代码现得。
 
 ---
 
@@ -264,11 +264,11 @@
 | 适配器缺口 | `_meta.json.adapter_gaps` 缺失或为**空对象** ⇒ 无缺口（不产行）；**非空对象** ⇒ `WARN` 逐条指名（不是 FAIL——「未接」本身不是缺陷，但**必须可见**，否则「设计结论不接」与「工具覆盖不足」在产物里同形）；形态非法（非对象）⇒ `FAIL`。2026-10-15 补，issue #3 ④ |
 | D 类接线态 | `adapters.api` **已接线**但 `categories.D` 锚定声明为**指针 / 未取证**形态、或 `adapter_gaps` 登记了 `api` ⇒ `WARN` 指名（接线态与形态声明跨产物混写——`shared/stack-profile.md` §3.5：该形态**不得接**源码枚举适配器，`adapters.api` 应置 null）。锚定声明口径（F38 同族）：token 在首位 + 显式分隔符，散文提及不算声明；profile 不存在 / `adapters.api` 未声明 ⇒ 不产行（profile 合法性归 `validate_stack_profile`）。2026-10-15 补 |
 | D 形态 | `apis.md` 要么清单、要么「真相源入口 + 访问方式」；不得混写 |
-| 指针预算 | 对每个域校验 `len(tour.md) + len(domains/<d>.md)` ≤ `.trellis/config.yaml` 的 `spec_injection.max_total_chars`（默认 9500）；超出须缩 L1 / 拆域 |
+| 指针预算 | 对每个域校验 `len(tour.md) + len(domains/<d>.md)` ≤ `.atlas/config.yaml` 的 `spec_injection.max_total_chars`（默认 9500）；超出须缩 L1 / 拆域 |
 | 注入结构 | `tour.md` 与 `domains/*.md` 的 `paths:` 为**块列表**（标量会被判 malformed → 不注入） |
 | 占位符 | 无未完成 / 待填字样。**例外**：① 代码语法 `...`；② A 的「待决策」小节；③ 描述占位符规则的行本身 |
 | 表格列 | 每张表列头与 §4 一致 |
-| 来源可定位 | `来源文件` 路径按**项目根**解析真实存在；短引用允许再按**所属 app 根**解析（`_meta.json.apps[].path`）；**spec 内相对引用合法**（F34b，R8：结构文档引用兄弟 spec 相对文件时以 `.trellis/spec/structure/` 为锚——幻影引用照拦） |
+| 来源可定位 | `来源文件` 路径按**项目根**解析真实存在；短引用允许再按**所属 app 根**解析（`_meta.json.apps[].path`）；**spec 内相对引用合法**（F34b，R8：结构文档引用兄弟 spec 相对文件时以 `.atlas/spec/structure/` 为锚——幻影引用照拦） |
 | 密钥泄漏 | 全文不含密钥 / 令牌 / 密码**值**；环境变量只写名称 |
 | 元数据一致 | `_meta.json` 与磁盘实际文件集合一致 |
 | 幂等 | 重跑后**事实区标记外**内容字节不变 |
@@ -279,11 +279,11 @@
 
 | 通道 | 谁跑 | 何时 | 覆盖 |
 |---|---|---|---|
-| **语义** | `trellis-update-spec`（AI）/ 人工 | Finish 原生步骤 | 经验 / 规范 / 坑（标记外） |
-| **事实** | **刷新脚本**（`--chain`：读适配器 → 填 `atlas:facts` 区 → L2 指针单遍化；F26 基线自进——`--chain` 无漂移且四前置满足时自动推进 `_meta.json.baseline`，漂移冻结待终审，显式 `--apply` 零变化承诺永不推进，`--advance-baseline` 显式越过） | **`after_archive` hook**（`.trellis/config.yaml.hooks.after_archive`，D159：归档才是收口，`after_finish` 只清指针；R7 原位迁移为 `--chain`）或手动 | 表 / 字段 / 路由 / 接口 / token（标记内） |
+| **语义** | 结构环语义区（AI）/ 人工 | Finish 原生步骤 | 经验 / 规范 / 坑（标记外） |
+| **事实** | **刷新脚本**（`--chain`：读适配器 → 填 `atlas:facts` 区 → L2 指针单遍化；F26 基线自进——`--chain` 无漂移且四前置满足时自动推进 `_meta.json.baseline`，漂移冻结待终审，显式 `--apply` 零变化承诺永不推进，`--advance-baseline` 显式越过） | **`after_archive` hook**（`.atlas/config.yaml.hooks.after_archive`，D159：归档才是收口，`after_finish` 只清指针；R7 原位迁移为 `--chain`）或手动 | 表 / 字段 / 路由 / 接口 / token（标记内） |
 
 - 事实刷新是**纯脚本**，适合 shell hook；hook 失败只告警、不阻塞任务。
-- hook 用**单行登记**（官方扩展点），不改 `workflow.md` 结构——Trellis 升级时冲突最小。
+- hook 用**单行登记**（官方扩展点），不改 `workflow.md` 结构——执行层 升级时冲突最小。
 - **适配器失败语义（F25 拍板，2026-10-15）**：`--chain` 下任一适配器非零退出 / 解析不到脚本 ⇒ 中止链条、不进 refresh、exit 2；中止前已落盘适配器产物 = 上一轮一致态，残留无害。
 - **history 与 baseline 正交**：`_drift-history.jsonl` 记漂移**事件流**（追溯），`baseline.commit` 记快照**锚点**（对账位），两者不互相背负，无需互斥设计。
 - 刷新脚本实现依赖适配器（未决 B1）；未接适配器的类别由 AI 维持。**D 类指针形态豁免（F33，R8）**：`global/apis-shared.md` 真相源行命中 app 名 ⇒ 该域 `apis.md` 缺失合规（覆盖判据内建），免手写域级指针文件。`tests` 适配器产物存在时，`tour.md` 项目概况渲染其 `run_command`（F29 消费披露）。

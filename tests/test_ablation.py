@@ -412,7 +412,7 @@ def test_install_update_refuses_active_ablation(tmp_path) -> None:
         pytest.skip("装配副本态（无 install.sh）= 采纳仓内，源包安装互锁测试不适用")
     root = tmp_path / "target"
     (root / ".atlas").mkdir(parents=True)
-    (root / ".trellis").mkdir()
+    (root / ".atlas").mkdir(exist_ok=True)
     state = tmp_path / "state"
     h = hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:16]
     state_dir = state / "roots" / h

@@ -38,7 +38,7 @@ CONTRACT = """# atlas 共享契约 — 收口清单
 | 环退役 / 真相源迁移 / 产物改名 | 8（生命周期三件套） |
 | 改 `DESIGN.md` §12 决策（尤其含「被否：」的行）/ 撤回或收窄某项能力宣称 | **1（含宣称 sweep）**：以该裁决的否决词**全仓 grep** |
 | 缺陷修复类任务（bug fix） | **4**（修复验证 7 检查点）→ 1 → 7 |
-| 影响面报告已产出（`.trellis/tasks/<ID>/impact.json` 存在）的收口 | 1（含 `impact_reconcile --task <ID>`，2026-10-07 起） |
+| 影响面报告已产出（`.atlas/tasks/<ID>/impact.json` 存在）的收口 | 1（含 `impact_reconcile --task <ID>`，2026-10-07 起） |
 | 独立审查报告落盘（①②④⑤ 任一实例） | 1（含 `validate_review_report --dir <报告目录>`，2026-10-06 起） |
 
 | 任一工作单元收尾 | 1（至少） |
@@ -123,7 +123,7 @@ def test_unconditional_row_always_present(tmp_path) -> None:
 
 def test_supplementary_table_is_parsed(tmp_path) -> None:
     root = _repo(tmp_path)
-    _touch(root, ".trellis/spec/structure/current/demo/facts.md")
+    _touch(root, ".atlas/spec/structure/current/demo/facts.md")
     res = _res(root)
     assert "结构环产出" in res["text"], res["text"]
 
@@ -132,7 +132,7 @@ def test_steps_are_deduped_across_rows(tmp_path) -> None:
     root = _repo(tmp_path)
     _touch(root, "shared/gates.md")
     _touch(root, "DESIGN.md")
-    _touch(root, ".trellis/spec/structure/current/demo/facts.md")
+    _touch(root, ".atlas/spec/structure/current/demo/facts.md")
     text = _res(root)["text"]
     assert text.count("步骤 1 ") == 1, text
 

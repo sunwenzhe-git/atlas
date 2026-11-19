@@ -27,6 +27,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -63,7 +64,8 @@ VALIDATORS = (
     "validate_walkthrough",
     "validate_task_card",
     "validate_apply_record",
-)  # E1：validate_prototype 随原型环退役；§B120：stack_profile / structure 纳入；#182：design_exemptions 纳入；§5.8：e2e_mocks 纳入；B209-1（3507 BT）：validate_ac_alignment 纳入；2026-10-13：validate_adr 纳入（架构决策资产门）；2026-10-14：validate_ledger 随知识库/台账子系统退役（AC 号唯一判据归位 validate_prd）；2026-10-23：validate_walkthrough 纳入（M1 走查锁，RFC-20261022-01）；2026-11-12：task_card / apply_record 纳入（RFC-20261111-03 C 批）
+    "validate_adopt_facts",
+)  # E1：validate_prototype 随原型环退役；§B120：stack_profile / structure 纳入；#182：design_exemptions 纳入；§5.8：e2e_mocks 纳入；B209-1（3507 BT）：validate_ac_alignment 纳入；2026-10-13：validate_adr 纳入（架构决策资产门）；2026-10-14：validate_ledger 随知识库/台账子系统退役（AC 号唯一判据归位 validate_prd）；2026-10-23：validate_walkthrough 纳入（M1 走查锁，RFC-20261022-01）；2026-11-12：task_card / apply_record 纳入（RFC-20261111-03 C 批）；2026-11-19：validate_adopt_facts 纳入（RFC-20261119-03 Phase 3a，静态事实 stale 门）
 
 # 对齐测试门的预算（issue #63，2026-11-13 定标）：装配副本全量出厂测试实测 535s
 # （76 文件 / 1750 项，静默机器）、681s（1 个并行会话同机跑同款全量）；发版日 ~3× 负载
@@ -83,8 +85,8 @@ def _gate_preconditions(root: Path) -> dict[str, tuple[str, str]]:
             f"前置未声明（未就绪，非失败）：无 {lay.print_value('stack_profile')}（项目未接 atlas）"),
         # 结构环未跑 ⇒ 结构事实区未生成
         "validate_structure": (
-            ".trellis/spec/structure/_meta.json",
-            "前置未声明（未就绪，非失败）：结构环未跑（无 .trellis/spec/structure/_meta.json）"),
+            ".atlas/spec/structure/_meta.json",
+            "前置未声明（未就绪，非失败）：结构环未跑（无 .atlas/spec/structure/_meta.json）"),
         # 设计档案未建（frontend-design skill 首次判读时才落盘）⇒ 未走到这一步（#182）
         "validate_design_exemptions": (
             lay.print_value("design"),
@@ -102,10 +104,10 @@ def _gate_preconditions(root: Path) -> dict[str, tuple[str, str]]:
         "validate_adr": (
             lay.print_value("adr"),
             f"前置未声明（未就绪，非失败）：无 {lay.print_value('adr')}/（尚未创建任何 ADR）"),
-        # 任务卡在成员仓；父仓 / 未接 Trellis 的项目 ⇒ 未走到这一步（C 批）
+        # 任务卡在成员仓；父仓 / 未接入任务卡的项目 ⇒ 未走到这一步（C 批）
         "validate_task_card": (
-            ".trellis",
-            "前置未声明（未就绪，非失败）：无 .trellis/（成员仓未接入任务卡）"),
+            ".atlas/tasks",
+            "前置未声明（未就绪，非失败）：无 .atlas/tasks/（成员仓未接入任务卡）"),
         # 封条归父仓：**不设前置**。无锁但有封条必须由 validator 自己报红
         # （`seal_anchor_path_unmapped`），有锁无封条由它自报 N/A——前置 SKIP 会把
         # 「删锁保留封条」整段跳过（B1 假绿）。
@@ -122,6 +124,108 @@ EMPTY_DIGEST = "e3b0c44298fc1c14"
 # 判据是「可导入性」而非「路径存在」——框架名只在这里作为探测目标出现。
 
 
+# ---- 门禁载荷防自动改写（RFC-20261119-03 Phase 2）---------------------------
+# 门禁输出只允许「只读诊断」：禁止 fix/autofix 字段，禁止在 detail/output/hint
+# 中出现可直接覆盖真相源或基线的命令。command 字段是**已执行的证据**，只允许
+# 只读命令头，不再整类豁免（评审 Critical：detail/output 曾散落 --apply / release）。
+SCHEMA_VERSION = 1
+FORBIDDEN_PAYLOAD_KEYS = frozenset({"fix", "autofix", "apply_command", "record_command"})
+FORBIDDEN_PAYLOAD_PATTERNS = (
+    re.compile(r"--(?:write|record|force|apply|bootstrap-review)\b"),
+    re.compile(r"\brelease\s+--file\b"),
+    re.compile(r"\bgit\s+apply\b"),
+    re.compile(r"\brm\s+-rf\b"),
+)
+READONLY_COMMAND_HEADS = frozenset({"python", "pytest", "node", "npx", "bash", "sh", "pwsh"})
+
+
+def _command_head(cmd: str) -> str:
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        return ""
+    if not parts:
+        return ""
+    head = Path(parts[0]).name.lower()
+    return "python" if head.startswith("python") else head
+
+
+def command_is_readonly(cmd: str) -> bool:
+    """command 证据字段是否只读：命令头白名单 + 不含改写类旗标。"""
+    if not cmd.strip():
+        return True
+    if any(p.search(cmd) for p in FORBIDDEN_PAYLOAD_PATTERNS):
+        return False
+    return _command_head(cmd) in READONLY_COMMAND_HEADS
+
+
+def _text_violations(text: str, path: str) -> list[dict[str, str]]:
+    return [{"code": "forbidden_text", "path": path,
+             "message": f"命中可执行改写模式 {p.pattern!r}"}
+            for p in FORBIDDEN_PAYLOAD_PATTERNS if p.search(text)]
+
+
+def payload_violations(payload, path: str = "$") -> list[dict[str, str]]:
+    """递归扫描 `atlas check --json` 载荷，返回全部违规（空 = 干净）。
+
+    扫描面覆盖 rows[] 与 failures[] 的 detail/output/remediation_hint，不只扫
+    failures[].hint；WARN 行同样在面内（评审 Critical：WARN detail 是绕过通道）。
+    """
+    out: list[dict[str, str]] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            here = f"{path}.{key}"
+            if str(key).lower() in FORBIDDEN_PAYLOAD_KEYS:
+                out.append({"code": "forbidden_key", "path": here,
+                            "message": f"禁用字段 {key}"})
+            if str(key) in ("detail", "output", "remediation_hint", "hint", "text") \
+                    and isinstance(value, str):
+                out.extend(_text_violations(value, here))
+            if str(key) == "command" and isinstance(value, str) \
+                    and not command_is_readonly(value):
+                out.append({"code": "command_not_readonly", "path": here,
+                            "message": "command 不是只读诊断命令"})
+            out.extend(payload_violations(value, here))
+    elif isinstance(payload, list):
+        for i, value in enumerate(payload):
+            out.extend(payload_violations(value, f"{path}[{i}]"))
+    return out
+
+
+def _default_remediation_hint(name: str, detail: str) -> dict[str, str]:
+    """FAIL 行的只读诊断建议（自然语言；禁止可执行改写命令）。"""
+    if "对齐测试" in name:
+        return {
+            "category": "regression",
+            "text": "先判断失败用例是本次改动的预期行为变化，还是真回归。若预期，"
+                    "需由人显式更新契约/测试真相源并在提交说明中记录理由；若回归，"
+                    "回查最近一次改动。不要批量重写断言或重录基线。",
+        }
+    if "生成物最新" in name:
+        return {
+            "category": "truth-source-change",
+            "text": "确认生成器源码或输入是否变化。若产物确实过期，由人按生成流程"
+                    "重跑并复核 diff；不要把重跑命令当作自动修复。",
+        }
+    if "装配版本" in name or "写面残留" in name:
+        return {
+            "category": "environment",
+            "text": "先核对装配态与运行态是否与当前源码一致；由人决定重装或释放"
+                    " claim，再复跑检查。",
+        }
+    if "E2E 真跑" in name:
+        return {
+            "category": "environment",
+            "text": "先确认靶场、运行器与浏览器依赖是否就绪；环境未就绪时不要改用例"
+                    "或基线来换取绿灯。",
+        }
+    return {
+        "category": "ambiguous",
+        "text": "先定位这条门读取的真相源与本次改动范围，判断是回归、预期变化还是"
+                "环境问题；改真相源必须由人确认。",
+    }
+
+
 class Row:
     def __init__(self) -> None:
         self.rows: list[dict] = []
@@ -129,22 +233,30 @@ class Row:
 
     def add(self, name: str, status: str, detail: str = "",
             command: str = "", full_output: str = "", code: int | None = None,
-            duration_ms: int | None = None, extra: dict | None = None) -> None:
+            duration_ms: int | None = None, extra: dict | None = None,
+            remediation_hint: dict | str | None = None) -> None:
         # duration_ms 是观测字段，不参与任何判据；None = 该行没有可计时的执行段，或尚未接入计时。
+        if remediation_hint is None and status == "FAIL":
+            remediation_hint = _default_remediation_hint(name, detail)
         row = {"name": name, "status": status, "detail": detail,
                "duration_ms": duration_ms}
         # extra = 机读附加字段（如 E2E 行的 skip_reason）；人读输出只取 name/status/detail。
         if extra:
             row.update(extra)
+        if remediation_hint:
+            row["remediation_hint"] = remediation_hint
         self.rows.append(row)
         if status == "FAIL":
-            self.failures.append({
+            failure = {
                 "name": name,
                 "detail": detail,
                 "command": command,
                 "code": code,
                 "output": full_output,
-            })
+            }
+            if remediation_hint:
+                failure["remediation_hint"] = remediation_hint
+            self.failures.append(failure)
 
     @property
     def failed(self) -> bool:
@@ -396,11 +508,21 @@ def check_generated(root: Path, rows: Row, py: str) -> None:
         return
     stale = [r["file"] for r in info.get("results", []) if r.get("changed")]
     if stale:
-        rows.add("生成物最新", "WARN", "%d 个产物待重跑 gen_e2e_scripts.py --apply（例：%s）"
-                 % (len(stale), Path(stale[0]).name), duration_ms=duration_ms)
+        rows.add("生成物最新", "WARN", "%d 个产物待重跑（例：%s）"
+                 % (len(stale), Path(stale[0]).name), duration_ms=duration_ms,
+                 remediation_hint={
+                     "category": "truth-source-change",
+                     "text": "确认生成器源码或输入是否变化。若产物确实过期，由人按生成"
+                             "流程重跑并复核 diff；不要把重跑命令当作自动修复。",
+                 })
     elif "基线报告兜底中" in out:
-        rows.add("生成物最新", "WARN", "独立审查未执行（基线报告兜底中；跑 gen_e2e_scripts.py --bootstrap-review）",
-                 duration_ms=duration_ms)
+        rows.add("生成物最新", "WARN", "独立审查未执行（基线报告兜底中）",
+                 duration_ms=duration_ms,
+                 remediation_hint={
+                     "category": "truth-source-change",
+                     "text": "先确认独立审查流程是否完成；若未完成，由人按审查流程补跑"
+                             "并留痕，再重新生成。不要把补跑命令当作自动修复。",
+                 })
     else:
         rows.add("生成物最新", "ok", "%d 个页面脚本与索引反向视图均已最新" % info.get("generated", 0),
                  duration_ms=duration_ms)
@@ -462,7 +584,7 @@ def check_drift(root: Path, rows: Row) -> None:
     （源码结构变更未经 apply 登记的信号）；登记语义归收口对账人终审 ⇒ WARN 不置红。
 
     基准 = **项目根** `.adapter-out/`（2026-10-15 统一，issue #8）。此前本门读
-    `.trellis/spec/structure/.adapter-out/`，而图谱层写项目根 ⇒ 同名两处，现场出现
+    `.atlas/spec/structure/.adapter-out/`，而图谱层写项目根 ⇒ 同名两处，现场出现
     「`git status` 里有 `.adapter-out/`，本门却说『无 .adapter-out 产物目录』」的矛盾
     （排查者会先怀疑门坏）。统一后 SKIP 文案**带上实际路径**，这类「SKIP 与现场不一致」
     一眼能看出问的是哪条路径。
@@ -668,8 +790,12 @@ def check_write_claims(root: Path, rows: Row) -> None:
     more = "" if len(residuals) <= 3 else f"…共 {len(residuals)} 个"
     rows.add("写面残留", "WARN",
              f"{len(residuals)} 个未释放的写面 claim：{'；'.join(parts)}{more}"
-             "（确认任务已完成 ⇒ `write_claim.py release --file <路径>`；"
-             "claims 是运行态，不进 git 历史）")
+             "（claims 是运行态，不进 git 历史）",
+             remediation_hint={
+                 "category": "environment",
+                 "text": "确认对应任务是否已完成；若已完成，由人释放对应 claim 后重新"
+                         "检查。claims 是运行态，不写入 git 历史。",
+             })
 
 
 def check_ablation_residue(root: Path, rows: Row) -> None:
@@ -1053,6 +1179,7 @@ def main() -> int:
 
     if args.json:
         payload = {
+            "schema_version": SCHEMA_VERSION,
             "root": str(root),
             "ok": not rows.failed,
             "rows": rows.rows,
@@ -1074,6 +1201,10 @@ def main() -> int:
                 print(f"▶ [{fail['name']}] (Exit Code: {fail.get('code')})")
                 if fail.get("command"):
                     print(f" • 命令: {fail['command']}")
+                hint = fail.get("remediation_hint")
+                hint_text = hint.get("text") if isinstance(hint, dict) else hint
+                if hint_text:
+                    print(f" • 诊断: {hint_text}")
                 out_lines = [l for l in fail.get("output", "").splitlines() if l.strip()]
                 key_lines = [l for l in out_lines if "[FAIL]" in l or "Error" in l or "error:" in l.lower()]
                 lines_to_show = key_lines[:20] if key_lines else out_lines[-10:]

@@ -17,8 +17,8 @@ paths:
 
 | 事实 | 出处 |
 |---|---|
-| 目录与模块地图 | `.trellis/spec/structure/global/directory-map.md` |
-| 全站路由总表 | `.trellis/spec/structure/global/routes.md` |
+| 目录与模块地图 | `.atlas/spec/structure/global/directory-map.md` |
+| 全站路由总表 | `.atlas/spec/structure/global/routes.md` |
 
 ## 域速查表
 
@@ -26,10 +26,10 @@ paths:
 |---|---|---|---|
 | `[必填：domain-slug]` | [必填] | [必填] | 候选 |
 
-> 碰某域代码时，对应 `.trellis/spec/structure/domains/<domain>.md` 会自动注入，含该域结构文档链接。
+> 碰某域代码时，对应 `.atlas/spec/structure/domains/<domain>.md` 会自动注入，含该域结构文档链接。
 <!-- atlas:facts:end -->
 
 ## 维护约定
 
 - **事实区**：标记内由 `refresh_structure.py`（`after_finish` hook）刷新。
-- **语义区**：标记外内容由 AI / `trellis-update-spec` 维护。
+- **语义区**：标记外内容由 AI / 结构环语义区（AI） 维护。

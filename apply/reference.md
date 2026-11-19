@@ -7,9 +7,9 @@
 
 ## 0. 一句话
 
-把「一条需求」灌进项目级应然资产：读 Trellis 需求卡 → 推导影响面 → 按 `prd → e2e` 增量更新 → 跑机器校验 → 出报告；更新完成后，Trellis 才去实现。四种模式：`apply <需求ID>`（需求式增量）、`apply adopt`（既有项目**一次性接入开户**）、`all`（按序跑三环全量；E1，原型环已移除 `3508 §92`）与 **`backfill`（回流原语：把已裁决的回填条目分组攒批灌入上游，§5.2）**。
+把「一条需求」灌进项目级应然资产：读 执行层任务卡 → 推导影响面 → 按 `prd → e2e` 增量更新 → 跑机器校验 → 出报告；更新完成后，执行层 才去实现。四种模式：`apply <需求ID>`（需求式增量）、`apply adopt`（既有项目**一次性接入开户**）、`all`（按序跑三环全量；E1，原型环已移除 `3508 §92`）与 **`backfill`（回流原语：把已裁决的回填条目分组攒批灌入上游，§5.2）**。
 
-- **单向衔接**：需求 → 项目级资产（应然，实现之前）→ 实现（Trellis Execute）。apply 不写业务代码。
+- **单向衔接**：需求 → 项目级资产（应然，实现之前）→ 实现（执行层 Execute）。apply 不写业务代码。
 - 本环**不重实现**各环逻辑：各环正文归各自契约（`.atlas/rings/*/reference.md`）。
 - 本环**不产** PRD 正文、用例、结构事实、业务代码；越界即失败。
 
@@ -19,13 +19,13 @@
 
 | 模式 | 语义 | 触发 |
 |---|---|---|
-| `apply <需求ID>` | **需求式跨环增量**：只改动本次需求影响的 PRD 章节 / E2E 分片与索引页面表；更新完才进实现 | 由 Trellis Plan 阶段的 `#### 1.6 项目级资产更新` 步骤 `[required · once]` 调用（见 §7） |
+| `apply <需求ID>` | **需求式跨环增量**：只改动本次需求影响的 PRD 章节 / E2E 分片与索引页面表；更新完才进实现 | 由 执行层 Plan 阶段的 `#### 1.6 项目级资产更新` 步骤 `[required · once]` 调用（见 §7） |
 | `all` | **按序全量**：`structure → prd → e2e` 逐一走各环自己的全量流程，建立 / 刷新整套项目级资产 | `origin: greenfield` 的新项目接入、或需重建基线时手动触发 |
 | **`adopt`** | **一次性接入开户**（2026-09-26 补；2026-09-27 补域级最小集；2026-10-15 补开户交尾交付物）：既有项目接入时**只跟 `structure` 全量**，再按「最小必填集」把 `product/prd/` 开起来——全局 `prd.md` 落 `范围形态：变更` + `覆盖度` + `基线`，**并为域清单里每个域开一份「开户最小集」域级 PRD**（`rings/prd/reference.md` §4）；**开户交尾补一件派生件**：跑一次 `python3 .atlas/scripts/gen_testid_stub.py --root .` 出实现期薄桩（= **老页面 testid 的实然盘点表**，`rings/e2e/reference.md` §4.1）；**不预设** E2E——它由后续每条需求按下面的门增量长出（E1：原型环已移除）；**开户问数（2026-10-16，`RFC-20261015-02` / issue #11）**：与 `product/stack-profile.yaml` 的既有声明同批向用户索取**靶场接入取证**——`e2e.app_base_url` + `e2e.app_login` **形态三选一必须显式**（有门 = `real` 四值；无门 = `mode: none`；纯前端桩 = `fabricated` + `storage_key`），并提醒运行期凭据只来自 `ATLAS_APP_USER` / `ATLAS_APP_PASSWORD`（运行者 / CI 设置，**询问不落盘**）——缺失会在下一次真跑准备日升档为生成器 `not_ready`（`shared/gates.md`「E2E 真跑」行） | `origin: adopt` 的项目**第一次**接入时手动触发；此后每条需求走 `apply <需求ID>` |
 | **`backfill`** | **回流原语**（2026-09-28 补，`3509 §99`；详见 §5.2）：把**已裁决**的回填条目按「上游目标 + 改动类型」分组、攒批灌入上游应然资产与配置，跨环同步（含下游用例改挂），各环门照跑 | 收口时扫描本任务产生的回填 → 入队；**攒批**后手动触发（每批 ≤ 10 条） |
 
-- **需求 ID = Trellis task id**（`task.json` 的 `id`，即 task 目录名）；**需求卡 = 该 task 的 `.trellis/tasks/<需求ID>/prd.md`**（`single-source.md` §1）。不另建 inbox。
-- **第 4 种形态**（**应然资产自身修订，无需求卡**）**不属本环**：它不挂 Trellis 需求、不经 `apply`，直接按 `prd → e2e` 逐环跑受影响集合。判据与四条粒度纪律见 **§3.2**。
+- **需求 ID = 任务卡 id**（`task.json` 的 `id`，即 task 目录名）；**需求卡 = 该 task 的 `.atlas/tasks/<需求ID>/prd.md`**（`single-source.md` §1）。不另建 inbox。
+- **第 4 种形态**（**应然资产自身修订，无需求卡**）**不属本环**：它不挂 需求、不经 `apply`，直接按 `prd → e2e` 逐环跑受影响集合。判据与四条粒度纪律见 **§3.2**。
 - 四环与 `apply` 是**不同模式**，不合并：四环是「按阶段全量」，apply 是「按需求跨环增量」（D27/F10）。
 - **`adopt` 与 `all` 的区别**：两者都不叫「增量」，但 `adopt` **不做全量重述**——既有项目的 UI / 流程 / 数据已经在代码里，全量重写 PRD 与用例既不可能也没价值。`adopt` 只做一件事：**把基线登记下来**（结构事实），并把项目级 PRD 开到「能接第一条需求」的最小形态。**域级同样只开最小集**：止于「概述 + 功能清单 + 规则 + AC」，六件套（状态机 / 字段校验 / 六类文案 / 异常处理）留到该域**真的有需求**时补——开户时写它只能从代码反推产品意图（实测成本见 `rings/prd/reference.md` §4 的「开户最小集」）。**开户交尾再补一件派生件**（不是第四环、也不是需求）：跑一次 `gen_testid_stub.py` 出实现期薄桩，它是**老页面 testid 的实然盘点表**，属开户交付物；**它不是门禁前置**——薄桩缺失由 `validate_testids` 机器兜底补齐（F32，2026-10-15），显式跑一次是为了让这份交割物**当场可见、可核对**，而不是躲在某道门的副作用里（`rings/e2e/reference.md` §4.1）。**断点续跑**：开户按**产物存在与否**跳过已完成的环节（结构事实 / 域级 PRD / 薄桩各自判）——「接了一半」的项目据此续跑，不推倒重来（与 §6 `all` 同口径：`prd` 已存在的域级文件默认不覆盖、需 `--force`）。
 - **形态与门的分工**：`origin`（项目级，一次）定**默认**；三问门（需求级，每条）定**这一条**要拉起哪些环。**形态不剥夺能力**：`origin` 只定默认，不阻止某条需求按三问门把应然 UI 面落细（E1：原型环已移除，应然 UI 的 testid 应然随用例分片产出，见 `rings/e2e/reference.md` §6.2）。
@@ -36,9 +36,9 @@
 
 | 输入 | 必需 | 说明 |
 |---|---|---|
-| `.trellis/tasks/<需求ID>/prd.md` | 是 | 需求卡；影响面推导的语义来源 |
-| `.trellis/spec/structure/_meta.json` | 是 | 域清单（机器）+ apps（域→globs 的证据） |
-| `.trellis/spec/structure/global/routes.md` | 是 | 路由 / 页面 → 域 的证据 |
+| `.atlas/tasks/<需求ID>/prd.md` | 是 | 需求卡；影响面推导的语义来源 |
+| `.atlas/spec/structure/_meta.json` | 是 | 域清单（机器）+ apps（域→globs 的证据） |
+| `.atlas/spec/structure/global/routes.md` | 是 | 路由 / 页面 → 域 的证据 |
 | `product/stack-profile.yaml` | 是 | 产品名、apps、适配器、`e2e` 段（`prototype` 段已随 E1 退役，见 `shared/stack-profile.md` §2） |
 | `product/prd/{prd.md,README.md,<domain>-prd.md}` | 按模式 | 既有应然产品文档（增量落笔的基线）。`apply <需求ID>` **必需**；`apply adopt` **开户时可以为空**（那次由 adopt 开起来：全局按最小必填集，**域级按「开户最小集」逐域一份**） |
 | `product/prototype/` | 否 | **已退役（E1）且已删除**（2026-09-30）；页 ↔ 路由映射的唯一权威 = `product/e2e/e2e-index.md` 页面表（`rings/e2e/reference.md` §3.2） |
@@ -53,9 +53,9 @@
 
 ## 3. 参与环与顺序
 
-`apply <需求ID>` 按 **`prd → e2e`** 顺序处理；`structure` **不参与**该增量（它是 apply 的**输入**，不是产出——实然事实在实现后由 `after_archive` hook 与 `trellis-update-spec` 维护）。
+`apply <需求ID>` 按 **`prd → e2e`** 顺序处理；`structure` **不参与**该增量（它是 apply 的**输入**，不是产出——实然事实在实现后由 `after_archive` hook 与 结构环语义区（AI） 维护）。
 
-**唯一例外（有界）**：若本次 PRD 定稿**改变了域清单**（合并 / 拆分 / 改名），在 `prd` 之后追加一次 structure **re-key**（按 `rings/structure/reference.md` §2.2：按最终域重排 `.trellis/spec/structure/{current,legacy}/<domain>/` 目录并回写 `_meta.json.domains` / `tour.md`，**不重读代码**）。除该情形外，apply 不写结构事实。
+**唯一例外（有界）**：若本次 PRD 定稿**改变了域清单**（合并 / 拆分 / 改名），在 `prd` 之后追加一次 structure **re-key**（按 `rings/structure/reference.md` §2.2：按最终域重排 `.atlas/spec/structure/{current,legacy}/<domain>/` 目录并回写 `_meta.json.domains` / `tour.md`，**不重读代码**）。除该情形外，apply 不写结构事实。
 
 **各环是否参与的判据**（`rings/e2e/reference.md` §6.2；D51/E14）——不以需求大小为准，以「是否改变应然 UI」为准：
 
@@ -71,14 +71,14 @@
 2. **这次是否需要人来确认应然 UI / 流程**？**是** ⇒ `prd` 六件套（用户流程 / 状态机 / 字段 / 文案 / 异常）落细 **+ 派生「用户旅程走查」并取得用户确认（`rings/prd/reference.md` §4·八；确认前不得进 `e2e` 环）**；应然 UI 的 testid 应然随用例分片产出（E1：原型环已移除）。
 3. **这次是否需要可重复的验收**（超出 lint / test / typecheck 的能力）？**是** ⇒ E2E 环参与。
 
-- **三问全否 ⇒ 只走 `structure` + Trellis**：atlas 三环记 `不适用`，报告里必须留一行 `本需求判定：纯加法 / 不启用三环` + 依据。**这是一条合法路径，不是绕过工作流**——结构事实仍由 `after_archive` hook 保鲜，实现任务照旧拿到路径注入的事实。
+- **三问全否 ⇒ 只走 `structure` + 执行层**：atlas 三环记 `不适用`，报告里必须留一行 `本需求判定：纯加法 / 不启用三环` + 依据。**这是一条合法路径，不是绕过工作流**——结构事实仍由 `after_archive` hook 保鲜，实现任务照旧拿到路径注入的事实。
 - **`prd` 不再恒参与**（原口径：任何需求至少在域级 PRD / 追溯总表留一条）。它在**资产为空的旧项目**上等于「第一个小需求就要写全套项目级 PRD」——成本炸弹，而且与 §2 输入表（要求资产已存在）自相矛盾。改为按上面的门判定；若判定「本需求不改任何应然资产」（纯内部重构且不影响产品定义），apply 报告 `no-op` 并写明依据，**不**强改资产。
 - **两条报告口径**并列**，可同段共存**（2026-09-27 补，`3509 §B91`）：① 三问全否 ⇒ 写 `本需求判定：纯加法 / 不启用三环` + 依据；② 本需求不改任何应然资产 ⇒ 写 `no-op` + 依据。一个需求可以**两条同时命中**（如「新增一个与产品无关的通用工具函数」：既三问全否，又不碰任何应然资产）——此种情形**两行都写**，不择一、也无优先序。
 - **门是语义判断，机器判不了**（与 `§8 末注` 同源）：所以要求把**判定 + 依据**写进 `atlas-apply.md`，让复核者一眼看出它有没有偷懒。
 - **E2E 首跑取证兜底（2026-10-16，`RFC-20261015-02` / issue #11）**：第 3 问判「是」且 `e2e.app_login` 仍未声明 ⇒ 向用户**追问一次**（`real` 四值 / `mode: none` / `fabricated` + `storage_key`，三选一必须显式），落 `product/stack-profile.yaml` 后再进 e2e 环。追问是 UX 加速器，不是判据——机器判据是生成器 `not_ready`（升档 = 下一次真跑准备日，`shared/gates.md`「E2E 真跑」行）；adopt 开户已问过（同批「靶场接入取证」）的项目此处自然不触发。
 - **环间人工门（E1 起；2026-09-29 重议 = `3507 AQ`，B124 结论）**：两道人侧门——① **走查单确认门（实现前，硬）**：改变应然 UI 的需求，域级 PRD 的「用户旅程走查」节须用户显式确认（节首 `已确认：<日期>`；`rings/prd/reference.md` §4·八，确认前对照 `product/design.md`（存在时）视觉方向，`3507 BE`），确认前 **`apply` 不得进 `e2e` 环**；② **验收走查门（收口前）**：该域 E2E 在真实应用全 green 后，用户按域级 PRD 功能清单逐条在真实应用上过一遍（可用 + 符合已确认走查单），确认后才算域收口；不符 ⇒ 差异登记且域不收口；真实应用不可用 ⇒ 与 E2E 同为 `blocked` 显式带原因（`rings/e2e/reference.md` §5.4 末）。`e2e` 用例另走独立审查门（`rings/e2e/reference.md` §12）+ 首跑分类协议（同文件 §5.4）。原型增量人工 review 门已随环退役（`3508 §92`）。
 - **走查单确认门的机器面（2026-10-23，`RFC-20261022-01` M1）**：`validators/validate_walkthrough.py` 读本报告（`atlas-apply.md`）第 2 问**已写下**的判定，与 `product/prd/<domain>-prd.md` 的 `> 已确认：YYYY-MM-DD` 行对账。因此报告里第 2 问的答句必须写成「是 / 否」开头；受影响域以报告内对 `product/prd/<domain>-prd.md` 的路径引用为准（解析不到 ⇒ WARN 要求人工核对）。本器只判「写下的『是』与确认行的对账」，不判三问语义对错（那仍归人）。
-- 结构事实的**实现后**回写不属于 apply：由 `after_archive` hook（`refresh_structure.py`，事实区）与 Finish 的 `trellis-update-spec`（语义区）负责（D38）。
+- 结构事实的**实现后**回写不属于 apply：由 `after_archive` hook（`refresh_structure.py`，事实区）与 Finish 的 结构环语义区（AI）（语义区）负责（D38）。
 
 `all` 模式的顺序固定为 **`structure → prd → e2e`**（含 structure 全量）。
 
@@ -88,7 +88,7 @@
 
 | 答 | 走哪条路 |
 |---|---|
-| **有** | Trellis 需求流程 + `apply <需求ID>`（§1）；需求卡是唯一上游 |
+| **有** | 需求流程 + `apply <需求ID>`（§1）；需求卡是唯一上游 |
 | **无**（还在定 / 修应然资产本身，尚未写代码） | **不建需求卡、不建任务**，直接按 `prd → e2e` 逐环跑，逐环**只改受影响集合** |
 
 - **为何要这一条**：原契约把「需求」当作跨环增量的**唯一**上游，而三环只有「全量」入口 ⇒ agent 只能把资产修订塑成需求。实测（2026-09-23）：把「对照截图修订应然资产」当成需求，建了 `1 parent + 6 children` 的任务树，用户当场纠正（原话见 `3508 §33`：还没写代码，在解决生成原型阶段的问题）。
@@ -103,7 +103,7 @@
 
 **门控态（预期红）**：`review` 期间 `validators/validate_testids.py` 的「分片应然 ⇔ 前端实然双向集合」**允许红** —— 分片要等 review 通过后才写，这是门**自身**造成的预期红；**收口前必须绿**。取证：2026-09-23 首轮实跑（见知识库《评审粒度》note）。
 
-**收口留痕**：本形态**不写** `.trellis/tasks/<需求ID>/atlas-apply.md`（无需求 ID）——执行记录写进 `product/reviews/<日期>-<主题>/README.md`（§8 的固定小节照旧填）。
+**收口留痕**：本形态**不写** `.atlas/tasks/<需求ID>/atlas-apply.md`（无需求 ID）——执行记录写进 `product/reviews/<日期>-<主题>/README.md`（§8 的固定小节照旧填）。
 
 ---
 
@@ -122,10 +122,10 @@ evidence:           [ "prd.md:<行/要点>", "routes.md:<行>", "e2e-index.md:<�
 - **证据必须可定位**（`global-rules.md` §6）：每条受影响项都要指回需求卡行 / routes 行 / 页表行。
 - **影响面基准与语义透镜（2026-11-19 收口，RFC-20261119-01 / D202）**：cgc 外部 AST 图谱已正式退役；
   项目推导前跑 `python3 .atlas/scripts/impact_report.py --root . --task <需求ID> --paths …`
-  （落 `.trellis/tasks/<ID>/impact.json|md`）。报告器优先读取 `.trellis/spec/structure/**/cognition.fras`
+  （落 `.atlas/tasks/<ID>/impact.json|md`）。报告器优先读取 `.atlas/spec/structure/**/cognition.fras`
   单跳反向引用补充进 `aoci_candidates` 独立字段供参考；未维护语义透镜时 ⇒ 报告器 exit 3 `not_ready`，
   此时预测集取需求卡声明集（`touched_files`）。agent **先读报告再做语义判断**。
-  **收口时对账**（B191-1，2026-10-07 起）：`.trellis/tasks/<ID>/impact.json` 存在的需求，收口必跑
+  **收口时对账**（B191-1，2026-10-07 起）：`.atlas/tasks/<ID>/impact.json` 存在的需求，收口必跑
   `python3 .atlas/scripts/impact_reconcile.py --root . --task <ID> --diff-base <ref>` ——
   预测集 vs 实际 diff 双向差集（miss 漏报维持 WARN 级，严格遵从 D79④ 观察窗升档规则，并在收口报告留痕说明）；
   报告缺失 ⇒ SKIP（显式，不是通过）。
@@ -199,7 +199,7 @@ apply 只对**本次受影响集合**落笔，**不整文件覆盖**任何项目
 - **声明与分派**：并发前，每个任务必须**声明自己要写哪些项目级文件**；由用户 / 编排者按 `one writer per file` 分派；冲突时**停下报告**，不得抢占（实测第三次才守住，`3508 §55 一`）。
 - **claim 钩子（2026-10-23，`RFC-20261022-01` M3）**：共享文件动手前 `python3 .atlas/scripts/write_claim.py take --file <路径> --task <需求ID>`，收口时 `release --file <路径>`。每 claim 一个原子文件（`.atlas/runs/write-claims/<hash>.json`，`O_CREAT|O_EXCL`）⇒ 并发 take 同一文件时后者**直接退出非零并指名在办任务**；未释放的 claim 由 `atlas_check` 的 `写面残留` 行 WARN 点名。**降级路径**：旧装配无此命令 ⇒ 纪律照旧（本钩子的主语义是「有命令则机器判」，安全性不押在降级上）。claims 是运行态，`.atlas/` 不入库 ⇒ 不进 git 历史；`validate_e2e_index` 的事后兜底保留不撤。
 - **降串行度的建议（非硬）**：索引类表面可**按用例 ID 分区**（或拆成每页一份的反向索引）；但反向视图现在是**生成**的（`single-source` §2），所以首选是「一次只让一个任务改主表」。
-- **不属本节**：需求级文件（`.trellis/tasks/**`）天然一任务一份，无需仲裁。
+- **不属本节**：需求级文件（`.atlas/tasks/**`）天然一任务一份，无需仲裁。
 
 ### 5.2 回流原语（`backfill`，第 4 种模式；2026-09-28 定，`3509 §99`）
 
@@ -231,32 +231,32 @@ apply 只对**本次受影响集合**落笔，**不整文件覆盖**任何项目
 - **顺序**：`structure → prd → e2e`（E1），逐环走**各环自己的全量流程**（`rings/structure/reference.md` §6、`rings/prd/reference.md` §5、`rings/e2e/reference.md` §6）。apply 只做**编排与顺序**，不重实现环内步骤。
 - **环间审查门（硬，E1）**：`e2e` 用例产出后、生成脚本前，跑 **E2E 环独立审查**（`rings/e2e/reference.md` §12）——**有 `Critical` ⇒ `gen_e2e_scripts.py --apply` 拒绝写盘**。原「原型产出后停下等用户 review 原型」的门已随原型环退役（`3508 §92`）；应然 UI 的人工确认 = 两道人侧门（**走查单确认门**实现前 + **验收走查门**收口前，见 §3.1 环间人工门；2026-09-29 `3507 AQ` 重议）。
 - **幂等**：重跑 `all` 不产生漂移——各环自身的幂等 / 确认门语义照旧（如 `prd` 已存在域级文件默认不覆盖、需 `--force`）。
-- **断点续跑**：任一环失败或处门控态 → **停在该环并报告**，**下游环不静默跳过**。用户修好后重跑 `all`，**已完成的环按产物存在与否跳过**（对齐 Trellis 的 `[once]` 语义，`workflow.md` Rules §4）。
+- **断点续跑**：任一环失败或处门控态 → **停在该环并报告**，**下游环不静默跳过**。用户修好后重跑 `all`，**已完成的环按产物存在与否跳过**（对齐 执行层的 `[once]` 语义，`workflow.md` Rules §4）。
 - **门控态**：`prd` 待决策非空 ⇒ 只产全局 PRD 与追溯总表；`e2e` 进门控（只落空骨架）。apply 如实报告，**不判失败**。
 - **启动顺序自适应**：项目形态（绿地 / 重构 / 存量）决定各环实际工作量，但 `all` 的编排顺序固定；`structure` 环的 A（可选）与 H（条件）仍按其契约过确认门。
 
 ---
 
-## 7. 与 Trellis 的挂接
+## 7. 与执行层（`atlas workflow`）的挂接
 
-- **需求 ID = Trellis task id**；**需求卡 = task 的 `prd.md`**（D19/F2）。
-- **挂载点**：`.trellis/workflow.md` 的 **Phase 1 Plan**：
-  - 步骤 `#### 1.6 项目级资产更新（atlas apply）` `[required · once]`（沿用 `X.Y` 编号，`get_step` 可解析；**不重命名** `## Phase 1: Plan` 边界标题）；
-  - `[workflow-state:planning]` 与 `[workflow-state:planning-inline]` 面包屑块各加一条 **enforcement 行**，使其**每轮自动提醒**（`DESIGN.md` §8.2）。
-  - 两者由 `patches/workflow-plan-apply/` 的锚点**版本化**补丁落下（§9）。
-- **E2E 触发段（2026-11-03，`RFC-20261103-07`）**：Phase 2 实现完成后，由 `patches/workflow-e2e-trigger/` 落下的步骤在**最后一轮**质量检查之前执行 `scripts/e2e_trigger.py`（归因 + 委托既有执行器；**不生成脚本、不替代真跑门**，详见 `rings/e2e/reference.md` §10.2）；收尾只给控制台命令，人工 review 不代劳。
-- **不新增 Trellis 状态**（B3）：只用 `planning` / `in_progress` / `completed` 三态；不改状态机、不改 hook 解析逻辑、不使用 `set-status`。
+- **需求 ID = 任务卡 id**；**需求卡 = task 的 `prd.md`**（D19/F2）。
+- **挂载点**：`atlas workflow plan` / `atlas workflow dispatch`：
+  - `plan` 建卡时把「项目级资产更新」作为 `[required · once]` 步骤写入任务卡；
+  - `dispatch` 生成的 `.atlas/tasks/<ID>/dispatch.md` 常驻 `atlas apply <需求ID>` 指令与 enforcement 行；
+  - `verify` 是实现在后的独立审查入口（`shared/independent-review.md` 实例⑤）。
+- **E2E 触发段（2026-11-03，`RFC-20261103-07`）**：实现完成后、`atlas workflow verify` 之前执行 `scripts/e2e_trigger.py`（归因 + 委托既有执行器；**不生成脚本、不替代真跑门**，详见 `rings/e2e/reference.md` §10.2）；收尾只给控制台命令，人工 review 不代劳。
+- **任务状态**（B3）：只用 `planning` / `in_progress` / `completed` 三态（`task.json` 的 `status`）；不改状态机、不加旁路状态。
 - **失败 / 部分完成回报**：
   - 任一参与环失败、或影响面无法确定且用户未答 → **停在 planning**，输出结构化报告（§8 格式），**不得进入实现**；
   - 用户显式选择「放弃 / 降级（如 OOS、延期）」时，把结论与依据写进 `atlas-apply.md` 后方可继续；
   - 门控态**不是失败**，如实报告即可（§6）。
-  - 失败不写入 Trellis 状态字段；apply 的成败记录在 `atlas-apply.md`（§8）。
+  - 失败不写入任务状态字段；apply 的成败记录在 `atlas-apply.md`（§8）。
 
 ---
 
 ## 8. 回写与报告
 
-**执行记录落点**：`.trellis/tasks/<需求ID>/atlas-apply.md`（需求级执行记录；**非产品文档**、非需求卡，`single-source.md` 的需求卡仍是 `prd.md`）。每次 apply 覆写本文件为最新一次运行结果（幂等）。**无需求卡的应然资产修订（§3.2）本文件 N/A** —— 它的记录落 `product/reviews/<日期>-<主题>/README.md`。
+**执行记录落点**：`.atlas/tasks/<需求ID>/atlas-apply.md`（需求级执行记录；**非产品文档**、非需求卡，`single-source.md` 的需求卡仍是 `prd.md`）。每次 apply 覆写本文件为最新一次运行结果（幂等）。**无需求卡的应然资产修订（§3.2）本文件 N/A** —— 它的记录落 `product/reviews/<日期>-<主题>/README.md`。
 
 记录内容（固定小节）：
 
@@ -273,24 +273,14 @@ apply 只对**本次受影响集合**落笔，**不整文件覆盖**任何项目
 - apply 在**实现之前**运行，**不回写** E2E 执行状态；新增用例状态置 `red`。
 - `green` 的回写发生在**真实应用单段执行**与收口阶段，均**不在** apply 内；`prototype-pass` 为 **E0 历史终态**（E1 起不再产生，`rings/e2e/reference.md` §5.4）。
 
-**需求卡本身**：apply **不改写** `.trellis/tasks/<需求ID>/prd.md`（除非用户明确要求）；apply 的痕迹只落 `atlas-apply.md`。
+**需求卡本身**：apply **不改写** `.atlas/tasks/<需求ID>/prd.md`（除非用户明确要求）；apply 的痕迹只落 `atlas-apply.md`。
 
 ---
 
-## 9. patches（Trellis 挂载补丁）
+## 9. 装配接线（patches）
 
-- 落点：`patches/workflow-plan-apply/`（`spec.json` + `apply-patches.py` + 片段）。
-- **锚点式版本化**（2026-09-27 改，原「见标记即跳过」见 `3509 §B93`）：只做外科式插入 / **整块替换**，不整体覆盖 `.trellis/workflow.md`。块形态：
-  ```
-  <!-- atlas:apply:<id>@<片段正文 sha256 前 8 位> -->
-  <片段正文>
-  <!-- /atlas:apply:<id> -->
-  ```
-  判据 = **块内正文是否仍等于当前片段**：指纹相同 ⇒ `skipped`；指纹不同（片段更新过）⇒ **整块替换**；旧式块（无指纹 / 无结束标记）⇒ 就地补格式（`upgraded`）或整块替换（`replaced`）。
-- **旧式块的安全迁移**：`insert_before*` 的块紧邻锚点 ⇒ 边界 = 重算的锚点位置（精确）；`insert_after*` 且正文不符 ⇒ **报 error 且不改文件**（不猜边界）。
-- **可重放**：Trellis 升级、上游模板变更、**或本包片段自身更新**后，重跑 `install.sh`（或 `apply-patches.py --apply`）即对齐；`install.sh` 按真实 `applied / replaced / upgraded / skipped` 回报，**不把「跳过」报成成功**。
-- **前置告警（未决 B2）**：全局 `trellis` CLI 版本落后于项目 `.trellis/.version`。在把 CLI 升到项目版本之前，`trellis update` 的模板行为不代表当前版本，**补丁可能被 `trellis update` 冲掉**——因此打补丁前应先升级 CLI（`trellis upgrade`），升级后重跑本补丁。
-- 应用本补丁 = 改 `.trellis/workflow.md`，属 `global-rules.md` §7 确认门动作；由 `install.sh` 在用户显式安装时执行（`--no-patch` 可跳过）。
+- **需求级挂载不再打补丁**：`atlas workflow` 自带 plan / dispatch / verify / finish，步骤与 enforcement 行由执行层生成，无需向宿主模板插入或重放。
+- **仅保留 `patches/project-wiring/`**：AGENTS.md 指针段 / extractor 测试配置 / `.gitignore` / pi 宿主扩展；由 `install.sh` 幂等执行（`--no-wiring` 跳过）。
 
 ---
 
@@ -298,7 +288,7 @@ apply 只对**本次受影响集合**落笔，**不整文件覆盖**任何项目
 
 1. 遵守 `global-rules.md`：跨项目无框架名 / 单一真相源 / 不越界 / 幂等 / 零占位符 / 取证与应然分离 / 用户确认门。
 2. **不重实现各环逻辑**：本环引用各环契约的增量规程；PRD 正文归 `prd`、用例归 `e2e`、结构事实归 `structure`。
-3. **不产业务代码**：实现归 Trellis Execute。
+3. **不产业务代码**：实现归 执行层 Execute。
 4. **幂等**：重跑同需求不重复累积（对齐各环幂等语义）。
 5. 影响面推导失败**先问再做**，不猜（§4）；确认门动作先复述再等确认（§5）。
 
@@ -319,7 +309,7 @@ PRD 正文 / E2E 用例 / 结构事实 / 业务代码 / 影响面之外的重写
 | §4 影响面识别 | **D61** | agent 语义 + 结构证据；结构化清单；≤3 问兜底；禁 regex 判语义 |
 | §5 增量边界与覆盖门 | **D62** | 各环只落受影响增量；破坏性动作过确认门 |
 | §6 `all` 模式 | **D63** | 顺序 / 幂等 / 断点续跑 / 门控 |
-| §7 Trellis 挂接 | **D64** | 需求 ID = task id；`#### 1.6` + 面包屑 enforcement；不新增状态；失败停 planning |
+| §7 执行层 挂接 | **D64** | 需求 ID = task id；`#### 1.6` + 面包屑 enforcement；不新增状态；失败停 planning |
 | §8 回写与报告 | **D65** | `atlas-apply.md`；E2E 状态边界；不改需求卡 |
 | §9 patches | **D66** | 锚点幂等、可重放；前置 B2 |
 | §5.2 回流原语 | **`3509 §99`** | 第 4 种模式：分组（上游目标 + 改动类型）/ 攒批（≤ 10 条/批）/ 独立写面（§5.1 仲裁）/ 闭环钩子（下游重跑 + 台账挪卷 + 各环门照跑） |
@@ -327,4 +317,4 @@ PRD 正文 / E2E 用例 / 结构事实 / 业务代码 / 影响面之外的重写
 
 ## Guidance
 
-执行 `apply` / `all` / `backfill` 前先读本文件与 `shared/*`、各环契约。**不得**在本环重实现任何环内逻辑，**不得**新增 Trellis 状态，**不得**绕过用户确认门与影响面兜底问答。改本契约时同步 `DESIGN.md`（决策 D60–D66）。
+执行 `apply` / `all` / `backfill` 前先读本文件与 `shared/*`、各环契约。**不得**在本环重实现任何环内逻辑，**不得**新增 任务状态，**不得**绕过用户确认门与影响面兜底问答。改本契约时同步 `DESIGN.md`（决策 D60–D66）。

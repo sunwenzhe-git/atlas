@@ -175,14 +175,13 @@ def test_install_sh_update_fails_on_uninitialized_project():
 def test_install_sh_update_preserves_runs_dir():
     with tempfile.TemporaryDirectory() as tmpdir:
         tmppath = Path(tmpdir)
-        (tmppath / ".atlas").mkdir()
+        (tmppath / ".atlas").mkdir(parents=True, exist_ok=True)
         (tmppath / ".atlas" / "VERSION").write_text("dummy-digest\n", encoding="utf-8")
-        (tmppath / ".trellis").mkdir()
         runs_file = tmppath / ".atlas" / "runs" / "backend-ac-alignment.json"
         runs_file.parent.mkdir(parents=True)
         runs_file.write_text('{"baseline": 1}\n', encoding="utf-8")
 
-        res = run_cmd(["bash", str(INSTALL_SH), "--update", "--target", tmpdir, "--no-skill", "--no-patch", "--no-wiring"])
+        res = run_cmd(["bash", str(INSTALL_SH), "--update", "--target", tmpdir, "--no-skill", "--no-wiring"])
         assert res.returncode == 0
         assert runs_file.is_file()
         assert runs_file.read_text(encoding="utf-8") == '{"baseline": 1}\n'
@@ -191,9 +190,8 @@ def test_install_sh_update_preserves_runs_dir():
 def test_cli_update_dry_run_on_initialized_project():
     with tempfile.TemporaryDirectory() as tmpdir:
         tmppath = Path(tmpdir)
-        (tmppath / ".atlas").mkdir()
+        (tmppath / ".atlas").mkdir(parents=True, exist_ok=True)
         (tmppath / ".atlas" / "VERSION").write_text("dummy-digest\n", encoding="utf-8")
-        (tmppath / ".trellis").mkdir()
 
         res = run_cmd(["node", str(ATLAS_BIN), "update", "--target", tmpdir, "--dry-run"])
         assert res.returncode == 0
@@ -259,7 +257,6 @@ def test_cli_unknown_command_exits_2():
 
 
 # ---------------------------------------------------------------- 平台探测（bin/platform.js）
-# Windows 现场（2026-11-03）：原生 PowerShell 没有 which ⇒ trellis 已装却被判「未检测到」；
 # 随后 `bash` 落到 C:\Windows\System32\bash.exe（WSL 中继壳）⇒ execvpe(/bin/bash) 报错，
 # install.sh 一步没跑；而 spawn 失败（status=null）还会被 `|| 0` 洗成成功。
 # 下面四测钉住探测口径与路径归一化。
@@ -270,11 +267,6 @@ def node_json(expr: str):
     res = run_cmd(["node", "-e", script])
     assert res.returncode == 0, res.stderr
     return json.loads(res.stdout)
-
-
-def test_trellis_probe_uses_where_on_windows():
-    assert node_json("p.trellisProbe('win32')") == {"cmd": "where", "args": ["trellis"]}
-    assert node_json("p.trellisProbe('darwin')") == {"cmd": "which", "args": ["trellis"]}
 
 
 def test_bash_candidates_are_git_bash_only():

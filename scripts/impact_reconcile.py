@@ -69,7 +69,7 @@ def head_of(root: Path) -> str:
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", required=True)
-    ap.add_argument("--task", default=None, help="需求 ID → .trellis/tasks/<ID>/impact.json")
+    ap.add_argument("--task", default=None, help="需求 ID → .atlas/tasks/<ID>/impact.json")
     ap.add_argument("--impact", default=None, help="impact.json 路径（优先于 --task）")
     ap.add_argument("--diff-base", required=True,
                     help="git ref：实际改动 = diff --name-only <ref>（与 impact_report 同语义）")
@@ -86,7 +86,7 @@ def main() -> int:
         return skip("非 git 仓库（无 .git）——对账无 diff 可言")
 
     impact_path = (Path(args.impact).resolve() if args.impact
-                   else root / ".trellis" / "tasks" / (args.task or "") / "impact.json")
+                   else root / ".atlas" / "tasks" / (args.task or "") / "impact.json")
     if not impact_path.is_file():
         return skip(f"impact.json 不存在: {impact_path}（影响面报告未跑——SKIP 不是通过）")
     try:

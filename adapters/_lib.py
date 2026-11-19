@@ -21,7 +21,7 @@ IGNORE_DIRS = {
     ".git", "node_modules", "__pycache__", "site-packages", "dist", "build",
     ".next", ".turbo", ".mypy_cache", ".pytest_cache", ".pyxle-build",
     "coverage", ".coverage", ".venv", "venv", ".scratch", "target",
-    ".gradle", ".idea", ".atlas", ".atlas-run", ".trellis", ".adapter-out",
+    ".gradle", ".idea", ".atlas", ".atlas-run", ".adapter-out",
 }
 
 

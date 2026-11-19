@@ -75,7 +75,7 @@ def mk(root: Path) -> None:
     (root / "backend" / "app" / "utils.py").write_text("def send_email():\n    pass\n",
                                                        encoding="utf-8")
     # RFC-20261119-01 (D202)：写入轻量语义透镜测试夹具
-    fras_dir = root / ".trellis" / "spec" / "structure" / "global"
+    fras_dir = root / ".atlas" / "spec" / "structure" / "global"
     fras_dir.mkdir(parents=True, exist_ok=True)
     (fras_dir / "cognition.fras").write_text(
         "backend/app/api/routes/login.py[DU5T]: F:登录路由 | R:code:backend/app/utils.py | A:login | S:-\n"

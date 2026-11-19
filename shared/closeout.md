@@ -16,7 +16,7 @@
 | 域实现完成 + 该域 E2E 全 green | **9**（域收口验收走查） |
 | 域实现完成（E2E 真跑前即可） | **10**（实例 ⑤ 实现代码独立审查） |
 | 独立审查报告落盘（①②④⑤ 任一实例） | 1（含 `validate_review_report --dir <报告目录>`，2026-10-06 起） |
-| 影响面报告已产出（`.trellis/tasks/<ID>/impact.json` 存在）的收口 | 1（含 `impact_reconcile --task <ID> --diff-base <ref>` 对账门：predicted vs 实际 diff 双向差集 ⇒ WARN，B191-1，2026-10-07 起） |
+| 影响面报告已产出（`.atlas/tasks/<ID>/impact.json` 存在）的收口 | 1（含 `impact_reconcile --task <ID> --diff-base <ref>` 对账门：predicted vs 实际 diff 双向差集 ⇒ WARN，B191-1，2026-10-07 起） |
 | 缺陷修复类任务（bug fix） | **4**（修复验证 7 检查点）→ 1 → 7 |
 | 实现类任务（feature / refactor，非 bug fix） | **4（B 档）** → 1 → 7（语义触发行，不自动派生；「实现类任务」= 落业务代码的 feature / refactor；bug fix 走上一行，纯文档 / 纯契约改动不算） |
 | 改动触及核心业务链路 / 权限 / CI / 依赖 / 契约 | **3**（变更风险定档与人工审批）→ 1 |
@@ -77,7 +77,7 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
   2. 基础路由与页面守卫（`router / guards / layout / navigation`）；
   3. CI/CD 流水线与构建配置（`.github/workflows / build / webpack / rspack / vite`）；
   4. 根级包依赖（`package.json / bun.lock / pnpm-lock / go.mod`）；
-  5. atlas / Trellis 核心共享契约（`shared/*.md / rings/*/reference.md`）。
+  5. atlas / 执行层 核心共享契约（`shared/*.md / rings/*/reference.md`）。
 - **审批主体纪律**：Agent 生成的审查通过（即使带 status=PASS）**永远不算人工审批名额**；审查必须由具备最终交付责任的人类开发者执行或确认。
 - **系统性修复的留出验证定档（2026-10-27，D156）**：改门 / 校验器 / 契约判据的批次，定档时必须附**触发 (b) 路径交叉检查**结论——`git diff --name-only` + `scripts/closeout_derive.py` 输出 ↔ DR4 段级锚路径族（`bugs.md` 同根归纳段）手工对照，记「锚 → 路径族」映射与误报，并粘贴 `git diff --name-only` 与 `closeout_derive.py` 的原始输出（命令 + 输出，不得只写结论）；命中 ⇒ 该 RFC §4.5 必须走留出验证三态（`闭族` / `未闭族` / `单案修复（无留出集）`）。触发 (a) = RFC §1 引子族锚或 ≥3 条独立审查重复 finding。**盲区明写**：语义映射不可机判，本步是纪律面（触发靠自述、可被逃）；评审侧对称检查 = `shared/independent-review.md` §9，流程门登记 = `shared/gates.md` §2.5。
 
@@ -99,7 +99,7 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
 
 > 4 项只作**证据观察，不判分**、无退出码；结论落收口记录即可。
 
-1. **可追溯性**：本轮改动可追溯到 Trellis 任务 Plan / Design 中的假设与决策；不另建台账（`global-rules.md` §18）。
+1. **可追溯性**：本轮改动可追溯到 任务卡 Plan / dispatch.md 中的假设与决策；不另建台账（`global-rules.md` §18）。
 2. **纯空白证据命令**：声称「无实质改动」时，给出可复跑的纯空白证据（如 `git diff -w` / `git diff --ignore-all-space`）。
 3. **纯后端验证命令**：非视觉 / 后端改动给出可复跑的后端验证命令与输出。
 4. **测试反模式**：是否出现「只为通过用例而写的特例」等反模式——**只作证据观察，不判分**。
@@ -142,7 +142,7 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
   6. `python3 .atlas/scripts/review_closure.py --dir <报告目录> [--emit-skeleton <file>]`（D5 跨轮闭环 observer：prior open Critical/Major 未 carried/resolves ⇒ WARN；关闭按该指纹最后一次证据判，中间轮关过不必重贴；跨轮必须同 `--unit`，否则孤儿文件 WARN；v4 跨轮内容漂移（prior 实审文件变了且未纳入最新实审集）⇒ `scope_drift` WARN，`review_scope_drift` 签字齐全 ⇒ `scope_drift_accepted` 不告警；<2 轮 SKIP；不阻断；不替代步骤 5。待填声明用 `--emit-skeleton` 出骨架，填完经转换器 `--resolves` 落盘）。
 - **一键入口（2026-11-03，`RFC-20261103-05`）**：`atlas review --unit <需求ID> --from main --to <分支>` 按上述六步自动走全（`--dry-run` 预览命令与 N）；手工分步仍有效，判据以本步骤为准。
 - **报告落点**：`product/reviews/<日期>-impl-review-<范围>/`（`cli.json` 留档为输入侧证据）。
-- **门禁**：有 `Critical` ⇒ 域不收口，修复回流 Trellis Execute、改完重跑（round +1）；`M < N` ⇒ 查静默跳过；finding 判明「AC / 断言本身错」⇒ 回退环改判 `prd` / `e2e` 入 backfill 队列。
+- **门禁**：有 `Critical` ⇒ 域不收口，修复回流 执行层 Execute、改完重跑（round +1）；`M < N` ⇒ 查静默跳过；finding 判明「AC / 断言本身错」⇒ 回退环改判 `prd` / `e2e` 入 backfill 队列。
 
 ### 步骤 11 — harness 复盘（按需，2026-10-12 补，`3507 BT`，ATLAS-UPSTREAM #201）
 
@@ -152,7 +152,7 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
   3. 大版本或里程碑集中收口。
   - **反向约束**：日常顺利收口**不得盲目触发**（`global-rules.md §12` 成本预算纪律，无信号不空跑）。
 - **输入物（就地取材）**：
-  - 会话原文或近几轮讨论纪要（`3508` 最新轮次，跨会话可调 `trellis mem`）；
+  - 会话原文或近几轮讨论纪要（`3508` 最新轮次；跨会话时从会话上下文恢复）；
   - 本批变更清单（`ATLAS-UPSTREAM.md`）与待决议题（`3509` 未决卷）；
   - 本地环境若已装配通用 `retro` skill，可直接复用其分析类目。
 - **三视角审视**：
@@ -162,7 +162,7 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
 - **结论三通道分流（严禁凭空造新文件）**：
   - **契约 / 门 / 补丁缺陷** ⇒ 登记 `ATLAS-UPSTREAM.md`，走用户确认门（`global-rules.md §7`）；
   - **未决待观察事项** ⇒ 写入 `3509` 未决卷标准条目（带背景与验证判据）；
-  - **开发流程/宿主适配摩擦** ⇒ 沉淀为 `.trellis/workflow.md` 补丁（`patches/`）或通过 `atlas report`（`§15`）上报开源池。
+  - **开发流程/宿主适配摩擦** ⇒ 通过 `atlas report`（`§15`）上报开源池；装配接线问题改 `patches/project-wiring/`。
   - **事故追问与回归闭环（D131）**：出错若为线上或联调逃逸 bug，必追问：“该改动可能出什么错？哪一道检查（E2E、单测、校验门、独立审查）才是接住它的正确位置？为什么这道门当时没接住？”每确认一个此类缺陷，必须同时补齐一条可复现的 E2E 回归用例或 M 系列变异钉（连接 `duty-review/bugs.md` 与 gates 总账）。
 - **硬边界**：
   - 不做业务代码实现期规范复盘（`BP` 边界，业务代码规范归项目自身 linter/typecheck 机器门；`shared/global-rules.md` §18 的实现期纪律与步骤 4 B 档的测试反模式证据不属于此复盘）；

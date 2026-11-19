@@ -2,7 +2,7 @@
 """atlas 结构环校验器 —— 按 `rings/structure/reference.md` §7 校验清单对结构产物做机器校验。
 
 - **框架无关**：本文件不得出现任何具体框架名（共享契约 global-rules.md §1）。
-- 纯标准库；对 `<项目根>/.trellis/spec/structure/` 可回归。
+- 纯标准库；对 `<项目根>/.atlas/spec/structure/` 可回归。
 - 输出 PASS / FAIL；有 FAIL 时非零退出。
 
 用法：
@@ -135,7 +135,7 @@ def paths_block(fm: str) -> tuple[bool, str]:
 
 
 def read_max_total(root: Path) -> int:
-    cfg = root / ".trellis" / "config.yaml"
+    cfg = root / ".atlas" / "config.yaml"
     if cfg.is_file():
         m = re.search(r"^\s*max_total_chars:\s*(\d+)", cfg.read_text(encoding="utf-8"), re.M)
         if m:
@@ -263,7 +263,7 @@ def validate(root: Path) -> Result:
     except LayoutError as exc:
         res.add("项目布局配置", False, str(exc))
         return res
-    spec = root / ".trellis" / "spec" / "structure"
+    spec = root / ".atlas" / "spec" / "structure"
 
     if not spec.is_dir():
         res.add("域模型", False, f"缺少结构事实根 {spec}")
@@ -534,7 +534,7 @@ def validate(root: Path) -> Result:
     def resolves(target: str) -> bool:
         # F34b（R8 收束，2026-10-15）：兄弟 spec 相对引用合法——结构文档里的
         # `global/routes.md`、`domains/demo.md` 等 <spec> 内相对路径，解析锚 =
-        # **结构 spec 根**（`.trellis/spec/structure/`）；项目根与 app 根锚保留在前优先。
+        # **结构 spec 根**（`.atlas/spec/structure/`）；项目根与 app 根锚保留在前优先。
         bases = [root] + [root / ap for ap in app_paths] + [spec]
         if "*" in target:
             return any(any(b.glob(target)) for b in bases)

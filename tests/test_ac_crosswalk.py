@@ -537,7 +537,7 @@ def test_parent_side_does_not_judge_confirmed_state(tmp_path: Path) -> None:
     """
     write(tmp_path, PRD, PRD_OK)
     write(tmp_path, "product/prd/ac-crosswalk.md", cw(ROW))
-    write(tmp_path, "backend/.trellis/tasks/T-1/prd.md",
+    write(tmp_path, "backend/.atlas/tasks/T-1/prd.md",
           "## Confirmed\n\n| 确认项 | 口径 | 证据状态 | 证据指针 |\n"
           "|---|---|---|---|\n| 认证方式 | JWT | unverified | — |\n")
     got = check(tmp_path, data())

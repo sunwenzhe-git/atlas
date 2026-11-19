@@ -38,7 +38,7 @@ JS_SUFFIXES = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
 SKIP_DIRS = {
     "node_modules", ".git", "dist", "build", ".next", ".nuxt", ".output",
     "coverage", "__pycache__", ".venv", "venv", "vendor", ".cache", "out",
-    "target", ".atlas", ".atlas-run", ".scratch", ".trellis", ".turbo",
+    "target", ".atlas", ".atlas-run", ".scratch", ".turbo",
 }
 E2E_PREFIXES = ("product/e2e/", ".atlas-run/", ".atlas/")
 

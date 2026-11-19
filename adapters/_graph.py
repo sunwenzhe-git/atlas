@@ -4,8 +4,8 @@
 设计定案（RFC-20261119-01 / D202，2026-11-19）：
 * **外部 AST 图谱（cgc / FalkorDB）正式退役**：实测证明前端 JSX 组件无边、现代 Java 后端
   （Spring DI / MyBatis / 线程池异步 / HTTP）四重截断，沉重外部图数据库已彻底移除。
-* **单源与两级轻量透镜**：支持读取项目内的全局（`.trellis/spec/structure/global/cognition.fras`）
-  与业务域（`.trellis/spec/structure/current/<domain>/cognition.fras`）轻量语义行，
+* **单源与两级轻量透镜**：支持读取项目内的全局（`.atlas/spec/structure/global/cognition.fras`）
+  与业务域（`.atlas/spec/structure/current/<domain>/cognition.fras`）轻量语义行，
   提供反向 1-hop 单跳引用查询，赋能执行层与影响面推导。
 * **落点保持**：项目根 `.adapter-out/` 仍是单一位点标记，保持与结构环产物一致。
 """
@@ -306,7 +306,7 @@ def reverse_1hop_callers(root: Path, target_paths: list[str]) -> list[str]:
     callers = set()
 
     candidate_files = []
-    structure_root = root / ".trellis" / "spec" / "structure"
+    structure_root = root / ".atlas" / "spec" / "structure"
     if structure_root.is_dir():
         for fras_file in structure_root.glob("**/cognition.fras"):
             candidate_files.append(fras_file)

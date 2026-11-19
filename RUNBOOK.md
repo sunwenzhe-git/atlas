@@ -5,18 +5,17 @@
 
 ---
 
-## 0. 前置：Trellis CLI 版本必须匹配项目
+## 0. 前置：Node.js + Python 3.10+
 
-目标项目 `.trellis/.version` 记录生成该项目的 Trellis 版本；**全局 CLI 必须 ≥ 该项目版本**——否则 `trellis update` 的行为不代表项目版本，Plan 挂载补丁（`patches/workflow-plan-apply/`）可能被 `trellis update` 冲掉（未决 B2）。
+Atlas 自带执行层（`atlas workflow`），**没有宿主执行器要安装或对齐版本**。只需：
 
 ```bash
-trellis --version                       # 全局 CLI
-cat <项目根>/.trellis/.version          # 项目 pin
+node --version      # >= 18
+python3 --version   # >= 3.10（Windows 用 python --version）
 ```
 
-- 落后就升：`trellis upgrade --tag <项目版本>`（或 `--tag beta` 取最新 beta）；先 `--dry-run` 看命令。
-- 两行版本号必须相等（或全局 CLI 更高）。**本文件不写死版本号**——它随升级立刻过期（§5 的“写死计数无对账”教训：对账靠上面两条命令）。换机 / 换工作区后**必须重做本步**。
-- 注意：`trellis update` 会把 `.trellis/config.yaml` 的**本地改动**视为冲突并覆盖——atlas 的 `after_finish` hook（`refresh_structure.py`）由 §1 的 **`install.sh` 第 6 步接线自动登记**（幂等），升级后重跑 `install.sh` 即恢复（或升级时选保留本地版本）。同理，`AGENTS.md` 的 atlas 指针段由该步写入 Trellis 区块**外**，不受 `trellis update` 覆盖。
+- 换机 / 换工作区后重做本步即可；不存在“全局 CLI 与项目 pin 版本对齐”的步骤。
+- `atlas update` 只刷新 `.atlas/` 白名单子目录，`.atlas/tasks`、`.atlas/spec`、`atlas.config.yaml` 与 `AGENTS.md` 指针段不受影响。
 
 ### 0.5 图谱前置（可选；profile 声明 `graph.backend` 的项目才需要）
 
@@ -41,16 +40,15 @@ bash atlas/install.sh --target <项目根> --dry-run   # 先看计划（本工�
 bash atlas/install.sh --target <项目根>             # 实装
 ```
 
-装：整包 → `<项目根>/.atlas/`；5 个 skill 瘦桩（`atlas-{structure,prd,e2e,apply,design-review}`）→ `.claude/skills/` 与 `.agents/skills/`；资产根骨架（默认 `product/`，由 `atlas.config.yaml` 解析；**不建**已退役的 `product/prototype/`）；**Plan 挂载补丁打进 `.trellis/workflow.md`**（锚点幂等；`--no-patch` 可跳过）；**项目接线**——`AGENTS.md` 的 atlas 指针段 + `.trellis/config.yaml` 的 `after_finish` hook（幂等；`--no-wiring` 可跳过）；并**清理历史单入口 `atlas` skill 与源包已退役的 `atlas-*` 瘦桩**（实例：E1 退役的 `atlas-prototype`）。
+装：整包 → `<项目根>/.atlas/`；5 个 skill 瘦桩（`atlas-{structure,prd,e2e,apply,design-review}`）→ `.claude/skills/` 与 `.agents/skills/`；资产根骨架（默认 `product/`，由 `atlas.config.yaml` 解析；**不建**已退役的 `product/prototype/`）；**执行层骨架**（`.atlas/tasks`、`.atlas/spec/structure`、`.atlas/spec/conventions`）；**项目接线**——`AGENTS.md` 的 atlas 指针段、extractor 测试配置、`.gitignore`、pi 宿主扩展（幂等；`--no-wiring` 可跳过）；并**清理历史单入口 `atlas` skill 与源包已退役的 `atlas-*` 瘦桩**（实例：E1 退役的 `atlas-prototype`）。
 
 - 已装配过的目标默认**硬停**（`ATLAS_ALLOW_OVERWRITE=1` 显式越过）——防分歧窗口内旧源包覆盖副本侧改动；新项目开户与 `--dry-run` 不受限。
 
-- 补丁目的 = 在 Phase 1 插 `#### 1.6 项目级资产更新` + `[workflow-state:planning]` 面包屑 enforcement（决策 D64/D66）。
-- 手动重放补丁（Trellis 升级后）：
+- 「项目级资产更新」不再是补丁步骤：`atlas workflow plan` 把它写进任务卡，`atlas workflow dispatch` 把它写进派工单（决策 D64/D66）。
+- 手动重放项目接线：
 
 ```bash
-python3 atlas/patches/workflow-plan-apply/apply-patches.py \
-  --target codebases --spec atlas/patches/workflow-plan-apply/spec.json --apply
+python3 atlas/patches/project-wiring/apply-wiring.py --target <项目根> --apply
 ```
 
 ---
@@ -60,17 +58,17 @@ python3 atlas/patches/workflow-plan-apply/apply-patches.py \
 按 `结构 → PRD → E2E`：逐个触发 `atlas-structure` / `atlas-prd` / `atlas-e2e`，或用 `atlas-apply` 的 `all` 模式一次按序跑三环（**E1：原型环已移除**，2026-09-27；应然 UI 的 testid 应然随用例分片产出，见 `rings/e2e/reference.md` §4/§6.2）。
 
 - **门控**：`product/prd/prd.md` §零若有待决策，PRD 只产全局、E2E 只落空骨架——先清零产品待决策再往下。
-- 结构事实落 `.trellis/spec/structure/`；A（技术栈/启动）与 H（测试/运行）落项目根 `README.md`。
+- 结构事实落 `.atlas/spec/structure/`；A（技术栈/启动）与 H（测试/运行）落项目根 `README.md`。
 
 ---
 
 ## 3. 接需求（需求式增量）
 
-走 Trellis Plan（原生入口）；其 **1.6 步**自动调 `atlas-apply` 的 `apply <需求ID>`：
+走 Atlas 执行层：`atlas workflow plan --unit <需求ID>` 建卡，`atlas workflow dispatch` 出派工单；派工单包含 `atlas-apply` 的 `apply <需求ID>` 指令：
 
-读需求卡 → 推导影响面 → 按 `prd → e2e` 增量更新（E1：原型环已移除）→ 跑机器校验 → 写 `.trellis/tasks/<需求ID>/atlas-apply.md`。
+读需求卡 → 推导影响面 → 按 `prd → e2e` 增量更新（E1：原型环已移除）→ 跑机器校验 → 写 `.atlas/tasks/<需求ID>/atlas-apply.md`。
 
-**需求 ID = Trellis task id**；**需求卡 = 该 task 的 `prd.md`**。
+**需求 ID = 任务卡 id**；**需求卡 = 该 task 的 `prd.md`**。
 
 ---
 
@@ -78,7 +76,7 @@ python3 atlas/patches/workflow-plan-apply/apply-patches.py \
 
 **收口按 `.atlas/shared/closeout.md` 逐步跑**（门自检 → 装配面核对 → 回灌登记 → 提交）；**门总账** = `.atlas/shared/gates.md`（一门一行、含显式盲区与取证等级；**不在表 = 不存在**）。
 
-实现后：真实应用跑 E2E（**E1 单段**：`stack-profile.yaml` 的 `e2e.app_base_url`）→ 全 `green`（或 `blocked` 带原因）→ `after_finish` hook 刷结构事实（`refresh_structure.py`）→ Trellis `update-spec` + `finish`。
+实现后：真实应用跑 E2E（**E1 单段**：`stack-profile.yaml` 的 `e2e.app_base_url`）→ 全 `green`（或 `blocked` 带原因）→ 显式刷结构事实（`python3 .atlas/scripts/refresh_structure.py --root . --chain`）→ `atlas workflow finish --unit <需求ID>`。
 
 - `e2e.app_base_url` 为空 ⇒ E2E 跑不起来：`atlas_check` 记 **`SKIP`**（显式可见跳过），**不得**当作已验收。真栈跑通前，E1 口径下的实现类工作无法验收。
 - 首跑前先读 `rings/e2e/reference.md` §5.4 的**首跑分类协议**（mock 语义残留 / 命名漂移 / 真缺陷三分类，不分类不得批量回写状态）。
@@ -90,7 +88,7 @@ python3 atlas/patches/workflow-plan-apply/apply-patches.py \
 状态随每轮变化，写死即过期（实例：本节曾是 2026-09-20 的快照，三轮后仍在报“四环已就绪 / 原型待跑”）。**当前进度与下一步的落点** = 项目内任务/评审记录，按当轮实际产出就近登记。
 
 ```bash
-trellis --version && cat .trellis/.version      # 版本对齐（§0）
+node --version && python3 --version             # 前置（§0）
 ls .atlas/rings/                                # 期望：e2e prd structure（三环）
 ls <平台>/skills/atlas-*                        # 期望：atlas-{structure,prd,e2e,apply,design-review}
 python3 .atlas/scripts/atlas_check.py --root . --fast   # 门一行一门：ok|FAIL|WARN|SKIP
@@ -126,4 +124,4 @@ python3 .atlas/scripts/refresh_structure.py         --root . --apply
 
 ## Guidance
 
-换工作区重跑时**按 §0 → §1 → §2 → §3 → §4 顺序**；**§0 的 CLI 版本核对不能跳**——否则 `trellis update` 会冲掉 `#### 1.6` 挂载补丁。改动 `atlas/` 后跑 `python3 check-all.py`。
+换工作区重跑时**按 §0 → §1 → §2 → §3 → §4 顺序**；§0 只核对 Node.js / Python 3.10+。改动 `atlas/` 后跑 `python3 check-all.py`。

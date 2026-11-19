@@ -1,29 +1,21 @@
 #!/usr/bin/env python3
-"""atlas 项目接线（project wiring）——把入口指针、收口 hook、宿主扩展幂等写进目标项目。
+"""atlas 项目接线（project wiring）——把入口指针、测试配置、宿主扩展幂等写进目标项目。
 
 用法：
     python3 apply-wiring.py --target <项目根> [--apply] [--json]
 
-做五件事（各自独立幂等）：
+做四件事（各自独立幂等）：
 
-  1. `<项目根>/AGENTS.md`：在 Trellis 区块 `<!-- TRELLIS:END -->` **之后**追加
-     `<!-- ATLAS:START -->…<!-- ATLAS:END -->` 段。该段位于 Trellis 区块**之外**，
-     因此不被 `trellis update` 覆盖。已存在则整段按源更新（不新建重复段）。
-     文件不存在时创建。
+  1. `<项目根>/AGENTS.md`：追加 `<!-- ATLAS:START -->…<!-- ATLAS:END -->` 段；
+     已存在则整段按源更新（不新建重复段）。文件不存在时创建。
 
-  2. `<项目根>/.trellis/config.yaml`：登记 `after_archive` hook 跑
-     `refresh_structure.py`（结构事实刷新，决策 D159：归档才是任务收口；旧形态
-     `after_finish` 会被迁移）；已有 `hooks:` 块则并入，否则在文件末尾新增。
-     同一步把 `session_auto_commit` 默认写为 `false`（D160：提交由人 review，
-     不让归档自动 commit；用户显式设置的键尊重不动）。
-
-  3. `<项目根>/<测试配置>`（仅 extractor 声明的栈）：由 `adapters/ac/` 的 extractor
+  2. `<项目根>/<测试配置>`（仅 extractor 声明的栈）：由 `adapters/ac/` 的 extractor
      提供项目级配置 hook；无 hook 的栈跳过，不写任何配置。
 
-  4. `<项目根>/.pi/`（仅 pi 宿主）：把官方扩展落到 `.pi/extensions/atlas/index.ts`，
+  3. `<项目根>/.pi/`（仅 pi 宿主）：把官方扩展落到 `.pi/extensions/atlas/index.ts`，
      并在 `.pi/settings.json` 的 `extensions[]` 里幂等登记一行（2026-10-15 补）。
 
-  5. `<项目根>/.gitignore`（仅已存在时）：幂等追加一行 `.adapter-out/`（2026-10-15 补）。
+  4. `<项目根>/.gitignore`（仅已存在时）：幂等追加一行 `.adapter-out/`（2026-10-15 补）。
      issue #8 后 atlas 全部中间产物统一落项目根该目录（适配器输出 / 漂移标记 /
      图谱新鲜度标记），不忽略则 `git status` 常驻未跟踪噪声——**对所有接线项目成立**，
      不只图谱用户。判据：文件**不存在 ⇒ 不首创**（跳过并在报告里给一行建议）；
@@ -35,9 +27,7 @@
 设计要点：
   * 只做**外科式插入 / 替换**，不整体覆盖任何文件；标记外内容原样保留。
   * 缺省 dry-run（安全默认）；真正写入需显式 `--apply`。
-  * `.yaml` 目标写入前做轻量结构护栏（不依赖第三方库）：`hooks:` 顶层键唯一、
-    hook 命令行存在；不满足则报 error 且不写该文件。`.pi/settings.json` 同律：
-    结构判读不了就跳过（只报要手加的那一行），不猜结构。
+  * `.pi/settings.json` 的结构判读不了就跳过（只报要手加的那一行），不猜结构。
   * **不认识的目标形态 = 跳过 + 说明**，绝不自动创建宿主目录（非 pi 项目不建 `.pi/`）。
 """
 
@@ -59,54 +49,7 @@ POINTER_SNIPPET = PKG_ROOT / "agent-pointer.md"
 
 ATLAS_START = "<!-- ATLAS:START -->"
 ATLAS_END = "<!-- ATLAS:END -->"
-TRELLIS_END = "<!-- TRELLIS:END -->"
 AGENTS_REL = "AGENTS.md"
-
-# 钩子由 Trellis 以 `subprocess.Popen(cmd, shell=True)` 执行（common/task_utils.run_task_hooks）：
-# POSIX 走 /bin/sh、Windows 走 cmd.exe；`.trellis/config.yaml` 是 git 跟踪的，写死
-# `python3`/`python` 任何一端都会在另一端坏掉（Windows 上 python3 还会命中商店 stub）。
-# 2026-11-03 拍板（RFC-20261103-04 §6）改用**平台无关启动器**：Node 是 Atlas 硬依赖，
-# 由 `.atlas/scripts/run_python.js` 运行时解析 Python 3.10+ 再转发 argv/退出码。
-HOOK_CORE = ".atlas/scripts/refresh_structure.py --root ."
-HOOK_LAUNCHER = "node .atlas/scripts/run_python.js"
-HOOK_CMD = f"{HOOK_LAUNCHER} {HOOK_CORE} --chain"
-# 兼容升级判据仍以 HOOK_CORE（平台无关的脚本路径段）为准；旧形态（python3/python/py -3）
-# 在 update 时就地升级为启动器形态，不双注册。
-CONFIG_REL = ".trellis/config.yaml"
-EVENT_ARCHIVE = "after_archive"
-EVENT_ORDER = ["after_finish", "after_start", "after_create", "after_archive"]
-
-RE_HOOKS = re.compile(r"^hooks:\s*(#.*)?$")
-RE_AFTER_FINISH = re.compile(r"^  after_finish:\s*(#.*)?$")
-RE_TOP_LEVEL = re.compile(r"^\S")
-
-
-RE_LEGACY_INTERP = re.compile(r'(\s*-\s*["\']?)(?:python3?|py)(?:\.exe)?(?:\s+-3)?\s+',
-                               re.IGNORECASE)
-
-
-def _refresh_tail(line: str) -> str | None:
-    """是 refresh hook 行 ⇒ 返回 HOOK_CORE 之后的尾参（`--chain`/`--apply`/自定义）。"""
-    if HOOK_CORE not in line:
-        return None
-    return line.split(HOOK_CORE, 1)[1].strip().strip('"').strip("'").strip()
-
-
-def _normalize_hook_line(line: str) -> str | None:
-    """把 refresh hook 升级成平台无关启动器形态，其余原样保留。
-
-    * 已是启动器形态 ⇒ 原样返回（幂等）；
-    * 旧解释器形态（`python3` / `python` / `py -3` / `python.exe`）⇒ 前缀换成启动器；
-    * 认不出的前缀（绝对路径解释器、自定义包装）⇒ 返回 None，调用侧按「自定义 hook」跳过。
-    """
-    idx = line.index(HOOK_CORE)
-    before = line[:idx]
-    if "run_python.js" in before:
-        return line
-    m = RE_LEGACY_INTERP.fullmatch(before)
-    if not m:
-        return None
-    return m.group(1) + HOOK_LAUNCHER + " " + line[idx:]
 
 
 def render_pointer() -> str:
@@ -141,12 +84,6 @@ def wire_agents(target: Path) -> dict:
             j += 1
         new_text = text[:i] + block + text[j:]
         detail = "updated (block replaced)"
-    elif TRELLIS_END in text:
-        idx = text.index(TRELLIS_END) + len(TRELLIS_END)
-        if text[idx:idx + 1] == "\n":
-            idx += 1
-        new_text = text[:idx] + block + text[idx:]
-        detail = "applied (after TRELLIS:END)"
     else:
         new_text = text
         if not new_text.endswith("\n"):
@@ -159,177 +96,7 @@ def wire_agents(target: Path) -> dict:
     return {"file": AGENTS_REL, "status": "applied", "detail": detail, "_write": (path, new_text)}
 
 
-# ----------------------------------------------------------------- .trellis/config.yaml
-
-RE_AUTO_COMMIT = re.compile(r"^session_auto_commit:\s*(.*)$")
-RE_AUTO_COMMIT_COMMENTED = re.compile(r"^#\s*session_auto_commit:.*$")
-
-
-def _wire_auto_commit(lines: list[str]) -> str:
-    """默认关闭 Trellis 的自动提交（D160）。
-
-    自动提交会把 journal / task 归档直接 commit 进用户仓库，绕过人工 review；
-    atlas 的接线口径是「提交由人决定」，故新项目默认写 `session_auto_commit: false`。
-    用户显式写了该键 ⇒ 尊重（true/false 都不改），只在报告里说明。
-    """
-    for ln in lines:
-        m = RE_AUTO_COMMIT.match(ln)
-        if not m:
-            continue
-        value = m.group(1).split("#")[0].strip().lower()
-        return "respected (already false)" if value in ("false", "no", "0", "off") else "respected (user override)"
-    for i, ln in enumerate(lines):
-        if RE_AUTO_COMMIT_COMMENTED.match(ln):
-            lines[i] = "# atlas 接线：默认关闭自动提交，提交由人 review 后手工执行（D160）\nsession_auto_commit: false\n"
-            return "applied (enabled-off at template comment)"
-    if lines and not lines[-1].endswith("\n"):
-        lines[-1] += "\n"
-    lines.append("\n# atlas 接线：默认关闭自动提交，提交由人 review 后手工执行（D160）\nsession_auto_commit: false\n")
-    return "applied (enabled-off appended)"
-
-
-def _hooks_range(lines: list[str]) -> tuple[int, int] | None:
-    """返回 hooks: 子块的行区间 [start, end)（end 为第一个顶层行）。"""
-    hi = next((i for i, ln in enumerate(lines) if RE_HOOKS.match(ln)), None)
-    if hi is None:
-        return None
-    end = len(lines)
-    for j in range(hi + 1, len(lines)):
-        if RE_TOP_LEVEL.match(lines[j]):
-            end = j
-            break
-    return (hi + 1, end)
-
-
-def _event_lines(lines: list[str], rng: tuple[int, int], event: str) -> tuple[int, list[int]] | None:
-    """返回某事件子块的 (键行下标, 命令行下标列表)；不存在返回 None。"""
-    start, end = rng
-    key_re = re.compile(rf"^  {re.escape(event)}:\s*(#.*)?$")
-    for i in range(start, end):
-        if not key_re.match(lines[i]):
-            continue
-        cmd_idx = []
-        j = i + 1
-        while j < end:
-            ln = lines[j]
-            if ln.strip() and not ln.startswith("    "):
-                break
-            if ln.lstrip().startswith("- "):
-                cmd_idx.append(j)
-            j += 1
-        return (i, cmd_idx)
-    return None
-
-
-def wire_config(target: Path) -> dict:
-    """接线 `.trellis/config.yaml` 的两件事（各自幂等）：
-
-    1. refresh hook 登记到 `after_archive`（D159）。归档（`task.py archive`，收尾命令
-       `/trellis-finish-work` 走的也是它）才是任务收口；`after_finish` 只清活动任务指针，
-       用它会在真收口时漏刷新。存量 `after_finish` 里的同一条命令会被**迁移**。
-    2. `session_auto_commit` 默认写 `false`（D160）：自动提交会把 journal / 任务归档直接
-       commit 进用户仓库，绕过人工 review；用户显式写了该键则尊重不动。
-    """
-    path = target / CONFIG_REL
-    if not path.exists():
-        return {"file": CONFIG_REL, "status": "skipped",
-                "detail": "config.yaml 不存在（Trellis 未初始化？）"}
-
-    text = path.read_text(encoding="utf-8")
-    lines = text.splitlines(keepends=True)
-    rng = _hooks_range(lines)
-
-    hook_ready = False
-    migrated = False
-    if rng is not None:
-        archive = _event_lines(lines, rng, EVENT_ARCHIVE)
-        if archive is not None:
-            for i in archive[1]:
-                if _refresh_tail(lines[i]) != "--chain":
-                    continue
-                new_line = _normalize_hook_line(lines[i])
-                if new_line is None:
-                    # 解释器前缀认不出（自定义包装 / `py -3` 两段式）⇒ 不猜、不重复登记
-                    return {"file": CONFIG_REL, "status": "skipped",
-                            "detail": "after_archive 已存在 refresh hook（解释器前缀无法识别），未改"}
-                if new_line != lines[i]:
-                    lines[i] = new_line
-                    migrated = True
-                hook_ready = True
-
-    detail = "after_archive hook already registered"
-    if migrated:
-        detail = "applied (hook upgraded to platform-neutral launcher)"
-    if not hook_ready:
-        # 找到别处（旧形态 after_finish / 其它事件）或 after_archive 旧尾参（--apply）的
-        # 同一条命令，准备迁移。判据只看 HOOK_CORE（平台无关），解释器名不参与判等。
-        legacy: list[tuple[str, int]] = []
-        if rng is not None:
-            for event in EVENT_ORDER:
-                found = _event_lines(lines, rng, event)
-                if found is None:
-                    continue
-                for i in found[1]:
-                    tail = _refresh_tail(lines[i])
-                    if tail is None:
-                        continue
-                    if tail not in ("--apply", "--chain"):
-                        return {"file": CONFIG_REL, "status": "skipped",
-                                "detail": "存在自定义 refresh hook（尾参非 --apply/--chain），未改"}
-                    legacy.append((event, i))
-
-        # 迁移：删除旧命令行；旧事件子块被删空时连键行一起去掉
-        for event, i in sorted(legacy, key=lambda x: -x[1]):
-            del lines[i]
-            found = _event_lines(lines, _hooks_range(lines) or (0, 0), event)
-            if found is not None and not found[1]:
-                del lines[found[0]]
-
-        rng = _hooks_range(lines)
-        if rng is None:
-            if text and not text.endswith("\n"):
-                lines.append("\n")
-            lines.append("\n# atlas structure refresh（D159）：任务归档后刷新结构事实指针层\n")
-            lines.append("hooks:\n")
-            lines.append("  after_archive:\n")
-            lines.append(f'    - "{HOOK_CMD}"\n')
-            detail = "applied (new hooks block at EOF)"
-        else:
-            archive = _event_lines(lines, rng, EVENT_ARCHIVE)
-            if archive is None:
-                lines.insert(rng[1], f'  after_archive:\n    - "{HOOK_CMD}"\n')
-                detail = "applied (after_archive added to existing hooks)"
-            else:
-                lines.insert(archive[0] + 1, f'    - "{HOOK_CMD}"\n')
-                detail = "applied (hook added to existing after_archive)"
-            if legacy:
-                detail = detail.replace("applied", "applied (migrated from after_finish)")
-
-    commit_state = _wire_auto_commit(lines)
-    if commit_state.startswith("applied"):
-        detail = f"{detail}; session_auto_commit off"
-
-    new_text = "".join(lines)
-
-    # 轻量 YAML 结构护栏（不依赖 PyYAML）
-    top_hooks = [ln for ln in new_text.splitlines() if RE_HOOKS.match(ln)]
-    if len(top_hooks) != 1:
-        return {"file": CONFIG_REL, "status": "error",
-                "detail": f"YAML 护栏：顶层 hooks: 出现 {len(top_hooks)} 次（期望 1），不修改"}
-    if HOOK_CMD not in new_text:
-        return {"file": CONFIG_REL, "status": "error",
-                "detail": "YAML 护栏：hook 命令未写入，不修改"}
-    active_commit_keys = [ln for ln in new_text.splitlines() if RE_AUTO_COMMIT.match(ln)]
-    if len(active_commit_keys) > 1:
-        return {"file": CONFIG_REL, "status": "error",
-                "detail": f"YAML 护栏：session_auto_commit 出现 {len(active_commit_keys)} 次（期望 ≤1），不修改"}
-
-    if new_text == text:
-        return {"file": CONFIG_REL, "status": "skipped", "detail": "already current"}
-    return {"file": CONFIG_REL, "status": "applied", "detail": detail, "_write": (path, new_text)}
-
-
-# ----------------------------------------------------------------- .gitignore 兜底（2026-10-15 补，第 5 个触点）
+# ----------------------------------------------------------------- .gitignore 兜底（2026-10-15 补，第 4 个触点）
 
 GITIGNORE_REL = ".gitignore"
 ADAPTER_OUT_LINE = ".adapter-out/"
@@ -361,7 +128,7 @@ def wire_gitignore(target: Path) -> dict:
             "_write": (path, new_text)}
 
 
-# ----------------------------------------------------------------- pi 宿主扩展（2026-10-15 补，第 4 个触点）
+# ----------------------------------------------------------------- pi 宿主扩展（2026-10-15 补，第 3 个触点）
 
 PI_REL = ".pi"
 PI_SETTINGS_REL = ".pi/settings.json"
@@ -472,8 +239,7 @@ def main() -> int:
         print(f"[FAIL] {exc}", file=sys.stderr)
         return 2
 
-    results = [wire_agents(target), wire_config(target), wire_project(target),
-               wire_gitignore(target)]
+    results = [wire_agents(target), wire_project(target), wire_gitignore(target)]
     results += wire_pi_extension(target)
     errors = sum(1 for r in results if r["status"] == "error")
 

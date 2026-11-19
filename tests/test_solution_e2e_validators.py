@@ -265,13 +265,13 @@ def set_reader_version(root: Path, version: str) -> None:
 
 
 def test_parent_second_landing_fails_for_task_dir_case_outside_index(tmp_path: Path) -> None:
-    """RFC-20261111-03 §2.4：成员 `.trellis/tasks/**/cases.md` 出现索引外用例 ID ⇒ FAIL。"""
+    """RFC-20261111-03 §2.4：成员 `.atlas/tasks/**/cases.md` 出现索引外用例 ID ⇒ FAIL。"""
     make_parent(tmp_path, [req("REQ-001", "web", case_ids=["E2E-SOLUTION-001"])])
     write_prd(tmp_path)
     write_index(tmp_path, [main_row()])
     write_shard(tmp_path, case_block())
     set_reader_version(tmp_path, "0.4.0")
-    task_dir = tmp_path / "web" / ".trellis" / "tasks" / "T-1"
+    task_dir = tmp_path / "web" / ".atlas" / "tasks" / "T-1"
     task_dir.mkdir(parents=True)
     (task_dir / "cases.md").write_text(
         "# 任务用例\n\n用例 E2E-SOLUTION-777 写在任务目录里。\n", encoding="utf-8")
@@ -286,12 +286,12 @@ def test_m06_any_case_row_is_second_landing_regardless_of_id_prefix(tmp_path: Pa
     write_prd(tmp_path)
     write_index(tmp_path, [main_row()])
     write_shard(tmp_path, case_block())
-    active = tmp_path / "web" / ".trellis" / "tasks" / "T-9"
+    active = tmp_path / "web" / ".atlas" / "tasks" / "T-9"
     active.mkdir(parents=True)
     (active / "cases.md").write_text(
         "# 任务用例\n\n| 用例ID | 场景 |\n|---|---|\n| BE-SYNC-001 | 同步重试成功 |\n",
         encoding="utf-8")
-    archived = tmp_path / "web" / ".trellis" / "tasks" / "archive" / "2026-10" / "T-8"
+    archived = tmp_path / "web" / ".atlas" / "tasks" / "archive" / "2026-10" / "T-8"
     archived.mkdir(parents=True)
     (archived / "cases.md").write_text(
         "# 归档用例\n\n| HC-RECORD-001 | 记录回放 |\n|---|---|\n", encoding="utf-8")
@@ -306,8 +306,8 @@ def test_m06_any_case_row_is_second_landing_regardless_of_id_prefix(tmp_path: Pa
     assert levels(fail)["用例第二落点"] == "FAIL", fail
     detail = details(fail, "用例第二落点")
     assert "task_dir_case_duplicate" in detail
-    assert ".trellis/tasks/T-9/cases.md" in detail
-    assert ".trellis/tasks/archive/2026-10/T-8/cases.md" in detail
+    assert ".atlas/tasks/T-9/cases.md" in detail
+    assert ".atlas/tasks/archive/2026-10/T-8/cases.md" in detail
 
 
 def test_parent_second_landing_passes_when_task_dir_ids_are_in_index(tmp_path: Path) -> None:
@@ -315,7 +315,7 @@ def test_parent_second_landing_passes_when_task_dir_ids_are_in_index(tmp_path: P
     write_prd(tmp_path)
     write_index(tmp_path, [main_row()])
     write_shard(tmp_path, case_block())
-    task_dir = tmp_path / "api" / ".trellis" / "tasks" / "T-2"
+    task_dir = tmp_path / "api" / ".atlas" / "tasks" / "T-2"
     task_dir.mkdir(parents=True)
     (task_dir / "cases.md").write_text(
         "已迁入索引：E2E-SOLUTION-001。\n", encoding="utf-8")
@@ -328,7 +328,7 @@ def _task_case_fixture(tmp_path: Path) -> None:
     write_prd(tmp_path)
     write_index(tmp_path, [main_row()])
     write_shard(tmp_path, case_block())
-    task_dir = tmp_path / "web" / ".trellis" / "tasks" / "T-9"
+    task_dir = tmp_path / "web" / ".atlas" / "tasks" / "T-9"
     task_dir.mkdir(parents=True)
     (task_dir / "cases.md").write_text(
         "# 任务用例\n\n| 用例ID | 场景 |\n|---|---|\n| BE-SYNC-001 | 同步重试成功 |\n",
@@ -379,7 +379,7 @@ def test_task_case_rows_under_generic_header(tmp_path: Path, header: str) -> Non
     write_prd(tmp_path)
     write_index(tmp_path, [main_row()])
     write_shard(tmp_path, case_block())
-    task = tmp_path / "web" / ".trellis" / "tasks" / "T-HDR"
+    task = tmp_path / "web" / ".atlas" / "tasks" / "T-HDR"
     task.mkdir(parents=True)
     (task / "cases.md").write_text(
         f"| {header} | 场景 |\n|---|---|\n| E2E-SOLUTION-001 | 登录成功 |\n",
@@ -404,8 +404,8 @@ def test_task_case_rows_under_generic_header(tmp_path: Path, header: str) -> Non
 
 def test_ac_trace_table_is_not_a_case_row(tmp_path: Path) -> None:
     """复核 2：追溯表放进**成员** `web/`、四类前缀都在首列 ⇒ 仍不得判成用例行。"""
-    _task_case_fixture(tmp_path)  # web/.trellis/tasks/T-9/cases.md：一条真用例行
-    trace = tmp_path / "web" / ".trellis" / "tasks" / "T-10"
+    _task_case_fixture(tmp_path)  # web/.atlas/tasks/T-9/cases.md：一条真用例行
+    trace = tmp_path / "web" / ".atlas" / "tasks" / "T-10"
     trace.mkdir(parents=True)
     (trace / "cases.md").write_text(
         "# 验收追溯\n\n"
@@ -425,7 +425,7 @@ def test_ac_trace_table_is_not_a_case_row(tmp_path: Path) -> None:
     # 扫描面钉子：T-10 确实存在且被扫到，但一行都不认；只有 T-9 那条真用例行
     assert (trace / "cases.md").is_file()
     assert v_index._task_case_lines(tmp_path / "web") == [
-        ".trellis/tasks/T-9/cases.md:5=BE-SYNC-001"], "扫描面或判定不符"
+        ".atlas/tasks/T-9/cases.md:5=BE-SYNC-001"], "扫描面或判定不符"
     result = v_index.validate(tmp_path)
     assert levels(result)["用例第二落点"] == "FAIL", result
     detail = details(result, "用例第二落点")
@@ -438,7 +438,7 @@ def test_ac_trace_table_is_not_a_case_row(tmp_path: Path) -> None:
     assert "D-1" not in detail
 
     # 去掉那条唯一用例行 ⇒ PASS（追溯表本身不得触发任何判定）
-    (tmp_path / "web" / ".trellis" / "tasks" / "T-9" / "cases.md").write_text(
+    (tmp_path / "web" / ".atlas" / "tasks" / "T-9" / "cases.md").write_text(
         "| AC-DEMO-001 | 仅追溯表 |\n", encoding="utf-8")
     assert levels(v_index.validate(tmp_path))["用例第二落点"] == "PASS"
 

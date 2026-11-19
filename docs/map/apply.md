@@ -7,15 +7,15 @@
 
 - 不产 PRD 正文 / 用例 / 结构事实 / 业务代码——越界即失败(契约 §11)。
 - 不重实现环内步骤:prd / e2e 的增量规程归 `rings/*/reference.md`。
-- 不新增 Trellis 状态:只用 planning / in_progress / completed 三态(D64)。
+- 不新增 执行层 状态:只用 planning / in_progress / completed 三态(D64)。
 
 ## 文件清单
 
 | 文件 | 角色 |
 |---|---|
-| `apply/reference.md`(330 行) | 执行契约本体(安装后位于 `.atlas/apply/reference.md`),四模式 / 三问门 / 影响面 / 增量边界全在这 |
+| `apply/reference.md`(320 行) | 执行契约本体(安装后位于 `.atlas/apply/reference.md`),四模式 / 三问门 / 影响面 / 增量边界全在这 |
 | `skills/atlas-apply/` | agent 执行入口(skill 薄桩) |
-| `patches/workflow-plan-apply/` | 把 apply 挂进 Trellis 工作流的锚点式补丁 |
+| `atlas workflow plan` / `dispatch` | 把 apply 挂进 执行层 工作流的锚点式补丁 |
 | `scripts/write_claim.py`(204 行) | 并发写面仲裁的 claim 钩子(M3,RFC-20261022-01) |
 | `tests/test_backfill_contract.py` | backfill 契约符合性钉(弱判据形态面) |
 
@@ -28,7 +28,7 @@
 | `all` | 按序全量:`structure → prd → e2e`(绿地 / 重建基线) | 三环各自全量流程的编排 |
 | `backfill` | 回流原语:已裁决的回填条目分组攒批灌回上游(≤10 条/批) | 「回填是常态,不是异常」 |
 
-**需求 ID = Trellis task id;需求卡 = task 的 `prd.md`**。另有第 4 种形态(应然资产自身修订、无需求卡)**不经 apply**——直接按 `prd → e2e` 逐环跑受影响集合,判据 = 「有没有一条需求要接?」(§3.2)。
+**需求 ID = 任务卡 id;需求卡 = task 的 `prd.md`**。另有第 4 种形态(应然资产自身修订、无需求卡)**不经 apply**——直接按 `prd → e2e` 逐环跑受影响集合,判据 = 「有没有一条需求要接?」(§3.2)。
 
 ## 核心机制
 
@@ -52,13 +52,13 @@ agent 语义判断为主 + 结构证据约束;产出结构化清单(`affected_do
 
 共享表面(e2e-index 等)单写者纪律:动手前 `write_claim.py take --file <路径> --task <ID>`(原子文件 `.atlas/runs/write-claims/<hash>.json`,`O_CREAT|O_EXCL`),收口 `release`;残留由 atlas_check「写面残留」门 WARN 点名。claims 是运行态不进 git。
 
-### 5. Trellis 挂接(§7,`apply/reference.md:238`)
+### 5. 执行层 挂接(§7,`apply/reference.md:238`)
 
-挂载点 = `.trellis/workflow.md` Phase 1 的 `#### 1.6 项目级资产更新(atlas apply)` 步骤 + 面包屑 enforcement 行,由 `patches/workflow-plan-apply/` 锚点式版本化补丁落下(块指纹 = 片段正文 sha256 前 8 位;指纹同 ⇒ skipped,异 ⇒ 整块替换——可重放,不整体覆盖用户的 workflow.md)。失败 ⇒ 停在 planning 输出结构化报告,不得进实现。
+挂载点 = `atlas workflow plan` 写进任务卡的 `#### 1.6 项目级资产更新(atlas apply)` 步骤 + `dispatch` 写进 `dispatch.md` 的 enforcement 行;不向宿主模板打补丁。失败 ⇒ 停在 planning 输出结构化报告,不得进实现。
 
 ### 6. 回写与报告(§8)
 
-执行记录落 `.trellis/tasks/<需求ID>/atlas-apply.md`(幂等覆写),固定七小节:模式 / 三问判定 / 影响面清单 / 各环改动(含写面声明) / 校验结果 / 门控项 / 下一步。apply 在实现之前跑,**不回写** E2E 执行状态(新增用例置 red,green 的回写在真实执行与收口)。
+执行记录落 `.atlas/tasks/<需求ID>/atlas-apply.md`(幂等覆写),固定七小节:模式 / 三问判定 / 影响面清单 / 各环改动(含写面声明) / 校验结果 / 门控项 / 下一步。apply 在实现之前跑,**不回写** E2E 执行状态(新增用例置 red,green 的回写在真实执行与收口)。
 
 ## 单向衔接总图
 
@@ -66,7 +66,7 @@ agent 语义判断为主 + 结构证据约束;产出结构化清单(`affected_do
 需求卡(prd.md) ──apply──► 应然资产(PRD 增量 + E2E 分片,实现之前)
                                  │ 机器校验
                                  ▼
-                    Trellis Execute 实现业务代码
+                    执行层 Execute 实现业务代码
                                  │ after_finish hook
                                  ▼
                     实然事实回写(structure 保鲜,D38)
@@ -86,12 +86,12 @@ agent 语义判断为主 + 结构证据约束;产出结构化清单(`affected_do
 | D60 | `prd → e2e` 顺序;structure 不参与增量 + 域变更 re-key 唯一例外 |
 | D61 | 影响面 = agent 语义 + 结构证据;≤3 问兜底;禁 regex 判语义 |
 | D62/D63 | 增量边界与确认门 / all 的幂等与断点续跑 |
-| D64/D65/D66 | Trellis 挂接(不加状态)/ 报告落点 / patches 锚点幂等 |
+| D64/D65/D66 | 执行层 挂接(不加状态)/ 报告落点 / patches 锚点幂等 |
 | `3509 §99` | backfill 第 4 模式(2026-09-28):分组 / 攒批 ≤10 / 独立写面 / 闭环钩子 |
 | RFC-20261022-01 M3 | write_claim 钩子(2026-10-23);walkthrough 机器面 M1 同批 |
 
 ## 讲述时的三个抓手
 
-1. **单向阀门**:需求必须先变成应然资产并过机器校验,实现才能开始——「更新完成后,Trellis 才去实现」。
+1. **单向阀门**:需求必须先变成应然资产并过机器校验,实现才能开始——「更新完成后,执行层 才去实现」。
 2. **四模式覆盖全部入口**:新需求 / 旧项目开户 / 全量重建 / 回流补账,没有第五种入口(资产自修订显式不走 apply,防任务树滥用)。
 3. **编排件不复制环逻辑**:apply 的 331 行全部是顺序、边界、报告——每个环的正文都在自己的契约里,这是「单一真相源」在编排层的体现。

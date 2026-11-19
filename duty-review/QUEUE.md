@@ -5,7 +5,15 @@
 
 ## 待拍板（≤5；「默认」= 你不回就维持现状）
 
-> 容量 0/5。案 1–10 已结（案 10 = A，实现折入 2026-11-14 交接提示词由新窗口落）。
+> 容量 1/5。案 1–10 已结（案 10 = A，实现折入 2026-11-14 交接提示词由新窗口落）。
+
+- **案 11「playground 真跑预算 1800s/外层 2400s 追认」判定 = DR2**
+  1. **判定**：DR2（gates/判据面预算变更已随修复批生效，实现方自记「待追认」，沉默将静默坐实——协议防的病④）。
+  2. **现象与证据**：issue #63 修复批（`43ec05a`，随 beta.36 `69113d1` 发布）把对齐门预算 900s → `FACTORY_TIMEOUT_S = 1800`（`scripts/atlas_check.py:73`，注释自记「提值 1800（≈3.4× 静默余量）」）、fixture 外层 900s → 2400s（`tests/test_atlas_verify_playground.py:144-155`，行内注释自记「随对齐门预算 900→1800 同批上报待追认」）；bugs.md 安装与装配段 #63 行同记「判据面变更随方案上报待追认」（2026-11-14）。自 11-13 提值至今 6 天，其上已叠发 0.3.0-beta.1–6 六版，预算未再动。
+  3. **关联存量**：issue #63（已随 beta.36 关单）；定标实测 = 真跑链 535s、900s 静默余量仅 1.68×、负载日 ~3× 撞顶（bugs.md #63 行）。
+  4. **AI 建议**：追认 1800s/2400s 为新基线（默认 = 你不回就维持现状，即现行值不动）。理由：提值直接解掉「外层先杀、真跑门从未触达」的第二层根因，且超时诊断面（`TIMEOUT(>Ns) 部分输出`）已在，回退不丢可诊断性。
+  5. **反方声音**：3.4× 余量按单机一次实测（535s）推算，负载日 ~3× 的样本只有 #63 这一次现场；若 CI/他机负载分布更差，1800 仍可能不够而 2400 外层同样吃紧（1800 + E2E 段 ≈2335s，贴着 2400）；预算翻倍也让最坏等待翻倍，若认为 skipif 补挂才是根因修复、预算 900 原值即可，回退是合理选项。
+  6. **你的选项**：A = 追认（默认/现状）；B = 回退 900s/外层随调（依赖已补的 skipif + 超时诊断面保可用性）；C = 另批按多机负载数据定动态预算，本轮先留 1800。
 
 
 ## 观察室（够不上判据但值得盯；一行一条，带升室 / 出室条件）
@@ -45,6 +53,12 @@
 
 - **[Unreleased] 更正（B-0，2026-11-11）**：上一条观察项里的退役点作废——按 `RFC-20261111-03` §2.6，`--allow-dangling-acs` 的退役点是 **0.4.0**（谓词 `semver_lt(version, "0.4.0")`，`0.3.x` 仍注册、`0.4.0` 起不注册），不是 `0.3.0`。旧条原文保留作历史，不改写；补验期限与 owner 不变。
 
+- **外部情报·NVIDIA skill 评测/安全双管线**（2026-11-19 Trending 扫描；[SkillEvaluator](https://github.com/NVIDIA/SkillEvaluator) 3.9k★ / [SkillSpector](https://github.com/NVIDIA/SkillSpector) 26.9k★，均 Apache-2.0，同属 NVIDIA Verified Skills 管线 scan→evaluate→sign→catalog）：参考点 = ① SkillEvaluator 的「带/不带 skill」A/B 实测判影响 + 合并前 CI 模板门——与 Atlas 消融判据（ablation begin/restore）同构，可对照其「质量门→实测影响」两档分层；② SkillSpector 的安装前安全扫描（31,132 skill 子集 26.1% 含漏洞 / 5.2% 恶意）+ 分析资源 fail-closed 上界（bundle/parser/nested-artifact/ledger/finding ceilings）——供给侧安全视角 Atlas 装配器/adopt 门禁尚未覆盖。升室：出现「采纳仓装入恶意/劣质 skill 造成实际损害」实证或 Atlas 决定立 skill 供应链门 ⇒ 按 DR2 起「skill 安装门」决策行；出室：连续两轮扫描该管线无新机制形态 ⇒ 归档。
+- **外部情报·cursor/plugins 四件参考模式**（2026-11-19 Trending 扫描；[cursor/plugins](https://github.com/cursor/plugins) 17.3k★，官方插件仓，每插件独立目录 + `plugin.json` 清单）：参考点 = ① `cli-for-agent`（coding agent 可靠运行的 CLI 设计模式：旗标/help 带示例/管道——可反哺 `atlas` CLI 面）；② `continual-learning`（转写驱动的 AGENTS.md 增量记忆回写，只收高信号 bullet——与巡检 QUEUE 回写纪律同构）；③ `thermos`（并行子代理深度评审 + merge-ready 门——与 RFC-20261119-02 check 行为者 / atlas review 编排直接对照）；④ `agent-compatibility`（repo 兼容性扫描对账 startup/validation/docs 与实况——对应画像/探测对账）。升室：check 行为者实现期需子代理评审编排先例或 CLI 可靠性设计需要外部模式库 ⇒ 按 DR2 引用对应件起决策行；出室：四模式逐一对过 Atlas 对应面且无新增可借鉴形态 ⇒ 归档。
+- **外部情报·CLI-Anything 贡献面测试基线门**（2026-11-19 Trending 扫描；[HKUDS/CLI-Anything](https://github.com/HKUDS/CLI-Anything) 60k★，把任意软件包成 agent 可用 CLI harness 的工厂 + CLI-Hub 注册表）：参考点 = 每个 harness 贡献强制带测试基线（实例：134-test validation baseline / 48 unit + 7 E2E）+ SKILL.md 单一正本（`skills/` 统一 + root-skill validation CI）+ 定期安全加固轮（defusedxml / path traversal / symlink escape）——「贡献面测试基线门 + 正本单源 + 加固轮」三件与 Atlas 装配集/golden/变异钉纪律同域可对照。升室：Atlas 开放外部贡献面或 skill 贡献流程时 ⇒ 按 DR2 对照其基线门起决策行；出室：连续两轮扫描无新机制形态 ⇒ 归档。
+- **外部情报·ECC harness 组装 OS**（2026-11-19 Trending 扫描；[affaan-m/ECC](https://github.com/affaan-m/ECC) 306k★，MIT，coding agent 的 harness 组装器：skills+rules+hooks+MCP 按宿主分路径装配）：参考点 = ①「每宿主只走一条安装路径」装配互斥纪律（Atlas 装配器 `--force`/升级链同题）；②「low-context / no-hooks」轻载出口（对应 Atlas adopt 分档思想）；③ rules 分 common+语言特异性两层分发（对应 shared/契约 + 环契约分层）。升室：Atlas 装配器做多宿主/多档位分发改造时 ⇒ 按 DR2 对照起决策行；出室：连续两轮扫描无新机制形态 ⇒ 归档。
+- **外部情报·rust-anything 行为录制断言重写线束**（2026-11-19 Trending 100 样本扫描；[erkamyaman/rust-anything](https://github.com/erkamyaman/rust-anything) 3.8k★，MIT，本周新星榜前列）：参考点 = 渐进式跨语言重构的「行为录制与回放断言」闭环（The loop: 38,251 recorded cases replayed · 0 mismatches）——把老系统的真实 IO 全量录制为 behavioral cases 作为重构每一小步的回归地基，与 Atlas 的 golden harness / 变异钉及采纳仓渐进迁移思路完全契合，为 vibecoding 代码重构演进提供了「行为保真优先于静态测试」的实用样板。升室：Atlas 在制定执行层代码重构/自举迁移协议时 ⇒ 按 DR2 对照起决策行；出室：连续两轮扫描无新机制形态 ⇒ 归档。
+
 ## 归档与废案（结案带原话；重开被拒的理由也记这里）
 
 - **2026-11-14 · 案 10「`SEAL_UPSTREAM_BIND_FROM` 落值时点」结案 = A（你原话：「案 10要按A做的，你更新提示词就行了」）。** 落值口径 = 代码注释自带发版门「D 批发版时改为首版 tag 的 UTC 日期」⇒ 取 **2026-11-13**（首版 D 批 tag v0.2.0-beta.34 = b529a55 的 UTC 日期，实测 commit 2026-11-13T20:19:57+08:00 当日落 UTC 同日）；实现折入 2026-11-14 交接提示词由新窗口做（改常量 + 跑 SEAL 钉 + 随下一版发），QUEUE 本行即结案登记。
@@ -76,4 +90,4 @@
 
 ---
 
-<!-- 机器状态行（勿读）：上次巡检 2026-11-14 23:55 · 可写面 = 本文件 + duty-review/bugs.md · 待拍板空（案 1–10 全结；案 10 = A 已拍，SEAL 落值实现折入 2026-11-14 交接提示词由新窗口做）· 观察室 +1（#50 宽限观察行 RFC-20261111-01）· 在途批：未推提交 ×1（65690c3 三待办四提案落盘）· 工作树：5 个未跟踪目录（.trae-html-share-packages/ / 2026-11-13/ / 2026-11-14/ / docs/specs/ / specs/，并行会话件不代清）· 深看基线 2026-11-08 11:08 → HEAD 65690c3（五日约六十提交：beta.31–36 + 验收资产域收尾 RFC-20261111-03（b529a55 三面同指，#51–#55/#59 关单）+ RFC-20261114-01 装配集摘除出厂测试 + #63 playground 真跑门修复（beta.36 定标 535s）+ 三待办四提案评审中间态（handover 交接件在 2026-11-14/handover-doc/））· bugs.md 版次 v6（#51–#55 出库，族锚记 #50 去向）· issue 通道停用（以批语落点为准）-->
+<!-- 机器状态行（勿读）：上次巡检 2026-11-19 15:24 · 可写面 = 本文件 + duty-review/bugs.md · 待拍板 1/5（案 11 = #63 预算 1800s/2400s 追认，DR2；案 1–10 全结）· 观察室 +5（2026-11-19 Trending 100 样本扫描外部情报：NVIDIA skill 双管线 / cursor/plugins 四模式 / CLI-Anything 基线门 / ECC 组装 OS / rust-anything 行为回放线束；既有行期限均未到：ENV-01 2026-12-17 / P3-a 2026-12-15 / 纪律判据 2026-12-07 / #50 2026-12-31）· 在途批：未推提交 0（HEAD d657fa7 = origin/main）· 工作树：未跟踪 6 项（.zcode/ / 2026-11-17/prompt-library-eval/ / 2026-11-17/sql-hint-table-audit/ / 2026-11-18/ / proposals/RFC-20261119-02 + REVIEW-20261119-02 双件，并行会话件不代清）· 深看基线 2026-11-14 23:55 → d657fa7（五日约 45 提交：v0.3.0-beta.1–6 六连发 + D200 families --json 双轨 + D201 账本单一源/派生占位 + D202 cgc 图谱退役/两级语义透镜（supersedes D77/D78 行级作废）+ #67 pi turn_end 去重 + upgrade 跟运行路径装 + 清单版本门 0.3.0-0 预发布线 + E1 缺源归因 + env-reds 登记簿增设 3201315 + RFC-20261119-02 check 行为者骨架在飞未提交）· bugs.md 版次 v6 无新增（本窗修复批均批内收口；散文日期两关 grep 0 命中；families 三族升室候选 = 10-17 归档裁定的同三族，重入判据均未满足，不重挂行防复读）· issue 对照库本轮缺帧（GitHub API 403 rate limit；通道已停用仅对照面）· 最久未回执案情：案 11，已呈 0 天-->

@@ -8,7 +8,6 @@ const {
   IS_WIN,
   resolvePython,
   normalizeBashArgs,
-  detectTrellis,
 } = require('./platform.js');
 
 const PKG_ROOT = path.resolve(__dirname, '..');
@@ -27,6 +26,7 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
   update    安全刷新当前项目中的 .atlas/ 工程线束与平台 Skills 至最新版本
   upgrade   自动拉取 npm 最新全局包升级全局 Atlas CLI
   check     运行项目级资产与门禁全套检查
+  workflow  自建全流程执行层调度（plan / dispatch / verify / finish / run）
   solution  多仓方案层：init / adopt / status / check / lock / task（Phase 1 仅 federated）
   review    实例⑤实现代码独立审查一键编排（preview → CLI review → scope → convert → validate → closure）
   eval      消融对照跑分器（run：两 commit 对照出 ledger；gate：回归判定）
@@ -40,6 +40,7 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
   atlas init                  # 在当前项目初始化装配
   atlas init --target /path   # 在指定项目初始化装配
   atlas init --assets-root docs  # 首次装配指定项目级资产根（默认 product）
+  atlas init --profile=audit --dry-run  # 体检档：只展开旗标、不写盘
   atlas update                # 刷新当前项目的工程线束与资产
   atlas update --dry-run      # 预览项目更新改动
   atlas upgrade               # 升级全局 CLI 至最新发布版
@@ -167,9 +168,15 @@ switch (command) {
     }
 
     const hasAssetsRoot = passthroughArgs.includes('--assets-root');
+    const hasDryRun = passthroughArgs.includes('--dry-run');
+    // --profile 是旗标宏（audit/adopt/strict）：由 install.py 展开；JS 侧不得抢先
+    // 做交互式询问，否则 --profile=audit 仍会阻塞 TTY。
+    const hasProfile = passthroughArgs.some(
+      (a) => a === '--profile' || a.startsWith('--profile='));
     const hasConfig = fs.existsSync(path.join(targetDir, 'atlas.config.yaml'));
     const hasAtlas = fs.existsSync(path.join(targetDir, '.atlas'));
     const shouldPrompt = !hasAssetsRoot && !hasConfig && !hasAtlas
+      && !hasDryRun && !hasProfile
       && process.stdin.isTTY && process.stdout.isTTY;
 
     // 先 fail-closed：没有 Python 3.10+ 就别让用户答完资产根才发现装不了。
@@ -178,33 +185,6 @@ switch (command) {
     function runInstall(extraArgs) {
       const baseArgs = hasTarget ? passthroughArgs : ['--target', targetDir, ...passthroughArgs];
       const finalArgs = [...baseArgs, ...extraArgs];
-
-      // Trellis 环境检测与自动初始化引导
-      const trellisDir = path.join(targetDir, '.trellis');
-      if (!fs.existsSync(trellisDir)) {
-        const trellisCmd = detectTrellis();
-        if (trellisCmd && IS_WIN) {
-          // Windows 下 npm 的 trellis 是 .cmd/sh 入口，Node 不能直接拉起；交给
-          // install.sh 在 bash 里执行 trellis init（那里能直接找到 shim）。
-          console.log('\n[Atlas] 检测到 Trellis CLI，但目标项目尚未初始化（.trellis/ 缺失）。');
-          console.log('[Atlas] 装配器将在 bash 中尝试 trellis init ...');
-        } else if (trellisCmd) {
-          console.log('\n[Atlas] 检测到目标项目尚未初始化 Trellis (.trellis/ 缺失)。');
-          console.log('[Atlas] 正在自动运行 trellis init 初始化状态机骨架...');
-          const initRes = spawnSync(trellisCmd, ['init'], {
-            cwd: targetDir,
-            stdio: 'inherit',
-            env: process.env,
-          });
-          if (initRes.status !== 0) {
-            console.warn('[Atlas] ⚠️ 警告: trellis init 执行异常，继续执行 Atlas 装配...');
-          }
-        } else {
-          console.warn('\n[Atlas] ⚠️ 提示: 未检测到 Trellis CLI。');
-          console.warn('[Atlas] Atlas 需求级执行依赖 Trellis，建议稍后安装:');
-          console.warn('        npm install -g @mindfoldhq/trellis\n');
-        }
-      }
 
       const res = runInstaller(finalArgs);
       exitWithResult(res, 'python');
@@ -252,7 +232,6 @@ Atlas update — 安全刷新当前项目中的 .atlas/ 工程线束与平台 Sk
   --target <dir>    指定目标项目目录（默认为当前工作目录）
   --dry-run         仅预览将要刷新的文件与改动，不实际写入
   --no-skill        跳过 Skills 瘦桩刷新
-  --no-patch        跳过 Trellis workflow 补丁刷新
   --no-wiring       跳过项目接线刷新
   -h, --help        查看帮助信息
 
@@ -424,6 +403,20 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
     break;
   }
 
+  case 'workflow': {
+    const passthroughArgs = args.slice(1);
+    const targetDir = process.cwd();
+    const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_workflow.py');
+    const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_workflow.py');
+    const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
+
+    const res = runPython([runScript, '--root', targetDir, ...passthroughArgs], {
+      stdio: 'inherit',
+    });
+    exitWithResult(res, 'python');
+    break;
+  }
+
   case 'solution': {
     const passthroughArgs = args.slice(1);
     const targetDir = process.cwd();
@@ -540,7 +533,7 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
   1. 在 Agent 会话中直接输入大白话，例如:
      - "帮我把这个项目接入 Atlas 工作流" (意图 = adopt 存量开户)
      - "跑一下三环全量构建，建立应然基线" (意图 = all 全量构建)
-     注意「装配 ≠ 开户」：开户产物是资产根/prd/ 与 .trellis/spec/structure/ 的内容。
+     注意「装配 ≠ 开户」：开户产物是资产根/prd/ 与 .atlas/spec/structure/ 的内容。
      若 Agent 因 .atlas/ 已存在而回你「已接入」，改用下面第 2 种（确定性入口）。
   2. 或在支持 Slash Command 的平台中唤起技能:
      /atlas-apply ${sub}

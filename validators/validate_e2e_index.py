@@ -160,12 +160,12 @@ def _cells(line: str) -> list[str]:
 
 
 def _task_case_lines(repo: Path) -> list[str]:
-    """扫 `<repo>/.trellis/tasks/**/cases.md`（含 `archive/<month>/`）的用例行。
+    """扫 `<repo>/.atlas/tasks/**/cases.md`（含 `archive/<month>/`）的用例行。
 
     表格行按「首列 ID 形态 + 前缀排除」判（表头写 `编号` / `ID` / `序号` / `用例`
     都不影响）；`atlas-case` 围栏标题恒认。
     """
-    tasks = Path(repo) / ".trellis" / "tasks"
+    tasks = Path(repo) / ".atlas" / "tasks"
     if not tasks.is_dir():
         return []
     found: list[str] = []
@@ -190,8 +190,8 @@ def _task_case_lines(repo: Path) -> list[str]:
 
 
 def _task_case_ids(repo: Path) -> set[str]:
-    """扫 `<repo>/.trellis/tasks/**/cases.md` 中出现的合法用例 ID（RFC-20261111-03 §2.4）。"""
-    tasks = Path(repo) / ".trellis" / "tasks"
+    """扫 `<repo>/.atlas/tasks/**/cases.md` 中出现的合法用例 ID（RFC-20261111-03 §2.4）。"""
+    tasks = Path(repo) / ".atlas" / "tasks"
     if not tasks.is_dir():
         return set()
     found: set[str] = set()
@@ -434,7 +434,7 @@ def seed_models_check(root: Path, blocks: dict[str, dict]) -> tuple[str, str]:
     seeds = {cid: (b.get("seed") or []) for cid, b in blocks.items() if b.get("seed")}
     if not seeds:
         return "NA", "无用例声明 `seed:`（契约 §5.7 的可选块）"
-    spec = root / ".trellis" / "spec" / "structure"
+    spec = root / ".atlas" / "spec" / "structure"
     facts = sorted(spec.rglob("data-models*.md")) if spec.is_dir() else []
     if not facts:
         return "NA", f"无 models 事实（{spec}/**/data-models*.md 不存在）⇒ 跳过对账（不是通过）"
@@ -801,7 +801,7 @@ def validate(root: Path) -> Result:
     res.add("索引↔分片标题一致", "PASS" if not title_bad else "FAIL", f"{_format_list(title_bad)}")
 
     # 用例第二落点（#54 / RFC-20261111-03 §2.4）：合法落点只有 `<assets>/e2e/cases/*.md` 与索引主表。
-    # 任务目录 `.trellis/tasks/**/cases.md`（含 `archive/<month>/` 与成员任务目录）**只要有
+    # 任务目录 `.atlas/tasks/**/cases.md`（含 `archive/<month>/` 与成员任务目录）**只要有
     # 用例行**即报 `task_dir_case_duplicate`，不看 ID 前缀是否 `E2E-*`（`BE-SYNC-*` /
     # `HC-RECORD-*` / `TW-PUSH-*` 同属「用例先行」的第二落点）。版本分级：0.3.x WARN、
     # 0.4.0 起 FAIL；父仓未声明 `case_ids` / 清单不可读 ⇒ 本项 N/A 并在 detail 写明原因

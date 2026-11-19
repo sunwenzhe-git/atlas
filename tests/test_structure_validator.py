@@ -94,7 +94,7 @@ DATA_MODELS = """# demo 数据模型
 def mk(root: Path, *, meta: dict | None = None, tour: str = TOUR,
        apis: str | None = APIS_POINTER, directory_map: str = DIRECTORY_MAP,
        routes: str = ROUTES, profile: str | None = None) -> None:
-    spec = root / ".trellis" / "spec" / "structure"
+    spec = root / ".atlas" / "spec" / "structure"
     (spec / "domains").mkdir(parents=True, exist_ok=True)
     (spec / "global").mkdir(parents=True, exist_ok=True)
     (spec / "current" / "demo").mkdir(parents=True, exist_ok=True)
@@ -154,7 +154,7 @@ def test_structure_missing_meta_fails() -> None:
     with _tmp() as td:
         root = Path(td)
         mk(root)
-        (root / ".trellis" / "spec" / "structure" / "_meta.json").unlink()
+        (root / ".atlas" / "spec" / "structure" / "_meta.json").unlink()
         res = _res(root)
         assert res["域模型"]["ok"] is False and "_meta.json" in res["域模型"]["detail"], res["域模型"]
 
@@ -361,7 +361,7 @@ def test_f31_case_id_reference_not_flagged_as_todo_placeholder() -> None:
     with _tmp() as td:
         root = Path(td)
         mk(root)
-        doc = root / ".trellis" / "spec" / "structure" / "domains" / "demo.md"
+        doc = root / ".atlas" / "spec" / "structure" / "domains" / "demo.md"
         doc.write_text(
             "# demo 域结构\n\n"
             "- 本域改动对照用例 `E2E-TODO-001` 至 `E2E-TODO-004`（自然语言引用）。\n",
@@ -372,7 +372,7 @@ def test_f31_case_id_reference_not_flagged_as_todo_placeholder() -> None:
     with _tmp() as td:
         root = Path(td)
         mk(root)
-        doc = root / ".trellis" / "spec" / "structure" / "domains" / "demo.md"
+        doc = root / ".atlas" / "spec" / "structure" / "domains" / "demo.md"
         doc.write_text("# demo 域结构\n\n- 事项：TODO 待补充。\n", encoding="utf-8")
         res = _res(root)
         assert res["占位符"]["ok"] is False, "裸 TODO 必须命中（不放宽）"
@@ -381,7 +381,7 @@ def test_f31_case_id_reference_not_flagged_as_todo_placeholder() -> None:
     with _tmp() as td:
         root = Path(td)
         mk(root)
-        doc = root / ".trellis" / "spec" / "structure" / "domains" / "demo.md"
+        doc = root / ".atlas" / "spec" / "structure" / "domains" / "demo.md"
         doc.write_text("# demo 域结构\n\n- 事项：TODO: 后续补充判定。\n", encoding="utf-8")
         res = _res(root)
         assert res["占位符"]["ok"] is False, "TODO: 冒号形态必须命中"
@@ -393,14 +393,14 @@ def test_f33_api_pointer_form_waives_domain_apis_md() -> None:
     with _tmp() as td:
         root = Path(td)
         mk(root)  # 基线：current/demo 有 apis.md + data-models.md（夹具默认）
-        add = root / ".trellis" / "spec" / "structure" / "current" / "other"
+        add = root / ".atlas" / "spec" / "structure" / "current" / "other"
         add.mkdir(parents=True)
         (add / "data-models.md").write_text(DATA_MODELS, encoding="utf-8")
         meta2 = dict(META)
         meta2["domains"] = list(meta2["domains"]) + [
             {"id": "other", "name": "其他", "apps": ["app"], "status": "候选",
              "globs": ["app/pages/other*"]}]
-        (root / ".trellis" / "spec" / "structure" / "_meta.json").write_text(
+        (root / ".atlas" / "spec" / "structure" / "_meta.json").write_text(
             json.dumps(meta2, ensure_ascii=False), encoding="utf-8")
 
         # 无指针行 ⇒ 缺 apis.md FAIL（原语义不放松）
@@ -408,7 +408,7 @@ def test_f33_api_pointer_form_waives_domain_apis_md() -> None:
         assert res["类别覆盖 · 域级 apis/data-models"]["ok"] is False, res
 
         # 指针行命中 domain 的 app 名 ⇒ 豁免 PASS
-        ptr_md = root / ".trellis" / "spec" / "structure" / "global" / "apis-shared.md"
+        ptr_md = root / ".atlas" / "spec" / "structure" / "global" / "apis-shared.md"
         ptr_md.write_text(
             "# 跨域共享接口 / 真相源入口\n\n"
             "| 方法 | 路径 | 用途 | 请求要点 | 响应要点 | 来源模块 |\n"
@@ -429,7 +429,7 @@ def test_f33_api_pointer_form_waives_domain_apis_md() -> None:
 
 
 def test_f34b_spec_relative_sibling_reference_resolves() -> None:
-    """F34b（R8 收束）：结构文档中 `.trellis/spec/structure/` **内部相对引用**（如
+    """F34b（R8 收束）：结构文档中 `.atlas/spec/structure/` **内部相对引用**（如
     `global/routes.md`、`current/demo/apis.md`）以结构 spec 根为锚解析合法——
     旧口径只按项目根/app 根解析 ⇒ 结构文档引用兄弟文件被迫写全路径（F7 病根）。
     幻影引用（指向不存在的文件）照 FAIL（fail-closed 不松）。"""
@@ -437,7 +437,7 @@ def test_f34b_spec_relative_sibling_reference_resolves() -> None:
     with _tmp() as td:
         root = Path(td)
         mk(root)
-        doc = root / ".trellis" / "spec" / "structure" / "domains" / "demo.md"
+        doc = root / ".atlas" / "spec" / "structure" / "domains" / "demo.md"
         doc.write_text("# demo 域结构\n\n" + ref, encoding="utf-8")
         res = _res(root)
         assert res["来源可定位"]["ok"] is True, res["来源可定位"]
@@ -445,7 +445,7 @@ def test_f34b_spec_relative_sibling_reference_resolves() -> None:
     with _tmp() as td:
         root = Path(td)
         mk(root)
-        doc = root / ".trellis" / "spec" / "structure" / "domains" / "demo.md"
+        doc = root / ".atlas" / "spec" / "structure" / "domains" / "demo.md"
         doc.write_text("# demo 域结构\n\n- 幻影引用：`global/no-such-file.md`。\n",
                        encoding="utf-8")
         res = _res(root)

@@ -15,7 +15,7 @@ description: "项目级产品需求文档（PRD）：产出全局 prd.md + 每�
 
 ## 路径
 
-本项目 atlas 包在 `<项目根>/.atlas/`；`<项目根>` = 当前工作目录（含 `.trellis/` 与 `product/` 的那层）。
+本项目 atlas 包在 `<项目根>/.atlas/`；`<项目根>` = 当前工作目录（含 `.atlas/` 与 `product/` 的那层）。
 
 ## 边界
 

@@ -9,7 +9,7 @@
   确认门本体是人侧门（内容对不对归人），本器只判**声明与凭据对得上**。
 
 时空域（评审 P1-2）：
-  - 只扫 `.trellis/tasks/*/` 中 `task.json.status ∈ {planning, in_progress}` 的任务；
+  - 只扫 `.atlas/tasks/*/` 中 `task.json.status ∈ {planning, in_progress}` 的任务；
   - 已归档（completed 等）不扫——「重派生删行」的合法失效与老记录不挂永久红账；
   - task 记录缺失 / 不可解析 ⇒ 该任务 **SKIP + 原因**（响亮，不假红）。
 
@@ -44,10 +44,10 @@ if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _support.layout import LayoutError, load_layout  # noqa: E402
 
-TASKS_RELPATH = Path(".trellis") / "tasks"
+TASKS_RELPATH = Path(".atlas") / "tasks"
 APPLY_RECORD = "atlas-apply.md"
 ACTIVE_STATUSES = {"planning", "in_progress"}
-# Trellis 三态里的归档态；其余未知值（`in-progress` 手滑 / `blocked` 一类）
+# 任务三态里的归档态；其余未知值（`in-progress` 手滑 / `blocked` 一类）
 # 必须**显式 SKIP 指名**，不得静默出域（评审 P1-1：静默继续 = 门失效）
 ARCHIVED_STATUSES = {"completed"}
 
@@ -258,7 +258,7 @@ def run(root: Path) -> Result:
     tasks_root = root / TASKS_RELPATH
     if not tasks_root.is_dir():
         res.add("时空域", "SKIP",
-                f"无 {TASKS_RELPATH.as_posix()}/（项目未接 Trellis 任务，未就绪非失败）")
+                f"无 {TASKS_RELPATH.as_posix()}/（项目未接任务卡，未就绪非失败）")
         return res
 
     task_dirs = sorted(p for p in tasks_root.iterdir() if p.is_dir())

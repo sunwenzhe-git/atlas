@@ -9,7 +9,7 @@ status: draft
 # [必填：产品名] — 产品需求文档（全局）
 
 > 本文件是**应然**文档：只写产品应该是什么样，**不写实现进度、不挂状态**。
-> 实现状态见 `.trellis/spec/structure/current/`，验收进度见 `<资产根>/e2e/`（默认 `product/e2e/`）。
+> 实现状态见 `.atlas/spec/structure/current/`，验收进度见 `<资产根>/e2e/`（默认 `product/e2e/`）。
 
 范围形态：首建
 

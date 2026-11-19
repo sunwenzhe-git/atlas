@@ -3,7 +3,7 @@
 
 设计共识（2026-10-05 图谱批 1）：
 
-* **advisory 附件，不是门**：本报告落 `.trellis/tasks/<需求ID>/impact.json|md`，
+* **advisory 附件，不是门**：本报告落 `.atlas/tasks/<需求ID>/impact.json|md`，
   agent 推导影响面时**先读本报告再做语义判断**；对账门（预测集 vs 实际 diff）属批 2，
   本批只产基准、不判罚。
 * **确定性**：分层 BFS（一跳 = 直接会坏 L1，二跳 = 间接 L2，三跳 = 传递 L3，深度封顶），
@@ -17,7 +17,7 @@
         [--symbols a,b] [--paths x.py,y.ts] [--diff-base <git ref>] [--depth 3]
 
 输入至少给一种（--symbols / --paths / --diff-base）；`--task` 落
-`.trellis/tasks/<ID>/`，或用 `--out <目录>` 指定任意落点（冒烟 / 评测用）。
+`.atlas/tasks/<ID>/`，或用 `--out <目录>` 指定任意落点（冒烟 / 评测用）。
 """
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ def git(root: Path, *args: str) -> str:
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", required=True)
-    ap.add_argument("--task", default=None, help="需求 ID（= Trellis task id）→ .trellis/tasks/<ID>/")
+    ap.add_argument("--task", default=None, help="需求 ID（= 执行层任务卡 id）→ .atlas/tasks/<ID>/")
     ap.add_argument("--out", default=None, help="自定义输出目录（优先于 --task；冒烟/评测用）")
     ap.add_argument("--symbols", default=None, help="逗号分隔的符号名（函数/方法）")
     ap.add_argument("--paths", default=None, help="逗号分隔的文件路径（项目根相对）")
@@ -187,7 +187,7 @@ def main() -> int:
     aoci_candidates = _graph.reverse_1hop_callers(root, _touched)
 
     # 若没有任何 FRAS/AOCI 语义透镜，显式返回 not_ready（保持三态契约，预测集回退至声明集）
-    has_fras = bool(list((root / ".trellis" / "spec" / "structure").glob("**/cognition.fras"))) or (root / "aoci.code.txt").is_file()
+    has_fras = bool(list((root / ".atlas" / "spec" / "structure").glob("**/cognition.fras"))) or (root / "aoci.code.txt").is_file()
     if not has_fras:
         return not_ready("未维护语义透镜（cognition.fras）；影响面基准显式跳过，预测集取需求卡声明集（RFC-20261119-01 / D202）")
 
@@ -210,7 +210,7 @@ def main() -> int:
             }
         ] if aoci_candidates else [],
     }
-    out_dir = Path(args.out).resolve() if args.out else root / ".trellis" / "tasks" / args.task
+    out_dir = Path(args.out).resolve() if args.out else root / ".atlas" / "tasks" / args.task
     render(out_dir, payload)
     total = sum(len(l["symbols"]) for l in payload["layers"])
     print(f"[{SCRIPT}] 种子 {len(seeds)} → L1..L{len(payload['layers'])} 共 {total} 符号 "

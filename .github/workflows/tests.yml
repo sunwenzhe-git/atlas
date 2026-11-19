@@ -80,14 +80,13 @@ jobs:
           Copy-Item (Get-Command python).Source (Join-Path $dir "python3.exe")
           Add-Content -Path $env:GITHUB_PATH -Value $dir
 
-      - name: Platform probes (Git Bash found, Trellis probe does not throw)
+      - name: Platform probes (Git Bash found, Python 3.10+ resolved)
         run: |
           node -e "
             const p = require('./bin/platform.js');
             const bash = p.resolveBash();
             if (!bash) { console.error('Git Bash not found'); process.exit(1); }
             console.log('bash =', bash);
-            console.log('trellis =', p.detectTrellis());
           "
 
       - name: CLI exit-code smoke
@@ -127,7 +126,7 @@ jobs:
           $repo = (Get-Location).Path
           $nodeExe = (Get-Command node).Source
           $tmp = Join-Path $env:RUNNER_TEMP ("atlas-native-" + [guid]::NewGuid().ToString("N"))
-          New-Item -ItemType Directory -Force -Path (Join-Path $tmp ".trellis") | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $tmp ".atlas") | Out-Null
           Write-Host "::group::init"
           & $nodeExe "$repo\bin\atlas.js" init --target $tmp --assets-root docs
           if ($LASTEXITCODE -ne 0) { throw "init failed: $LASTEXITCODE" }
@@ -160,7 +159,7 @@ jobs:
         run: |
           $repo = (Get-Location).Path
           $tmp = Join-Path $env:RUNNER_TEMP ("atlas-gbk-" + [guid]::NewGuid().ToString("N"))
-          New-Item -ItemType Directory -Force -Path (Join-Path $tmp ".trellis") | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $tmp ".atlas") | Out-Null
           $oldEnc = [Console]::OutputEncoding
           try {
             [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding(936)

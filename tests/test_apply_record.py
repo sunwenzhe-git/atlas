@@ -31,7 +31,7 @@ validator = _load("_v_record", "validators/validate_apply_record.py")
 
 CASE_ID = "E2E-LOGIN-001"
 SEAL_REL = "product/reviews/apply/web/T-001.seal.json"
-CARD = ".trellis/tasks/01-x/prd.md"
+CARD = ".atlas/tasks/01-x/prd.md"
 
 
 def git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -627,7 +627,7 @@ def test_i7_origin_rewritten_is_detected(repo: Path) -> None:
 def test_r4_archived_card_is_not_card_absent(repo: Path) -> None:
     """卡归档后封条 `card.path` 不改写：双解析到 archive 仍须绿；两处都缺才红。"""
     member = repo / "web"
-    archived = member / ".trellis/tasks/archive/2026-11/01-x/prd.md"
+    archived = member / ".atlas/tasks/archive/2026-11/01-x/prd.md"
     archived.parent.mkdir(parents=True)
     card = member / CARD
     card.rename(archived)

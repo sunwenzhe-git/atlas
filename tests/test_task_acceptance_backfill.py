@@ -22,7 +22,7 @@ def _load(name: str, rel: str):
 core = _load("_c_backfill", "_support/solution.py")
 card = _load("_v_backfill", "validators/validate_task_card.py")
 
-CARD_REL = ".trellis/tasks/01-r1/prd.md"
+CARD_REL = ".atlas/tasks/01-r1/prd.md"
 
 
 def git(cwd: Path, *args: str) -> None:
@@ -56,7 +56,7 @@ def new_repo(tmp: Path) -> Path:
         requirements=[{"id": "R1", "member": "web",
                        "acs": ["AC-SOLUTION-001"], "case_ids": [],
                        "task_slug": "r1", "scope": ["AC-SOLUTION-001"]}])
-    task = web / ".trellis" / "tasks" / "01-r1"
+    task = web / ".atlas" / "tasks" / "01-r1"
     task.mkdir(parents=True)
     (task / "task.json").write_text(json.dumps({"meta": {
         "solution": "demo", "requirement": "R1", "member": "web"}}),

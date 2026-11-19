@@ -38,7 +38,7 @@ JAVA_KEYWORDS = {
 }
 SKIP_DIRS = {
     "node_modules", ".git", "target", "build", "out", "dist", "coverage",
-    "__pycache__", ".venv", "venv", ".atlas", ".atlas-run", ".scratch", ".trellis", ".gradle",
+    "__pycache__", ".venv", "venv", ".atlas", ".atlas-run", ".scratch", ".gradle",
 }
 
 

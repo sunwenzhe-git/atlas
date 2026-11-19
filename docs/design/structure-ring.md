@@ -1,11 +1,11 @@
 ---
 title: 结构（逆向）环设计
-description: 第一环：读代码产出实然结构事实，落 .trellis/spec/structure/，既是项目级事实又能被 Trellis 原生注入；适配器 AST/正则抽取 + 多信号投票候选域；CGC 图谱为可选增强，仅两条有限消费面（routes 文件枚举 + advisory 影响面基准，DESIGN.md D77）、用前现刷。
+description: 第一环：读代码产出实然结构事实，落 .atlas/spec/structure/，既是项目级事实又能被 `atlas workflow dispatch` 注入；适配器 AST/正则抽取 + 多信号投票候选域；CGC 图谱为可选增强，仅两条有限消费面（routes 文件枚举 + advisory 影响面基准，DESIGN.md D77）、用前现刷。
 ---
 
 # 结构（逆向）环设计
 
-> **第一环。**读代码产出**结构事实**，直接落 `.trellis/spec/structure/`——同一份既是项目级事实（PRD / E2E 按需读取），又能被 Trellis 任务**原生注入**消费。
+> **第一环。**读代码产出**结构事实**，直接落 `.atlas/spec/structure/`——同一份既是项目级事实（PRD / E2E 按需读取），又能被 执行层任务**原生注入**消费。
 >
 > 口号：**只做足够支撑下游（PRD / E2E）的上下文**，绝不重做一套文档工厂。契约正文位于 `.atlas/rings/structure/reference.md`，本页是设计依据。
 
@@ -91,7 +91,7 @@ Atlas 把 **CGC（CodeGraphContext，MIT）** 作为**可选增强**集成（消
 ```text
 <项目根>/
 ├── README.md                       # A（技术栈/启动，可选）+ H（测试/运行，条件）
-├── .trellis/spec/structure/
+├── .atlas/spec/structure/
 │   ├── _meta.json                  # 机器：product / baseline / apps[] / domains[] / categories
 │   ├── tour.md                     # L1：paths ['**']
 │   ├── domains/<domain>.md         # L2：paths = 域 globs
@@ -102,7 +102,7 @@ Atlas 把 **CGC（CodeGraphContext，MIT）** 作为**可选增强**集成（消
 └── product/                        # prd / e2e
 ```
 
-**为什么落 `.trellis/spec/structure/`**：这是 Trellis 的 Spec 路径注入层——`tour.md` 与 `domains/<d>.md` 带 `paths:`，Trellis 任务会**原生注入**对应片段；其余文件按需 Read。
+**为什么落 `.atlas/spec/structure/`**：这是 执行层的任务上下文注入层——`tour.md` 与 `domains/<d>.md` 带 `paths:`，执行层任务会**原生注入**对应片段；其余文件按需 Read。
 
 ---
 
@@ -119,7 +119,7 @@ Atlas 把 **CGC（CodeGraphContext，MIT）** 作为**可选增强**集成（消
 
 | 通道 | 谁跑 | 何时 | 覆盖 |
 |---|---|---|---|
-| **语义** | `trellis update-spec`（AI）/ 人工 | Trellis Finish 原生步骤 | 经验 / 规范 / 坑（`atlas:facts` 标记**外**） |
+| **语义** | 结构环语义区（AI / 人工） | 收口后按需 | 经验 / 规范 / 坑（`atlas:facts` 标记**外**） |
 | **事实** | `refresh_structure.py`（读适配器 → 填 `atlas:facts` 区 → 推进基线） | `after_archive` hook 或手动 | 表 / 字段 / 路由 / 接口（标记**内**） |
 
 事实刷新是**纯脚本**，正好适合 hook 单行登记，不改 `workflow.md` 结构，升级冲突最小。语义区留给 AI，事实区由脚本保鲜。

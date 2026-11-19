@@ -7,7 +7,7 @@ Atlas 的应然资产治理围绕 **三环（Rings）** 展开，环环相扣，
 ## 1. Ring 1: 结构基线 (`atlas-structure`)
 
 * **角色**：**实然代码事实**
-* **产物路径**：`.trellis/spec/structure/`
+* **产物路径**：`.atlas/spec/structure/`
 * **底层能力**：
   * 基于适配器（AST / 正则）逆向扫描抽取事实；代码图谱（cgc）为**可选增强**，仅两条有限消费面（文件枚举通道与 advisory 影响面基准，`DESIGN.md` D77）；
   * 自动抽取前端路由、后端 API 端点、数据模型（Schemas/Entities）、以及现有自动化测试分布；

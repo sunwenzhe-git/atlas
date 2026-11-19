@@ -29,7 +29,7 @@ def test_f41_adapter_out_single_location() -> None:
 
     三消费者必须同址：适配器产物（`refresh_structure`）、漂移门（`atlas_check`）、图谱
     新鲜度标记（`adapters/_graph`）。此前图谱层在项目根、结构环产物在
-    `.trellis/spec/structure/` 下 ⇒ 同名两处。现场因此出现「`git status` 里有
+    `.atlas/spec/structure/` 下 ⇒ 同名两处。现场因此出现「`git status` 里有
     `.adapter-out/`，而漂移门说『无 .adapter-out 产物目录』」的自相矛盾——排查者会先怀疑
     门坏，而不是去比对基准。本钉即 issue #8 ④ 要求的「把两处硬编码字面量钉在一起」：
     任一消费者改回 spec 目录即红。
@@ -62,7 +62,7 @@ def test_f41_adapter_out_single_location() -> None:
 
 
 def build(root: Path) -> None:
-    sd = root / ".trellis" / "spec" / "structure"
+    sd = root / ".atlas" / "spec" / "structure"
     sd.mkdir(parents=True, exist_ok=True)   # .adapter-out 已移到项目根 ⇒ 不再顺带建 sd
 
     (root / ".adapter-out" / "api").mkdir(parents=True, exist_ok=True)
@@ -98,7 +98,7 @@ def test_facts_rendered_and_mapped() -> None:
         build(root)
         r = run(root, "--apply")
         assert r.returncode == 0, r.stderr + r.stdout
-        sd = root / ".trellis" / "spec" / "structure"
+        sd = root / ".atlas" / "spec" / "structure"
         sd.mkdir(parents=True, exist_ok=True)   # .adapter-out 已移到项目根 ⇒ 不再顺带建 sd
 
         routes = (sd / "global" / "routes.md").read_text(encoding="utf-8")
@@ -117,7 +117,7 @@ def test_semantic_cells_preserved() -> None:
         root = Path(td)
         build(root)
         run(root, "--apply")
-        routes_path = root / ".trellis" / "spec" / "structure" / "global" / "routes.md"
+        routes_path = root / ".atlas" / "spec" / "structure" / "global" / "routes.md"
         # 手动写入语义单元格「用途」，重跑应保留
         text = routes_path.read_text(encoding="utf-8")
         routes_path.write_text(text.replace("| app | /home | home |  |  |", "| app | /home | home | 首页入口 |  |"),
@@ -158,7 +158,7 @@ def test_duplicate_row_keys_collapse_within_one_facts_file() -> None:
             }, ensure_ascii=False), encoding="utf-8")
         r = run(root, "--apply")
         assert r.returncode == 0, r.stderr + r.stdout
-        apis = (root / ".trellis" / "spec" / "structure" / "current" / "home"
+        apis = (root / ".atlas" / "spec" / "structure" / "current" / "home"
                 / "apis.md").read_text(encoding="utf-8")
         assert apis.count("zeldaEasy.x.doIt") == 1, apis
 
@@ -179,7 +179,7 @@ def test_dry_run_no_write() -> None:
         build(root)
         r = run(root)
         assert r.returncode == 0
-        assert not (root / ".trellis" / "spec" / "structure" / "global" / "routes.md").exists()
+        assert not (root / ".atlas" / "spec" / "structure" / "global" / "routes.md").exists()
 
 
 def test_drift_detected_then_cleared() -> None:
@@ -191,7 +191,7 @@ def test_drift_detected_then_cleared() -> None:
         root = Path(td)
         build(root)
         run(root, "--apply")
-        sd = root / ".trellis" / "spec" / "structure"
+        sd = root / ".atlas" / "spec" / "structure"
         sd.mkdir(parents=True, exist_ok=True)   # .adapter-out 已移到项目根 ⇒ 不再顺带建 sd
 
         # 模拟改名：改写适配器产物（路由 /home → /home2，未走 apply 登记）
@@ -224,7 +224,7 @@ def test_drift_dry_run_prints_without_marker() -> None:
         root = Path(td)
         build(root)
         run(root, "--apply")
-        sd = root / ".trellis" / "spec" / "structure"
+        sd = root / ".atlas" / "spec" / "structure"
         sd.mkdir(parents=True, exist_ok=True)   # .adapter-out 已移到项目根 ⇒ 不再顺带建 sd
 
         (root / ".adapter-out" / "routes.json").write_text(
@@ -245,7 +245,7 @@ def test_pipe_in_cell_value_round_trips() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         build(root)
-        sd = root / ".trellis" / "spec" / "structure"
+        sd = root / ".atlas" / "spec" / "structure"
         sd.mkdir(parents=True, exist_ok=True)   # .adapter-out 已移到项目根 ⇒ 不再顺带建 sd
 
         (root / ".adapter-out" / "models" / "app.json").write_text(json.dumps({
@@ -279,7 +279,7 @@ def test_multiline_cell_value_round_trips() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         build(root)
-        sd = root / ".trellis" / "spec" / "structure"
+        sd = root / ".atlas" / "spec" / "structure"
         sd.mkdir(parents=True, exist_ok=True)
 
         (root / ".adapter-out" / "models" / "app.json").write_text(json.dumps({
@@ -318,7 +318,7 @@ def test_key_column_with_newline_does_not_phantom_drift() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         build(root)
-        sd = root / ".trellis" / "spec" / "structure"
+        sd = root / ".atlas" / "spec" / "structure"
         sd.mkdir(parents=True, exist_ok=True)
 
         (root / ".adapter-out" / "models" / "app.json").write_text(json.dumps({
@@ -446,7 +446,7 @@ def test_chain_runs_adapters_then_refresh_in_one_pass() -> None:
         write_stub_adapters(root)
         r = run(root, "--chain")
         assert r.returncode == 0, r.stderr + r.stdout
-        sd = root / ".trellis" / "spec" / "structure"
+        sd = root / ".atlas" / "spec" / "structure"
         sd.mkdir(parents=True, exist_ok=True)   # .adapter-out 已移到项目根 ⇒ 不再顺带建 sd
 
         # 适配器产物更新（routes.json 由 stub 写入新键）
@@ -468,7 +468,7 @@ def test_chain_failure_aborts_before_refresh() -> None:
         write_stub_adapters(root, broken_exit="models")
         r = run(root, "--chain")
         assert r.returncode == 2, r.stdout
-        sd = root / ".trellis" / "spec" / "structure"
+        sd = root / ".atlas" / "spec" / "structure"
         sd.mkdir(parents=True, exist_ok=True)   # .adapter-out 已移到项目根 ⇒ 不再顺带建 sd
 
         # routes 适配器（顺序在前）已落盘
@@ -500,7 +500,7 @@ def test_apply_default_never_advances_baseline() -> None:
         r = run(root, "--apply")
         assert r.returncode == 0, r.stderr
         assert "advanced baseline" not in r.stdout, r.stdout
-        meta_now = json.loads((root / ".trellis" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))
+        meta_now = json.loads((root / ".atlas" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))
         assert meta_now["baseline"]["commit"] == "abc"
 
 
@@ -516,7 +516,7 @@ def test_chain_advances_baseline_when_clean() -> None:
         r = run(root, "--chain")
         assert r.returncode == 0, r.stderr
         assert "advanced baseline" in r.stdout, r.stdout
-        meta_now = json.loads((root / ".trellis" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))
+        meta_now = json.loads((root / ".atlas" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))
         assert meta_now["baseline"]["commit"] == head_sha(root)
 
 
@@ -538,11 +538,11 @@ def test_chain_advance_frozen_by_drift_then_override() -> None:
         }, ensure_ascii=False), encoding="utf-8")
         r = run(root, "--apply")     # 显式 apply 漂移刷新（零推进承诺不受影响）
         assert "结构漂移" in r.stdout
-        assert json.loads((root / ".trellis" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))["baseline"]["commit"] == sha1
+        assert json.loads((root / ".atlas" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))["baseline"]["commit"] == sha1
         # --chain 因冻结跳过推进
         r2 = run(root, "--chain")
         assert "冻结" in r2.stdout, r2.stdout
-        assert json.loads((root / ".trellis" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))["baseline"]["commit"] == sha1
+        assert json.loads((root / ".atlas" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))["baseline"]["commit"] == sha1
         # 人工终审：提交漂移对应的工作（HEAD 前进）后，--advance-baseline 显式越过仍存的偏移 Freeze
         subprocess.run(["git", "-C", str(root), "add", "-A"], capture_output=True)
         subprocess.run(["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t",
@@ -551,11 +551,11 @@ def test_chain_advance_frozen_by_drift_then_override() -> None:
         assert sha2 != sha1
         r3 = run(root, "--chain", "--advance-baseline")
         assert "advanced baseline" in r3.stdout, r3.stdout
-        assert json.loads((root / ".trellis" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))["baseline"]["commit"] == sha2
+        assert json.loads((root / ".atlas" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))["baseline"]["commit"] == sha2
 
 
 def test_advance_skips_when_product_dirty() -> None:
-    """F26 第四前置：产品侧工作树脏 ⇒ SKIP（不给未审定代码背书）；.atlas/.trellis 自身写盘豁免。"""
+    """F26 第四前置：产品侧工作树脏 ⇒ SKIP（不给未审定代码背书）；.atlas 自身写盘豁免。"""
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         build(root)
@@ -572,7 +572,7 @@ def test_render_tour_lists_adapter_run_command() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         build(root)
-        sd = root / ".trellis" / "spec" / "structure"
+        sd = root / ".atlas" / "spec" / "structure"
         sd.mkdir(parents=True, exist_ok=True)   # .adapter-out 已移到项目根 ⇒ 不再顺带建 sd
 
         (root / ".adapter-out" / "tests").mkdir(parents=True, exist_ok=True)

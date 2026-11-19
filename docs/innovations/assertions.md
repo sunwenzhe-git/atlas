@@ -45,8 +45,8 @@ e2e:
 ## 3. `testid` 薄桩机制 (Thin Stubs Injection)
 
 * **传统断层**：写前端业务代码的 Agent 往往与写测试的 Agent 视野脱节，写代码时不知道该用什么 `data-testid`，导致用例找不到元素；
-* **Atlas 的解法**：当 E2E 页面分片定义好应然 `testid:` 清单后，Atlas 自动编译生成一份极其轻量的 `.trellis/spec/conventions/testid.md` 薄桩文件；
-* 通过 Trellis 的路径注入机制，直接将埋点清单送到写代码 Agent 的眼皮底下，实现两端**零心智对齐**。
+* **Atlas 的解法**：当 E2E 页面分片定义好应然 `testid:` 清单后，Atlas 自动编译生成一份极其轻量的 `.atlas/spec/conventions/testid.md` 薄桩文件；
+* 通过 执行层的路径注入机制，直接将埋点清单送到写代码 Agent 的眼皮底下，实现两端**零心智对齐**。
 
 ---
 

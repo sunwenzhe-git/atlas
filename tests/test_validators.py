@@ -89,7 +89,7 @@ FM_DOMAIN = "---\ndoc: demo-prd\ndomain: demo\ndomain_name: 演示域\ndomain_co
 FM_GLOBAL = "---\ndoc: prd\nproduct: demo\nversion: 1.0\ndate: 2026-09-25\nstatus: final\n---\n\n"
 def mk_stub(root: Path) -> None:
     """实现期薄桩（契约 §4.1）：`validate_testids` 要求它存在 —— 由生成器产出。"""
-    d = root / ".trellis" / "spec" / "conventions"
+    d = root / ".atlas" / "spec" / "conventions"
     d.mkdir(parents=True, exist_ok=True)
     (d / "testid.md").write_text("---\npaths:\n  - '**'\n---\n\n# testid 约定\n", encoding="utf-8")
 
@@ -405,7 +405,7 @@ ADOPT_PRD_GLOBAL = """# 全局 PRD
 
 范围形态：变更
 覆盖度：增量起步
-基线：`.trellis/spec/structure/`
+基线：`.atlas/spec/structure/`
 
 ## 五、功能架构
 
@@ -3040,7 +3040,7 @@ def _seed_levels(case: str, models: str | None) -> dict[str, str]:
         mk_cases(root, case)
         mk_index(root)
         if models is not None:
-            d = root / ".trellis" / "spec" / "structure" / "current" / "demo"
+            d = root / ".atlas" / "spec" / "structure" / "current" / "demo"
             d.mkdir(parents=True, exist_ok=True)
             (d / "data-models.md").write_text(models, encoding="utf-8")
         return {c["check"]: c["level"] for c in ve.validate(root).checks}
@@ -3429,14 +3429,14 @@ def test_testids_stub_missing_fails() -> None:
         assert res["实现期薄桩存在"]["level"] == "PASS", res
 
         # 缺失 ⇒ 自动再生（文件回到原地，门绿；detail 披露兜底语义）
-        (root / ".trellis" / "spec" / "conventions" / "testid.md").unlink()
+        (root / ".atlas" / "spec" / "conventions" / "testid.md").unlink()
         res = {c["check"]: c for c in vt.validate(root).checks}
         assert res["实现期薄桩存在"]["level"] == "PASS", res
         assert "自动生成" in res["实现期薄桩存在"]["detail"], res
-        assert (root / ".trellis" / "spec" / "conventions" / "testid.md").is_file()
+        assert (root / ".atlas" / "spec" / "conventions" / "testid.md").is_file()
 
         # 生成失败的真错 ⇒ FAIL（变异：把应然清单源置坏 ⇒ render 抛错）
-        (root / ".trellis" / "spec" / "conventions" / "testid.md").unlink()
+        (root / ".atlas" / "spec" / "conventions" / "testid.md").unlink()
         broken = root / "product" / "e2e" / "cases" / "broken.md"
         broken.write_text("## E2E-HOME-001\n\n```atlas-case\nid: E2E-HOME-001\n",
                           encoding="utf-8")  # 无闭合 ``` ⇒ parse_block 无碍，但
@@ -3446,7 +3446,7 @@ def test_testids_stub_missing_fails() -> None:
         res = vt.validate(root)
         st = {c["check"]: c for c in res.checks}
         assert st["实现期薄桩存在"]["level"] == "PASS"
-        assert (root / ".trellis" / "spec" / "conventions" / "testid.md").is_file()
+        assert (root / ".atlas" / "spec" / "conventions" / "testid.md").is_file()
 
 
 def test_testids_adopt_extracts_from_real_ui() -> None:
@@ -3982,9 +3982,9 @@ def test_index_second_landing_fails_for_case_id_only_in_task_dir() -> None:
         mk_cases(root)
         mk_index(root)
         mk_prd(root)
-        (root / ".atlas").mkdir()
+        (root / ".atlas").mkdir(exist_ok=True)
         (root / ".atlas" / "VERSION").write_text("0.4.0\n", encoding="utf-8")
-        d = root / ".trellis" / "tasks" / "T-1"
+        d = root / ".atlas" / "tasks" / "T-1"
         d.mkdir(parents=True)
         (d / "cases.md").write_text("用例 E2E-HOME-042 只写在任务目录。\n", encoding="utf-8")
         row = next(c for c in ve.validate(root).checks if c["check"] == "用例第二落点")

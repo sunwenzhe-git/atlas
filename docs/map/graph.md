@@ -59,7 +59,7 @@ graph:
 python3 .atlas/scripts/impact_report.py --root . --task <需求ID> --symbols/--paths/--diff-base …
 ```
 
-链路:种子符号收集(`collect_seed_symbols`,impact_report.py:71)→ 沿 CALLS 边 BFS 分层(`bfs_layers`,impact_report.py:102)→ 渲染 `.trellis/tasks/<ID>/impact.json|md`(`render`,impact_report.py:134)。用前现刷、确定性可复现;未声明 graph 段 ⇒ exit 3 `not_ready`(impact_report.py:42),apply 记录后跳过、不阻断。
+链路:种子符号收集(`collect_seed_symbols`,impact_report.py:71)→ 沿 CALLS 边 BFS 分层(`bfs_layers`,impact_report.py:102)→ 渲染 `.atlas/tasks/<ID>/impact.json|md`(`render`,impact_report.py:134)。用前现刷、确定性可复现;未声明 graph 段 ⇒ exit 3 `not_ready`(impact_report.py:42),apply 记录后跳过、不阻断。
 
 ### 6. 消费者②:收口对账 `impact_reconcile.py`
 

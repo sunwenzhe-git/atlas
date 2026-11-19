@@ -13,19 +13,19 @@
 
 | 文件 | 行数 | 角色 |
 |---|---|---|
-| `bin/atlas.js` | 560 | CLI 入口:命令面总表见 `printHelp`(`bin/atlas.js:18`)= init / update / upgrade / check / solution / review / eval / console / report / version,分派在同文件 `switch (command)`;平台探测拆到 `bin/platform.js`(Trellis 用 which/where、bash 只认 Git Bash、Python 按平台探测 3.10+) |
-| `install.py` | 981 | 装配单源:白名单拷贝 + 版本戳 + manifest + 66 条 `c()` 自检 + 图谱探测;叶子脚本(layout / apply-patches / apply-wiring / pkg_digest / ablation / evidence_archive)复用不重写 |
-| `install.sh` | 59 | 薄 wrapper:头部用法说明 + `exec python3 install.py`(装配逻辑零残留,自检门守) |
-| `scripts/run_python.js` | 102 | 钩子平台中立启动器:`.trellis/config.yaml` 的 after_archive 调它;运行时解析 Python 3.10+(win32 py -3/真实 python,剔除 WindowsApps stub),转发 argv/退出码,强制 PYTHONUTF8=1 |
+| `bin/atlas.js` | 553 | CLI 入口:命令面总表见 `printHelp`(`bin/atlas.js:18`)= init / update / upgrade / check / workflow / solution / review / eval / e2e / console / report / apply / version,分派在同文件 `switch (command)`;平台探测拆到 `bin/platform.js`(bash 只认 Git Bash、Python 按平台探测 3.10+) |
+| `install.py` | 921 | 装配单源:白名单拷贝 + 版本戳 + manifest + 70 条 `c()` 自检 + 图谱探测;叶子脚本(layout / apply-patches / apply-wiring / pkg_digest / ablation / evidence_archive)复用不重写 |
+| `install.sh` | 56 | 薄 wrapper:头部用法说明 + `exec python3 install.py`(装配逻辑零残留,自检门守) |
+| `scripts/atlas_workflow.py` | 354 | 执行层调度:plan / dispatch / verify / finish / status / run;任务账本 `.atlas/tasks`,`--round` / `--resolves` 透传 |
 | `scripts/pkg_digest.py` | — | 内容摘要算法单点(`ASSEMBLY_COVER_DIRS`,`scripts/pkg_digest.py:52`):装配版本门两侧共用,防双端漂移 |
 | `scripts/backflow.py` | — | 副本 ⇄ 源包三态回灌(`diff_trees`,`scripts/backflow.py:60`;`apply`,`scripts/backflow.py:97`) |
 | `patches/`(4 族) | — | 锚点式版本化补丁:workflow-plan-apply / project-wiring / workflow-root-cause / workflow-skill-routing |
 
 ## 核心机制
 
-### 1. 装配六步(`install.py`;`install.sh` 薄 wrapper)
+### 1. 装配四步(`install.py`;`install.sh` 薄 wrapper)
 
-`[1/6]` 整包 → `.atlas/`(`atlas_dest`,`install.py:5`,白名单目录拷贝,不整目录删,保住 `.atlas/runs/` 运行态)→ `[2/6]` skill 瘦桩(引用契约不复制正文)→ `[4/6]` 骨架 → `[5/6]` Trellis workflow 补丁(遍历 patches/)→ `[6/6]` 项目接线 → 图谱后端探测(可选)→ 自检段(`say("自检")`,`install.py:664`,65 条 `c()` 声明)。`--dry-run`(F54)零落盘、双摘要可见化;`--update` 刷新已装配副本。
+`[1/6]` 整包 → `.atlas/`(`atlas_dest`,`install.py:5`,白名单目录拷贝,不整目录删,保住 `.atlas/runs/` 运行态)→ `[2/6]` skill 瘦桩(引用契约不复制正文)→ `[4/6]` 骨架 → `[5/6]` 执行层 workflow 补丁(遍历 patches/)→ `[6/6]` 项目接线 → 图谱后端探测(可选)→ 自检段(`say("自检")`,`install.py:664`,70 条 `c()` 声明)。`--dry-run`(F54)零落盘、双摘要可见化;`--update` 刷新已装配副本。
 
 ### 2. 装配基线三件(D145/D146/D147)
 
@@ -50,7 +50,7 @@ AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.ada
 | atlas_check 装配版本门 | VERSION 戳 + MANIFEST 基线 ⇔ 源包重算 |
 | test_install_selfcheck | 自检引用必须存在:63 条 `check` 指向的文件必须真落下 |
 | test_backflow | 三态语义 + SOURCE_ONLY 护栏钉 |
-| Trellis | patches 族把 apply / 工作流步骤织进 `.trellis/workflow.md` |
+| 执行层 | `atlas workflow` 把 apply / 工作流步骤写进 `.atlas/tasks` 任务卡与派工单 |
 
 ## 显式盲区
 

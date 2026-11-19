@@ -8,9 +8,9 @@
 ## 一页看懂:主数据流
 
 ```
-业务代码 ──► 适配器抽取(adapters/) ──► 结构事实(.trellis/spec/structure/)
+业务代码 ──► 适配器抽取(adapters/) ──► 结构事实(.atlas/spec/structure/)
                                                │
-Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
+执行层任务卡(.atlas/tasks/<ID>/prd.md)     │
         │                                      │
         ▼                                      ▼
    apply 跨环编排(apply/reference.md)──────────┘
@@ -54,9 +54,9 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 ### 1. CLI 与装配
 
-- `bin/atlas.js`(560 行):命令面 = `init / update / upgrade / check / solution / review / eval / console / report / version`。`init` 先探测 Trellis(POSIX `which` / Windows `where`;`.trellis/` 缺失时自动 `trellis init`)再调装配器;平台探测拆在 `bin/platform.js`(bash 只认 Git Bash 不回落 WSL 中继壳;Python 按平台探测 `py -3`/`python`/`python3` 并校验 3.10+)。
-- `install.py`(981 行):装配单源(`install.sh` 59 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`(RFC-20261114-01 起不含出厂测试目录,历史残留经 MANIFEST 基线闸清理),落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 66 条 `c()` 自检声明。
-- `patches/`(4 族):`workflow-plan-apply`(apply 挂进 Trellis 工作流)、`project-wiring`(AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.adapter-out/` / pi 扩展五触点)、`workflow-root-cause`、`workflow-skill-routing`。锚点式版本化补丁,可重放。
+- `bin/atlas.js`(553 行):命令面 = `init / update / upgrade / check / solution / review / eval / console / report / version`。`init` 直接调装配器(前置仅 Node.js + Python 3.10+);平台探测拆在 `bin/platform.js`(bash 只认 Git Bash 不回落 WSL 中继壳;Python 按平台探测 `py -3`/`python`/`python3` 并校验 3.10+)。
+- `install.py`(921 行):装配单源(`install.sh` 56 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`(RFC-20261114-01 起不含出厂测试目录,历史残留经 MANIFEST 基线闸清理),落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 70 条 `c()` 自检声明。
+- `patches/`(4 族):`workflow-plan-apply`(apply 挂进 执行层 工作流)、`project-wiring`(AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.adapter-out/` / pi 扩展五触点)、`workflow-root-cause`、`workflow-skill-routing`。锚点式版本化补丁,可重放。
 - 对账:`scripts/pkg_digest.py`(摘要算法单点)+ `scripts/backflow.py`(副本⇔源包三态回灌,SOURCE_ONLY 拒绝护栏)。
 
 ### 2. 共享契约层 `shared/`
@@ -67,13 +67,13 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 - 适配器四件:`routes.py` / `api.py` / `models.py` / `tests.py`,由 `product/stack-profile.yaml` 的 `adapters` 段声明启用。统一契约:只读、幂等、失败非零且零部分产物、输出 JSON 形如 `{category, items, source_files, adapter_version}`,落 `.adapter-out/`(项目根,运行态不入库)。
 - `_lib.py` / `_scaffold.py` 是共享件;`_graph.py` 不是适配器(归子系统 4)。
-- `scripts/refresh_structure.py`(818 行)把适配器产物渲染进 `.trellis/spec/structure/` 的 `atlas:facts` 标记区:键级单元格重写、语义列保留、键级增删落漂移标记 `.adapter-out/_drift.json`(由「结构漂移」门消费)。
+- `scripts/refresh_structure.py`(818 行)把适配器产物渲染进 `.atlas/spec/structure/` 的 `atlas:facts` 标记区:键级单元格重写、语义列保留、键级增删落漂移标记 `.adapter-out/_drift.json`(由「结构漂移」门消费)。
 
 ### 4. 代码图谱 → [graph.md](graph.md)
 
 ### 5. 三环资产引擎 `rings/`
 
-三份 `reference.md` 分别是 structure / prd / e2e 环的规程契约(环内逻辑的唯一正文);`skills/atlas-{structure,prd,e2e}` 是给 agent 的执行入口(skill 薄桩引用契约,不复制正文)。环产出:structure → `.trellis/spec/structure/`;prd → `product/prd/`(全局 prd.md + 域级 `<domain>-prd.md`);e2e → `product/e2e/e2e-index.md` + `cases/` 分片。原型环已退役(E1)。
+三份 `reference.md` 分别是 structure / prd / e2e 环的规程契约(环内逻辑的唯一正文);`skills/atlas-{structure,prd,e2e}` 是给 agent 的执行入口(skill 薄桩引用契约,不复制正文)。环产出:structure → `.atlas/spec/structure/`;prd → `product/prd/`(全局 prd.md + 域级 `<domain>-prd.md`);e2e → `product/e2e/e2e-index.md` + `cases/` 分片。原型环已退役(E1)。
 
 ### 6. apply 跨环编排 → [apply.md](apply.md)
 
@@ -103,14 +103,14 @@ Trellis 需求卡(.trellis/tasks/<ID>/prd.md)     │
 
 | 量 | 值 | 出处 |
 |---|---|---|
-| 校验器 | 〔数:校验器=12〕(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py:52` |
-| 编排门行 | 〔数:编排门行=9〕 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 / 消融残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:92`) |
-| 出厂测试文件 | 〔数:出厂测试文件=82〕 | `tests/` |
-| skills | 〔数:skills=8〕(含 frontend-design) | `skills/` |
+| 校验器 | 〔数:校验器=13〕(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py:52` |
+| 编排门行 | 〔数:编排门行=10〕 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 / 消融残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:92`) |
+| 出厂测试文件 | 〔数:出厂测试文件=85〕 | `tests/` |
+| skills | 〔数:skills=9〕(含 frontend-design) | `skills/` |
 | 环 | 〔数:环=3〕(structure / prd / e2e;原型环 E1 已退役) | `rings/` |
 | 共享契约 | 〔数:共享契约=9〕 份 | `shared/` |
-| 共享内核 | 〔数:共享内核=21〕 件 | `_support/` |
-| install.py 自检声明 | 〔数:自检声明=66〕 条 | `install.py` |
+| 共享内核 | 〔数:共享内核=24〕 件 | `_support/` |
+| install.py 自检声明 | 〔数:自检声明=70〕 条 | `install.py` |
 | 最大单件 | `〔数:最大单件文件=scripts/gen_e2e_scripts.py〕` 〔数:最大单件行数=3425〕 行 | — |
 
 ## L1 铺设计划(2026-10-25 定稿)

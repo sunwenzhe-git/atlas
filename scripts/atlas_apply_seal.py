@@ -6,7 +6,7 @@
 
     python3 scripts/atlas_apply_seal.py --root . \
         --seal product/reviews/apply/web/T-001.seal.json \
-        --card .trellis/tasks/01-xxx/prd.md --e2e-status ready \
+        --card .atlas/tasks/01-xxx/prd.md --e2e-status ready \
         --case case-login --owner @alice
 
 签发后请提交封条，再跑 `atlas solution lock --update` 并独立提交。

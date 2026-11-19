@@ -18,7 +18,7 @@ FAKE_TASK = r'''#!/usr/bin/env python3
 import datetime, json, pathlib, sys
 
 root = pathlib.Path(__file__).resolve().parents[2]
-tasks = root / ".trellis" / "tasks"
+tasks = root / ".atlas" / "tasks"
 args = sys.argv[1:]
 
 if args and args[0] == "create":
@@ -53,7 +53,7 @@ if args and args[0] == "create":
     (d / "implement.jsonl").write_text("", encoding="utf-8")
     (d / "check.jsonl").write_text("", encoding="utf-8")
     if not opts.get("no_start"):
-        (root / ".trellis" / "active").write_text(name, encoding="utf-8")
+        (root / ".atlas" / "active").write_text(name, encoding="utf-8")
     print("Created task: " + name, file=sys.stderr)
     sys.exit(0)
 
@@ -84,11 +84,11 @@ task_core = load("_solution_task_test_tasks", "_support/solution_task.py")
 
 def make_member(root: Path, name: str, with_task_py: bool = True) -> Path:
     member = root / name
-    (member / ".trellis" / "scripts").mkdir(parents=True, exist_ok=True)
-    (member / ".trellis" / ".developer").write_text(
+    (member / ".atlas" / "scripts").mkdir(parents=True, exist_ok=True)
+    (member / ".atlas" / ".developer").write_text(
         "name=agent_learning\ninitialized_at=2026-11-05T00:00:00\n", encoding="utf-8")
     if with_task_py:
-        (member / ".trellis" / "scripts" / "task.py").write_text(FAKE_TASK, encoding="utf-8")
+        (member / ".atlas" / "scripts" / "task.py").write_text(FAKE_TASK, encoding="utf-8")
     return member
 
 
@@ -118,7 +118,7 @@ def test_dry_run_zero_write(tmp_path: Path) -> None:
     result = task_core.create_tasks(tmp_path, data, "REQ-001", apply=False)
     assert result["apply"] is False
     assert len(result["plans"]) == 2
-    assert not list((tmp_path / "a" / ".trellis" / "tasks").glob("*/task.json"))
+    assert not list((tmp_path / "a" / ".atlas" / "tasks").glob("*/task.json"))
 
 
 def test_apply_creates_tasks_without_start_and_with_context(tmp_path: Path) -> None:
@@ -127,7 +127,7 @@ def test_apply_creates_tasks_without_start_and_with_context(tmp_path: Path) -> N
     assert len(result["done"]) == 2
     expected = {"a": "实现同步 API", "b": "接入同步入口"}
     for name in ("a", "b"):
-        task_dirs = [p for p in (tmp_path / name / ".trellis" / "tasks").iterdir()
+        task_dirs = [p for p in (tmp_path / name / ".atlas" / "tasks").iterdir()
                      if (p / "task.json").is_file()]
         assert len(task_dirs) == 1
         task = task_dirs[0]
@@ -140,19 +140,8 @@ def test_apply_creates_tasks_without_start_and_with_context(tmp_path: Path) -> N
         assert expected[name] in (task / "solution.md").read_text(encoding="utf-8")
         assert (task / "implement.jsonl").read_text(encoding="utf-8").strip()
         assert (task / "check.jsonl").read_text(encoding="utf-8").strip()
-        assert not (tmp_path / name / ".trellis" / "active").exists()
+        assert not (tmp_path / name / ".atlas" / "active").exists()
         assert expected[name] not in (task / "prd.md").read_text(encoding="utf-8")
-
-
-def test_missing_task_py_preflight_writes_nothing(tmp_path: Path) -> None:
-    make_member(tmp_path, "a")
-    make_member(tmp_path, "b", with_task_py=False)
-    data = make_solution(tmp_path, members=("a", "b"), with_task_py=False)
-    # make_solution re-created a/b; ensure b lacks task.py
-    (tmp_path / "b" / ".trellis" / "scripts" / "task.py").unlink(missing_ok=True)
-    with pytest.raises(task_core.TaskError, match="task.py"):
-        task_core.create_tasks(tmp_path, data, "REQ-001", apply=True)
-    assert not list((tmp_path / "a" / ".trellis" / "tasks").glob("*/task.json"))
 
 
 def test_missing_ac_preflight(tmp_path: Path) -> None:
@@ -172,18 +161,18 @@ def test_resume_and_update(tmp_path: Path) -> None:
     resumed = task_core.create_tasks(tmp_path, data, "REQ-001", apply=True, resume=True)
     assert all(p["action"] == "skip" for p in resumed["done"])
     before = [p.read_text(encoding="utf-8") for p in
-              (tmp_path / "a" / ".trellis" / "tasks").glob("*/prd.md")]
+              (tmp_path / "a" / ".atlas" / "tasks").glob("*/prd.md")]
     updated = task_core.create_tasks(tmp_path, data, "REQ-001", apply=True, update=True)
     assert all(p["action"] == "update" for p in updated["done"])
     after = [p.read_text(encoding="utf-8") for p in
-             (tmp_path / "a" / ".trellis" / "tasks").glob("*/prd.md")]
+             (tmp_path / "a" / ".atlas" / "tasks").glob("*/prd.md")]
     assert before == after
 
 
 def test_status_live_and_check_warns(tmp_path: Path) -> None:
     data = make_solution(tmp_path)
     task_core.create_tasks(tmp_path, data, "REQ-001", apply=True)
-    task = next((tmp_path / "a" / ".trellis" / "tasks").glob("*/task.json")).parent
+    task = next((tmp_path / "a" / ".atlas" / "tasks").glob("*/task.json")).parent
     __import__("shutil").rmtree(task)
     status = task_core.task_status(tmp_path, data, "REQ-001")
     assert not status["ok"]
@@ -192,26 +181,11 @@ def test_status_live_and_check_warns(tmp_path: Path) -> None:
     assert any("跨仓任务" in c["check"] for c in checked["checks"])
 
 
-REAL_TASK = Path(os.environ.get("ATLAS_REAL_TRELLIS_TASK", ""))
-
-
-@pytest.mark.skipif(not REAL_TASK.is_file(), reason="未提供 ATLAS_REAL_TRELLIS_TASK")
-def test_real_trellis_cli_supports_required_flags() -> None:
-    text = subprocess.run([sys.executable, str(REAL_TASK), "create", "--help"],
-                          capture_output=True, text=True)
-    out = text.stdout + text.stderr
-    for flag in ("--slug", "--assignee", "--description", "--meta", "--no-start"):
-        assert flag in out
-    ctx = subprocess.run([sys.executable, str(REAL_TASK), "add-context", "--help"],
-                         capture_output=True, text=True)
-    assert "add-context" in (ctx.stdout + ctx.stderr)
-
-
 def test_archive_layout_is_found_and_idempotent(tmp_path: Path) -> None:
     data = make_solution(tmp_path)
     task_core.create_tasks(tmp_path, data, "REQ-001", apply=True)
-    task = next((tmp_path / "a" / ".trellis" / "tasks").glob("*/task.json")).parent
-    archive = tmp_path / "a" / ".trellis" / "tasks" / "archive" / "2026-11"
+    task = next((tmp_path / "a" / ".atlas" / "tasks").glob("*/task.json")).parent
+    archive = tmp_path / "a" / ".atlas" / "tasks" / "archive" / "2026-11"
     archive.mkdir(parents=True)
     task.rename(archive / task.name)
 
@@ -229,7 +203,7 @@ def test_archive_layout_is_found_and_idempotent(tmp_path: Path) -> None:
 def test_resume_repairs_missing_context(tmp_path: Path) -> None:
     data = make_solution(tmp_path)
     task_core.create_tasks(tmp_path, data, "REQ-001", apply=True)
-    task = next((tmp_path / "a" / ".trellis" / "tasks").glob("*/task.json")).parent
+    task = next((tmp_path / "a" / ".atlas" / "tasks").glob("*/task.json")).parent
     (task / "check.jsonl").write_text("", encoding="utf-8")
     assert any("context" in w for w in task_core.task_status(tmp_path, data)["warnings"])
     task_core.create_tasks(tmp_path, data, "REQ-001", apply=True, resume=True)
@@ -238,7 +212,7 @@ def test_resume_repairs_missing_context(tmp_path: Path) -> None:
 
 def test_cross_day_slug_collision(tmp_path: Path) -> None:
     data = make_solution(tmp_path)
-    d = tmp_path / "a" / ".trellis" / "tasks" / "01-01-req-001-api"
+    d = tmp_path / "a" / ".atlas" / "tasks" / "01-01-req-001-api"
     d.mkdir(parents=True)
     (d / "task.json").write_text(
         json.dumps({"meta": {"solution": "other", "requirement": "X", "member": "a"}}),
@@ -258,14 +232,14 @@ def test_cli_dry_run_flag(tmp_path: Path) -> None:
     )
     assert res.returncode == 0, res.stderr
     assert "DRY-RUN" in res.stdout
-    assert not list((tmp_path / "a" / ".trellis" / "tasks").glob("*/task.json"))
+    assert not list((tmp_path / "a" / ".atlas" / "tasks").glob("*/task.json"))
 
 
 def test_assignee_env_overrides_developer(tmp_path: Path, monkeypatch) -> None:
     data = make_solution(tmp_path)
-    monkeypatch.setenv("TRELLIS_DEVELOPER", "alice")
+    monkeypatch.setenv("ATLAS_DEVELOPER", "alice")
     task_core.create_tasks(tmp_path, data, "REQ-001", members=["a"], apply=True)
-    task = next((tmp_path / "a" / ".trellis" / "tasks").glob("*/task.json")).parent
+    task = next((tmp_path / "a" / ".atlas" / "tasks").glob("*/task.json")).parent
     payload = __import__("json").loads((task / "task.json").read_text(encoding="utf-8"))
     assert payload["assignee"] == "alice"
 

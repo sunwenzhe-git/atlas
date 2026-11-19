@@ -23,13 +23,6 @@ function joinFor(platform) {
   return platform === 'win32' ? path.win32.join : path.join;
 }
 
-/** Trellis CLI 的探测命令：POSIX 用 which，Windows 用 where（which 在原生 Windows 不存在）。 */
-function trellisProbe(platform = process.platform) {
-  return platform === 'win32'
-    ? { cmd: 'where', args: ['trellis'] }
-    : { cmd: 'which', args: ['trellis'] };
-}
-
 /** Git for Windows 的常见安装位置（不含 System32 的 WSL 中继壳）。 */
 function bashCandidates(platform = process.platform, env = process.env) {
   if (platform !== 'win32') return ['bash'];
@@ -133,34 +126,12 @@ function normalizeBashArgs(argv, platform = process.platform) {
   return out;
 }
 
-/**
- * 返回可用于启动的 trellis 入口；未安装返回 null。
- * Windows 下 where 会同时列出无扩展名的 sh 入口与 .cmd/.exe；Node 不能直接拉起
- * .cmd，所以优先 .exe，其次 .cmd/.bat。
- */
-function detectTrellis(platform = process.platform) {
-  const { cmd, args } = trellisProbe(platform);
-  const res = spawnSync(cmd, args, { encoding: 'utf8' });
-  if (res.status !== 0) return null;
-  if (platform !== 'win32') return 'trellis';
-  const hits = (res.stdout || '')
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return hits.find((p) => /\.exe$/i.test(p))
-    || hits.find((p) => /\.(cmd|bat)$/i.test(p))
-    || hits[0]
-    || null;
-}
-
 module.exports = {
   IS_WIN,
   IS_GIT_BASH,
-  trellisProbe,
   bashCandidates,
   resolveBash,
   normalizeBashArgs,
-  detectTrellis,
   pythonCandidates,
   parsePythonVersion,
   versionSupported,

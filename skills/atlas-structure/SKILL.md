@@ -1,11 +1,11 @@
 ---
 name: atlas-structure
-description: "项目结构基线（逆向）：读代码产出结构事实，落 .trellis/spec/structure/（Trellis 路径注入层）——目录与模块地图、路由与页面清单、接口清单、数据模型清单；并从代码提议候选域。Use when 用户要求 项目结构/项目整体结构/逆向/项目基线/目录与模块地图/路由清单/接口清单/数据模型清单/候选域。不产出 PRD、E2E 用例或需求（那是其它 atlas 环）。"
+description: "项目结构基线（逆向）：读代码产出结构事实，落 .atlas/spec/structure/（结构环事实层（`paths:` 索引））——目录与模块地图、路由与页面清单、接口清单、数据模型清单；并从代码提议候选域。Use when 用户要求 项目结构/项目整体结构/逆向/项目基线/目录与模块地图/路由清单/接口清单/数据模型清单/候选域。不产出 PRD、E2E 用例或需求（那是其它 atlas 环）。"
 ---
 
 # atlas structure
 
-结构基线（逆向）环。读代码产出**结构事实**，落 **`.trellis/spec/structure/`**（Trellis 的路径注入层）——既是项目级事实，又能被 Trellis 任务原生注入消费。
+结构基线（逆向）环。读代码产出**结构事实**，落 **`.atlas/spec/structure/`**（执行层的路径注入层）——既是项目级事实，又能被 执行层 任务原生注入消费。
 
 ## 先读
 
@@ -15,7 +15,7 @@ description: "项目结构基线（逆向）：读代码产出结构事实，落
 
 ## 路径
 
-本项目 atlas 包在 `<项目根>/.atlas/`；`<项目根>` = 当前工作目录（含 `.trellis/` 与 `product/` 的那层）。结构事实落 `<项目根>/.trellis/spec/structure/`。
+本项目 atlas 包在 `<项目根>/.atlas/`；`<项目根>` = 当前工作目录（含 `.atlas/` 与 `product/` 的那层）。结构事实落 `<项目根>/.atlas/spec/structure/`。
 
 ## 边界
 

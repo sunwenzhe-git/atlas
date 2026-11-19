@@ -16,7 +16,7 @@
                       `^check ` 与 `tests/test_*.py` glob）。
 
 显式盲区（登记于 `shared/gates.md` 2.6）：
-  * 目标仓运行态路径（`product/` `.trellis/` `.adapter-out/` `.atlas/`）不在校验域；
+  * 目标仓运行态路径（`product/` `.atlas/` `.adapter-out/` `.atlas/`）不在校验域；
   * `.md` 目标的无 § 邻接行锚只验「行存活」（节标题锚定不做符号对账）；
   * 锚的**语义正确性**（那行是否仍是作者想指的那行）机器判不了——符号匹配是近似。
 

@@ -2,8 +2,11 @@
 """atlas installer —— 把 atlas 包装配到目标项目（RFC-20261103-04 第 4 步）。
 
 用法：
-  bash install.sh [--target <项目根>] [--update] [--force] [--dry-run] [--no-skill] [--no-patch] [--no-wiring]
-                  [--no-trellis] [--assets-root <dir>] [--adr-dir <dir>]
+  bash install.sh [--target <项目根>] [--update] [--force] [--dry-run] [--no-skill] [--no-wiring]
+                  [--assets-root <dir>] [--adr-dir <dir>]
+                  [--profile=audit|adopt|strict]
+  --profile 是旗标宏：audit = `--no-wiring`；adopt = `--no-wiring`；
+  strict = 无附加旗标。显式旗标优先，不新增装配分支。
 （install.sh 已退化为薄 wrapper，本文件是装配单源；`python3 install.py` 等价。）
 
 装配行为：
@@ -14,12 +17,11 @@
      历史装配残留的 .atlas/tests 经 MANIFEST 基线闸后清理。
   2. 每个 skills/atlas-*/ 以一个瘦桩 SKILL.md 装到各平台 skill 目录。
   3. 清理历史遗留的单入口 skill（<平台>/skills/atlas）。
-  4. 建资产根骨架（默认 product/；已有内容永不覆盖）。
-  5. 应用 .trellis/workflow.md 的 Plan 挂载补丁（atlas apply；锚点幂等，
-     用 --no-patch 跳过）。
-  6. 项目接线：AGENTS.md 的 atlas 指针段 + .trellis/config.yaml 的 after_archive
-     hook（幂等，用 --no-wiring 跳过）。
-     第 5、6 步属 global-rules §7 确认门动作，由本次显式安装触发。
+  4. 建资产根骨架（默认 product/；已有内容永不覆盖）与执行层骨架
+     （`.atlas/tasks`、`.atlas/spec/structure`、`.atlas/spec/conventions`）。
+  5. 项目接线：AGENTS.md 的 atlas 指针段、extractor 测试配置、`.gitignore`、
+     pi 宿主扩展（幂等，用 --no-wiring 跳过）。属 global-rules §7 确认门动作，
+     由本次显式安装触发。
 
 模式：
   --update: 刷新已有项目的 .atlas/ 资产与平台 Skills 瘦桩（要求目标已初始化 .atlas/）。
@@ -31,12 +33,11 @@
   未跟踪（如 .atlas/ 不入库）⇒ WARN 放行、不消费 --force（覆盖自负，先回灌更稳）。
 
 幂等：.atlas/ 与 skill 瘦桩默认刷新（属包下发物，用 --no-skill 跳过 skill）；
-      资产根下的既有内容永不覆盖；workflow.md 补丁只做锚点插入、重跑即恢复；
-      AGENTS.md 指针段与 config.yaml hook 就地更新、重跑即恢复。
+      资产根下的既有内容永不覆盖；AGENTS.md 指针段与接线触点就地更新、重跑即恢复。
 
-移植口径：编排逻辑与 install.sh 逐段 1:1，**面向用户的输出逐字节保留**
-（golden 基线 = `proposals/RFC-20261103-04-installer-golden/`，验收口令
-`harness.py --check --installer install.py` 必须全绿）。叶子脚本
+移植口径：装配逻辑单源在本文件；历史 golden 基线
+`proposals/RFC-20261103-04-installer-golden/` 是 2026-11-03 的冻结快照，
+不再逐字节对齐（移除旧宿主执行器后输出已变更）。叶子脚本
 （`_support/layout.py` / `patches/*/apply-patches.py` / `scripts/pkg_digest.py` /
 `scripts/ablation.py`）继续复用，不是第二实现。
 """
@@ -71,9 +72,7 @@ IS_UPDATE = False
 FORCE = False
 DRY_RUN = False
 INSTALL_SKILL = True
-INSTALL_PATCH = True
 INSTALL_WIRING = True
-NO_TRELLIS = False
 ASSETS_ROOT_ARG = ""
 ADR_DIR_ARG = ""
 
@@ -256,32 +255,6 @@ def solution_update_guard(target: str) -> tuple[bool, str]:
         "      然后提交清单 → atlas solution lock --update → 提交锁 → 再加 --update 重跑。")
 
 
-def apply_patch_pkg(pkg_dir: Path) -> None:
-    name = pkg_dir.name
-    if DRY_RUN:
-        run(f"python3 {pkg_dir / 'apply-patches.py'} --target {TARGET} "
-            f"--spec {pkg_dir / 'spec.json'}")
-        return
-    r = subprocess.run(
-        [sys.executable, str(pkg_dir / "apply-patches.py"),
-         "--target", TARGET, "--spec", str(pkg_dir / "spec.json"), "--apply"],
-        env=py_env(), text=True, encoding="utf-8", errors="replace",
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-    )
-    out = r.stdout or ""
-    for line in out.splitlines() if out else [""]:
-        say("      | " + line)
-    if r.returncode == 0:
-        m = re.search("合计：.*", out)
-        summary = m.group(0) if m else ""
-        if "applied=0 replaced=0 upgraded=0" in summary:
-            say(f"      = {name}：.trellis/workflow.md 已是最新（无改动；{summary}）")
-        else:
-            say(f"      -> .trellis/workflow.md（{name}；{summary}）")
-    else:
-        say(f"      ⚠ {name} 存在 error（锚点未命中，Trellis 模板可能已变）——不阻断装配。")
-
-
 def check(label: str, path: str) -> None:
     global FAIL
     if DRY_RUN:
@@ -295,8 +268,23 @@ def check(label: str, path: str) -> None:
 
 
 def main() -> None:
-    global TARGET, IS_UPDATE, FORCE, DRY_RUN, INSTALL_SKILL, INSTALL_PATCH, INSTALL_WIRING
-    global NO_TRELLIS, ASSETS_ROOT_ARG, ADR_DIR_ARG, FAIL
+    global TARGET, IS_UPDATE, FORCE, DRY_RUN, INSTALL_SKILL, INSTALL_WIRING
+    global ASSETS_ROOT_ARG, ADR_DIR_ARG, FAIL
+
+    profile_name = ""
+
+    def apply_profile(name: str) -> None:
+        """Profile 只是旗标宏；显式旗标仍可覆盖同名布尔（均为关闭型，无正向旗标）。"""
+        nonlocal profile_name
+        global INSTALL_WIRING
+        if name in ("audit", "adopt"):
+            INSTALL_WIRING = False
+        elif name == "strict":
+            pass
+        else:
+            print(f"未知 profile: {name}（可选：audit / adopt / strict）", file=sys.stderr)
+            die(2)
+        profile_name = name
 
     argv = sys.argv[1:]
     i = 0
@@ -317,14 +305,14 @@ def main() -> None:
         elif a == "--no-skill":
             INSTALL_SKILL = False
             i += 1
-        elif a == "--no-patch":
-            INSTALL_PATCH = False
-            i += 1
         elif a == "--no-wiring":
             INSTALL_WIRING = False
             i += 1
-        elif a == "--no-trellis":
-            NO_TRELLIS = True
+        elif a == "--profile":
+            apply_profile(argv[i + 1] if i + 1 < len(argv) else "")
+            i += 2
+        elif a.startswith("--profile="):
+            apply_profile(a.split("=", 1)[1])
             i += 1
         elif a == "--assets-root":
             ASSETS_ROOT_ARG = argv[i + 1] if i + 1 < len(argv) else ""
@@ -355,6 +343,13 @@ def main() -> None:
         say("atlas installer")
     say(f"  包目录 : {SCRIPT_DIR}")
     say(f"  目标项目: {TARGET}")
+    if profile_name:
+        expanded = {
+            "audit": "--no-wiring",
+            "adopt": "--no-wiring",
+            "strict": "（无附加旗标）",
+        }[profile_name]
+        say(f"  [profile] {profile_name} => {expanded}")
     say("")
 
     if IS_UPDATE and not os.path.isdir(os.path.join(TARGET, ".atlas")):
@@ -368,25 +363,6 @@ def main() -> None:
         if refuse:
             say(reason)
             die(1)
-
-    if NO_TRELLIS:
-        say("提示：--no-trellis：跳过 Trellis 初始化与 .trellis 骨架。")
-    else:
-        if not os.path.isdir(os.path.join(TARGET, ".trellis")):
-            if shutil.which("trellis"):
-                if DRY_RUN:
-                    # F54 补洞（2026-11-03）：干跑零落盘——trellis init 会写 .trellis/，跳过。
-                    say("提示：目标项目尚未初始化 Trellis（--dry-run：跳过 trellis init，不落盘）。")
-                else:
-                    say("提示：目标项目尚未初始化 Trellis，尝试自动执行 trellis init...")
-                    subprocess.run(["trellis", "init"], cwd=TARGET, check=False)
-        if not os.path.isdir(os.path.join(TARGET, ".trellis")):
-            say("警告：目标项目没有 .trellis/（未初始化 Trellis）。")
-            say("      atlas 的需求级衔接依赖 Trellis，请先在目标项目执行 trellis init。")
-            say("      （如果未安装，请执行: npm i -g @mindfoldhq/trellis）")
-            if not FORCE:
-                say("      如确认要继续，请加 --force。")
-                die(1)
 
     # ── 临时守卫（2026-09-28 加；副本先改、源包后回灌的分歧窗口防 rm -rf 卷走）──
     if (not DRY_RUN and os.path.isdir(os.path.join(TARGET, ".atlas"))
@@ -414,7 +390,7 @@ def main() -> None:
                     continue
                 raw_path = raw[3:]
                 if not (raw_path == ".atlas" or raw_path.startswith(".atlas/")
-                        or raw_path in (".trellis/workflow.md", ".trellis/config.yaml", "AGENTS.md")):
+                        or raw_path == "AGENTS.md"):
                     continue
                 if raw[:2] == "??":
                     untracked_touch += f" {raw_path}"
@@ -563,7 +539,7 @@ def main() -> None:
 
     # ---------------------------------------------------------------- 1. 整包 → .atlas/
 
-    say("[1/6] 装配 atlas 包到 .atlas/")
+    say("[1/4] 装配 atlas 包到 .atlas/")
     atlas_dest = os.path.join(TARGET, ".atlas")
     pkg_dirs = ["shared", "rings", "apply", "scripts", "templates",
                 "adapters", "validators", "patches", "_support", "extensions"]
@@ -629,7 +605,7 @@ def main() -> None:
     # ---------------------------------------------------------------- 2/3. skill 瘦桩与清理
 
     if INSTALL_SKILL:
-        say("[2/6] 装配 skill 瘦桩")
+        say("[2/4] 装配 skill 瘦桩")
         skill_srcs = sorted((PKG / "skills").iterdir()) if (PKG / "skills").is_dir() else []
         if not skill_srcs:
             say("      未发现 skills/*，跳过。")
@@ -647,7 +623,7 @@ def main() -> None:
                         action=lambda s=skill_src, d=dest: cp_r(s, Path(d)))
                 say(f"      -> {name}（{len(platform_dirs)} 个平台）")
 
-        say("[3/6] 清理历史与退役 skill")
+        say("[2/4] 清理历史与退役 skill")
         for rel in platform_dirs:
             legacy = Path(TARGET) / rel / "atlas"
             if legacy.exists():
@@ -677,19 +653,19 @@ def main() -> None:
                             cp_f(s, Path(TARGET) / b / n))
                 say(f"      -> agent {agent_name}")
     else:
-        say("[2/6] 跳过 skill（--no-skill）")
-        say("[3/6] 跳过 skill 清理（--no-skill）")
+        say("[2/4] 跳过 skill（--no-skill）")
+        say("[2/4] 跳过 skill 清理（--no-skill）")
 
     # ---------------------------------------------------------------- 4. 骨架
 
-    say("[4/6] 建立骨架")
+    say("[3/4] 建立骨架")
     skeleton = [
         e2e_cases_rel,
-        ".trellis/spec/structure/domains",
-        ".trellis/spec/structure/global",
+        ".atlas/tasks",
+        ".atlas/spec/structure/domains",
+        ".atlas/spec/structure/global",
+        ".atlas/spec/conventions",
     ]
-    if NO_TRELLIS:
-        skeleton = [d for d in skeleton if not d.startswith(".trellis/")]
     for d in skeleton:
         run(f"mkdir -p {TARGET}/{d}", action=lambda d=d: mkdir_p(Path(TARGET) / d))
         gitkeep = os.path.join(TARGET, d, ".gitkeep")
@@ -717,27 +693,6 @@ def main() -> None:
             die(r.returncode or 1)
         say(f"      + {stack_profile_rel}（草稿，需人工确认）")
 
-    # ---------------------------------------------------------------- 5. Trellis workflow 补丁
-
-    if INSTALL_PATCH:
-        say("[5/6] 应用 Trellis workflow 补丁（patches/*/）")
-        found_any = False
-        # bash 原样：恒迭代 `$ATLAS_DEST/patches/*/spec.json`。dry-run 首装时 dest 未拷贝
-        # ⇒ glob 为空 ⇒ 「未发现…跳过」（与基线一致）；update 干跑时 dest 有上次拷贝
-        # ⇒ 命中后回退源包目录，使补丁计划照样可见。
-        for spec in sorted(Path(atlas_dest).glob("patches/*/spec.json")):
-            pkg_dir = spec.parent
-            if not (pkg_dir / "apply-patches.py").is_file():
-                continue
-            if DRY_RUN and (PKG / "patches" / pkg_dir.name / "apply-patches.py").is_file():
-                pkg_dir = PKG / "patches" / pkg_dir.name
-            found_any = True
-            apply_patch_pkg(pkg_dir)
-        if not found_any:
-            say("      未发现含 apply-patches.py 的补丁包，跳过。")
-    else:
-        say("[5/6] 跳过 workflow 补丁（--no-patch）")
-
     # ---------------------------------------------------------------- 6. 项目接线
 
     wiring_dir = os.path.join(atlas_dest, "patches", "project-wiring")
@@ -746,7 +701,7 @@ def main() -> None:
                                             "apply-wiring.py"))):
         wiring_dir = os.path.join(SCRIPT_DIR, "patches", "project-wiring")
     if INSTALL_WIRING:
-        say("[6/6] 项目接线（AGENTS.md 指针 + after_archive hook）")
+        say("[4/4] 项目接线（AGENTS.md 指针 + 测试配置 + .gitignore + pi 扩展）")
         if os.path.isfile(os.path.join(wiring_dir, "apply-wiring.py")):
             if DRY_RUN:
                 run(f"python3 {wiring_dir}/apply-wiring.py --target {TARGET}")
@@ -757,14 +712,13 @@ def main() -> None:
                     env=py_env(),
                 )
                 if r.returncode == 0:
-                    say("      -> AGENTS.md（atlas 指针段）+ .trellis/config.yaml"
-                        "（after_archive hook + session_auto_commit: false）")
+                    say("      -> AGENTS.md（atlas 指针段）+ 测试配置 / .gitignore / pi 扩展")
                 else:
                     say("      ⚠ 接线存在 error——不阻断装配（见上）。")
         else:
             say("      未发现 patches/project-wiring/apply-wiring.py，跳过。")
     else:
-        say("[6/6] 跳过项目接线（--no-wiring）")
+        say("[4/4] 跳过项目接线（--no-wiring）")
 
     # ---------------------------------------------------------------- 图谱后端探测（可选能力）
 
@@ -818,7 +772,6 @@ def main() -> None:
     c("prd 环契约", f"{atlas_dest}/rings/prd/reference.md")
     c("e2e 环契约", f"{atlas_dest}/rings/e2e/reference.md")
     c("apply 契约", f"{atlas_dest}/apply/reference.md")
-    c("workflow 补丁应用器", f"{atlas_dest}/patches/workflow-plan-apply/apply-patches.py")
     c("校验器 validate_structure", f"{atlas_dest}/validators/validate_structure.py")
     c("校验器 validate_stack_profile", f"{atlas_dest}/validators/validate_stack_profile.py")
     c("校验器 validate_prd", f"{atlas_dest}/validators/validate_prd.py")
@@ -829,15 +782,17 @@ def main() -> None:
     c("校验器 validate_ac_alignment", f"{atlas_dest}/validators/validate_ac_alignment.py")
     c("校验器 validate_adr", f"{atlas_dest}/validators/validate_adr.py")
     c("校验器 validate_walkthrough", f"{atlas_dest}/validators/validate_walkthrough.py")
+    c("校验器 validate_adopt_facts", f"{atlas_dest}/validators/validate_adopt_facts.py")
     c("E2E 脚本生成器", f"{atlas_dest}/scripts/gen_e2e_scripts.py")
     c("结构事实刷新器", f"{atlas_dest}/scripts/refresh_structure.py")
     c("testid 薄桩生成器", f"{atlas_dest}/scripts/gen_testid_stub.py")
     c("审查输入清单生成器", f"{atlas_dest}/scripts/make_review_inputs.py")
     c("变异证明工具", f"{atlas_dest}/scripts/mutation_proof.py")
     c("atlas 自检器", f"{atlas_dest}/scripts/atlas_check.py")
+    c("adopt 静态抽取编排", f"{atlas_dest}/scripts/adopt_static.py")
     c("消融事务工具", f"{atlas_dest}/scripts/ablation.py")
+    c("全量消融编排", f"{atlas_dest}/scripts/ablate_all.py")
     c("E2E 评审控制台", f"{atlas_dest}/scripts/e2e_console.py")
-    c("Python 启动器（钩子平台中立）", f"{atlas_dest}/scripts/run_python.js")
     c("控制台静态资源", f"{atlas_dest}/templates/e2e/console/index.html")
     c("适配器脚手架", f"{atlas_dest}/adapters/_scaffold.py")
     c("适配器指南", f"{atlas_dest}/adapters/README.md")
@@ -847,6 +802,8 @@ def main() -> None:
     c("AC 提取器（JUnit 5）", f"{atlas_dest}/adapters/ac/junit.py")
     c("AC 外部 extractor 运行器", f"{atlas_dest}/adapters/ac/command.py")
     c("JPA 模型解析器", f"{atlas_dest}/adapters/_jpa.py")
+    c("Spring Controller 静态解析器", f"{atlas_dest}/adapters/java_web.py")
+    c("JUnit 5 + AssertJ 静态解析器", f"{atlas_dest}/adapters/java_tests.py")
     c("图谱后端隔离层", f"{atlas_dest}/adapters/_graph.py")
     c("影响面基准报告器", f"{atlas_dest}/scripts/impact_report.py")
     c("回灌助手", f"{atlas_dest}/scripts/backflow.py")
@@ -871,18 +828,9 @@ def main() -> None:
     c("ADR 模板", f"{atlas_dest}/templates/adr/template.md")
     c("审查指引模板", f"{atlas_dest}/templates/reviews/README.md")
     c("stack-profile（资产根）", stack_profile)
-    if not NO_TRELLIS:
-        c("structure spec 根", os.path.join(TARGET, ".trellis", "spec", "structure"))
+    c("structure spec 根", os.path.join(TARGET, ".atlas", "spec", "structure"))
+    c("testid 薄桩目录", os.path.join(TARGET, ".atlas", "spec", "conventions"))
     c("e2e 用例分片目录", e2e_cases_dir)
-
-    if INSTALL_PATCH and not DRY_RUN and os.path.isfile(
-            os.path.join(TARGET, ".trellis", "workflow.md")):
-        with open(os.path.join(TARGET, ".trellis", "workflow.md"),
-                  encoding="utf-8", errors="replace") as fh:
-            if "atlas:apply:plan-step-1-6" in fh.read():
-                say("  [OK]   Plan 挂载补丁（atlas apply）")
-            else:
-                say("  [WARN] Plan 挂载补丁未生效（workflow.md 锚点可能已变；见 patches/workflow-plan-apply/README.md）")
 
     if INSTALL_WIRING and not DRY_RUN:
         agents_md = os.path.join(TARGET, "AGENTS.md")
@@ -893,14 +841,6 @@ def main() -> None:
             say("  [OK]   AGENTS.md atlas 指针段")
         else:
             say("  [WARN] AGENTS.md atlas 指针段未生效（见 patches/project-wiring/README.md）")
-        config_yaml = os.path.join(TARGET, ".trellis", "config.yaml")
-        config_text = ""
-        if os.path.isfile(config_yaml):
-            config_text = open(config_yaml, encoding="utf-8", errors="replace").read()
-        if "refresh_structure.py" in config_text:
-            say("  [OK]   after_archive hook（refresh_structure）")
-        else:
-            say("  [WARN] after_archive hook 未生效（见 patches/project-wiring/README.md）")
 
     if INSTALL_SKILL and not DRY_RUN:
         first_platform = platform_dirs[0]

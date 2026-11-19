@@ -16,13 +16,13 @@ description: "项目级 E2E 验收用例环：从 PRD 的 AC（业务预期）�
 
 ## 路径
 
-本项目 atlas 包在 `<项目根>/.atlas/`；`<项目根>` = 当前工作目录（含 `.trellis/` 与 `product/` 的那层）。用例资产落 `<项目根>/product/e2e/`；实现期 testid 薄桩落 `<项目根>/.trellis/spec/conventions/testid.md`。
+本项目 atlas 包在 `<项目根>/.atlas/`；`<项目根>` = 当前工作目录（含 `.atlas/` 与 `product/` 的那层）。用例资产落 `<项目根>/product/e2e/`；实现期 testid 薄桩落 `<项目根>/.atlas/spec/conventions/testid.md`。
 
 ## 边界
 
 只产出 E2E 用例资产与 E2E 脚本，**不得**顺手写 PRD、结构事实、业务代码，也不实现影响面识别算法。越界即失败。
 
-- **依据来源硬优先级**：业务预期只来自域级 PRD 的 AC；交互与 testid **应然**来自用例分片（E1）；`.trellis/spec/structure/` 只作参考基线，禁止反推预期。
+- **依据来源硬优先级**：业务预期只来自域级 PRD 的 AC；交互与 testid **应然**来自用例分片（E1）；`.atlas/spec/structure/` 只作参考基线，禁止反推预期。
 - **testid 是唯一硬锚**：必要元素必须带 `data-testid`，脚本一律以 testid 定位；**应然（分片 `testid:` 清单）⇔ 实然（前端源码 `data-testid` 扫描）**按页双向集合校验（已实现页必须相等；未实现页 SKIP / WARN，`实现状态` 见索引页面表）。
 - **页面 slug = 分片文件名**（E1：slug 规则正文在环契约 §3.1）：分片键只认页面；跨页记 `pages[]`，绝不复制；「页 ↔ 真实路由」的唯一真相源 = 索引**页面表**。
 - **状态类字段只在索引**：执行结果回写 `e2e-index.md` 的 `状态` / `状态原因`。

@@ -1,13 +1,13 @@
 # patches/project-wiring
 
-把 atlas 的**入口指针**与**收口 hook** 幂等写进目标项目，让新项目的 agent 一开会话就知道「本项目用 atlas、契约在哪、需求级怎么走」。
-
-补的是两处此前靠手工、且会被 `trellis update` 冲掉的接线（`install.sh` 原本不碰它们）：
+把 atlas 的**入口指针**、**测试配置**、**宿主扩展**与 **`.gitignore` 兜底**幂等写进目标项目，让新项目的 agent 一开会话就知道「本项目用 atlas、契约在哪、需求级怎么走」。
 
 | # | 接线 | 落点 | 作用 |
 |---|---|---|---|
-| A | **AGENTS.md 指针** | `<项目根>/AGENTS.md` 的 `<!-- TRELLIS:END -->` **之后**（`<!-- ATLAS:START/END -->` 区块） | 位于 Trellis 区块外 ⇒ 不被 `trellis update` 覆盖；给出契约路径、skills、需求级 1.6 步、收口门 |
-| B | **`after_archive` hook + `session_auto_commit: false`** | `<项目根>/.trellis/config.yaml` | 每个任务归档（`task.py archive` / `/trellis-finish-work`）后跑 `refresh_structure.py --chain` 刷结构事实（决策 D159；旧 `after_finish` 形态自动迁移） |
+| A | **AGENTS.md 指针** | `<项目根>/AGENTS.md` 的 `<!-- ATLAS:START/END -->` 区块 | 给出契约路径、skills、`atlas workflow` 步骤、收口门 |
+| B | **extractor 测试配置** | `<项目根>/<测试配置>`（仅声明栈） | 由 `adapters/ac/` 的 extractor 提供；无 hook 的栈跳过 |
+| C | **pi 宿主扩展** | `<项目根>/.pi/extensions/atlas/index.ts` + `.pi/settings.json` 的 `extensions[]` | `/atlas` 命令与「未开户」提示 |
+| D | **`.gitignore`** | `<项目根>/.gitignore`（仅已存在时） | 追加 `.adapter-out/`，避免中间产物常驻未跟踪噪声 |
 
 ## 内容
 
@@ -28,15 +28,14 @@ python3 apply-wiring.py --target <项目根> --apply     # 写入
 ## 幂等与可重放
 
 - AGENTS.md：区块已存在则**按源整段替换**（不新建重复段）；文件不存在则创建；标记单侧存在 → 报 `error` 且**不改文件**。
-- `config.yaml`：hook 命令已在 `after_archive` → 跳过该步；有 `hooks:` 块则并入 `after_archive`，无则末尾新增 `hooks:` 块；存量 `after_finish` 中的同一条命令自动迁移。
-- `session_auto_commit`：默认写 `false`（D160，提交由人 review）；用户显式设置的键尊重不动（含 `true`）。
-- `.yaml` 写入前做**轻量结构护栏**（不依赖 PyYAML）：顶层 `hooks:` 必须唯一、hook 命令必须存在，否则报 `error` 且不写。
-- **可重放**：`trellis update` 冲掉 `config.yaml` 的本地 hook 或 AGENTS.md 指针后，重跑 `install.sh`（或本接线器 `--apply`）即恢复。
+- `.gitignore`：已含 `.adapter-out` 子串或 `!.adapter-out` 负模式 ⇒ 跳过；文件不存在 ⇒ 不首创（只给建议行）。
+- `.pi/settings.json`：只往 `extensions[]` 插一行；结构判读不了 ⇒ 跳过并给出要手加的行。
+- **可重放**：重跑 `install.sh`（或本接线器 `--apply`）即对齐。
 
 ## 确认门
 
-改 `<项目根>/AGENTS.md` 与 `.trellis/config.yaml` 属 `shared/global-rules.md` §7 的确认门动作；由 `install.sh` 在用户显式安装时执行。
+改 `<项目根>/AGENTS.md`、测试配置、`.gitignore`、`.pi/settings.json` 属 `shared/global-rules.md` §7 的确认门动作；由 `install.sh` 在用户显式安装时执行。
 
 ## 回归测试
 
-`atlas/tests/test_project_wiring.py`：验证「TRELLIS:END 之后插入 / 幂等 / 缺文件创建 / 区块更新 / config 三种落位（无 hooks、有 hooks 无 after_archive、有 after_archive）/ dry-run 不写 / 标记不成对报错不改」。
+`atlas/tests/test_project_wiring.py`：验证「追加 / 幂等 / 缺文件创建 / 区块更新 / dry-run 不写 / 标记不成对报错不改」。

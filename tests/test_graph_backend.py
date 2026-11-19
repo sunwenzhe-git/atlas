@@ -112,7 +112,7 @@ def test_ensure_index_fresh_then_reindex_on_change(fake_cgc, git_repo) -> None:
     # 那条路径是给适配器 `--out` 产物定的，而本层不是适配器、消费者跨两个环。
     marker = json.loads((git_repo / ".adapter-out" / "_graph_index.json").read_text(encoding="utf-8"))
     assert marker["backend"] == "cgc" and marker["backend_version"] == "0.9.9"
-    assert not (git_repo / ".trellis" / "spec" / "structure" / ".adapter-out").exists(), \
+    assert not (git_repo / ".atlas" / "spec" / "structure" / ".adapter-out").exists(), \
         "不得把本层运行时状态挂进结构环的产物目录"
 
     r2 = _graph.ensure_index(git_repo, cfg, version="0.9.9")

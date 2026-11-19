@@ -30,7 +30,7 @@ CONFIG_NAME = "atlas.config.yaml"
 DEFAULT_ASSETS_ROOT = Path("product")
 _ALLOWED_TOP = frozenset({"version", "layout"})
 _ALLOWED_LAYOUT = frozenset({"assets_root", "adr"})
-_FORBIDDEN_FIRST_PARTS = frozenset({".atlas", ".trellis"})
+_FORBIDDEN_FIRST_PARTS = frozenset({".atlas"})
 
 
 class LayoutError(ValueError):

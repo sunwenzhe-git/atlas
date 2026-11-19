@@ -5,7 +5,7 @@
 在 AI 编程的实际落地中，必须清晰区分两套完全不同的线束（Harness）：
 
 * **Agent Harness（工人马具）**：由外部 Coding Agent 平台（如 Claude Code, Cursor, OpenCode 等）提供，负责模型在单次会话中的 Prompt 组装、上下文截断与底层工具调用；
-* **Project Harness（项目工程线束）**：直接驻留在业务 Git 仓库内部、守护软件全生命周期的工程规范。**Trellis 本身就是 Project Harness 的一部分**，专注于小需求的任务拆解与状态机流转；而 **Atlas 将这套 Project Harness 升格为覆盖软件全生命周期的完整治理体系**。
+* **Project Harness（项目工程线束）**：直接驻留在业务 Git 仓库内部、守护软件全生命周期的工程规范。**`atlas workflow` 是 Atlas 内置的需求级执行层**，专注于小需求的任务拆解与状态流转； **Atlas 将这套 Project Harness 升格为覆盖软件全生命周期的完整治理体系**。
 
 ---
 
@@ -22,7 +22,7 @@
 │                              │  单向编排：atlas apply <ID>   │
 │                              ▼                              │
 │   ┌─────────────────────────────────────────────────────┐   │
-│   │   需求级平面（小需求任务执行，由内置的 Trellis 承担）    │   │
+│   │   需求级平面（小需求任务执行，由内置的 `atlas workflow` 承担）    │   │
 │   │   需求卡 (Task) ──► 业务代码编写 ──► 任务归档        │   │
 │   └─────────────────────────────────────────────────────┘   │
 └──────────────────────────────┬──────────────────────────────┘
@@ -39,8 +39,8 @@
   现代 Coding Agent 确实拥有记忆机制（如 auto-memory、向量检索或会话手记）。但这种记忆本质上是**自然语言的经验总结与概率召回** —— 它无法提供机器确定性。面对大型系统，模型依旧会遗忘边界、漏掉关联依赖、甚至产生假完成幻觉；
 * **Project Harness 维护的是“工程蓝图与机器门禁（确定且可证伪）”**：  
   Atlas 原创提出的 Project Harness 不依赖模型的“记忆自觉”，而是将应然资产（PRD 验收准则、代码图谱事实、E2E 验收用例）直接固化在代码仓库内，并用双向集合对账门给出硬性的 0/1 判定。**工人的个人手记再丰富，也绝不能替代工地的建筑蓝图与机器监理！**
-* **Trellis 专注小需求执行**：  
-  Trellis 优雅地解决了“单条小需求的 Plan、Implement 与 Check”，它作为 Project Harness 的需求级执行件，现在已经是 Atlas 工作流的有机组成部分；
+* **`atlas workflow` 专注小需求执行**：  
+  `atlas workflow` 解决了“单条小需求的 Plan、Implement 与 Check”，它是 Atlas 工作流的执行层。
 * **Atlas 补齐了全生命周期的全局闭环**：  
   在小需求执行之上，Atlas 铸造了项目级应然资产（PRD/E2E/结构）、全套机器硬门禁、以及有头慢放控制台，让整个代码库拥有了贯穿一生的工程确定性。无论你外部换用何种 Coding Agent，项目内部的 Project Harness 始终如一地稳如磐石。
 
@@ -50,7 +50,7 @@
 
 * **定义**：“这个软件是什么、业务规则有哪些、怎么算做对”；
 * **内容物**：
-  * **结构基线**（`.trellis/spec/structure/`）：通过 AST 与代码图谱自动抽取的实然事实；
+  * **结构基线**（`.atlas/spec/structure/`）：通过 AST 与代码图谱自动抽取的实然事实；
   * **项目级 PRD**（`product/prd/`）：业务叙事与验收标准（AC）单一真相源；
   * **E2E 验收总索引与页面分片**（`product/e2e/`）：真实靶场可证伪用例；
 * **特性**：
@@ -60,10 +60,10 @@
 
 ---
 
-## 2. 需求级：任务执行层 (Trellis 辖区)
+## 2. 需求级：任务执行层（`atlas workflow`）
 
 * **定义**：“这一次迭代具体改什么、哪个 Agent 来改、怎么一步步改”；
-* **执行体**：由必需的宿主任务系统 [Trellis](https://github.com/mindfold-ai/trellis) 承担（负责任务调度与需求级流程挂载；底层对接各类 Agent 交互平台）；
+* **执行体**：由内置的 `atlas workflow` 承担（负责任务调度与需求级流程挂载；底层对接各类 Agent 交互平台）；
 * **特性**：
   * 任务卡（`prd.md`、`implement.md`）随着开发结束而归档；
   * 会话上下文随着任务完结而重置；
@@ -93,7 +93,7 @@
 | Agent Harness 子系统 | 课程落点 | Atlas 对应 | Atlas 的差异 |
 |---|---|---|---|
 | Instructions | AGENTS.md / CLAUDE.md | init 注入指针 + skills 瘦桩 + `shared/global-rules.md` | 入口是路由，规则随包版本化 |
-| State | progress.md / feature_list.json | Trellis 任务 + 结构基线 + ADR + E2E 索引 | 门禁判定 + 人审落账，跨会话可对账（门禁只报告，不改写资产） |
+| State | progress.md / feature_list.json | 执行层任务 + 结构基线 + ADR + E2E 索引 | 门禁判定 + 人审落账，跨会话可对账（门禁只报告，不改写资产） |
 | Verification | init.sh / 测试命令 | `atlas check` 两档 + 硬门 + 变异证明 | 双向对账，门禁自证会红 |
 | Scope | WIP=1 / 完成定义 | 三问门 + AC + 覆盖维度 | 需求级裁剪；覆盖维度只提示缺口，不替代语义审查 |
 | Session Lifecycle | session-handoff.md | apply / backfill / closeout + 人审账本 | 跨会话资产化 + 评审指纹 |

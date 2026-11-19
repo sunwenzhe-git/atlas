@@ -17,10 +17,20 @@
 | `adapters/api.py` | 611 | API 适配器:OpenAPI/Swagger 描述文件(`DESCRIPTOR_FILES`,`adapters/api.py:46`)+ 运行时 schema 构造调用判定(AST)+ Python/JS/Java Spring/NestJS-Midway/Go 路由双通道 |
 | `adapters/models.py` | 766 | 模型适配器:AST 解析(`_index_columns`,`adapters/models.py:115`),SQLModel 继承/TS/JPA/MyBatis-Plus(走 `_jpa.py`)/Go struct |
 | `adapters/tests.py` | 219 | 测试盘点适配器:`PY_TEST_RE` / `JS_TEST_RE` / `JAVA_TEST_RE` / `GO_TEST_RE`(`adapters/tests.py:38`)识别 pytest / Playwright / Vitest / JUnit / Go 与 Maven/Gradle/Go 运行命令 |
-| `adapters/_jpa.py` | 294 | JPA 跨文件类图:`@MappedSuperclass` 继承合并 + `@Embeddable` 内嵌字段展开(不猜命名策略) |
+| `adapters/_jpa.py` | 313 | JPA 跨文件类图:`@MappedSuperclass` 继承合并 + `@Embeddable` 内嵌字段展开(不猜命名策略) |
 | `adapters/_lib.py` | 278 | 适配器共享件:文件遍历 / apps 解析 / `write_json`(`adapters/_lib.py:230`)落盘约定 |
 | `adapters/_scaffold.py` | 80 | 新适配器脚手架:`CATEGORY`(`adapters/_scaffold.py:25`)占位待改 |
 | `scripts/refresh_structure.py` | 818 | 事实渲染器:适配器产物 → `atlas:facts` 标记区 |
+
+### Adopt 专用静态解析器（不属四类结构事实）
+
+`RFC-20261119-03` Phase 3 新增，由 `scripts/adopt_static.py` 直接调用，**不注册 `refresh_structure` 的 `ADAPTER_CATEGORIES`**，产物只落 `.adapter-out/adopt/`：
+
+| 文件 | 行数 | 角色 |
+|---|---|---|
+| `adapters/java_web.py` | 309 | Spring Controller / DTO 只读静态解析（同行注解、路径拼接、DTO 歧义列候选；不执行 Java） |
+| `adapters/java_tests.py` | 185 | JUnit 5 + AssertJ 只读静态解析 → AC 草稿（`confirmed:false`，不跑目标仓测试） |
+| `scripts/adopt_static.py` | 181 | Adopt 编排：产出 `facts.json` / `ac-draft.json` / `ac-draft.md`，带源指纹与 `--verify` |
 
 ## 核心机制
 

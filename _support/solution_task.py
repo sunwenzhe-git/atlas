@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""atlas solution task —— 父级 requirement → 成员 Trellis 任务卡（Phase 1 增量）。
+"""atlas solution task —— 父级 requirement → 成员执行层任务卡（Phase 1 增量）。
 
 边界：
-- 只在成员仓 `.trellis/tasks/` 创建任务卡 / `solution.md` 指针 / curated context；
+- 只在成员仓 `.atlas/tasks/` 创建任务卡 / `solution.md` 指针 / curated context；
 - **不** start、**不** commit、**不**写代码/资产/PRD；
-- 不创建父级 `.trellis`；父级 AC 正文仍在 `solution-prd.md`。
+- 不创建父级 `.atlas`；父级 AC 正文仍在 `solution-prd.md`。
 
-契约正文见 `shared/solution.md`；本模块不 import solution（由调用方传入 manifest），
-避免循环加载。
+任务卡原生写入（`_support/workflow_plan.write_task_card`），不再依赖宿主的
+`task.py`。契约正文见 `shared/solution.md`。
 """
 from __future__ import annotations
 
@@ -39,37 +39,29 @@ def _assets_root(root: Path) -> str:
     return "product"
 
 
-def _task_py(member: Path) -> Path:
-    return member / ".trellis" / "scripts" / "task.py"
+def _tasks_root(member: Path) -> Path:
+    return member / ".atlas" / "tasks"
 
 
-def _run(member: Path, args: list[str], timeout: int = 60) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, str(_task_py(member)), *args],
-        cwd=str(member), capture_output=True, text=True, timeout=timeout,
-    )
+def _write_task_card(task_dir: Path, card: dict) -> None:
+    """按文件路径加载同仓内核，兼容源包态 / 装配态 / 独立加载。"""
+    import importlib.util
 
-
-def _probe(member: Path) -> None:
-    task_py = _task_py(member)
-    if not task_py.is_file():
-        raise TaskError(f"{member.name}: 缺少 .trellis/scripts/task.py")
-    try:
-        create_help = _run(member, ["create", "--help"])
-        context_help = _run(member, ["add-context", "--help"])
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise TaskError(f"{member.name}: task.py 不可执行: {exc}") from exc
-    text = (create_help.stdout or "") + (create_help.stderr or "")
-    for flag in ("--slug", "--assignee", "--description", "--meta", "--no-start"):
-        if flag not in text:
-            raise TaskError(f"{member.name}: task.py create 缺能力 {flag}")
-    ctx = (context_help.stdout or "") + (context_help.stderr or "")
-    if "add-context" not in ctx and "argument" not in ctx:
-        raise TaskError(f"{member.name}: task.py add-context 不可用")
+    key = "_atlas_solution_workflow_plan"
+    mod = sys.modules.get(key)
+    if mod is None:
+        path = Path(__file__).with_name("workflow_plan.py")
+        spec = importlib.util.spec_from_file_location(key, path)
+        if spec is None or spec.loader is None:
+            raise TaskError(f"无法加载任务卡内核：{path}")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[key] = mod
+        spec.loader.exec_module(mod)
+    mod.write_task_card(task_dir, card)
 
 
 def _task_json(member: Path) -> list[tuple[Path, dict]]:
-    root = member / ".trellis" / "tasks"
+    root = _tasks_root(member)
     if not root.is_dir():
         return []
     out: list[tuple[Path, dict]] = []
@@ -105,7 +97,7 @@ def _slug_ok(slug: str) -> bool:
 
 
 def _slug_collision(member: Path, slug: str) -> Path | None:
-    tasks = member / ".trellis" / "tasks"
+    tasks = _tasks_root(member)
     if not tasks.is_dir():
         return None
     for path in sorted(tasks.rglob(f"*-{slug}")):
@@ -134,14 +126,17 @@ def _context_ok(task_dir: Path) -> bool:
 
 
 def _ensure_context(member: Path, task_dir: Path, rel: str) -> None:
+    """原生写实现/检查上下文指针（`.jsonl` 每行一个 `{"file": ...}`）。
+
+    `rel` 是任务目录相对成员仓的路径；`solution.md` 就在任务目录里，故指针写成
+    `<rel>/solution.md`，与 `find_task` 的 `_context_has` 判据一致。
+    """
     for kind in ("implement", "check"):
         if _context_has(task_dir, kind):
             continue
-        c = _run(member, ["add-context", rel, kind, f"{rel}/solution.md",
-                          "跨仓任务父级指针"])
-        if c.returncode != 0:
-            raise TaskError(f"{member.name}: add-context {kind} 失败: "
-                            f"{(c.stderr or c.stdout)[-300:]}")
+        entry = {"file": f"{rel}/solution.md", "reason": "跨仓任务父级指针"}
+        (task_dir / f"{kind}.jsonl").write_text(
+            json.dumps(entry, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def _ac_prd(root: Path, data: dict, assets_root: str | None = None) -> Path:
@@ -283,13 +278,13 @@ def _developer_name(path: Path) -> str | None:
 def _assignee(member: Path, req: dict) -> str:
     if req.get("assignee"):
         return str(req["assignee"])
-    env = os.environ.get("TRELLIS_DEVELOPER")
+    env = os.environ.get("ATLAS_DEVELOPER")
     if env:
         return env
-    own = _developer_name(member / ".trellis" / ".developer")
+    own = _developer_name(member / ".atlas" / ".developer")
     if own:
         return own
-    # Trellis 的 worktree 语义：成员本身是 worktree 时，回落到主工作树的 .developer。
+    # worktree 语义：成员本身是 worktree 时，回落到主工作树的 .developer。
     try:
         p = subprocess.run(["git", "-C", str(member), "worktree", "list", "--porcelain"],
                            capture_output=True, text=True, timeout=10)
@@ -300,11 +295,11 @@ def _assignee(member: Path, req: dict) -> str:
             if line.startswith("worktree "):
                 main = Path(line.split(" ", 1)[1]).resolve()
                 if main != member.resolve():
-                    value = _developer_name(main / ".trellis" / ".developer")
+                    value = _developer_name(main / ".atlas" / ".developer")
                     if value:
                         return value
                 break
-    raise TaskError(f"{member.name}: 缺少 assignee 与可解析的 .trellis/.developer")
+    raise TaskError(f"{member.name}: 缺少 assignee 与可解析的 .atlas/.developer")
 
 
 def _select(data: dict, requirement: str, members: list[str] | None) -> list[dict]:
@@ -334,7 +329,6 @@ def create_tasks(root: Path, data: dict, requirement: str,
         missing = [ac for ac in req["acs"] if ac not in defs]
         if missing:
             raise TaskError(f"{req['id']}: AC 定义行不存在: {missing}")
-        _probe(member)
         assignee = _assignee(member, req)
         existing = find_task(member, data["solution"], req["id"], req["member"])
         if update and not existing:
@@ -383,20 +377,21 @@ def create_tasks(root: Path, data: dict, requirement: str,
             continue
         title = f"[{req['acs'][0]}] {req['id']}"
         pointer = f"跨仓任务 {req['id']} / {','.join(req['acs'])}；详见 solution.md"
-        p = _run(member, [
-            "create", title, "--slug", req["task_slug"], "--assignee", plan["assignee"],
-            "--description", pointer,
-            "--meta", f"solution={data['solution']}",
-            "--meta", f"requirement={req['id']}",
-            "--meta", f"member={req['member']}",
-            "--no-start",
-        ])
-        if p.returncode != 0:
-            raise TaskError(f"{req['member']}: task.py create 失败: {(p.stderr or p.stdout)[-300:]}")
-        found = find_task(member, data["solution"], req["id"], req["member"])
-        if found is None:
-            raise TaskError(f"{req['member']}: create 后找不到 meta 任务")
-        task_dir, _ = found
+        task_dir = _tasks_root(member) / f"{datetime.now().strftime('%m-%d')}-{req['task_slug']}"
+        _write_task_card(task_dir, {
+            "id": task_dir.name,
+            "title": title,
+            "acs": list(req["acs"]),
+            "depends_on": [],
+            "affected_domains": [],
+            "details": pointer,
+        })
+        task_json = task_dir / "task.json"
+        card = json.loads(task_json.read_text(encoding="utf-8"))
+        card["meta"] = {"solution": data["solution"], "requirement": req["id"],
+                        "member": req["member"]}
+        card["assignee"] = plan["assignee"]
+        task_json.write_text(json.dumps(card, ensure_ascii=False, indent=2), encoding="utf-8")
         (task_dir / "solution.md").write_text(
             _pointer(root, member, data, req, assets_root), encoding="utf-8")
         rel = task_dir.relative_to(member).as_posix()

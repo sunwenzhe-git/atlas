@@ -2,7 +2,7 @@
 
 > **“自由放养的 AI 编码，写得越快，烂尾越彻底。”**
 
-随着 Cursor、Claude Code、Trellis 等 Agent 工具的普及，“Vibe Coding”（凭感觉让模型自由写代码）成为热潮。但在实际工程中，团队很快会撞上一堵无形的墙。
+随着 Cursor、Claude Code、执行层 等 Agent 工具的普及，“Vibe Coding”（凭感觉让模型自由写代码）成为热潮。但在实际工程中，团队很快会撞上一堵无形的墙。
 
 ---
 

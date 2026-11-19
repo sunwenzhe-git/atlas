@@ -43,7 +43,7 @@ VERSION = "0.5.0"
 IGNORE_DIRS = {
     ".git", "node_modules", "__pycache__", "site-packages", "dist", "build",
     ".pyxle-build", ".next", ".turbo", ".mypy_cache", ".pytest_cache", "tests",
-    "target", ".gradle", ".idea", ".scratch", ".atlas", ".atlas-run", ".trellis",
+    "target", ".gradle", ".idea", ".scratch", ".atlas", ".atlas-run",
 }
 
 

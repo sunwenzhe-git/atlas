@@ -10,8 +10,8 @@ Atlas 的产物**不散落**：每个文件都有唯一归属地、唯一写者�
 |---|---|---|
 | `<项目根>/.atlas/` | atlas **包产物**（共享契约、环契约、模板、适配器、校验器、刷新脚本） | 会刷新（属包，非用户数据） |
 | `<项目根>/product/` | atlas **项目产物**（PRD、E2E、设计档案） | **永不覆盖** |
-| `<项目根>/.trellis/spec/structure/` | **结构事实**（逆向产物；Trellis 路径注入层） | 由结构环 / 刷新脚本维护 |
-| `<项目根>/.trellis/spec/conventions/` | **约定类注入薄桩**（当前仅 `testid.md`，派生视图） | 由 E2E 环维护 |
+| `<项目根>/.atlas/spec/structure/` | **结构事实**（逆向产物；结构环事实层（`paths:` 索引）） | 由结构环 / 刷新脚本维护 |
+| `<项目根>/.atlas/spec/conventions/` | **约定类注入薄桩**（当前仅 `testid.md`，派生视图） | 由 E2E 环维护 |
 
 `.atlas/` 是包在项目里的唯一副本；平台 skill 目录里只放瘦桩 `SKILL.md`，第一步就指回 `.atlas/` —— **不存第二份正文**。
 
@@ -30,10 +30,10 @@ product/
     └── reviews/                # 独立审查报告 + console/ 人工评审账本（append-only）+ <日期>-acceptance-<域>/ / <日期>-first-run/ / <日期>-verify/ 留痕（非报告）
 ```
 
-结构事实落 `.trellis/spec/structure/` —— 它既是项目级事实，又能被 Trellis 任务**原生注入**消费：
+结构事实落 `.atlas/spec/structure/` —— 它既是项目级事实，又能被 执行层任务**原生注入**消费：
 
 ```text
-.trellis/spec/structure/
+.atlas/spec/structure/
 ├── _meta.json                  # 机器：product / baseline / apps[] / domains[] / categories
 ├── tour.md                     # L1：paths ['**']
 ├── domains/<domain>.md         # L2：paths = 该域 globs

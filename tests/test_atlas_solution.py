@@ -391,12 +391,11 @@ def test_cli_check_strict_exit_code(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(not (PKG_ROOT / "install.py").is_file(),
                     reason="副本态（.atlas/）无 install.py；安装器集成只在源包测试")
-def test_init_with_install_skips_trellis_and_uses_solution_profile(tmp_path: Path) -> None:
+def test_init_with_install_uses_solution_profile(tmp_path: Path) -> None:
     make_repo(tmp_path / "web")
     core.init_solution(tmp_path, "demo", [("web", "web", "frontend")],
                        install=True)
     assert (tmp_path / ".atlas").is_dir()
-    assert not (tmp_path / ".trellis").exists()
     profile = (tmp_path / "product" / "stack-profile.yaml").read_text(encoding="utf-8")
     assert "name: web" in profile
     assert "<app 标识>" not in profile
@@ -641,7 +640,7 @@ def test_r1_backticked_and_padded_ac_rows_pass(tmp_path: Path) -> None:
 
 def seed_member_task(member: Path, requirement: str = "REQ-001") -> None:
     """造一张与清单对齐的成员任务卡，让 R2 的 PASS 不被既有 task_missing WARN 拉低。"""
-    task = member / ".trellis" / "tasks" / "11-11-req-001"
+    task = member / ".atlas" / "tasks" / "11-11-req-001"
     task.mkdir(parents=True)
     (task / "task.json").write_text(json.dumps({"meta": {
         "solution": "demo", "requirement": requirement, "member": member.name,
@@ -1358,8 +1357,8 @@ def test_b0_v14_init_writes_v1_then_migrate_reaches_v2(
 def test_b0_check_members_prints_active_and_archive_paths(tmp_path: Path) -> None:
     """I3：`migrate --check-members` 打印解析后的实际路径，active 与 archive 各一条。"""
     member = make_repo(tmp_path / "web")
-    for rel in (".trellis/tasks/T-001/prd.md", ".trellis/tasks/T-001/solution.md",
-                ".trellis/tasks/archive/2026-10/T-000/prd.md"):
+    for rel in (".atlas/tasks/T-001/prd.md", ".atlas/tasks/T-001/solution.md",
+                ".atlas/tasks/archive/2026-10/T-000/prd.md"):
         target = member / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("# card\n", encoding="utf-8")
@@ -1367,10 +1366,10 @@ def test_b0_check_members_prints_active_and_archive_paths(tmp_path: Path) -> Non
 
     res = run_cli(tmp_path, "--root", str(tmp_path), "migrate", "--check-members")
     assert res.returncode == 0, res.stdout + res.stderr
-    assert "git -C web add -f .trellis/tasks/T-001/prd.md .trellis/tasks/T-001/solution.md" \
+    assert "git -C web add -f .atlas/tasks/T-001/prd.md .atlas/tasks/T-001/solution.md" \
         in res.stdout
-    assert ".trellis/tasks/archive/2026-10/T-000/prd.md" in res.stdout
-    assert "git -C web add -f .trellis/tasks/archive/2026-10/T-000/prd.md" in res.stdout
+    assert ".atlas/tasks/archive/2026-10/T-000/prd.md" in res.stdout
+    assert "git -C web add -f .atlas/tasks/archive/2026-10/T-000/prd.md" in res.stdout
     # 只读：不写清单
     manifest = (tmp_path / core.MANIFEST_NAME).read_text(encoding="utf-8")
     assert re.search(r"^version: 1$", manifest, re.M)
@@ -1379,13 +1378,13 @@ def test_b0_check_members_prints_active_and_archive_paths(tmp_path: Path) -> Non
 def test_b0_check_members_quotes_paths_with_spaces(tmp_path: Path) -> None:
     """评审次要 10：成员路径含空格时 `git add -f` 命令必须加引号（可复制即跑）。"""
     member = make_repo(tmp_path / "web app")
-    card = member / ".trellis" / "tasks" / "T-001"
+    card = member / ".atlas" / "tasks" / "T-001"
     card.mkdir(parents=True)
     (card / "prd.md").write_text("# card\n", encoding="utf-8")
     core.init_solution(tmp_path, "demo", [("web", "web app", "frontend")], install=False)
 
     cmds = core.card_tracking_commands(tmp_path, core.load_manifest(tmp_path))
-    assert cmds == ["git -C 'web app' add -f .trellis/tasks/T-001/prd.md"], cmds
+    assert cmds == ["git -C 'web app' add -f .atlas/tasks/T-001/prd.md"], cmds
 
 
 def test_b0_u09_lenient_allows_lock_only_clone_and_rejects_seal(tmp_path: Path) -> None:
@@ -1534,7 +1533,7 @@ def test_b0_install_assembles_package_json_for_reader_version(
     target.mkdir()
     res = subprocess.run(
         [sys.executable, str(PKG_ROOT / "install.py"), "--target", str(target),
-         "--no-skill", "--no-patch", "--no-wiring", "--no-trellis"],
+         "--no-skill", "--no-wiring"],
         capture_output=True, text=True, timeout=300)
     assert res.returncode == 0, (res.stdout[-800:], res.stderr[-400:])
 

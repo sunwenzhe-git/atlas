@@ -1,6 +1,6 @@
 # 30 秒快速上手
 
-Atlas 采用现代化的一键全局 CLI 机制，你可以像使用 Trellis 一样，在任何新老项目中以极简命令启动。
+Atlas 采用现代化的一键全局 CLI 机制，你可以像使用 执行层 一样，在任何新老项目中以极简命令启动。
 
 ---
 
@@ -11,7 +11,6 @@ Atlas 采用现代化的一键全局 CLI 机制，你可以像使用 Trellis 一
 * **Node.js 18+**（CLI 运行环境）
 * **Python 3.10+**（核心校验器与生成引擎）
 * **Playwright**（E2E 测试运行器：Node 版，由项目 `node_modules` 提供）
-* **[Trellis](https://github.com/mindfold-ai/trellis)**（必需宿主执行器，负责需求级任务调度；安装：`npm install -g @mindfoldhq/trellis`）
 * *(可选)* **CodeGraphContext (cgc)**：若需开启图谱级跨文件逆向分析，安装 `uv tool install codegraphcontext`（或 `pip install codegraphcontext`）
 
 ---
@@ -41,15 +40,15 @@ atlas init --assets-root docs
 **四样主件**（atlas 与宿主执行器之间的全部耦合面）：
 
 1. **整包镜像**：把契约、环文档、校验器、模板、适配器整包复制到项目 `.atlas/`（日后所有规则与机器校验的唯一正本；skill 与文档都指回这里，不存第二份）；
-2. **下发专用 Skills 瘦桩**：按探测到的平台目录（`.agents/skills/`、`.claude/skills/`、`.codex/skills/`）各装一份轻量入口——`atlas-structure`、`atlas-prd`、`atlas-e2e`、`atlas-apply`、`atlas-grill`、`atlas-design-review`、`frontend-design`。桩本身不装规则，第一步就指回 `.atlas/`；
-3. **注入工作流补丁组**：向 `.trellis/` 注入补丁组（Phase 1.6 资产更新挂载、阶段技能路由、根因分析优先红用例）与项目接线——对准模板里的稳定标记定位、用带指纹的标记包住，幂等可重放（Trellis 升级重写该文件后，重跑 `install.sh` 即自动对齐）；
-4. **三处接线 + 只读审查 Agent**：`.trellis/config.yaml` 加 `after_archive` hook（每次任务收口后自动刷新结构事实）、项目 `AGENTS.md` 加一段指针、*（pi 宿主）*`.pi/` 下落地并登记 `/atlas` 控制台扩展（`/atlas status` 报**开户态**——「装配 ≠ 开户」，非 pi 项目不创建 `.pi/`），并下发 `atlas-reviewer` 只读审查者配置（工具集不含写文件与 bash）。
+2. **下发专用 Skills 瘦桩**：按探测到的平台目录（`.agents/skills/`、`.claude/skills/`、`.codex/skills/`）各装一份轻量入口——`atlas-structure`、`atlas-prd`、`atlas-e2e`、`atlas-apply`、`atlas-grill`、`atlas-design-review`、`atlas-ablate`、`frontend-design`。桩本身不装规则，第一步就指回 `.atlas/`；
+3. **建立执行层骨架**：`.atlas/tasks`、`.atlas/spec/structure`、`.atlas/spec/conventions`；并做项目接线（`AGENTS.md` 指针 / 测试配置 / `.gitignore` / pi 扩展，幂等）；
+4. **三处接线 + 只读审查 Agent**：`.atlas/config.yaml` 加 `after_archive` hook（每次任务收口后自动刷新结构事实）、项目 `AGENTS.md` 加一段指针、*（pi 宿主）*`.pi/` 下落地并登记 `/atlas` 控制台扩展（`/atlas status` 报**开户态**——「装配 ≠ 开户」，非 pi 项目不创建 `.pi/`），并下发 `atlas-reviewer` 只读审查者配置（工具集不含写文件与 bash）。
 
 **两步卫生件**：清理历史遗留 / 已退役的 skill；建资产根骨架（默认 `product/`；由 `atlas.config.yaml` 解析，已有内容永不覆盖）。
 
 ### 升级与更新机制（Update & Upgrade）
 
-类似 Trellis，Atlas 支持两层解耦的平滑升级机制：
+类似 执行层，Atlas 支持两层解耦的平滑升级机制：
 
 1. **升级全局 CLI（`atlas upgrade`）**：  
    当 Atlas 官方发布了新版本时，`upgrade` 会安装到**当前正在运行的那份**所在的 npm prefix（不是 npm 默认 prefix）：
@@ -126,7 +125,7 @@ Atlas 完全做到了**“日常全自动，低频全靠大白话”**：
 ```
 无论哪种入口，Agent 都会逆向扫描现有代码拓扑，建立应然资产起点（不瞎猜老业务用例，只登记基线），并在开户前与你核对画像草稿、把占位符换成真实路径。
 
-> ⚠️ **装配 ≠ 开户**：`atlas init` 只装配线束（`.atlas/`、资产根骨架（默认 `product/`）、AGENTS.md 指针）。**开户产物是 `<资产根>/prd/` 与 `.trellis/spec/structure/` 的内容**——两者为空就是尚未开户。所以「已经装过 atlas」不代表已接入：若 Agent 回你「已接入」或反问「是不是接过了」，直接敲 `/atlas-apply adopt`（开户按产物存在与否断点续跑）。
+> ⚠️ **装配 ≠ 开户**：`atlas init` 只装配线束（`.atlas/`、资产根骨架（默认 `product/`）、AGENTS.md 指针）。**开户产物是 `<资产根>/prd/` 与 `.atlas/spec/structure/` 的内容**——两者为空就是尚未开户。所以「已经装过 atlas」不代表已接入：若 Agent 回你「已接入」或反问「是不是接过了」，直接敲 `/atlas-apply adopt`（开户按产物存在与否断点续跑）。
 
 > 完整流程、为什么存量页面不会把门禁刷红、后端项目的补充配置，见 [存量项目接入指南 (adopt)](/guide/legacy-adoption)。
 
@@ -142,7 +141,7 @@ Atlas 完全做到了**“日常全自动，低频全靠大白话”**：
 Agent 全量串行初始化 `structure → prd → e2e`。
 
 ### 场景 C：日常迭代提需求（100% 自动无感）
-你**无需敲任何 Atlas 命令**，像往常一样在 Trellis 中创建任务（如 `/trellis:start 优化配音列表`）：
+你**无需敲任何 Atlas 命令**，像往常一样在 执行层 中创建任务（如 `atlas workflow plan 优化配音列表`）：
 * 工作流在 Phase 1.6 **自动调度 Agent 执行** `atlas-apply <需求ID>` 技能完成应然资产编译；
 * 需求写完收口时，自动触发钩子刷新最新代码事实。
 
@@ -187,4 +186,4 @@ atlas solution lock --update
 atlas solution task create --requirement REQ-001 --apply
 atlas solution task status --requirement REQ-001
 ```
-`create` 默认 dry-run；`--apply` 只写成员 `.trellis/tasks`（`--no-start`，不自动领取），任务仍需成员自己 `/trellis:start`。
+`create` 默认 dry-run；`--apply` 只写成员 `.atlas/tasks`（`--no-start`，不自动领取），任务仍需成员自己 `atlas workflow plan`。

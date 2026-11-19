@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """atlas 生成器 —— 实现期 testid 薄桩（`rings/e2e/reference.md` §4.1）。
 
-产出 `<项目根>/.trellis/spec/conventions/testid.md`：**派生视图**（祈使句 + 指针 + 当前 testid 清单）。
+产出 `<项目根>/.atlas/spec/conventions/testid.md`：**派生视图**（祈使句 + 指针 + 当前 testid 清单）。
 
 **抽取源与 `validate_testids.py` 同一个函数**（`collect_testids`）⇒ 薄桩里的清单与门眼里的集合
 永不漂移 —— 这就是 `3509 §B73`（「契约要求它、却没有生产者」）要的生产者。
@@ -30,7 +30,7 @@ from _support.layout import LayoutError, load_layout  # noqa: E402
 
 vt = load_module("validate_testids")
 
-STUB_REL = ".trellis/spec/conventions/testid.md"
+STUB_REL = ".atlas/spec/conventions/testid.md"
 
 # 祈使句（E1 统一，`rings/e2e/reference.md` §4.1）：单一常量覆盖两义——新页按分片应然命名；
 # 既有实现保持现状（adopt 场景下真实 UI 即现状，不强制改名对齐）。

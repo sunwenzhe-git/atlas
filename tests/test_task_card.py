@@ -31,8 +31,8 @@ def git(cwd: Path, *args: str) -> None:
                    capture_output=True, text=True)
 
 
-CARD = ".trellis/tasks/01-x/prd.md"
-POINTER = ".trellis/tasks/01-x/solution.md"
+CARD = ".atlas/tasks/01-x/prd.md"
+POINTER = ".atlas/tasks/01-x/solution.md"
 
 
 def write(root: Path, rel: str, text: str) -> Path:
@@ -133,18 +133,18 @@ def test_k_none_due_expired(tmp_path: Path) -> None:
 
 def test_k_untracked_card_is_fail(tmp_path: Path) -> None:
     root = new_repo(tmp_path)
-    write(root, ".trellis/tasks/02-y/prd.md",
+    write(root, ".atlas/tasks/02-y/prd.md",
           "atlas-acceptance: AC-SOLUTION-001\n")
-    write(root, ".trellis/tasks/02-y/solution.md", "- acs: AC-SOLUTION-001\n")
+    write(root, ".atlas/tasks/02-y/solution.md", "- acs: AC-SOLUTION-001\n")
     assert "card_untracked" in codes(root)
 
 
 def test_k_archive_card_hit(tmp_path: Path) -> None:
     root = new_repo(tmp_path)
-    archived = ".trellis/tasks/archive/2026-11/01-old/prd.md"
+    archived = ".atlas/tasks/archive/2026-11/01-old/prd.md"
     write(root, archived, "atlas-acceptance: AC-SOLUTION-001\n\n"
           + MINIMAL_CONFIRMED)
-    write(root, ".trellis/tasks/archive/2026-11/01-old/solution.md",
+    write(root, ".atlas/tasks/archive/2026-11/01-old/solution.md",
           "- acs: AC-SOLUTION-001\n")
     git(root, "add", "-A")
     git(root, "-c", "user.email=a@b", "-c", "user.name=a",
@@ -227,11 +227,11 @@ def test_i6_card_absent_is_warn_on_member_side(tmp_path: Path) -> None:
     """成员侧不读父仓封条 ⇒ 无卡只能 WARN；FAIL 由父仓 `card_absent` 承担。"""
     tmp_path.mkdir(parents=True, exist_ok=True)
     git(tmp_path, "init", "-q")
-    (tmp_path / ".trellis").mkdir()
-    (tmp_path / ".trellis" / "README.md").write_text("x\n", encoding="utf-8")
+    (tmp_path / ".atlas" / "tasks").mkdir(parents=True)
+    (tmp_path / ".atlas" / "tasks" / "README.md").write_text("x\n", encoding="utf-8")
     git(tmp_path, "add", "-A")
     git(tmp_path, "-c", "user.email=a@b", "-c", "user.name=a",
-        "commit", "-qm", "empty trellis")
+        "commit", "-qm", "empty tasks")
     errors, warnings = card.validate(tmp_path, today=PASS_DATE)
     assert errors == []
     assert [w["code"] for w in warnings] == ["card_absent"]
@@ -245,11 +245,11 @@ def test_i6_no_seal_no_card_is_green(tmp_path: Path) -> None:
     """无封条无卡 ⇒ member 侧全绿（WARN 不改退出码）。"""
     tmp_path.mkdir(parents=True, exist_ok=True)
     git(tmp_path, "init", "-q")
-    (tmp_path / ".trellis").mkdir()
-    (tmp_path / ".trellis" / "README.md").write_text("x\n", encoding="utf-8")
+    (tmp_path / ".atlas" / "tasks").mkdir(parents=True)
+    (tmp_path / ".atlas" / "tasks" / "README.md").write_text("x\n", encoding="utf-8")
     git(tmp_path, "add", "-A")
     git(tmp_path, "-c", "user.email=a@b", "-c", "user.name=a",
-        "commit", "-qm", "empty trellis")
+        "commit", "-qm", "empty tasks")
     res = subprocess.run([sys.executable, str(PKG / "validators" / "validate_task_card.py"),
                           "--root", str(tmp_path)], capture_output=True, text=True)
     assert res.returncode == 0, res.stdout
@@ -270,9 +270,9 @@ def test_i6_review_marker_only_counts_inside_confirmed_section(tmp_path: Path) -
 
 def test_delivery_gate_cli_exits_1_on_untracked_card(tmp_path: Path) -> None:
     root = new_repo(tmp_path)
-    write(root, ".trellis/tasks/02-y/prd.md",
+    write(root, ".atlas/tasks/02-y/prd.md",
           "atlas-acceptance: AC-SOLUTION-001\n\n" + MINIMAL_CONFIRMED)
-    write(root, ".trellis/tasks/02-y/solution.md", "- acs: AC-SOLUTION-001\n")
+    write(root, ".atlas/tasks/02-y/solution.md", "- acs: AC-SOLUTION-001\n")
     res = subprocess.run(
         [sys.executable, str(PKG / "validators" / "validate_task_card.py"),
          "--root", str(root)], capture_output=True, text=True)

@@ -46,7 +46,7 @@ def mk_repo(root: Path) -> str:
 
 def mk_impact(root: Path, *, head: str, touched: list[str], paths: list[str] | None = None,
               layers: list[dict] | None = None, diff_base: str | None = None) -> Path:
-    d = root / ".trellis" / "tasks" / "T1"
+    d = root / ".atlas" / "tasks" / "T1"
     d.mkdir(parents=True, exist_ok=True)
     payload = {
         "category": "impact",
@@ -72,7 +72,7 @@ def test_reconcile_equal_is_ok() -> None:
         mk_impact(root, head=base, touched=["b.py"], diff_base=base)
         p = run(root, "--task", "T1", "--diff-base", base)
         assert p.returncode == 0, p.stdout + p.stderr
-        out = json.loads((root / ".trellis" / "tasks" / "T1" / "impact-reconcile.json").read_text())
+        out = json.loads((root / ".atlas" / "tasks" / "T1" / "impact-reconcile.json").read_text())
         assert out["status"] == "ok", out
         assert out["miss"] == [] and out["over"] == [], out
 
@@ -89,7 +89,7 @@ def test_reconcile_diff_sets_warn_and_name_files() -> None:
                   diff_base=base)
         p = run(root, "--task", "T1", "--diff-base", base)
         assert p.returncode == 0, p.stdout + p.stderr
-        out = json.loads((root / ".trellis" / "tasks" / "T1" / "impact-reconcile.json").read_text())
+        out = json.loads((root / ".atlas" / "tasks" / "T1" / "impact-reconcile.json").read_text())
         assert out["status"] == "warn", out
         assert out["miss"] == ["b.py"], out          # 实际改动 b.py 不在预测集（c.py+d.py）
         assert out["over"] == ["c.py", "d.py"], out  # 预测的 c/d 均未改动
@@ -106,7 +106,7 @@ def test_reconcile_head_drift_warns() -> None:
         base = mk_repo(root)
         mk_impact(root, head="0" * 40, touched=["b.py"], diff_base=base)
         p = run(root, "--task", "T1", "--diff-base", base)
-        out = json.loads((root / ".trellis" / "tasks" / "T1" / "impact-reconcile.json").read_text())
+        out = json.loads((root / ".atlas" / "tasks" / "T1" / "impact-reconcile.json").read_text())
         assert out["status"] == "warn", out
         assert out["head_report"] == "0" * 40 and out["head_now"] == base, out
         assert any("基准 head 漂移" in w for w in out["warns"]), out
@@ -119,7 +119,7 @@ def test_reconcile_diff_base_mismatch_warns() -> None:
         base = mk_repo(root)
         mk_impact(root, head=base, touched=["b.py"], diff_base="HEAD~1")
         p = run(root, "--task", "T1", "--diff-base", base)
-        out = json.loads((root / ".trellis" / "tasks" / "T1" / "impact-reconcile.json").read_text())
+        out = json.loads((root / ".atlas" / "tasks" / "T1" / "impact-reconcile.json").read_text())
         assert out["status"] == "warn", out
         assert any("diff-base 不一致" in w for w in out["warns"]), out
 

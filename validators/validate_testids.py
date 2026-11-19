@@ -159,7 +159,7 @@ SKIP_DIRS = {"node_modules", ".git", "dist", "build", ".next", "coverage", "__py
              # 运行期产物目录(2026-10-25,合成靶场 D150 咬合批发现):失败批的 error-context.md /
              # trace 快照文本里含 testid 字面 ⇒ 不排除则下一批 validate(先于 playwright 清空
              # 执行)会扫出「testid 重复」假红。产物是**回声**,与测试文件同族。
-             ".atlas-run", "test-results", "playwright-report", ".atlas", ".trellis", ".verify"}
+             ".atlas-run", "test-results", "playwright-report", ".atlas", ".verify"}
 # 测试文件/目录**不入实然集合**（issue #27/#33，2026-10-19）：单元测试与夹具里的
 # `querySelector('[data-testid=x]')` 是页面元素的**回声**，不是声明处 —— 计进「声明处计数」
 # 会把「真实元素 + 自身测试文件里的同名字符串」判成全站重复假红（同文件重复 WARN 同理）。
@@ -611,7 +611,7 @@ def validate(root: Path) -> Result:
 
     # 实现期薄桩（契约 §4.1）：缺失 ⇒ **机器兜底生成**（F32，2026-10-15；与 R6 基线
     # 报告同哲学——缺失的派生工件由就近工具自动补齐），FAIL 只留给"生成不了"的真错。
-    stub = root / ".trellis" / "spec" / "conventions" / "testid.md"
+    stub = root / ".atlas" / "spec" / "conventions" / "testid.md"
     if stub.is_file():
         res.add("实现期薄桩存在", "PASS", "")
     else:
@@ -630,7 +630,7 @@ def validate(root: Path) -> Result:
                         "`python3 .atlas/scripts/gen_testid_stub.py --root .`）")
         else:
             res.add("实现期薄桩存在", "FAIL",
-                    "缺 .trellis/spec/conventions/testid.md 且无法定位生成器 —— 跑 "
+                    "缺 .atlas/spec/conventions/testid.md 且无法定位生成器 —— 跑 "
                     "`python3 .atlas/scripts/gen_testid_stub.py --root .` 生成"
                     "（rings/e2e/reference.md §4.1）")
 

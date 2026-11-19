@@ -1,0 +1,354 @@
+#!/usr/bin/env python3
+"""Atlas Workflow —— 自建全流程执行层调度总入口 (RFC-20261119-02 / D204)。
+
+整合完整生命周期：
+  Plan（大任务自动拆解）→ Dispatch（最小上下文分发）→ Verify（暂存区自动审查与测试并轨）→ Finish（收口归档）
+
+用法：
+  atlas workflow plan --unit <ID> [--requirement <TEXT_OR_FILE>]
+  atlas workflow dispatch [--unit <ID>]
+  atlas workflow verify --unit <ID> [--staged] [--check-cmd <CMD>]
+  atlas workflow finish --unit <ID>
+  atlas workflow status [--unit <ID>]
+  atlas workflow run --unit <ID> [--requirement <TEXT_OR_FILE>] [--check-cmd <CMD>]
+
+退出码：0 成功；1 门禁未通过/失败；2 参数错误/输入缺失。纯标准库。
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from datetime import date
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+if str(HERE.parent) not in sys.path:
+    sys.path.insert(0, str(HERE.parent))
+
+from _support.workflow_plan import (  # noqa: E402
+    decompose_requirement, write_task_card, load_tasks, PlanError
+)
+from _support.workflow_dispatch import (  # noqa: E402
+    get_next_runnable_task, dispatch_task, DispatchError
+)
+from _support.workflow_finish import (  # noqa: E402
+    finish_task, check_task_review_passed, FinishError
+)
+
+
+def die(msg: str, code: int = 2) -> int:
+    print(f"ERROR: {msg}", file=sys.stderr)
+    return code
+
+
+def _tasks_root(root: Path) -> Path:
+    """Atlas 自有任务账本（`.atlas/tasks`）。"""
+    return root / ".atlas" / "tasks"
+
+
+def _read_tasks_root(root: Path) -> Path:
+    """任务账本读取面 = `.atlas/tasks`（唯一落点）。"""
+    return _tasks_root(root)
+
+
+def cmd_plan(args: argparse.Namespace, root: Path) -> int:
+    req_text = ""
+    if args.requirement:
+        p = Path(args.requirement)
+        if not p.is_absolute():
+            p = root / p
+        if p.is_file():
+            req_text = p.read_text(encoding="utf-8")
+        else:
+            req_text = args.requirement
+    else:
+        req_text = f"需求工作单元 {args.unit}"
+
+    try:
+        tasks = decompose_requirement(root, req_text, args.unit)
+    except PlanError as exc:
+        return die(str(exc))
+
+    tasks_dir = _tasks_root(root)
+    created: list[dict] = []
+    for t in tasks:
+        t_dir = tasks_dir / t["id"]
+        if not args.dry_run:
+            write_task_card(t_dir, t)
+        created.append({"id": t["id"], "title": t["title"], "dir": str(t_dir.relative_to(root))})
+
+    if args.json:
+        print(json.dumps({"status": "ok", "unit": args.unit, "tasks": created},
+                         ensure_ascii=False, indent=2))
+    else:
+        print(f"atlas workflow plan @ {args.unit}   生成 {len(created)} 个工作单元：")
+        for item in created:
+            print(f"  - [{item['id']}] {item['title']} -> {item['dir']}")
+    return 0
+
+
+def cmd_dispatch(args: argparse.Namespace, root: Path) -> int:
+    tasks_dir = _read_tasks_root(root)
+    all_tasks = load_tasks(tasks_dir)
+    if not all_tasks:
+        return die(f"未找到任何任务卡（可在 {tasks_dir} 先运行 atlas workflow plan）")
+
+    target_task = None
+    if args.unit:
+        target_task = next((t for t in all_tasks if t["id"] == args.unit), None)
+        if not target_task:
+            # plan 把大任务拆成 <unit>-NN 时，允许按组派发：取组内首个 in_progress，
+            # 否则取首个依赖已满足的 todo。
+            group = sorted((t for t in all_tasks if t["id"].startswith(f"{args.unit}-")),
+                           key=lambda t: t["id"])
+            completed_ids = {t["id"] for t in all_tasks if t.get("status") == "completed"}
+            target_task = next((t for t in group if t.get("status") == "in_progress"), None)
+            if not target_task:
+                target_task = next(
+                    (t for t in group
+                     if t.get("status") == "todo"
+                     and all(d in completed_ids for d in (t.get("depends_on") or []))),
+                    None)
+        if not target_task:
+            return die(f"未找到指定任务 {args.unit}（或其可执行子任务）")
+    else:
+        target_task = get_next_runnable_task(tasks_dir)
+        if not target_task:
+            print("所有任务已完成或前置依赖未满足，无可分发任务。")
+            return 0
+
+    if args.dry_run:
+        print(f"$ # 将为任务 {target_task['id']} 组装最小上下文并生成 dispatch.md (dry-run)")
+        return 0
+
+    try:
+        disp_file = dispatch_task(root, target_task)
+    except DispatchError as exc:
+        return die(str(exc))
+
+    if args.json:
+        print(json.dumps({"status": "ok", "unit": target_task["id"], "dispatch": str(disp_file)},
+                         ensure_ascii=False, indent=2))
+    else:
+        print(f"atlas workflow dispatch @ {target_task['id']} [in_progress]")
+        print(f"  派工单就绪：{disp_file.relative_to(root)}")
+        print(f"  请依据派工单实现代码，完成后暂存并运行 `atlas workflow verify --unit {target_task['id']}`")
+    return 0
+
+
+def _next_review_round(root: Path, unit: str) -> int:
+    """同 (unit, round) 的 findings 不得覆盖（骨架 §4）：按已有轮次自动递增。"""
+    findings = (root / "product" / "reviews"
+                / f"{date.today().isoformat()}-impl-review-{unit}" / "findings")
+    rounds: list[int] = []
+    if findings.is_dir():
+        pat = re.compile(rf"{re.escape(unit)}\.r(\d+)\.json")
+        for p in findings.iterdir():
+            m = pat.fullmatch(p.name)
+            if m:
+                rounds.append(int(m.group(1)))
+    return max(rounds) + 1 if rounds else 1
+
+
+def cmd_verify(args: argparse.Namespace, root: Path) -> int:
+    if not args.unit:
+        return die("verify 步骤必须指定 --unit <ID>")
+
+    review_script = HERE / "atlas_review.py"
+    round_no = getattr(args, "round", None) or _next_review_round(root, args.unit)
+    cmd = [
+        sys.executable, str(review_script),
+        "--root", str(root),
+        "--unit", args.unit,
+        "--staged",
+        "--round", str(round_no),
+    ]
+    if args.check_cmd:
+        cmd.extend(["--check-cmd", args.check_cmd])
+    if getattr(args, "resolves", None):
+        cmd.extend(["--resolves", args.resolves])
+    if args.dry_run:
+        cmd.append("--dry-run")
+
+    if not args.json:
+        print(f"atlas workflow verify @ {args.unit} 启动独立质检管线（round {round_no}）...")
+    pr = subprocess.run(cmd, text=True)
+    # 本命令的退出码契约 = 0/1/2；子步的原生码（如 7）归一到 1。
+    return pr.returncode if pr.returncode in (0, 1, 2) else 1
+
+
+def cmd_finish(args: argparse.Namespace, root: Path) -> int:
+    if not args.unit:
+        return die("finish 步骤必须指定 --unit <ID>")
+
+    tasks_dir = _read_tasks_root(root)
+    all_tasks = load_tasks(tasks_dir)
+    target_task = next((t for t in all_tasks if t["id"] == args.unit), None)
+    if not target_task:
+        target_task = {"id": args.unit, "_dir": str(tasks_dir / args.unit)}
+
+    if args.dry_run:
+        print(f"$ # 校验 {args.unit} 的 review.json 产物并流转状态至 completed (dry-run)")
+        return 0
+
+    try:
+        res = finish_task(root, target_task, force=args.force)
+    except FinishError as exc:
+        return die(str(exc), code=1)
+
+    if args.json:
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+    else:
+        print(f"atlas workflow finish @ {args.unit}   status: completed")
+        print(f"  进度：{res['completed_tasks']}/{res['total_tasks']} 已完成")
+        if res.get("all_done"):
+            print("  ★ 全部工作单元已顺利完成收口！")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace, root: Path) -> int:
+    tasks_dir = _read_tasks_root(root)
+    all_tasks = load_tasks(tasks_dir)
+    if not all_tasks:
+        print(f"当前无工作流任务卡（目录：{tasks_dir}）")
+        return 0
+
+    if args.json:
+        print(json.dumps({"tasks": all_tasks}, ensure_ascii=False, indent=2))
+        return 0
+
+    print(f"atlas workflow 任务台账（共 {len(all_tasks)} 项）：")
+    for t in all_tasks:
+        stat = t.get("status", "unknown")
+        icon = "✓" if stat == "completed" else ("▶" if stat == "in_progress" else "○")
+        print(f"  {icon} [{t['id']}] {t.get('title')} ({stat})")
+        if t.get("acs"):
+            print(f"      ACs: {', '.join(t['acs'])}")
+    return 0
+
+
+def _has_staged_changes(root: Path) -> bool:
+    try:
+        pr = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=str(root),
+                            capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return pr.returncode == 0 and bool(pr.stdout.strip())
+
+
+def _with_unit(args: argparse.Namespace, unit: str) -> argparse.Namespace:
+    ns = argparse.Namespace(**vars(args))
+    ns.unit = unit
+    return ns
+
+
+def cmd_run(args: argparse.Namespace, root: Path) -> int:
+    """跑通闭环：Plan -> Dispatch -> Verify -> Finish。
+
+    前置：实现已按派工单完成并 `git add` 暂存（Atlas 不写业务实现）。
+    暂存区为空时停在 Dispatch 之后，给出下一步指令并返回 2。
+    """
+    print(f"=== [1/4] 执行 Plan 规划阶段 ===")
+    rc = cmd_plan(args, root)
+    if rc != 0:
+        return rc
+
+    print(f"\n=== [2/4] 执行 Dispatch 分发派单 ===")
+    rc = cmd_dispatch(args, root)
+    if rc != 0:
+        return rc
+
+    # plan 可能把大任务拆成 <unit>-NN：Verify/Finish 必须落到实际被派发的那个任务卡上
+    tasks_dir = _read_tasks_root(root)
+    group = [t for t in load_tasks(tasks_dir)
+             if t["id"] == args.unit or t["id"].startswith(f"{args.unit}-")]
+    active = next((t for t in group if t.get("status") == "in_progress"), None)
+    run_unit = active["id"] if active else args.unit
+
+    if not _has_staged_changes(root):
+        print(f"\n=== [3/4] Verify 暂不执行：暂存区为空 ===")
+        print(f"  派工单：.atlas/tasks/{run_unit}/dispatch.md")
+        print(f"  请实现并 `git add` 后重跑 `atlas workflow run --unit {args.unit}`"
+              f"（或 `atlas workflow verify --unit {run_unit}`）")
+        return 2
+
+    print(f"\n=== [3/4] 执行 Verify 独立审查验收 ===")
+    rc = cmd_verify(_with_unit(args, run_unit), root)
+    if rc != 0:
+        print(f"Verify 未通过，工作流终止在当前单元。修复后可重试 verify。")
+        return rc
+
+    print(f"\n=== [4/4] 执行 Finish 确认收口 ===")
+    return cmd_finish(_with_unit(args, run_unit), root)
+
+
+def main() -> int:
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--root", default=argparse.SUPPRESS, help="项目根目录（缺省当前目录）")
+    common.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="输出 JSON 格式结果")
+    common.add_argument("--dry-run", action="store_true", default=argparse.SUPPRESS, help="干跑演练，不写真实产物")
+
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--root", default=".", help="项目根目录（缺省当前目录）")
+    ap.add_argument("--json", action="store_true", default=False, help="输出 JSON 格式结果")
+    ap.add_argument("--dry-run", action="store_true", default=False, help="干跑演练，不写真实产物")
+
+    sub = ap.add_subparsers(dest="subcommand", required=True)
+
+    # plan
+    p_plan = sub.add_parser("plan", help="根据需求分解任务并生成任务卡 (Task Cards)", parents=[common])
+    p_plan.add_argument("--unit", required=True, help="大任务标识")
+    p_plan.add_argument("--requirement", help="需求说明文本或文件路径")
+
+    # dispatch
+    p_disp = sub.add_parser("dispatch", help="提取最小上下文并向执行侧分发任务", parents=[common])
+    p_disp.add_argument("--unit", help="指定分发的任务标识（默认自动调度就绪任务）")
+
+    # verify
+    p_ver = sub.add_parser("verify", help="对当前暂存区运行独立审查与测试并轨", parents=[common])
+    p_ver.add_argument("--unit", required=True, help="被检验的任务标识")
+    p_ver.add_argument("--staged", action="store_true", default=True, help="审查暂存区（默认开启）")
+    p_ver.add_argument("--check-cmd", help="执行确定性测试命令（如 pytest/npm test）")
+    p_ver.add_argument("--round", type=int, help="审查轮次（缺省按已有 findings 自动递增）")
+    p_ver.add_argument("--resolves", help="跨轮关闭声明文件（上一轮 findings 的处置）")
+
+    # finish
+    p_fin = sub.add_parser("finish", help="检验审查证明并收口任务", parents=[common])
+    p_fin.add_argument("--unit", required=True, help="收口的任务标识")
+    p_fin.add_argument("--force", action="store_true", help="强制收口（跳过 review.json 存在性检查）")
+
+    # status
+    p_stat = sub.add_parser("status", help="查看当前所有任务流转状态", parents=[common])
+    p_stat.add_argument("--unit", help="查看指定任务")
+
+    # run (一键全流程)
+    p_run = sub.add_parser("run", help="串联闭环（Plan -> Dispatch -> Verify -> Finish；需先按派工单实现并暂存）", parents=[common])
+    p_run.add_argument("--unit", required=True, help="大任务标识")
+    p_run.add_argument("--requirement", help="需求说明文本或文件路径")
+    p_run.add_argument("--check-cmd", help="确定性检查命令")
+    p_run.add_argument("--round", type=int, help="审查轮次（缺省自动递增）")
+    p_run.add_argument("--resolves", help="跨轮关闭声明文件")
+    p_run.add_argument("--force", action="store_true", help="允许无报告强制收口（测试用）")
+
+    args = ap.parse_args()
+    root = Path(args.root).resolve()
+
+    dispatch_map = {
+        "plan": cmd_plan,
+        "dispatch": cmd_dispatch,
+        "verify": cmd_verify,
+        "finish": cmd_finish,
+        "status": cmd_status,
+        "run": cmd_run,
+    }
+    handler = dispatch_map.get(args.subcommand)
+    if not handler:
+        return die(f"未知子命令：{args.subcommand}")
+    return handler(args, root)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

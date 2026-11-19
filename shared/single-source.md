@@ -8,20 +8,20 @@
 
 | 信息 | 唯一真相源 | 派生视图 / 引用者 |
 |---|---|---|
-| 需求卡 | Trellis 任务的 `prd.md`（`.trellis/tasks/<NN-slug>/prd.md`） | 不另建 inbox 或需求文档 |
-| 结构事实（全局层 + 域级层） | `.trellis/spec/structure/`（Trellis 路径注入层） | PRD / E2E 环按需 Read |
-| 域清单（候选 / 已定稿） | `.trellis/spec/structure/_meta.json`（机器）+ `tour.md` 域速查（人读）；structure 提议 → PRD 定稿回写 | PRD / E2E |
+| 需求卡 | 执行层 任务的 `prd.md`（`.atlas/tasks/<NN-slug>/prd.md`） | 不另建 inbox 或需求文档 |
+| 结构事实（全局层 + 域级层） | `.atlas/spec/structure/`（结构环事实层（`paths:` 索引）） | PRD / E2E 环按需 Read |
+| 域清单（候选 / 已定稿） | `.atlas/spec/structure/_meta.json`（机器）+ `tour.md` 域速查（人读）；structure 提议 → PRD 定稿回写 | PRD / E2E |
 | **域间依赖**（实现前置依赖） | **域级 PRD frontmatter `depends_on`**（语义 = 实现前置依赖，**只含**全局 `product/prd/prd.md` §五 mermaid 的**实线**；虚线 = 增强链路 / 数据回流，不入本字段） | 全局 §五 mermaid 域间关系图（实线边集）+ 域级正文「依赖域 / 上游 / 下游」——两者均为**派生视图**；`validate_prd.py` 参数 4「域间依赖」按实线边集对账（悬空引用 / 实线成环 / 不一致 ⇒ FAIL） |
 | 技术栈 + 快速启动（A 类，可选） | 项目根 `README.md` 的「技术栈 / 启动」两节 | 不入 spec；`_meta.json.categories` 记状态 |
 | 测试现状与运行方式（H 类，条件） | 项目根 `README.md` 的「测试 / 运行」节 | 不入 spec；无则由确认门补 |
-| 接口技术契约（D 类的机器可读部分） | 项目自带的机器可读接口描述（OpenAPI / Swagger / …） | `.trellis/spec/structure/*/<domain>/apis.md` 只记真相源入口，不复制端点 |
-| testid / selector 约定 | `rings/e2e/reference.md` §4（E2E 环契约；**不在 structure 环**） | 实现期薄桩 `.trellis/spec/conventions/testid.md`（派生视图，由 `scripts/gen_testid_stub.py` 生成）；**实际落点见下一行**；E2E 分片引用它 |
+| 接口技术契约（D 类的机器可读部分） | 项目自带的机器可读接口描述（OpenAPI / Swagger / …） | `.atlas/spec/structure/*/<domain>/apis.md` 只记真相源入口，不复制端点 |
+| testid / selector 约定 | `rings/e2e/reference.md` §4（E2E 环契约；**不在 structure 环**） | 实现期薄桩 `.atlas/spec/conventions/testid.md`（派生视图，由 `scripts/gen_testid_stub.py` 生成）；**实际落点见下一行**；E2E 分片引用它 |
 | 项目 PRD | `product/prd/prd.md`（全局）+ `product/prd/<domain>-prd.md`（域级） | `product/prd/README.md` 追溯总表 |
 | testid **实然**集合（现状） | 前端源码的 `data-testid` | `validate_testids.py` 按 `stack-profile.yaml` 的 `apps[].kind ∈ {frontend, fullstack}` 路径扫描（E1 统一，不再按 `origin` 分流）；与**应然**（下一行）的按页差集 = 待实现面 / 漂移面 |
 | E2E 用例 | `product/e2e/e2e-index.md`（唯一入口）+ `product/e2e/cases/<page>.md`（分片） | 脚本由分片生成 |
 | 页面标识（slug）与「页 ↔ 真实路由」映射 | `product/e2e/e2e-index.md` 页面表（e2e 环，E1 迁入） | slug = 分片文件名；页面表是 E2E 生成器 URL 的唯一来源（`rings/e2e/reference.md` §3.1） |
 | testid **应然**集合 | `product/e2e/cases/*.md` 分片的 `testid:`（e2e 环，E1 迁入） | 用例分片隐式决定元素清单与初始态；**实然** = 前端源码 `data-testid` 扫描，执行即对账 |
-| **前端复用决策记录** | Trellis 任务 Plan / Design（执行层；`.trellis/tasks/<NN-slug>/`） | `.atlas/shared/frontend-reuse.md` 只定义流程与记录字段；PRD / E2E / apply 不复制正文；Atlas 不持有索引或数据 |
+| **前端复用决策记录** | 任务卡 Plan / dispatch.md（执行层；`.atlas/tasks/<NN-slug>/`） | `.atlas/shared/frontend-reuse.md` 只定义流程与记录字段；PRD / E2E / apply 不复制正文；Atlas 不持有索引或数据 |
 | **独立审查的骨架条款** | `.atlas/shared/independent-review.md`（共享契约） | 三类实例（PRD / E2E 用例 / 设计决策）**按名引用**；各实例**只**声明自己的**维度 / fan-out 单位与阈值 / 回退环取值 / 权威输入** |
 | **独立审查报告**（设计期语义门） | `product/<环>/reviews/<日期>-<范围>/`：`README.md`（人读三段式）+ `review.json`（机读 `{ok,status,checks[]}`）+ `inputs/MANIFEST.json`（指针化输入清单） | 门禁读 `review.json` 的 `status`；**审查意见不进被审对象正文**（记录类 / 交付面分离） |
 | **人工缺口清单 / 修订批次**（无需求卡的应然资产修订） | `product/reviews/<日期>-<主题>/`：`README.md`（缺口清单 + 决策表 + 验收标准）+ `plans/`（分域修订方案） | 与上一行**不同角色**：上行是机器 / 独立审查产出，本行是人机协同收集的修订批次（`3507 P2`） |
@@ -39,10 +39,10 @@
 ## 4. 约束
 
 - 同一信息若在两处出现正文，判为**漂移**：保留真相源那份，另一处改成引用。
-- 结构事实的**唯一落点是 `.trellis/spec/structure/`**——不再有 `product/structure/`。Trellis 任务通过路径注入原生消费它；PRD / E2E 按需 Read。
+- 结构事实的**唯一落点是 `.atlas/spec/structure/`**——不再有 `product/structure/`。执行层 任务通过路径注入原生消费它；PRD / E2E 按需 Read。
 - 编码规范（原 I 类）与 testid 约定（原 G 类）**不在 structure 环**：testid 约定正文归 **E2E 环契约** `.atlas/rings/e2e/reference.md` §4；编码规范不由 atlas 收口。Atlas 管实现期纪律与可追溯性；业务代码规范仍归项目 linter/typecheck。
 - 编号体系（功能 / 规则 / AC / 用例）全产品唯一、不复用；格式见各环契约。
 - **独立审查的骨架条款唯一在 `shared/independent-review.md`**（2026-09-26 补）：四类实例不得把骨架（只审不改 / 独立结论 / 分级 / 留痕双份 / 硬口径 / 门禁 / 成本约束）复制进自己的环契约，只能**按名引用**并声明自己的维度与取值。发现两处骨架正文即判为漂移。
 - **`data-testid` 的应然归用例分片，实然归前端源码**（2026-09-26 立，2026-09-28 按 E1 改写）——真相源分层：**应然** = `product/e2e/cases/*.md` 分片的 `testid:` 清单（实现按它命名、不得自造，`rings/e2e/reference.md` §4.1）；**实然** = 前端源码 `data-testid` 扫描。旧项目接入时前端通常**没有** `testid`，按分片应然写用例得到的是「待实现面」差集——**不得**把旧代码的 CSS 选择器 / DOM 结构拓成应然。
 - **项目级长效架构决策唯一在 `product/adr/`**（2026-10-13 登记）：跨需求的全局长效技术决策落 `product/adr/NNNN-<slug>.md`；单需求内的业务实现细节归域级 PRD；无需求卡的人工修订批次归 `product/reviews/<日期>-<主题>/`。任何技术决策一旦落盘即为生效契约，推翻时新建并标记 `superseded`，严禁在别处复制正文。
-- **前端复用决策记录归 Trellis 任务 Plan / Design**（2026-10-31 登记，D177）：能力 / 参考实现 / 决策 / 缺口 / 验证只在任务 Plan / Design 保留一份；`.atlas/shared/frontend-reuse.md` 是**执行期程序契约**（非门、非真相源），不持有记录、不生成组件索引、不参与门禁。
+- **前端复用决策记录归 任务卡 Plan / dispatch.md**（2026-10-31 登记，D177）：能力 / 参考实现 / 决策 / 缺口 / 验证只在任务 Plan / Design 保留一份；`.atlas/shared/frontend-reuse.md` 是**执行期程序契约**（非门、非真相源），不持有记录、不生成组件索引、不参与门禁。

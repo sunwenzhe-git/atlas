@@ -69,7 +69,7 @@ NBER（美国国家经济研究局）2026 年工作论文 35275 追踪了超过 
 | :--- | :--- | :--- | :--- |
 | **CPU / 算力核心** | **LLM（大语言模型）** | Claude 3.7 / GPT-5 / GLM-5 | 负责纯粹的逻辑推理与自回归计算（纯算力输入与输出） |
 | **操作系统 / Runtime (OS)** | **Agent Harness** | Claude Code / Cursor / Pi Agent / OpenCode | **提供系统调用（Syscall）与运行环境**<br>• 文件读写、Bash 执行（工具调用）<br>• 内存与缓存管理（KV Cache 保温、上下文窗口截断）<br>• 多进程调度（Subagent 派生） |
-| **工程框架 / 工业级脚手架** | **Project Harness** | **Atlas** / Trellis / OpenSpec | **定义项目物理秩序与全生命周期防线**<br>• 规范与应然资产基线（PRD / AC 账本）<br>• 依赖图谱影响面基准（advisory；后端栈条件项，纯前端栈近零收益）<br>• 机器物理阻断门禁（防止 AI 敷衍实现与伪造测试） |
+| **工程框架 / 工业级脚手架** | **Project Harness** | **Atlas** | **定义项目物理秩序与全生命周期防线**<br>• 规范与应然资产基线（PRD / AC 账本）<br>• 依赖图谱影响面基准（advisory；后端栈条件项，纯前端栈近零收益）<br>• 机器物理阻断门禁（防止 AI 敷衍实现与伪造测试） |
 
 ### 3. 为什么说 Project Harness 是 AI 时代的 Spring Boot？
 
@@ -106,7 +106,7 @@ NBER（美国国家经济研究局）2026 年工作论文 35275 追踪了超过 
 │                              │  单向编排：atlas-apply (Skill) │
 │                              ▼                              │
 │   ┌─────────────────────────────────────────────────────┐   │
-│   │   需求级平面（小需求任务执行，由内置的 Trellis 承担）    │   │
+│   │   需求级平面（小需求任务执行，由内置的 atlas workflow 承担）    │   │
 │   │   需求卡 (Task) ──► 业务代码编写 ──► 任务归档        │   │
 │   └─────────────────────────────────────────────────────┘   │
 └──────────────────────────────┬──────────────────────────────┘
@@ -120,8 +120,9 @@ NBER（美国国家经济研究局）2026 年工作论文 35275 追踪了超过 
 
 ### 1. 两层正交模型（项目级平面 🆚 需求级平面）
 1. **项目级（应然资产层）**：定义“这个系统是什么、长什么样、怎么算做对”。包含**结构事实**（适配器 AST / 正则逆向抽取；图谱为可选文件枚举增强）、**项目级 PRD**（业务规则单源）、**E2E 验收用例**（真实靶场可证伪用例），以及跨需求生效的**架构决策记录**（`<资产根>/adr/NNNN-<slug>.md`，默认 `product/adr/...`）。
-2. **需求级（小需求执行层）**：定义“这次改动改什么、怎么写代码”。由内置的 **Trellis** 任务系统承担，Atlas 本身**不侵入业务代码实现**。
+2. **需求级（小需求执行层）**：定义“这次改动改什么、怎么写代码”。由内置的 **`atlas workflow`** 执行层承担，Atlas 本身**不侵入业务代码实现**。
 3. **`apply` 单向衔接**：需求在进入实现前，先由 Agent 唤起 `atlas-apply <需求ID>` 技能将需求增量合并入项目级应然资产，坚决杜绝“先写代码、事后补文档”的失控循环。
+4. **执行层命令**：`atlas workflow plan --unit <ID>`（建卡）→ `atlas workflow dispatch`（出派工单）→ `atlas workflow verify --unit <ID>`（独立审查）→ `atlas workflow finish --unit <ID>`（收口）；`atlas workflow status` / `atlas workflow run` 负责查账与串联。任务账本落 `.atlas/tasks/`。
 
 ### 2. 核心武器库：三环资产体系（Rings）
 
@@ -129,7 +130,7 @@ Atlas 的核心由 **三环（Rings）** 构筑成不可逾越的应然防线：
 
 | 构件 | 角色 | 产物位置 | 核心机制 |
 |---|---|---|---|
-| **Ring 1: 结构基线** (`atlas-structure`) | **实然事实** | `.trellis/spec/structure/` | 适配器（AST / 正则）逆向提取代码事实（路由、数据模型、API、测试现状）。事实区由机器刷新，语义区由规范治理，双份维护（`current` / `legacy`）。 |
+| **Ring 1: 结构基线** (`atlas-structure`) | **实然事实** | `.atlas/spec/structure/` | 适配器（AST / 正则）逆向提取代码事实（路由、数据模型、API、测试现状）。事实区由机器刷新，语义区由规范治理，双份维护（`current` / `legacy`）。 |
 | **Ring 2: 项目级 PRD** (`atlas-prd`) | **业务应然** | `<资产根>/prd/`（默认 `product/prd/`） | 业务叙事单一真相源（SSOT）。双向强制追踪链：`功能 ──► 业务规则 ──► 验收准则(AC) ──► E2E 用例`。不挂实现状态，保持应然纯粹性。 |
 | **Ring 3: 验收用例** (`atlas-e2e`) | **验证应然** | `<资产根>/e2e/`（默认 `product/e2e/`） | 真实应用单段执行（Playwright）。总索引唯一入口，一例一片（页面分片），以 `data-testid` 为唯一硬锚，严禁将瞬时反馈（Toast）当终态。 |
 
@@ -152,7 +153,6 @@ Atlas 的核心由 **三环（Rings）** 构筑成不可逾越的应然防线：
 * **Python 3.10+**（核心校验器与生成引擎）
 * **操作系统**：macOS / Linux / **Windows**。装配单源是 `install.py`（Python 3.10+）：Windows 原生 PowerShell/CMD 即可运行（`atlas init` 自动探测 `py -3` / 真实 `python` 路径并校验版本）；Git Bash / WSL2 不再是必要条件
 * **Playwright**（E2E 测试运行器：Node 版，由项目 node_modules 提供）
-* **[Trellis](https://github.com/mindfold-ai/trellis)**（必需宿主执行器，负责需求级任务调度；安装：`npm install -g @mindfoldhq/trellis`）
 
 **平台支持矩阵**：
 
@@ -161,7 +161,7 @@ Atlas 的核心由 **三环（Rings）** 构筑成不可逾越的应然防线：
 | macOS / Linux | 正式支持 | Node.js 18+、Python 3.10+ |
 | Windows 原生（PowerShell / CMD） | 支持（**beta**，待真机复验后转正） | Node.js 18+、Python 3.10+（`py -3` 或真实 `python`；`atlas init` 自动探测并校验版本） |
 | Windows + Git Bash | 可用（可选兜底） | 同上；`install.sh` wrapper 自动在 `python3` / `python` 中取可执行者，无需额外条件 |
-| Windows + WSL2 | 可用 | 在发行版内安装 Node.js / Python 3 / Trellis / Atlas（各环境独立，Windows 侧安装不算） |
+| Windows + WSL2 | 可用 | 在发行版内安装 Node.js / Python 3 / Atlas（各环境独立，Windows 侧安装不算） |
 | 无 Python 的任何环境 | 不支持（fail-closed） | `atlas init` 退出 2 并给出安装指引，不会半装 |
 
 > 发布口径：Windows 原生轨按 **beta 级支持**发布（CI 已覆盖入口/编码/探测），真机复验（中文 locale、企业策略、无 Python 裸机）通过后转正。
@@ -189,7 +189,7 @@ atlas init --assets-root docs
 装配命令将自动完成：
 1. 将核心契约、校验器、模板整包镜像至目标项目 `.atlas/`；
 2. 为你的 Agent 平台生成专用 Skills 瘦桩（`atlas-structure`, `atlas-prd`, `atlas-e2e`, `atlas-apply`, `atlas-grill`, `atlas-design-review`, `frontend-design` 等）；
-3. 向 `.trellis/` 注入工作流补丁组（Plan 1.6 应然资产挂载、各阶段技能路由、根因分析优先红用例）与项目接线（`AGENTS.md` 指针、`.trellis/config.yaml` 的 `after_finish` hook，pi 宿主另登记 `.pi/` 下的 `/atlas` 控制台扩展）；
+3. 建立执行层骨架（`.atlas/tasks`、`.atlas/spec/structure`、`.atlas/spec/conventions`）与项目接线（`AGENTS.md` 指针、extractor 测试配置、`.gitignore`、pi 宿主另登记 `.pi/` 下的 `/atlas` 控制台扩展）；
 4. 部署只读审查专用 Agent：`atlas-reviewer`。
 5. *（pi 宿主专有）* 落地 `/atlas` 控制台扩展——`/atlas status` 会报**开户态**（「装配 ≠ 开户」），未开户时直接告诉你去跑 `adopt`。非 pi 项目不创建 `.pi/`。
 
@@ -248,7 +248,7 @@ Atlas 完全做到了**“日常全自动，低频全靠大白话”**：
 ```
 无论哪种入口，Agent 都会逆向扫描现有代码拓扑，建立应然资产起点（不瞎猜老业务用例，只登记基线），并在开户前与你核对画像草稿、把占位符换成真实路径。
 
-> ⚠️ **装配 ≠ 开户**：`atlas init` 只装配线束（`.atlas/`、资产根骨架（默认 `product/`）、AGENTS.md 指针）。**开户产物是 `<资产根>/prd/` 与 `.trellis/spec/structure/` 的内容**——两者为空就是尚未开户。所以「已经装过 atlas」不代表已接入：此时若 Agent 回你「已接入」或反问你「是不是接过了」，直接敲 `/atlas-apply adopt` 即可（开户按产物存在与否断点续跑）。
+> ⚠️ **装配 ≠ 开户**：`atlas init` 只装配线束（`.atlas/`、资产根骨架（默认 `product/`）、AGENTS.md 指针）。**开户产物是 `<资产根>/prd/` 与 `.atlas/spec/structure/` 的内容**——两者为空就是尚未开户。所以「已经装过 atlas」不代表已接入：此时若 Agent 回你「已接入」或反问你「是不是接过了」，直接敲 `/atlas-apply adopt` 即可（开户按产物存在与否断点续跑）。
 
 > 完整流程、为什么存量页面不会把门禁刷红、后端项目的补充配置，见 [存量项目接入指南 (adopt)](https://sunwenzhe-git.github.io/atlas/guide/legacy-adoption)。
 
@@ -264,7 +264,7 @@ Atlas 完全做到了**“日常全自动，低频全靠大白话”**：
 Agent 全量串行初始化 `structure → prd → e2e`。
 
 #### 场景 C：日常迭代提需求（100% 自动无感）
-你**无需敲任何 Atlas 命令**，像往常一样在 Trellis 中创建任务（如 `/trellis:start 优化配音列表`）：
+你**无需敲任何 Atlas 命令**，像往常一样让 Agent 进入任务（如 `atlas workflow plan --unit 优化配音列表`）：
 * 工作流在 Phase 1.6 **自动调度 Agent 执行** `atlas-apply <需求ID>` 技能完成应然资产编译；
 * 需求写完收口时，自动触发钩子刷新最新代码事实。
 
@@ -419,7 +419,7 @@ Atlas 坚持**变异证明（Mutation Proving / M 系列钉子测试）**原则�
 
 ### 3. `testid` 薄桩机制（Thin Stubs Injection）
 * **解决跨目录认知成本**：写前端代码的 Agent 经常因不知道有哪些 `data-testid` 而乱起名字；
-* **自动注入上下文**：Atlas 从用例分片中自动提取该页面的全部应然 `testid`，编译为小巧的 `.trellis/spec/conventions/testid.md` 薄桩文件，通过 Trellis 原生机制直接注入到 Agent 的写代码上下文中，实现两端零心智对齐。
+* **自动注入上下文**：Atlas 从用例分片中自动提取该页面的全部应然 `testid`，编译为小巧的 `.atlas/spec/conventions/testid.md` 薄桩文件，通过 `atlas workflow dispatch` 直接注入到 Agent 的写代码上下文中，实现两端零心智对齐。
 
 ### 4. AC × 覆盖维度矩阵（防「表面用例」）
 * **补的是哪个洞**：AC 反向覆盖门只能回答「这条 AC 有没有用例指向」，答不了「这条 AC 的异常流 / 边界 / 权限 / 会话恢复 / 幂等 / 状态转换有没有人验过」——于是 Agent 交上来 30 条看着齐整、真正会炸的一条都没有；
@@ -498,10 +498,10 @@ Atlas 随包完整分发了一套自洽的高阶开发与评审套件：
 
 ### 1. `atlas-apply` — 唯一跨环编排件
 * 会话内把一条需求编译进项目级应然资产，四种模式：`<需求ID>` 需求增量 / `adopt` 存量开户 / `all` 三环全量 / `backfill` 反向回流；
-* 先过三问门（改动既有能力 / 要人确认 UI / 要可重复验收）；三问全否是合法旁路——只走 structure + Trellis，不硬造空 E2E 用例。
+* 先过三问门（改动既有能力 / 要人确认 UI / 要可重复验收）；三问全否是合法旁路——只走 structure + 执行层，不硬造空 E2E 用例。
 
 ### 2. 三环资产技能 — `atlas-structure` / `atlas-prd` / `atlas-e2e`
-* **`atlas-structure`（结构基线 · 实然）**：读代码逆向目录与模块地图、路由与接口清单、数据模型，落 `.trellis/spec/structure/`；
+* **`atlas-structure`（结构基线 · 实然）**：读代码逆向目录与模块地图、路由与接口清单、数据模型，落 `.atlas/spec/structure/`；
 * **`atlas-prd`（业务应然单源）**：全局 + 域级 PRD，含可追溯 AC；
 * **`atlas-e2e`（验收应然）**：页面分片 + 总索引用例资产，`data-testid` 应然⇔实然按页双向集合校验。
 

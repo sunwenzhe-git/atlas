@@ -51,7 +51,7 @@
 
 - 覆盖或删除已有产物文件。
 - 生成或改写 `product/stack-profile.yaml`（技术栈画像影响后续所有环）。
-- 在 `.trellis/workflow.md` 打补丁。
+- 改 `AGENTS.md` 指针段或装配接线（`patches/project-wiring/`）。
 - 任何跨项目通用的模板 / 校验脚本 / 契约变更（属 atlas 包自身演进，不属于单项目任务）。
 
 **独立审查不替代本门（2026-09-26 补）**：`shared/independent-review.md` 的「低风险 + 审查者独立结论一致 ⇒ 自动通过」**只适用于低风险侧**（可逆、只影响单个项目的 `product/` 产物、不动通用契约）；**本节四条一律人工** —— 审查者只**压缩阅读量**（把结论压成一行「已独立复核，同意 / 不同意，理由 X」），**不替代确认**。一句话：**审查者可以替人「读」，不能替人「签」**。
@@ -69,7 +69,7 @@
 
 - 包产物（契约、模板、适配器、校验器）由 `install.sh` 装配到 `<项目根>/.atlas/`。
 - 项目产物（结构事实、PRD、E2E 用例）落在 `<项目根>/product/`，目录与 role 语义见 `.atlas/shared/layout.md`。
-- 结构事实落 `<项目根>/.trellis/spec/structure/`（Trellis 路径注入层）；A（技术栈+启动，可选）与 H（测试/运行，条件）落项目根 `README.md`（受控例外，见 `layout.md` §1）。编码规范与 testid 约定**不在 structure 环产出**（testid 归 E2E 环）。
+- 结构事实落 `<项目根>/.atlas/spec/structure/`（结构环事实层（`paths:` 索引））；A（技术栈+启动，可选）与 H（测试/运行，条件）落项目根 `README.md`（受控例外，见 `layout.md` §1）。编码规范与 testid 约定**不在 structure 环产出**（testid 归 E2E 环）。
 
 ## 11. 产物生命周期（生 / 变 / 迁 / 死）
 
@@ -148,8 +148,8 @@
 
 ## 18. 实现期假设处置（硬，2026-11-07，D186）
 
-- **归属**：实现期的新假设落 Trellis 任务 Plan / Design，**不另建台账**；atlas 不写业务代码、不在实现期设机器门；实现期纪律按本条。
-- **停手**：命中 §7 四条签名（覆盖或删除已有产物 / 改 `stack-profile.yaml` / 打 `.trellis/workflow.md` 补丁 / 跨项目通用变更）**即停并取用户确认**，不得自行代签。
+- **归属**：实现期的新假设落 任务卡 Plan / dispatch.md，**不另建台账**；atlas 不写业务代码、不在实现期设机器门；实现期纪律按本条。
+- **停手**：命中 §7 四条签名（覆盖或删除已有产物 / 改 `stack-profile.yaml` / 改 `AGENTS.md` 指针段或装配接线 / 跨项目通用变更）**即停并取用户确认**，不得自行代签。
 - **升级路由**：假设会改 AC / 范围 / 用户可见行为 ⇒ **回流 PRD 决策**（`.atlas/rings/prd/reference.md`），不在实现期就地改口径。
 - **最小实现与过度设计**：按名引用 `shared/independent-review.md` §10.4 第 2 问（职责归属）；本条不复制判例。
 - 收口侧分档 = `shared/closeout.md` 步骤 4 B 档；本条为**纪律面，无机器门**。

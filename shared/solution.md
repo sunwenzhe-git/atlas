@@ -1,6 +1,6 @@
 # atlas 共享契约 — 多仓方案层（solution，Phase 1）
 
-> **状态**：Phase 1（2026-11-04）+ solution task 增量（2026-11-05）+ 可复现锁 / `check --strict` 增量（2026-11-07，`[Unreleased]`）。父级只做只读整合与**窄写成员任务卡**（`.trellis/tasks`）；`unified` 与成员代码提交属 Phase 2，`import`/`export` 属 Phase 3，多 host / `targets[]`、跨仓影响面与图谱、成员拆分导出属 Phase 4 可选增强，见源包提案 RFC-20261104-02 / RFC-20261105-02（装配态无 proposals）。
+> **状态**：Phase 1（2026-11-04）+ solution task 增量（2026-11-05）+ 可复现锁 / `check --strict` 增量（2026-11-07，`[Unreleased]`）。父级只做只读整合与**窄写成员任务卡**（`.atlas/tasks`）；`unified` 与成员代码提交属 Phase 2，`import`/`export` 属 Phase 3，多 host / `targets[]`、跨仓影响面与图谱、成员拆分导出属 Phase 4 可选增强，见源包提案 RFC-20261104-02 / RFC-20261105-02（装配态无 proposals）。
 >
 > 本层不复制成员 PRD / 域事实 / 成员 E2E；父仓持有跨仓 E2E，成员保留本地 E2E。父仓跨仓 E2E 的清单选择器是 `requirements[].case_ids`：**多成员需求必须有 `case_ids`（禁止 `cross_repo_e2e: none`）**；单成员需求 `case_ids` 或 `cross_repo_e2e: none` 二选一，两者都无 ⇒ `solution check` FAIL。资产归属的单源是 `atlas.solution.yaml` 的 `members[].assets`。
 
@@ -37,7 +37,7 @@
 | `solution` | 是 | 方案名 |
 | `mode` | 是 | Phase 1 仅 `federated`；`unified` 显式拒绝 |
 | `members[].name` | 是 | 成员标识，solution 内唯一 |
-| `members[].path` | 是 | 相对 solution 根；拒绝绝对路径 / `..` / Atlas/Trellis 内部目录；若已被父仓跟踪（含 mode 160000）则 init/adopt 直接拒绝 |
+| `members[].path` | 是 | 相对 solution 根；拒绝绝对路径 / `..` / Atlas/执行层 内部目录；若已被父仓跟踪（含 mode 160000）则 init/adopt 直接拒绝 |
 | `members[].url` | 否 | 远端地址；仅 `http/https/ssh/git/file` 或 `user@host:path`；禁止内嵌 userinfo / token，检测到即拒绝写入清单与锁 |
 | `members[].assets` | 是 | Phase 1 仅 `member` |
 | `members[].kind` | 否 | `frontend` / `backend` / `fullstack` / `mobile`；供 solution stack-profile |
@@ -47,9 +47,9 @@
 | `requirements[].id` | 否 | 父级需求 ID；与 `member` 组合唯一 |
 | `requirements[].acs` | 否 | 父级 AC ID，顿号/逗号分隔；必须是定义源 PRD 的 AC 定义行——方案 AC 写 `AC-SOLUTION-*`（§五 表），字段契约写 `AC-CONTRACT-*`（§五-b 表）；契约 AC 不参与方案 AC 定义校验 |
 | `requirements[].member` | 否 | 必须是 members 名称 |
-| `requirements[].task_slug` | 否 | Trellis slug；不含路径分隔符 / `..` / `MM-DD-` 前缀；创建后冻结 |
+| `requirements[].task_slug` | 否 | 任务 slug；不含路径分隔符 / `..` / `MM-DD-` 前缀；创建后冻结 |
 | `requirements[].scope` | 否 | 单行本地 scope；含 `#` 时必须加引号；只在成员任务 `solution.md` 中展开 |
-| `requirements[].assignee` | 否 | 可选；缺省 = 成员 `.trellis/.developer` |
+| `requirements[].assignee` | 否 | 可选；缺省 = 成员 `.atlas/.developer` |
 | `requirements[].case_ids` | 否 | 父仓跨仓 E2E 的**需求级选择器**，逗号/顿号分隔；用例 ID 文法见 `rings/e2e/reference.md` §5.3。同一 `requirement.id` 最多一行携带；不得与 `cross_repo_e2e` 同时出现 |
 | `requirements[].cross_repo_e2e` | 否 | 唯一合法值 `none`；只允许**单成员需求**用它声明「没有跨仓 E2E」。同一 `requirement.id` 最多一行携带 |
 
@@ -92,7 +92,7 @@ atlas solution task status [--requirement <REQ>]                     # 只读对
 - `check --strict` 把以下升为 `FAIL` 并返回 exit 1：锁缺失、锁未被父仓跟踪或与父仓 `HEAD` 不一致、锁↔清单 `url/path` 不一致、成员 dirty 或 dirty 无法判断、缺 URL、成员/契约版本漂移；`requirements[].acs` 引用方案 PRD 中不存在的 AC 定义行**默认即 FAIL**（`--allow-dangling-acs` 只宽限「PRD 定义非空」的 A 类悬空，写死 `0.4.0` / `2026-12-31` / `@sunwenzhe`；PRD 缺失 / 路径不匹配 / 零定义共用空集 guard ⇒ FAIL，不适用宽限）。除 AC 定义行外，其余默认仍为 WARN。采纳仓不跑 `solution check --strict` 就等于没有这道门（最小 CI 样例见 §5.1）。
 - `--lenient` 只放宽「成员工作区缺席」一项（记 `SKIP`，`member_workspace_absent`）；仓内存在任一封条（`<assets_root>/reviews/apply/**/*.seal.json`）即**拒绝执行**（exit 2，首行 `[FAIL] --lenient 仅限无封条`）。只有锁、没有封条时（fresh clone）允许执行。
 - `migrate --to 2` 只补缺（`definition` / `acceptance_cutover` / `min_atlas`，以及 PRD front matter 的 `prd_version` / `prd_schema`），已有字段一律不动，**不自动 `lock`**；B-0 的 `definition.path` 白名单只接受 `<assets_root>/prd/solution-prd.md`，非默认名 ⇒ 拒绝且不写任何文件。`--check-members` 只读打印逐成员卡片的 `git add -f` 命令（含 archive 实际路径）。
-- `task create` 默认 dry-run，`--apply` 才写成员 `.trellis/tasks`：固定 `--no-start`（不领取）、用 `--meta solution/requirement/member` 做幂等、写 `solution.md` 指针并 `add-context`；不写代码/资产/PRD，不自动 commit。重复/失败显式报告；`--resume`/`--update` 只处理已有任务。
+- `task create` 默认 dry-run，`--apply` 才写成员 `.atlas/tasks`：固定 `--no-start`（不领取）、用 `--meta solution/requirement/member` 做幂等、写 `solution.md` 指针并 `add-context`；不写代码/资产/PRD，不自动 commit。重复/失败显式报告；`--resume`/`--update` 只处理已有任务。
 - `commit` 入口保留给 Phase 2；Phase 1 调用时显式报「未交付」。
 
 ### 3.1 已交付 vs 本次新增（`[Unreleased]`）
@@ -163,10 +163,10 @@ atlas solution check --strict
 - `unified`（Phase 2）：solution 拥有唯一资产集、成员只提供代码根；需要 baseline v2 + 成员 SHA 向量 + 多根 freshness / impact / closeout。
 - `solution_commit --member`（Phase 2）：按成员仓提交代码。
 - `import` / `export`（Phase 3）：成员资产迁移；旧源删除，历史归 git。
-- solution 级 Trellis `packages`：Phase 1 不创建 `.trellis/`；若 solution 根已有 `.trellis/config.yaml`，`check` 只做成员 `path` 文本校验（不校验 `git: true`）；生成与完整语义校验归 Phase 2。
+- solution 根不创建 `.atlas/tasks`（成员各自持有）；`check` 若发现 `.atlas/config.yaml`，只做成员 `path` 文本校验（不校验 `git: true`）。
 - Phase 4（可选增强）：多 host / `targets[]`、跨仓影响面与代码图谱、成员拆分导出、更多宿主集成；不在当前 Phase 1–3 的交付范围。
-- 自动领取/自动启动不在本层：`task create` 只创建任务卡；成员仍需 `/trellis:start` 选择任务。
-- 父级 `task create` 是 Phase 1 的唯一窄写例外：只写成员 `.trellis/tasks`（任务卡/指针/context），不写成员代码/资产/PRD。
+- 自动领取/自动启动不在本层：`task create` 只创建任务卡；成员仍需 `atlas workflow dispatch` 选择任务。
+- 父级 `task create` 是 Phase 1 的唯一窄写例外：只写成员 `.atlas/tasks`（任务卡/指针/context），不写成员代码/资产/PRD。
 
 ### 6.1 父仓只读聚合视图（二期，2026-11-08，`RFC-20261108-02`）
 

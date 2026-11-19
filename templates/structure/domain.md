@@ -15,15 +15,15 @@ paths:
 
 | 文件 | 路径 |
 |---|---|
-| apis | `.trellis/spec/structure/current/[必填：domain]/apis.md` |
-| data-models | `.trellis/spec/structure/current/[必填：domain]/data-models.md` |
+| apis | `.atlas/spec/structure/current/[必填：domain]/apis.md` |
+| data-models | `.atlas/spec/structure/current/[必填：domain]/data-models.md` |
 
 **legacy**（无 `role: legacy` 的 app 时整块删除）
 
 | 文件 | 路径 |
 |---|---|
-| apis | `.trellis/spec/structure/legacy/[必填：domain]/apis.md` |
-| data-models | `.trellis/spec/structure/legacy/[必填：domain]/data-models.md` |
+| apis | `.atlas/spec/structure/legacy/[必填：domain]/apis.md` |
+| data-models | `.atlas/spec/structure/legacy/[必填：domain]/data-models.md` |
 <!-- atlas:facts:end -->
 
 ## 使用口径
