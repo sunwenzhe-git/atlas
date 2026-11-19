@@ -4,6 +4,12 @@
 
 ---
 
+## [Unreleased]
+
+### 🛡 Pi 宿主扩展：turn_end 门禁告警按失败签名去重
+
+* 项目里存在历史遗留门禁失败时，`turn_end` 原先裸看退出码、每轮复读同一句告警（issue #67）。现在消费 `atlas_check.py --fast --json` 失败集，以 sha256(门名+退出码+详情) 为签名与 `.atlas/runs/pi-turn-failures.json` 基线差分：新增/变化才告警（点名新红门）、复读静默、首轮静默建基线、收缩回写（复发再提醒）、输出不可解析静默不动基线。执行级判据挂假宿主真扩展跑通 issue 全场景（`tests/test_apply_wiring.py` 26→28）。
+
 ## [v0.3.0-beta.4] - 2026-11-17
 
 ### 🧭 `atlas upgrade` 跟着运行路径装，不再诱导 sudo
