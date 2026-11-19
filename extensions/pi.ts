@@ -14,9 +14,10 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 const EXTENSION_NAME = "atlasharness";
 
@@ -304,22 +305,84 @@ export default function (pi: ExtensionAPI) {
     const checkScript = join(ctx.cwd, ".atlas", "scripts", "atlas_check.py");
     if (!existsSync(checkScript)) return;
 
-    // 只做轻量校验（若支持 --fast）
+    // 只做轻量校验。失败判据 = **失败签名差分**（issue #67）：裸看退出码会把「历史遗留
+    // 的 FAIL」在每一轮重复告警，真新增反而被淹没。签名 = sha256(门名+退出码+详情)，
+    // 基线落 `.atlas/runs/pi-turn-failures.json`（运行态目录，不入库）：
+    //   * 基线缺失/损坏 ⇒ 静默落基线（升级后第一轮不提示历史失败 —— 消噪声的代价）；
+    //   * 当前相对基线**新增/变化** ⇒ 提示（只点名新红的门）；
+    //   * 失败集合不变 ⇒ 静默；集合收缩 ⇒ 静默但回写基线（修复后复发才能再提醒一次）；
+    //   * `--json` 输出不可解析 ⇒ 静默且不动基线（执行异常不得伪装成门禁回归）。
     try {
-      const res = await pi.exec(PYTHON, [checkScript, "--root", ctx.cwd, "--fast"], {
+      const res = await pi.exec(PYTHON, [checkScript, "--root", ctx.cwd, "--fast", "--json"], {
         timeout: 10_000,
       });
-      if (res.code !== 0) {
-        // 撞门时刻 = `global-rules.md` §15 的交付面之一：门真红的那一刻把「这可能是流水线
-        // 缺陷」的出口递到手边 —— 只写在契约正文里时，流程中段等不到任何提醒。
-        ctx.ui.notify(
-          "⚠️ Atlas 提示：本轮操作可能触发了机器门禁异常，建议使用 `/atlas check` 检查。\n" +
-            "   若这道门挡的是合情合理的业务形态（不是你的实现 bug）⇒ 那是流水线缺陷：" +
-            "按 `.atlas/shared/global-rules.md` §15 用 `atlas report` 沉淀现场，" +
-            "别静默豁免 / 注释规则 / `--no-verify`。",
-          "warning",
-        );
+      let payload: any;
+      try {
+        payload = JSON.parse(res.stdout || "");
+      } catch {
+        return; // 不可解析 ⇒ 检查本身没跑成，不判失败、不写基线
       }
+      if (!Array.isArray(payload?.failures)) return; // 形态不对同上：宁静默，不误报
+
+      const current = new Map<string, { name: string; code: unknown }>();
+      for (const f of payload.failures) {
+        const sig = createHash("sha256")
+          .update(`${f?.name ?? ""}\n${String(f?.code ?? "")}\n${f?.detail ?? ""}`)
+          .digest("hex")
+          .slice(0, 16);
+        current.set(sig, { name: String(f?.name ?? "未知门"), code: f?.code });
+      }
+
+      const baselinePath = join(ctx.cwd, ".atlas", "runs", "pi-turn-failures.json");
+      const writeBaseline = () => {
+        try {
+          mkdirSync(join(ctx.cwd, ".atlas", "runs"), { recursive: true });
+          writeFileSync(
+            baselinePath,
+            JSON.stringify({ v: 1, signatures: Object.fromEntries(current) }, null, 2),
+          );
+        } catch {
+          // 写失败不阻断：最坏结果 = 下一轮重新静默建一次基线
+        }
+      };
+
+      let baseline: Map<string, { name: string; code: unknown }> | null = null;
+      try {
+        const raw = JSON.parse(readFileSync(baselinePath, "utf-8"));
+        if (raw && typeof raw === "object" && raw.signatures && typeof raw.signatures === "object") {
+          baseline = new Map(Object.entries(raw.signatures));
+        }
+      } catch {
+        baseline = null; // 缺失 / 损坏 ⇒ 视同首次
+      }
+
+      if (baseline === null) {
+        writeBaseline(); // 首轮建基线：静默
+        return;
+      }
+      const base = baseline;
+
+      const fresh = [...current.entries()].filter(([sig]) => !base.has(sig));
+      if (fresh.length === 0) {
+        const sameSet = base.size === current.size &&
+          [...base.keys()].every((sig) => current.has(sig));
+        if (!sameSet) writeBaseline(); // 有失败被修掉 ⇒ 回写，复发才能再提醒
+        return;
+      }
+
+      writeBaseline();
+      const shown = fresh.slice(0, 3).map(([, m]) => `「${m.name}」`).join("、");
+      const more = fresh.length > 3 ? ` 等 ${fresh.length} 道` : "";
+      // 撞门时刻 = `global-rules.md` §15 的交付面之一：门**新增**红的那一刻把「这可能是
+      // 流水线缺陷」的出口递到手边 —— 只写在契约正文里时，流程中段等不到任何提醒。
+      ctx.ui.notify(
+        "⚠️ Atlas 提示：检测到新增/变化的机器门禁失败" + more + "：" + shown +
+          "，建议使用 `/atlas check` 查看详情。\n" +
+          "   与上一轮基线相同的历史失败不再重复提醒。若这道门挡的是合情合理的业务形态（不是你的实现 bug）⇒ " +
+          "那是流水线缺陷：按 `.atlas/shared/global-rules.md` §15 用 `atlas report` 沉淀现场，" +
+          "别静默豁免 / 注释规则 / `--no-verify`。",
+        "warning",
+      );
     } catch {
       // 容错不阻断
     }

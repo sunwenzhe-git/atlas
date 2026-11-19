@@ -496,6 +496,159 @@ def test_pi_extension_onboarding_behaviour() -> None:
     assert "已开户" in data["已开户"]["status"]
 
 
+def test_pi_extension_carries_failure_signature_gate() -> None:
+    """**弱判据（形态）**：`turn_end` 的失败判据必须是「失败签名差分」而非裸退出码
+    （issue #67：裸退出码把历史遗留 FAIL 每轮复读，告警疲劳，真新增被淹没）。
+
+    钉住四件：`--json` 机器可读失败集消费面、签名基线落运行态、sha256 签名差分、
+    不可解析静默不误报。语义归下一测试的执行级判据。"""
+    src = (PKG_ROOT / "extensions" / "pi.ts").read_text(encoding="utf-8")
+    missing = [f for f in ('"--fast", "--json"',
+                           "pi-turn-failures.json",
+                           'createHash("sha256")',
+                           "!base.has(sig)",
+                           "if (!Array.isArray(payload?.failures)) return;")
+               if f not in src]
+    assert not missing, f"宿主扩展缺「失败签名差分」判据片段：{missing}"
+
+
+_PI_FAILSIG_DRIVER = r'''
+// 由 test_pi_extension_failure_signature_behaviour 生成：假宿主 + 真扩展，把 turn_end 的
+// 失败签名差分全场景过一遍（issue #67 §5）。exec 打桩成按序吐 `atlas_check --fast --json`
+// 的产物（不真跑门禁）；基线文件真落临时项目目录，判「提醒几次 + 基线里剩什么」。
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import ext from "__PI_TS__";
+
+function makeProject(): string {
+  const root = mkdtempSync(join(tmpdir(), "pi-failsig-"));
+  mkdirSync(join(root, ".atlas"), { recursive: true });
+  writeFileSync(join(root, ".atlas", "VERSION"), "fixture-version\n");
+  mkdirSync(join(root, ".atlas", "scripts"), { recursive: true });
+  writeFileSync(join(root, ".atlas", "scripts", "atlas_check.py"), "print('ok')\n");
+  mkdirSync(join(root, "product", "prd"), { recursive: true });
+  writeFileSync(join(root, "product", "prd", "prd.md"), "# prd\n");
+  writeFileSync(join(root, "product", "stack-profile.yaml"), "product: x\norigin: adopt\n");
+  mkdirSync(join(root, ".trellis", "spec", "structure"), { recursive: true });
+  writeFileSync(join(root, ".trellis", "spec", "structure", "_meta.json"), "{}\n");
+  return root;
+}
+
+const A1 = { name: "generated", code: 1, detail: "drift X" };
+const A2 = { name: "generated", code: 1, detail: "drift Y" }; // 同门不同详情 ⇒ 新签名
+const B = { name: "e2e", code: 2, detail: "case 005 red" };
+const payload = (failures: any[]) =>
+  JSON.stringify({ root: ".", ok: failures.length === 0, rows: [], failures });
+
+const script: Array<{ code: number; stdout: string }> = [];
+let cursor = 0;
+let notifies = 0;
+let last = "";
+const hooks: Record<string, any> = {};
+const pi: any = {
+  registerCommand: () => {},
+  on: (e: string, f: any) => { hooks[e] = f; },
+  exec: async () => {
+    const r = script[cursor++];
+    return { code: r.code, stdout: r.stdout, stderr: "" };
+  },
+};
+const ui = {
+  notify: (m: string) => { notifies += 1; last = m; },
+  setStatus: () => {},
+};
+ext(pi);
+
+function baselineOf(root: string): string[] | null {
+  try {
+    const raw = JSON.parse(readFileSync(join(root, ".atlas", "runs", "pi-turn-failures.json"), "utf-8"));
+    return Object.entries(raw.signatures).map(([sig, m]: [string, any]) => sig.slice(0, 4) + ":" + m.name);
+  } catch {
+    return null; // 无基线
+  }
+}
+
+async function turn(root: string) {
+  await hooks["turn_end"]({ outcome: "completed", toolResults: [{}] }, { cwd: root, hasUI: true, ui });
+  return { notifies, last, baseline: baselineOf(root) };
+}
+
+const out: Record<string, any> = {};
+
+// ① 主场景：同项目连续轮次（全绿 → A 首现 → A 复读 → 新增 B → A 变详情 → 全绿 → A 复发 → 不可解析）
+const root = makeProject();
+const steps: any[] = [];
+script.push({ code: 0, stdout: payload([]) });
+steps.push(await turn(root));
+script.push({ code: 1, stdout: payload([A1]) });
+steps.push(await turn(root));
+script.push({ code: 1, stdout: payload([A1]) });
+steps.push(await turn(root));
+script.push({ code: 1, stdout: payload([A1, B]) });
+steps.push(await turn(root));
+script.push({ code: 1, stdout: payload([A2, B]) });
+steps.push(await turn(root));
+script.push({ code: 0, stdout: payload([]) });
+steps.push(await turn(root));
+script.push({ code: 1, stdout: payload([A1]) });
+steps.push(await turn(root));
+script.push({ code: 1, stdout: "Traceback (most recent call last):\n  ..." });
+steps.push(await turn(root));
+out.main = steps;
+
+// ② 升级路径：基线缺失 + 首轮就带历史失败 ⇒ 静默落基线（issue #67 trade-off）
+const root2 = makeProject();
+notifies = 0; last = ""; // 计数按场景清零：本断言只关心这个项目自己的动静
+script.push({ code: 1, stdout: payload([A1]) });
+out.upgrade = await turn(root2);
+
+console.log(JSON.stringify(out));
+'''
+
+
+def test_pi_extension_failure_signature_behaviour() -> None:
+    """**执行级**判据（bun 可用时）：`turn_end` 失败判据 = 失败签名差分（issue #67 §5）——
+      * 全绿静默且建空基线；失败 A 首现告警、复读静默（主诉：不再逐轮复读）；
+      * 新增 B ⇒ 只告警 B；A 详情变化 ⇒ 再告警 A；
+      * 全绿收缩回写基线 ⇒ A 复发能再提醒一次；
+      * 输出不可解析 ⇒ 静默且基线原地不动（执行异常不伪装成门禁回归）；
+      * 升级路径（无基线 + 首轮带历史失败）⇒ 静默落基线。
+    bun 缺席 ⇒ 显式 skip（不是通过）。"""
+    import shutil
+    import subprocess
+
+    bun = shutil.which("bun")
+    if not bun:
+        import pytest
+        pytest.skip("无 bun ⇒ pi 扩展执行级判据跳过（形态判据仍由上一测试守着）")
+
+    pi_ts = PKG_ROOT / "extensions" / "pi.ts"
+    driver = _PI_FAILSIG_DRIVER.replace("__PI_TS__", pi_ts.as_posix())
+    with tempfile.TemporaryDirectory() as td:
+        drv = Path(td) / "driver.ts"
+        drv.write_text(driver, encoding="utf-8")
+        run = subprocess.run([bun, "run", str(drv)], capture_output=True, text=True, timeout=120)
+        assert run.returncode == 0, run.stdout + run.stderr
+        data = json.loads(run.stdout.strip().splitlines()[-1])
+
+    main, up = data["main"], data["upgrade"]
+    n = [s["notifies"] for s in main]
+    assert n[0] == 0 and main[0]["baseline"] == [], main[0]          # 全绿首轮：静默 + 空基线
+    assert n[1] == 1 and "generated" in main[1]["last"], main[1]     # A 首现 ⇒ 告警点名
+    assert n[2] == 1, main[2]                                        # 同一 A 复读 ⇒ 静默（主诉）
+    assert n[3] == 2 and "e2e" in main[3]["last"] \
+        and "generated" not in main[3]["last"], main[3]              # 新增 B ⇒ 只告警 B
+    assert n[4] == 3 and "generated" in main[4]["last"] \
+        and "e2e" not in main[4]["last"], main[4]                    # A 变详情 ⇒ 只再告警 A
+    assert n[5] == 3 and main[5]["baseline"] == [], main[5]          # 全绿 ⇒ 静默 + 基线收缩为空
+    assert n[6] == 4, main[6]                                        # A 复发 ⇒ 再提醒一次
+    assert n[7] == 4 and main[7]["baseline"] == main[6]["baseline"] != [], main[7]
+                                                                     # 不可解析 ⇒ 静默且基线不动
+    assert up["notifies"] == 0 and up["baseline"] \
+        and len(up["baseline"]) == 1, up                             # 升级路径 ⇒ 静默落基线
+
+
 # ---------------------------------------------------------------- .gitignore 兜底（第 5 触点）
 
 
