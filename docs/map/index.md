@@ -1,7 +1,7 @@
 # Atlas 实现地图(创造者版)
 
 > **读者**:造 Atlas 的人(创造者与后续演化者)。面向**用** Atlas 的人请走 `docs/guide/`。**本目录不进公开站点**(VitePress `srcExclude`,2026-10-25 拍板:私有);文中决策编号(D/M/F 系列)的流水见 `shared/gates.md` 与 `DESIGN.md`。
-> **锚定版本**:v0.3.0-beta.6(2026-11-17 复核)。文中行号以该版本为准,文件路径为仓根相对路径。
+> **锚定版本**:v0.4.0-beta.1(2026-11-19 复核)。文中行号以该版本为准,文件路径为仓根相对路径。
 > **维护纪律**:每次发版时刷新本目录;引用的文件路径与行号锚由 `tests/test_map_anchors.py` 机器校验(锚存活性门,M151–M154);本图只写「现在是什么」,「为什么这么设计」归 `shared/gates.md` / `DESIGN.md` / 决策编号流水。
 > **章节预算**(2026-10-25 拍板):每章 ≤120 行、核心机制 4~7 条、file:line 锚 ≤20 个、演化锚 ≤8 行——锚数即门禁成本,预算是「讲述够用、维护可控」的硬边界。
 
@@ -55,8 +55,8 @@
 ### 1. CLI 与装配
 
 - `bin/atlas.js`(553 行):命令面 = `init / update / upgrade / check / solution / review / eval / console / report / version`。`init` 直接调装配器(前置仅 Node.js + Python 3.10+);平台探测拆在 `bin/platform.js`(bash 只认 Git Bash 不回落 WSL 中继壳;Python 按平台探测 `py -3`/`python`/`python3` 并校验 3.10+)。
-- `install.py`(921 行):装配单源(`install.sh` 56 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`(RFC-20261114-01 起不含出厂测试目录,历史残留经 MANIFEST 基线闸清理),落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 70 条 `c()` 自检声明。
-- `patches/`(4 族):`workflow-plan-apply`(apply 挂进 执行层 工作流)、`project-wiring`(AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.adapter-out/` / pi 扩展五触点)、`workflow-root-cause`、`workflow-skill-routing`。锚点式版本化补丁,可重放。
+- `install.py`(922 行):装配单源(`install.sh` 56 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`(RFC-20261114-01 起不含出厂测试目录,历史残留经 MANIFEST 基线闸清理),落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 70 条 `c()` 自检声明。
+- `patches/`:`project-wiring`(AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.adapter-out/` / pi 扩展五触点)。锚点式版本化补丁,可重放;其余 3 族 workflow 补丁已随执行层退役删除。
 - 对账:`scripts/pkg_digest.py`(摘要算法单点)+ `scripts/backflow.py`(副本⇔源包三态回灌,SOURCE_ONLY 拒绝护栏)。
 
 ### 2. 共享契约层 `shared/`

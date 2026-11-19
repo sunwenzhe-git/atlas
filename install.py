@@ -110,7 +110,8 @@ def rm_rf(path: Path) -> None:
 def cp_r(src: Path, dst: Path) -> None:
     if dst.exists():
         shutil.rmtree(dst)
-    shutil.copytree(src, dst, dirs_exist_ok=True)
+    shutil.copytree(src, dst, dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns(".DS_Store", "__pycache__", ".pytest_cache"))
 
 
 def cp_f(src: Path, dst: Path) -> None:

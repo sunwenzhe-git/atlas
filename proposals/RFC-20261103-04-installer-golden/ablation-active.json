@@ -1,7 +1,7 @@
 {
   "installer": [
-    "python3.12",
-    "<PKG>/install.py"
+    "bash",
+    "<PKG>/install.sh"
   ],
   "runs": [
     {
@@ -10,7 +10,6 @@
         "--target",
         "<ROOT>",
         "--no-skill",
-        "--no-patch",
         "--no-wiring"
       ],
       "exit": 2,
@@ -35,8 +34,7 @@
   "scenario": "ablation-active",
   "tree": {
     "dirs": [
-      ".atlas",
-      ".trellis"
+      ".atlas"
     ],
     "files": {
       ".atlas/ABLATION": "ccfc20bde1b7de44cd03792bd531427a3c0c3aa9f821db2192aa96259b9e0da6",

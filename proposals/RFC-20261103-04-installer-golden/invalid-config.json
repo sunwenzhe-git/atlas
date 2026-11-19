@@ -1,7 +1,7 @@
 {
   "installer": [
-    "python3.12",
-    "<PKG>/install.py"
+    "bash",
+    "<PKG>/install.sh"
   ],
   "runs": [
     {
@@ -24,9 +24,7 @@
   ],
   "scenario": "invalid-config",
   "tree": {
-    "dirs": [
-      ".trellis"
-    ],
+    "dirs": [],
     "files": {
       "atlas.config.yaml": "6c6cefe4713eb68169624bc08e042c0ed8dcd60af4e8979c6db31aa104a9ca72"
     }

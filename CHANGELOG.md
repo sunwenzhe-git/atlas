@@ -4,6 +4,30 @@
 
 ---
 
+## [v0.4.0-beta.1] - 2026-11-19
+
+### 🧭 执行层自主化：移除 Trellis，Atlas workflow 接管
+
+* 执行层改由 `scripts/atlas_workflow.py` + `_support/workflow_{plan,dispatch,finish}.py` 承载；Trellis 不再是运行时、装配、契约、模板与用户文档的前置依赖；
+* 任务与结构事实落点统一到 `.atlas/tasks/`、`.atlas/spec/structure/`、`.atlas/spec/conventions/`；`install.py` 骨架、validators、adapters、rings、skills 与 pi 扩展同步切换；
+* 删除 4 族仅改 `.trellis/workflow.md` 的 workflow 补丁与 `run_python.js`；`--no-patch` / `--no-trellis` 退役，`--profile` 收敛为 `audit=--no-wiring`、`adopt=--no-wiring`、`strict=无附加旗标`；
+* 装配步骤由 6 步收敛为 4 步；`install.sh` 仍为薄 wrapper，`install.py` 为唯一装配单源；历史 `proposals/`、`research/`、`handoff/`、changelog 与对比/迁移文档按约定保留。
+
+### 🧪 全量消融诊断（atlas-ablate）
+
+* 新增 `skills/atlas-ablate` 与 `scripts/ablate_all.py`：触发即全量，自动枚举 `VALIDATORS` 全量 + `atlas_check` 内联门行，在项目外隔离副本逐机制摘除、单轮观测、逐字节还原；
+* 不使用 git 写操作、不触碰目标工作树；基线 FAIL 或还原 sha256 不一致即停；输出 `matrix.json` / `summary.md`，不宣称净收益、不自动建议删除。
+
+### 🔍 存量采纳与只读诊断
+
+* 新增 Java Spring/JPA/JUnit 静态抽取（`adapters/java_web.py`、`java_tests.py`、`_jpa.py` 增强）与 `scripts/adopt_static.py`、`validators/validate_adopt_facts.py`；AC 草稿须 `confirmed: true` 才能进 PRD；
+* `atlas_check` 的 FAIL 载荷改为只读 `remediation_hint`，新增全载荷扫描，禁止 `--apply` / `--record` / `release --file` 等可执行文案；`--json` 增加 `schema_version`；
+* 装配新增 `--profile=audit|adopt|strict` 旗标宏与 `--dry-run` 展开。
+
+### 🧾 基线
+
+* 装配器 golden 快照按无 Trellis 的新装配行为重录；harness 场景移除 `.trellis` 种子与已退役旗标，`--check` 全场景通过。
+
 ## [v0.3.0-beta.6] - 2026-11-19
 
 ### ⚡️ 架构减负与执行层演进：退役外部 AST 图谱，确立轻量语义透镜 (D202)

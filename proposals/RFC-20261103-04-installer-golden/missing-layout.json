@@ -1,7 +1,7 @@
 {
   "installer": [
-    "python3.12",
-    "/Users/sunwenzhe/Desktop/atlas/install.py"
+    "bash",
+    "/Users/sunwenzhe/Desktop/atlas/install.sh"
   ],
   "runs": [
     {
@@ -24,9 +24,7 @@
   ],
   "scenario": "missing-layout",
   "tree": {
-    "dirs": [
-      ".trellis"
-    ],
+    "dirs": [],
     "files": {}
   }
 }

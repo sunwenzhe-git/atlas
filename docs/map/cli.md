@@ -14,7 +14,7 @@
 | 文件 | 行数 | 角色 |
 |---|---|---|
 | `bin/atlas.js` | 553 | CLI 入口:命令面总表见 `printHelp`(`bin/atlas.js:18`)= init / update / upgrade / check / workflow / solution / review / eval / e2e / console / report / apply / version,分派在同文件 `switch (command)`;平台探测拆到 `bin/platform.js`(bash 只认 Git Bash、Python 按平台探测 3.10+) |
-| `install.py` | 921 | 装配单源:白名单拷贝 + 版本戳 + manifest + 70 条 `c()` 自检 + 图谱探测;叶子脚本(layout / apply-patches / apply-wiring / pkg_digest / ablation / evidence_archive)复用不重写 |
+| `install.py` | 922 | 装配单源:白名单拷贝 + 版本戳 + manifest + 70 条 `c()` 自检 + 图谱探测;叶子脚本(layout / apply-patches / apply-wiring / pkg_digest / ablation / evidence_archive)复用不重写 |
 | `install.sh` | 56 | 薄 wrapper:头部用法说明 + `exec python3 install.py`(装配逻辑零残留,自检门守) |
 | `scripts/atlas_workflow.py` | 354 | 执行层调度:plan / dispatch / verify / finish / status / run;任务账本 `.atlas/tasks`,`--round` / `--resolves` 透传 |
 | `scripts/pkg_digest.py` | — | 内容摘要算法单点(`ASSEMBLY_COVER_DIRS`,`scripts/pkg_digest.py:52`):装配版本门两侧共用,防双端漂移 |

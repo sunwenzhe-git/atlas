@@ -22,6 +22,9 @@
 goldens 放在 `proposals/RFC-20261103-04-installer-golden/`（proposals 不随包装配，
 不会把快照塞进每个项目的 `.atlas/tests/`）。包内容一变（装配集文件有增删改），
 基线摘要随之变化 ⇒ **常规发版后需重录**；该 harness 的窗口是移植期，不是长期 CI 门。
+
+2026-11-19（v0.4.0-beta.1）：执行层移除 Trellis 后统一重录；场景不再种 `.trellis`，
+也不再传已退役的 `--no-patch` / `--no-trellis`。
 """
 from __future__ import annotations
 
@@ -44,7 +47,7 @@ DEFAULT_GOLDEN = Path(__file__).resolve().parent
 BASE_PATH = "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 ISO_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})")
 ISO_BYTES_RE = re.compile(rb"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})")
-VER_RE = re.compile(r"v0\.2\.0-beta\.\d+")
+VER_RE = re.compile(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?")
 
 MODIFY_PATCH = """diff --git a/a.txt b/a.txt
 --- a/a.txt
@@ -110,9 +113,6 @@ class Ctx:
         self.git("add", *add)
         self.git("commit", "-qm", "init")
 
-    def seed_trellis(self) -> None:
-        (self.root / ".trellis").mkdir(parents=True, exist_ok=True)
-
 
 def normalize_text(text: str, ctx: Ctx) -> str:
     # 先长路径后短路径：root 在 tmp 内，pkg 可能是 tmp 下的副本。
@@ -167,8 +167,7 @@ def snapshot(ctx: Ctx) -> dict:
 # 每个场景在独立的临时项目里跑；断言退出码 = 冻结契约的一部分。
 
 def sc_fresh(ctx: Ctx) -> None:
-    """首次装配：空项目 + .trellis 骨架；默认 flags（skills/骨架/落戳/自检全走）。"""
-    ctx.seed_trellis()
+    """首次装配：空项目；默认 flags（skills/骨架/落戳/自检全走）。"""
     ctx.run(["--target", str(ctx.root), "--assets-root", "docs"], expect=0)
 
 
@@ -180,40 +179,21 @@ def sc_update(ctx: Ctx) -> None:
 
 def sc_dry_run_fresh(ctx: Ctx) -> None:
     """F54：全新 target 干跑零落盘（.atlas/ 与 atlas.config.yaml 都不出现）。"""
-    ctx.seed_trellis()
     ctx.run(["--force", "--dry-run", "--target", str(ctx.root)], expect=0)
-
-
-def sc_dry_run_trellis(ctx: Ctx) -> None:
-    """F54 补洞（2026-11-03）：干跑不得执行 `trellis init`（即使 trellis 可执行）。
-
-    stub 的 `trellis init` 会在 cwd 造 `.trellis/fake.txt` —— 旧路径会在干跑里真执行，
-    新路径（--dry-run 闸）只打印跳过提示。快照能直接看出 .trellis 是否被写。
-    """
-    bindir = ctx.tmp / "fakebin"
-    bindir.mkdir()
-    stub = bindir / "trellis"
-    stub.write_text("#!/bin/sh\nmkdir -p .trellis && echo fake > .trellis/fake.txt\n")
-    stub.chmod(0o755)
-    ctx.env["PATH"] = f"{bindir}:{ctx.env['PATH']}"
-    ctx.run(["--force", "--dry-run", "--target", str(ctx.root), "--assets-root", "docs"],
-            expect=0)
 
 
 def _seed_assembled_tracked(ctx: Ctx) -> None:
     (ctx.root / ".atlas" / "scripts").mkdir(parents=True)
     (ctx.root / ".atlas" / "VERSION").write_text("fixture-stamp\nwhen\nnowhere\n", encoding="utf-8")
-    ctx.seed_trellis()
-    (ctx.root / ".trellis" / "workflow.md").write_text("# w\n", encoding="utf-8")
     (ctx.root / "AGENTS.md").write_text("# agents\n", encoding="utf-8")
-    ctx.git_init(["AGENTS.md", ".trellis/workflow.md", ".atlas/VERSION"])
+    ctx.git_init(["AGENTS.md", ".atlas/VERSION"])
 
 
 def sc_guard_dirty(ctx: Ctx) -> None:
     """F34/F55：已跟踪触点脏 ⇒ 拒（exit 1）；--force 越过（exit 0）并整包刷新。"""
     _seed_assembled_tracked(ctx)
     (ctx.root / "AGENTS.md").write_text("# agents\n# dirty local edit\n", encoding="utf-8")
-    common = ["--update", "--target", str(ctx.root), "--no-skill", "--no-patch", "--no-wiring"]
+    common = ["--update", "--target", str(ctx.root), "--no-skill", "--no-wiring"]
     ctx.run(common, expect=1)
     ctx.run([*common, "--force"], expect=0)
 
@@ -222,17 +202,14 @@ def sc_guard_untracked(ctx: Ctx) -> None:
     """F55：.atlas/ 整目录未跟踪 ⇒ WARN 放行（exit 0），双摘要可见。"""
     (ctx.root / ".atlas" / "scripts").mkdir(parents=True)
     (ctx.root / ".atlas" / "VERSION").write_text("fixture-stamp\nwhen\nnowhere\n", encoding="utf-8")
-    ctx.seed_trellis()
-    (ctx.root / ".trellis" / "workflow.md").write_text("# w\n", encoding="utf-8")
     (ctx.root / "AGENTS.md").write_text("# agents\n", encoding="utf-8")
-    ctx.git_init(["AGENTS.md", ".trellis/workflow.md"])  # 有意不 add .atlas/
-    ctx.run(["--update", "--target", str(ctx.root), "--no-skill", "--no-patch", "--no-wiring"],
+    ctx.git_init(["AGENTS.md"])  # 有意不 add .atlas/
+    ctx.run(["--update", "--target", str(ctx.root), "--no-skill", "--no-wiring"],
             expect=0)
 
 
 def sc_ablation_active(ctx: Ctx) -> None:
     """P3-b：active 消融期间 --update 拒（exit 2）。"""
-    ctx.seed_trellis()
     (ctx.root / ".atlas").mkdir()
     (ctx.root / "a.txt").write_text("old\n", encoding="utf-8")
     ctx.git_init(["a.txt"])
@@ -244,13 +221,12 @@ def sc_ablation_active(ctx: Ctx) -> None:
         env=ctx.env, capture_output=True, text=True,
     )
     assert p.returncode == 0, p.stdout + p.stderr
-    ctx.run(["--update", "--target", str(ctx.root), "--no-skill", "--no-patch", "--no-wiring"],
+    ctx.run(["--update", "--target", str(ctx.root), "--no-skill", "--no-wiring"],
             expect=2)
 
 
 def sc_invalid_config(ctx: Ctx) -> None:
     """布局配置非法 ⇒ exit 2 且不写。"""
-    ctx.seed_trellis()
     (ctx.root / "atlas.config.yaml").write_text(
         "version: 1\nlayout:\n  assets_root: product\n  bogus: x\n", encoding="utf-8")
     ctx.run(["--target", str(ctx.root)], expect=2)
@@ -270,7 +246,6 @@ def sc_missing_layout(ctx: Ctx) -> None:
     ctx.pkg = pkg
     # 沿用当前安装器自身的解释器与文件名（bash→install.sh / python→install.py）
     ctx.installer = [ctx.installer[0], str(pkg / Path(ctx.installer[1]).name)]
-    ctx.seed_trellis()
     ctx.run(["--target", str(ctx.root), "--assets-root", "docs"], expect=1)
 
 
@@ -278,7 +253,6 @@ SCENARIOS = {
     "fresh": sc_fresh,
     "update": sc_update,
     "dry-run-fresh": sc_dry_run_fresh,
-    "dry-run-trellis": sc_dry_run_trellis,
     "guard-dirty": sc_guard_dirty,
     "guard-untracked": sc_guard_untracked,
     "ablation-active": sc_ablation_active,

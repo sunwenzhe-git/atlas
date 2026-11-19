@@ -17,7 +17,7 @@
   `docs/guide/changelog.md`、`2026-11-17/`、`2026-11-18/`、`.zcode/`、`duty-review/`。
 - `docs/guide/comparison.md`：Trellis 作为**对比对象**保留。
 - `docs/guide/legacy-adoption.md`：Trellis 作为**迁移来源**保留。
-- `proposals/RFC-20261103-04-installer-golden/`：历史 golden 快照不改；
+- `proposals/RFC-20261103-04-installer-golden/`：历史 golden 快照在本任务内不改；v0.4.0-beta.1 发版批次按新装配行为统一重录（见 §8）；
   `install.py` docstring 不再声称它是当前验收口令。
 
 **非目标**：不改业务语义；不新增门禁；不做 git commit/push。
@@ -85,7 +85,7 @@ templates/adapters/validators/patches/_support/extensions`），`.atlas/tasks`�
 ### 4.1 `install.py`
 
 1. docstring：删 `--no-trellis`，步骤 5（workflow 补丁）删除，步骤 6 只保留 AGENTS.md /
-   extractor 配置 / `.gitignore` / pi 扩展接线；golden 说明改为"历史快照"。
+   extractor 配置 / `.gitignore` / pi 扩展接线；golden 说明改为"历史快照"，v0.4.0-beta.1 由发版批次统一重录。
 2. 删 `NO_TRELLIS` 全局与 `--no-trellis` / `--no-patch` 参数；`--profile` 宏：
    `audit = --no-wiring`、`adopt = --no-wiring`、`strict = 无附加旗标`。
 3. 删 L407-424（Trellis 检测 / 自动 `trellis init` / 缺 `.trellis` 即 die）。
@@ -176,8 +176,9 @@ templates/adapters/validators/patches/_support/extensions`），`.atlas/tasks`�
   不再回读 `.trellis/tasks`（彻底移除口径）。迁移在 `legacy-adoption.md` 给出手工命令。
 - **structure 刷新的触发时机**：`after_archive` 钩子随 Trellis 一起消失，改为显式
   `refresh_structure.py --chain`（收口后 / CI），文档明确写出。
-- **golden 快照**：`proposals/RFC-20261103-04-installer-golden/` 与新版输出不再逐字节一致，
-  保留为历史基线；`install.py` 不再引用它为验收口令。
+- **golden 快照**：`proposals/RFC-20261103-04-installer-golden/` 与旧版输出不再逐字节一致，
+  本任务内保留为历史基线；v0.4.0-beta.1 发版批次已按无 Trellis 的新装配行为统一重录，
+  harness 场景移除 `.trellis` 种子与已退役旗标，`--check` 8/8 通过；`install.py` 仍不引用它为验收口令。
 - **solution 成员任务**：由调用 Trellis `task.py` 改为 Atlas 原生写卡，`find_task` /
   `solution.md` / `implement.jsonl|check.jsonl` 语义保持，`shared/solution.md` 同步。
 
