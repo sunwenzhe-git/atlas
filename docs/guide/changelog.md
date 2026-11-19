@@ -4,6 +4,16 @@
 
 ---
 
+## [Unreleased]
+
+### ⚡️ 架构减负与执行层演进：退役外部 AST 图谱，确立轻量语义透镜 (D202)
+
+* 彻底退役基于 cgc / FalkorDB 的外部代码图谱隔离层，清理沉重外部图数据库容器依赖与死代码；
+* 确立业务域内（`structure/current/<domain>/cognition.fras`）与全局跨切面（`structure/global/cognition.fras`）两级轻量语义透镜，为 Atlas 自建执行层提供穿透调用的拓扑 (R) 与防改崩硬约束 (S)；
+* `impact_report.py` 支持单跳反向依赖提取进独立 `aoci_candidates` 字段，无语义索引时诚实返回 `status: not_ready` 且预测集退化为任务卡声明集；
+* `validate_stack_profile.py` 对存量声明了 `graph` 段的项目输出显式退役 `WARN` 提示（不静默吞掉）；
+* 全套测试链、地图锚点保活门及装配四表面对齐。
+
 ## [v0.3.0-beta.5] - 2026-11-19
 
 ### 🛡 Pi 宿主扩展：turn_end 门禁告警按失败签名去重
