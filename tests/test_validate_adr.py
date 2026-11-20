@@ -9,11 +9,14 @@
   4. 状态非法（如 draft）⇒ WARN；
   5. 关键章节缺失（如缺 Context/Decision）⇒ WARN；
   6. superseded 状态指向不存在后继 ⇒ WARN；
-  7. accepted 状态决策内容为空 ⇒ WARN。
+  7. accepted 状态决策内容为空 ⇒ WARN；
+  8. rejected 状态（RFC-20261120-01）：Decision 非空 ⇒ PASS，空占位 ⇒ WARN；
+  9. 模板状态枚举 ⇔ 校验器 VALID_STATUSES 双源一致。
 """
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
@@ -130,6 +133,34 @@ def test_validate_adr_warn_accepted_empty_decision(tmp_path: Path):
     res = MOD.validate_adr(tmp_path)
     assert res.status == "WARN"
     assert any("决策章节内容为空" in c["detail"] for c in res.checks)
+
+
+def test_validate_adr_rejected_with_reason_passes(tmp_path: Path):
+    """RFC-20261120-01：rejected 是合法终态，Decision 写明理由即 PASS。"""
+    rejected = VALID_ADR_SAMPLE.replace('status: "accepted"', 'status: "rejected"')
+    _make_adr_file(tmp_path, "0001-ffmpeg-audio.md", rejected)
+    res = MOD.validate_adr(tmp_path)
+    assert res.status == "PASS", res.checks
+    assert not any("非法" in c["detail"] for c in res.checks)
+
+
+def test_validate_adr_rejected_empty_decision_warns(tmp_path: Path):
+    """rejected 与 accepted 同口径：理由留空不得静默通过。"""
+    bad = VALID_ADR_SAMPLE.replace('status: "accepted"', 'status: "rejected"').replace(
+        '统一在服务端通过 ffmpeg 异步合成，导出 mp3 与 srt 文本。', '[必填：方案结论]')
+    _make_adr_file(tmp_path, "0001-ffmpeg-audio.md", bad)
+    res = MOD.validate_adr(tmp_path)
+    assert res.status == "WARN"
+    assert any("已 rejected 的 ADR 决策章节内容为空" in c["detail"] for c in res.checks)
+
+
+def test_adr_template_status_enum_synced():
+    """双源一致：模板声明的状态枚举必须与校验器 VALID_STATUSES 完全相同（防改一边漏一边）。"""
+    template = (PKG_ROOT / "templates" / "adr" / "template.md").read_text(encoding="utf-8")
+    m = re.search(r'status:\s*"\[必填：([^\]]+)\]"', template)
+    assert m, "模板缺少 status 枚举声明"
+    declared = {s.strip() for s in m.group(1).split("|")}
+    assert declared == MOD.VALID_STATUSES, (declared, MOD.VALID_STATUSES)
 
 
 def test_validate_adr_warn_cycle_detected(tmp_path: Path):

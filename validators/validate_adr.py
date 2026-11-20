@@ -10,10 +10,11 @@
   - 无 `资产根/adr/` 目录或目录为空 ⇒ SKIP（尚未创建任何 ADR，非失败）。
   - 有 ADR 文件：
       * 编号唯一：无同号异名冲突（0001-foo ⇔ 0001-bar）。
-      * Frontmatter 合法：status 必须属于 {proposed, accepted, superseded, deprecated}。
+      * Frontmatter 合法：status 必须属于 {proposed, accepted, rejected, superseded, deprecated}；
+        accepted / rejected 的 Decision 章节不得为空或残留占位符（rejected 写「为什么不引入」）。
       * 演进链闭环：status 为 superseded 时必须声明 superseded_by 且指向有效 ADR。
       * 章节完整：具备 Context、Decision、Consequences 三大核心章节。
-      * 内容非空：accepted 状态的 ADR 其 Decision 章节不得为空。
+      * 内容非空：accepted / rejected 状态的 ADR 其 Decision 章节不得为空。
   - 缺陷以 WARN 呈现（初期软性巡检，不阻断正常构建）；严重损坏时 FAIL。
 
 显式盲区（不查）：
@@ -36,7 +37,9 @@ if str(Path(__file__).resolve().parents[1]) not in sys.path:
 from _support.layout import LayoutError, load_layout  # noqa: E402
 
 ADR_FILENAME_PATTERN = re.compile(r"^(\d{4})-[a-z0-9_-]+\.md$", re.IGNORECASE)
-VALID_STATUSES = {"proposed", "accepted", "superseded", "deprecated"}
+VALID_STATUSES = {"proposed", "accepted", "rejected", "superseded", "deprecated"}
+# 需要 Decision 正文非空的终态：accepted = 为什么做；rejected = 为什么不做（RFC-20261120-01 §3.1）。
+DECISION_REQUIRED_STATUSES = {"accepted", "rejected"}
 
 
 class Result:
@@ -173,13 +176,14 @@ def validate_adr(root: Path) -> Result:
         if missing_sections:
             res.add(f"sections:{f.name}", "WARN", f"缺失必要章节：{', '.join(missing_sections)}")
         else:
-            # 若已 Accepted，检查 Decision 正文是否非空占位
-            if status == "accepted":
+            # 若已 Accepted / Rejected，检查 Decision 正文是否非空占位
+            if status in DECISION_REQUIRED_STATUSES:
                 sec_text = extract_section(content, "Decision|裁决|决策") or ""
                 # 过滤注释与占位符
                 cleaned = re.sub(r"\[必填.*?\]", "", sec_text).strip()
                 if not cleaned:
-                    res.add(f"decision_content:{f.name}", "WARN", "已 Accepted 的 ADR 决策章节内容为空或残留占位符")
+                    res.add(f"decision_content:{f.name}", "WARN",
+                            f"已 {status} 的 ADR 决策章节内容为空或残留占位符")
                 else:
                     res.add(f"content:{f.name}", "PASS", "章节完整且裁决内容充实")
             else:

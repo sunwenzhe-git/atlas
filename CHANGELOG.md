@@ -4,6 +4,16 @@
 
 ---
 
+## [Unreleased]
+
+### 🧭 偏差处置与 ADR 否决态（`RFC-20261120-01`）
+
+* `validate_adr` 新增 `rejected` 合法状态：`accepted` / `rejected` 的 Decision 必须非空（rejected 写「为什么不引入」）；ADR 模板同步枚举，并加双源一致性钉；
+* `apply` 契约新增 §5.3「偏差三岔口」：实现期偏差按 `spec_gap` / `spec_amend` / `out_of_scope` 归因，只有 `spec_amend` 回写上游；
+* 收口清单新增步骤 12（偏差三岔口对账）与触发行，编号口径改为 1–5、7–12；`atlas_check` 结构漂移 WARN 追加处置指引。
+
+---
+
 ## [v0.4.0-beta.3] - 2026-11-20
 
 ### 🧭 只读上下文预览

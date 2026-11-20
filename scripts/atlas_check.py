@@ -620,7 +620,8 @@ def check_drift(root: Path, rows: Row) -> None:
         parts.append(f"{x.get('kind', '?')} +{add} -{rem}")
     more = "" if len(drifts) <= 3 else f"（共 {len(drifts)} 处）"
     rows.add("结构漂移", "WARN",
-             f"最近一次事实刷新检测到未登记键级变更（.adapter-out/_drift.json）：{'；'.join(parts)}{more}",
+             f"最近一次事实刷新检测到未登记键级变更（.adapter-out/_drift.json）：{'；'.join(parts)}{more}；"
+             "请按偏差三岔口在收口逐条处置（apply/reference.md §5.3）",
              duration_ms=_elapsed_ms(started))
 
 

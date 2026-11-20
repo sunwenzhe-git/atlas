@@ -21,6 +21,7 @@
 | 实现类任务（feature / refactor，非 bug fix） | **4（B 档）** → 1 → 7（语义触发行，不自动派生；「实现类任务」= 落业务代码的 feature / refactor；bug fix 走上一行，纯文档 / 纯契约改动不算） |
 | 改动触及核心业务链路 / 权限 / CI / 依赖 / 契约 | **3**（变更风险定档与人工审批）→ 1 |
 | 域 / 里程碑收口且出现 ≥2 次同类纠偏（或用户点名复盘） | **11**（harness 复盘，按需） |
+| `atlas_check` 的 `结构漂移` 行点名新增 / 删除键，或 `validate_testids` 报多写，或 `validate_ac_alignment` 报 AC 偏差 | **12**（偏差三岔口对账，2026-11-20 补，`RFC-20261120-01`）→ 1 |
 | ADR 演进链出现 `adr_cycle_detected` WARN（validate_adr stdout 自带 F36 修复指令） | 1（含 ADR 终审：`superseded_by` 指向**移出环外**的有效编号或撤销现行非终态取代行；validate_adr 复跑复绿——WARN 是终审信号不是失败，`shared/gates.md` §2.1） |
 
 | 任一工作单元收尾 | 1（至少） |
@@ -35,7 +36,7 @@
 
 ## 2. 步骤
 
-> **编号口径（硬）**：现行步骤 = **1–5、7–11**；**步骤 6 随「台账 / vault / 知识库」子系统于 2026-10-14 退役而空，号码不回收**（与 `rings/e2e/reference.md` §5.3 用例 ID「删除后不复用」同源纪律）。引用某步必须**指名该步现有内容**——引用一个空号 = 死指针，实例：`shared/gates.md` 曾把「契约语义自洽归人」指向当时尚为空的「步骤 4」。
+> **编号口径（硬）**：现行步骤 = **1–5、7–12**；**步骤 6 随「台账 / vault / 知识库」子系统于 2026-10-14 退役而空，号码不回收**（与 `rings/e2e/reference.md` §5.3 用例 ID「删除后不复用」同源纪律）。引用某步必须**指名该步现有内容**——引用一个空号 = 死指针，实例：`shared/gates.md` 曾把「契约语义自洽归人」指向当时尚为空的「步骤 4」。
 
 ### 步骤 1 — 门自检
 
@@ -132,7 +133,7 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
 ### 步骤 10 — 实现代码独立审查（实例 ⑤，2026-09-29 接入）
 
 - **何时**：域实现落码后、域收口前（不依赖真栈，E2E 真跑前即可跑）。
-- **前置**：`product/stack-profile.yaml` 的 `impl_review.llm` 非空（未配 ⇒ 本步 `SKIP` + 原因，**不是通过**；契约依据 `shared/independent-review.md` §10）。
+- **前置**：`product/stack-profile.yaml` 的 `impl_review` 有可执行 CLI（`cli` + `llm` 非空）⇒ CLI 执行器；否则（段未配置 / `llm` 为 null / 显式 `executor: session`）⇒ **会话执行器**（issue #68；契约依据 `shared/independent-review.md` §10）：`atlas review` 先产 `review-request.md` 派工包并以「待审」退出（**不是通过**），当前会话派 fresh-context 子代理产出 `<报告目录>/cli.json` 后复跑。
 - **动作六步**：
   1. 组 background（Markdown 文件：需求卡摘要 + 受影响域 AC + 相关用例断言 + 审查焦点三问（`shared/independent-review.md` §10.4，只引路径不复制正文）；**不喂整仓**）；该域若有按域审查指引（`shared/independent-review.md` §10.5 的 `product/reviews/REVIEW-<域>.md`）⇒ **同样只给指针**；缺该文件 = 合法降级，按 §10.4 三问审即可，不因此报红；
   2. `<cli> review --preview --from main --to <分支>`，记下 **Will review N**（`.md` 等不支持扩展名会被 CLI 排除 ⇒ N 用 preview 数，**不得**用 git diff 全量计数）；
@@ -141,6 +142,7 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
   5. `python3 .atlas/scripts/validate_review_report.py --dir <报告目录> --scope-manifest <报告目录>/scope-manifest.json`（报告形态 + 应审/实审对账 + v4 内容复算门，2026-10-06 起 / v4 2026-11-03；**只对本轮新产出报告带该参数**，旧轮复验不带 ⇒ WARN 不追溯判红；FAIL ⇒ 修复产出侧后重出，不得带病收口）。
   6. `python3 .atlas/scripts/review_closure.py --dir <报告目录> [--emit-skeleton <file>]`（D5 跨轮闭环 observer：prior open Critical/Major 未 carried/resolves ⇒ WARN；关闭按该指纹最后一次证据判，中间轮关过不必重贴；跨轮必须同 `--unit`，否则孤儿文件 WARN；v4 跨轮内容漂移（prior 实审文件变了且未纳入最新实审集）⇒ `scope_drift` WARN，`review_scope_drift` 签字齐全 ⇒ `scope_drift_accepted` 不告警；<2 轮 SKIP；不阻断；不替代步骤 5。待填声明用 `--emit-skeleton` 出骨架，填完经转换器 `--resolves` 落盘）。
 - **一键入口（2026-11-03，`RFC-20261103-05`）**：`atlas review --unit <需求ID> --from main --to <分支>` 按上述六步自动走全（`--dry-run` 预览命令与 N）；手工分步仍有效，判据以本步骤为准。
+- **会话执行器替补（2026-11-20，issue #68）**：无 CLI 时第 2/3 步由派工包替代——`review-request.md` 给 fresh-context 子代理指针清单与 `cli.json` 骨架（含 `manifest.coverage.selected[]`，缺失须显式 `--expected-files`）；子代理只审不改，产物落 `<报告目录>/cli.json` 后复跑 `atlas review`/`atlas workflow verify`，第 4–6 步照旧。**待审 ≠ 通过**，`finish` 仍只认 `review.json` PASS。
 - **报告落点**：`product/reviews/<日期>-impl-review-<范围>/`（`cli.json` 留档为输入侧证据）。
 - **门禁**：有 `Critical` ⇒ 域不收口，修复回流 执行层 Execute、改完重跑（round +1）；`M < N` ⇒ 查静默跳过；finding 判明「AC / 断言本身错」⇒ 回退环改判 `prd` / `e2e` 入 backfill 队列。
 
@@ -167,6 +169,15 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
 - **硬边界**：
   - 不做业务代码实现期规范复盘（`BP` 边界，业务代码规范归项目自身 linter/typecheck 机器门；`shared/global-rules.md` §18 的实现期纪律与步骤 4 B 档的测试反模式证据不属于此复盘）；
   - 所有结论必须附带具体文件、会话或提交的**证据链**（`BQ` 同源）。
+
+### 步骤 12 — 偏差三岔口对账（2026-11-20 补，`RFC-20261120-01`）
+
+- **何时**：任一工作单元收口前；本轮出现以下任一信号时必须走（无信号不空跑）：
+  1. `atlas_check` 的 `结构漂移` 行点名了新增 / 删除键；
+  2. `validate_testids` 报「多写」（实然有、应然无）；
+  3. `validate_ac_alignment` 报 AC 偏差 / 零挂载。
+- **动作**：逐条按 `apply/reference.md` §5.3 归因（`spec_gap` / `spec_amend` / `out_of_scope`），把结论写进本轮报告或回填登记。**不得只写「已知悉」**。
+- **边界**：语义判断，**无机器门**（机器侧只提供信号，`结构漂移` 门本身不判该不该加）。
 
 ## Guidance
 

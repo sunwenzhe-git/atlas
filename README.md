@@ -490,6 +490,7 @@ Atlas 坚持**变异证明（Mutation Proving / M 系列钉子测试）**原则�
    * **步骤 3 风险定档**：低/中/高三档 + **Always-Human 路径**（`auth / permission / routing / CI / package deps / shared contracts` 一律禁止 Agent 代勾）；
    * **步骤 4 缺陷修复验证 7 检查点**：含「先有一条会失败的测试再修」（Red First）与「关闭的证据在哪」；
    * **步骤 11 事故追问**：每个逃逸缺陷必须回答「哪一层本该接住它」，并落成一条 E2E 回归用例或一条 M 系列变异钉——事故就此变成评测集。
+   * **步骤 12 偏差三岔口**：`结构漂移` 点名的新增键、`testid` 多写、AC 对齐偏差，收口时逐条归因为 `spec_gap` / `spec_amend` / `out_of_scope`（`apply/reference.md` §5.3）；只有 `spec_amend` 回写上游，其余走执行层任务，防止「实现怎么写、规格就怎么改」。
 
 ---
 

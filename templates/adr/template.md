@@ -3,7 +3,7 @@ doc: adr
 id: "[必填：4位数字编号，如 0001]"
 title: "[必填：架构决策标题]"
 date: "[必填：YYYY-MM-DD]"
-status: "[必填：proposed | accepted | superseded | deprecated]"
+status: "[必填：proposed | accepted | rejected | superseded | deprecated]"
 superseded_by: ""
 tags: []
 ---
@@ -11,6 +11,8 @@ tags: []
 # ADR-[id]: [title]
 
 > 决策落盘即为生效契约。若未来架构演进推翻本决策，请创建新编号 ADR 并在本篇标记 `status: superseded` 与 `superseded_by: "NNNN"`，禁止直接涂改历史事实。
+>
+> 若裁决是「不引入」：用 `status: rejected`，在「最终架构裁决」写明**为什么不引入**与**什么条件下重议**（留档供后人查，避免同一想法反复讨论）。
 
 ## 一、背景与问题上下文 (Context)
 [必填：遇到了什么具体的工程/架构问题？现存方案有什么局限？为什么需要在此处做出裁决？]
