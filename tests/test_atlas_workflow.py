@@ -315,3 +315,50 @@ def test_finish_scope_mismatch_blocks_stale_review(tmp_path: Path) -> None:
     subprocess.run(["git", "add", "app.txt"], cwd=root, check=True)
     ok, why = _scope_matches(root, data)
     assert not ok and "已变化" in why
+
+
+def write_spec(root: Path, rel: str, globs: list[str], body: str) -> None:
+    p = root / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fm = "---\npaths:\n" + "".join(f"  - '{g}'\n" for g in globs) + "---\n\n"
+    p.write_text(fm + body, encoding="utf-8")
+
+
+def test_context_is_read_only_and_scoped(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    write_spec(root, ".atlas/spec/structure/tour.md", ["**"], "# 导航")
+    write_spec(root, ".atlas/spec/structure/domains/web.md", ["apps/web/**"], "# 前端规范")
+    write_spec(root, ".atlas/spec/structure/domains/api.md", ["apps/api/**"], "# 后端规范")
+
+    p = run(root, "context", "--paths", "apps/web/a.ts")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "web.md" in p.stdout and "前端规范" in p.stdout
+    assert "api.md" not in p.stdout
+    assert not (root / ".atlas" / "tasks").exists(), "context 不得建任务目录"
+    assert not (root / ".atlas" / "tasks" / "T-01" / "dispatch.md").exists()
+
+
+def test_context_explicit_scope_has_no_tour_fallback(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    write_spec(root, ".atlas/spec/structure/tour.md", ["**"], "# 导航")
+    p = run(root, "context", "--paths", "apps/web/a.ts")
+    assert p.returncode == 0
+    assert "tour.md" not in p.stdout and "导航" not in p.stdout
+
+
+def test_context_unit_matches_dispatch(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    write_spec(root, ".atlas/spec/structure/domains/web.md", ["apps/web/**"], "# 前端规范")
+    write_spec(root, ".atlas/spec/structure/domains/api.md", ["apps/api/**"], "# 后端规范")
+    run(root, "plan", "--unit", "T-02", "--requirement", "请落实 AC-HOME-001")
+    run(root, "dispatch", "--unit", "T-02", "--paths", "apps/web/a.ts")
+
+    p = run(root, "context", "--unit", "T-02")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "web.md" in p.stdout and "api.md" not in p.stdout
+
+
+def test_context_requires_paths_or_unit(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    p = run(root, "context")
+    assert p.returncode == 2 and "至少提供" in p.stderr

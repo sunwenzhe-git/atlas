@@ -38,6 +38,7 @@ from _support.workflow_dispatch import (  # noqa: E402
 from _support.workflow_finish import (  # noqa: E402
     finish_task, check_task_review_passed, FinishError
 )
+from _support.workflow_context import select_specs, render_specs  # noqa: E402
 
 
 def die(msg: str, code: int = 2) -> int:
@@ -174,6 +175,40 @@ def cmd_dispatch(args: argparse.Namespace, root: Path) -> int:
         print(f"atlas workflow dispatch @ {target_task['id']} [in_progress]")
         print(f"  派工单就绪：{disp_file.relative_to(root)}")
         print(f"  请依据派工单实现代码，完成后暂存并运行 `atlas workflow verify --unit {target_task['id']}`")
+    return 0
+
+
+def cmd_context(args: argparse.Namespace, root: Path) -> int:
+    """只读查询：按文件路径打印命中的结构规范，不写盘、不改状态。"""
+    scope = [str(p) for p in (args.paths or []) if str(p).strip()]
+    domains: list[str] = []
+
+    if not scope:
+        if not args.unit:
+            return die("至少提供 --paths 或 --unit")
+        tasks_dir = _read_tasks_root(root)
+        task = next((t for t in load_tasks(tasks_dir) if t["id"] == args.unit), None)
+        if not task:
+            return die(f"未找到任务卡 {args.unit}")
+        if isinstance(task.get("paths"), list):
+            scope = [str(p) for p in task["paths"] if str(p).strip()]
+        raw_domains = task.get("affected_domains")
+        if isinstance(raw_domains, str):
+            raw_domains = [raw_domains]
+        domains = [str(d) for d in (raw_domains or []) if str(d).strip()]
+
+    specs = select_specs(root, paths=scope or None, domains=domains)
+
+    if args.json:
+        print(json.dumps({
+            "paths": scope,
+            "specs": [{"rel": s["rel"], "paths": s["paths"]} for s in specs],
+        }, ensure_ascii=False, indent=2))
+        return 0
+
+    print("只读预览：未写盘、未改状态；正式开工请用 `atlas workflow dispatch`。")
+    print()
+    print(render_specs(specs, scope_paths=scope, domains=domains))
     return 0
 
 
@@ -357,7 +392,12 @@ def main() -> int:
     p_disp.add_argument("--paths", nargs="+", default=None,
                         help="改动路径/目录（按 paths: 索引只注入命中的规范；缺省读任务卡）")
 
-    # verify
+    # context
+    p_ctx = sub.add_parser("context", parents=[common],
+                           help="只读查询：按文件路径查看命中的结构规范（不写盘、不改状态）")
+    p_ctx.add_argument("--paths", nargs="+", default=None, help="改动文件/目录（可多个）")
+    p_ctx.add_argument("--unit", help="从任务卡取改动路径/受影响域（无 --paths 时生效）")
+
     p_ver = sub.add_parser("verify", help="对当前暂存区运行独立审查与测试并轨", parents=[common])
     p_ver.add_argument("--unit", required=True, help="被检验的任务标识")
     p_ver.add_argument("--staged", action="store_true", default=True, help="审查暂存区（默认开启）")
@@ -391,6 +431,7 @@ def main() -> int:
     dispatch_map = {
         "plan": cmd_plan,
         "dispatch": cmd_dispatch,
+        "context": cmd_context,
         "verify": cmd_verify,
         "finish": cmd_finish,
         "status": cmd_status,

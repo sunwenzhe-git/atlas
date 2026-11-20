@@ -263,9 +263,15 @@ def _hit(path: str, glob: str) -> bool:
     return False
 
 
-def _specificity(spec: dict) -> int:
-    """最长非兜底 glob 越具体，越优先。"""
-    concrete = [len(g) for g in spec["paths"] if not _is_wildcard(g)]
+def _specificity(spec: dict, scopes: list[str] | None = None) -> int:
+    """命中的最长非兜底 glob 越具体，越优先。
+
+    限定只计**实际命中**的 glob：一份通用指南列了很多目录时，不得凭一条更长的
+    无关 glob 挤掉真正对口的领域约定。
+    """
+    concrete = [len(_norm_glob(g)) for g in spec["paths"]
+                if not _is_wildcard(g)
+                and (scopes is None or any(_hit(p, g) for p in scopes))]
     return max(concrete, default=0)
 
 
@@ -310,7 +316,7 @@ def select_specs(root: Path, paths: list[str] | None = None,
         hits = [s for s in specs
                 if not _is_wildcard_only(s)
                 and any(_hit(p, g) for p in scopes for g in s["paths"])]
-        hits.sort(key=lambda s: (-_specificity(s), s["rel"]))
+        hits.sort(key=lambda s: (-_specificity(s, scopes), s["rel"]))
         structure = [s for s in hits if not _is_conventions(s)]
         conventions = [s for s in hits if _is_conventions(s)]
         if structure:

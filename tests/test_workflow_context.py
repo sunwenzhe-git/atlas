@@ -79,6 +79,19 @@ def test_no_paths_spec_never_loaded(tmp_path: Path) -> None:
     assert ".atlas/spec/structure/global/routes.md" not in rels
 
 
+def test_wide_guide_does_not_outrank_scoped_convention(tmp_path: Path) -> None:
+    """通用指南列了更多（更长的）无关 glob，也不得挤掉对口的领域约定。"""
+    make_specs(tmp_path)
+    write_spec(tmp_path, ".atlas/spec/conventions/frontend/index.md", ["apps/web/**"],
+               "# 前端开发规范")
+    write_spec(tmp_path, ".atlas/spec/conventions/guides/reuse.md",
+               ["apps/web/**", "apps/api/**", "services/billing-api/**", "services/search-api/**"],
+               "# 通用复用指南")
+    rels = [s["rel"] for s in select_specs(tmp_path, paths=["apps/web/src/page.tsx"])]
+    assert ".atlas/spec/conventions/frontend/index.md" in rels
+    assert ".atlas/spec/conventions/guides/reuse.md" not in rels
+
+
 def test_render_is_minimal_and_explicit(tmp_path: Path) -> None:
     make_specs(tmp_path)
     picked = select_specs(tmp_path, paths=["apps/web/a.ts"])

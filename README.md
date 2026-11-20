@@ -122,7 +122,7 @@ NBER（美国国家经济研究局）2026 年工作论文 35275 追踪了超过 
 1. **项目级（应然资产层）**：定义“这个系统是什么、长什么样、怎么算做对”。包含**结构事实**（适配器 AST / 正则逆向抽取；图谱为可选文件枚举增强）、**项目级 PRD**（业务规则单源）、**E2E 验收用例**（真实靶场可证伪用例），以及跨需求生效的**架构决策记录**（`<资产根>/adr/NNNN-<slug>.md`，默认 `product/adr/...`）。
 2. **需求级（小需求执行层）**：定义“这次改动改什么、怎么写代码”。由内置的 **`atlas workflow`** 执行层承担，Atlas 本身**不侵入业务代码实现**。
 3. **`apply` 单向衔接**：需求在进入实现前，先由 Agent 唤起 `atlas-apply <需求ID>` 技能将需求增量合并入项目级应然资产，坚决杜绝“先写代码、事后补文档”的失控循环。
-4. **执行层命令**：`atlas workflow plan --unit <ID> [--paths <glob...>]`（建卡）→ `atlas workflow dispatch [--paths <file...>]`（出派工单 + 按 `paths:` 只注入命中的结构事实与约定规范）→ `atlas workflow verify --unit <ID>`（独立审查）→ `atlas workflow finish --unit <ID>`（收口）；`atlas workflow status` / `atlas workflow run` 负责查账与串联。任务账本落 `.atlas/tasks/`。
+4. **执行层命令**：`atlas workflow plan --unit <ID> [--paths <glob...>]`（建卡）→ `atlas workflow dispatch [--paths <file...>]`（出派工单 + 按 `paths:` 只注入命中的结构事实与约定规范）→ `atlas workflow verify --unit <ID>`（独立审查）→ `atlas workflow finish --unit <ID>`（收口）；`atlas workflow status` / `atlas workflow run` 负责查账与串联；中途范围变化时用只读的 `atlas workflow context --paths <file...>` 预览命中规范（不写盘、不改状态）。任务账本落 `.atlas/tasks/`。
 
 ### 2. 核心武器库：三环资产体系（Rings）
 
