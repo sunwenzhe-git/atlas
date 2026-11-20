@@ -112,13 +112,51 @@
   #tourbar button{font:inherit;font-size:13px;line-height:1;padding:6px 9px;border-radius:8px;cursor:pointer;
     border:1px solid var(--border);background:var(--card);color:var(--foreground)}
   #tourbar button:hover{border-color:var(--primary);color:var(--primary)}
+  /* ---- 讲述沉浸化:页头操作/图例/页脚淡化,hover 恢复(借 archify Presentation Stage) ---- */
+  body.touring .actions,body.touring .legend,body.touring footer{opacity:.18;transition:opacity .3s}
+  body.touring .actions:hover,body.touring .legend:hover{opacity:1}
+  /* ---- 搜索命中子图节点的 pulse 高亮 ---- */
+  .node.pulse rect.box{stroke-width:2.4;animation:pulseBox 1.6s ease-out 2}
+  @keyframes pulseBox{0%{filter:drop-shadow(0 0 0 rgba(79,70,229,0))}
+    35%{filter:drop-shadow(0 0 11px rgba(79,70,229,.55))}100%{filter:drop-shadow(0 0 0 rgba(79,70,229,0))}}
+  @media (prefers-reduced-motion:reduce){.node.pulse rect.box{animation:none}}
+  /* ---- 节点搜索(借 archify Node Finder) ---- */
+  kbd{font-family:ui-monospace,Menlo,monospace;font-size:10px;border:1px solid var(--border);border-radius:4px;
+    padding:0 5px;background:var(--card);color:var(--muted-foreground)}
+  #finder,#helpbox{position:fixed;inset:0;z-index:70;display:none;background:rgba(22,24,29,.28)}
+  #finder.open,#helpbox.open{display:flex}
+  #finder{align-items:flex-start;justify-content:center;padding-top:12vh}
+  #finder .panel{width:min(92vw,560px);background:var(--popover);border:1px solid var(--border);border-radius:14px;
+    box-shadow:0 24px 64px rgba(10,14,20,.28);overflow:hidden;display:flex;flex-direction:column}
+  #finder input{appearance:none;border:0;outline:0;background:transparent;color:var(--foreground);
+    font:inherit;font-size:15px;padding:14px 16px;border-bottom:1px solid var(--border)}
+  #finder input::placeholder{color:var(--muted-foreground)}
+  #finder .list{max-height:46vh;overflow:auto;padding:6px}
+  #finder .item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:9px;cursor:pointer;font-size:13.5px}
+  #finder .item.active{background:color-mix(in srgb,var(--primary) 9%,transparent)}
+  #finder .item .dot{width:9px;height:9px;border-radius:3px;flex:none}
+  #finder .item em{font-style:normal;color:var(--muted-foreground);font-size:12px;margin-left:6px}
+  #finder .item .where{margin-left:auto;font-size:11px;color:var(--muted-foreground);white-space:nowrap}
+  #finder .empty{padding:18px 16px;font-size:13px;color:var(--muted-foreground);text-align:center}
+  #finder .foot{border-top:1px solid var(--border);padding:7px 14px;font-size:11px;color:var(--muted-foreground);display:flex;gap:14px}
+  /* ---- 操作小抄(借 archify Diagram Guide,只手动唤出) ---- */
+  #helpbox{align-items:center;justify-content:center}
+  #helpbox .panel{width:min(92vw,440px);background:var(--popover);border:1px solid var(--border);border-radius:14px;
+    box-shadow:0 24px 64px rgba(10,14,20,.28);padding:16px 18px}
+  #helpbox h4{margin:0 0 10px;font-size:14px}
+  #helpbox .row{display:flex;align-items:baseline;gap:10px;padding:5px 0;font-size:13px}
+  #helpbox .row .k{flex:none;font-weight:600}
+  #helpbox .row .d{color:var(--muted-foreground)}
+  #helpbox .row .kbtns{margin-left:auto;white-space:nowrap;display:flex;gap:4px}
 </style>
 </head>
 <body>
 <div class="page"><header>
-  <div class="brand"><span class="logo"></span><span class="bt">Atlas 实现地图<small>锚定 v0.4.0-beta.2 · 图是导航面,细节以 docs/map/ 与代码为准</small></span></div>
+  <div class="brand"><span class="logo"></span><span class="bt">Atlas 实现地图<small>锚定 v0.4.0-beta.3 · 图是导航面,细节以 docs/map/ 与代码为准</small></span></div>
   <div class="actions">
+    <button id="finderBtn" title="搜索节点(⌘K / Ctrl+K)">⌘K 搜索</button>
     <button id="tourBtn" title="十步主数据流动线:←/→/空格步进,Esc 退出,可点高亮节点下钻">▶ 讲述模式</button>
+    <button id="helpBtn" title="操作小抄(?)">?</button>
   </div>
 </header>
 <div class="crumb" id="crumb"></div></div>
@@ -126,6 +164,22 @@
 <div id="fitbadge" style="position:fixed;right:10px;bottom:8px;font-size:10px;color:var(--muted-foreground);opacity:.55;z-index:40;pointer-events:none"></div>
 
 <div id="tip"></div>
+
+<div id="finder"><div class="panel">
+  <input id="finput" placeholder="搜节点:名称 / 说明 / 子系统…(Esc 关闭)" autocomplete="off" spellcheck="false">
+  <div class="list" id="flist"></div>
+  <div class="foot"><span><kbd>↑</kbd><kbd>↓</kbd> 选择</span><span><kbd>↩</kbd> 打开</span><span><kbd>esc</kbd> 关闭</span></div>
+</div></div>
+
+<div id="helpbox"><div class="panel">
+  <h4>操作小抄</h4>
+  <div class="row"><span class="k">点节点</span><span class="d">打开该子系统的设计详情页</span><span class="kbtns"></span></div>
+  <div class="row"><span class="k">悬停节点</span><span class="d">摘要与关键文件</span><span class="kbtns"></span></div>
+  <div class="row"><span class="k">搜索节点</span><span class="d">按名称/说明过滤,回车直达</span><span class="kbtns"><kbd>⌘K</kbd><kbd>Ctrl K</kbd></span></div>
+  <div class="row"><span class="k">讲述步进</span><span class="d">讲述模式中上下步,空格同 →</span><span class="kbtns"><kbd>←</kbd><kbd>→</kbd><kbd>空格</kbd></span></div>
+  <div class="row"><span class="k">返回 / 退出</span><span class="d">依次关面板 → 退讲述 → 详情回全景</span><span class="kbtns"><kbd>esc</kbd></span></div>
+  <div class="row"><span class="k">本小抄</span><span class="d">只手动唤出,不自动弹</span><span class="kbtns"><kbd>?</kbd></span></div>
+</div></div>
 
 <div id="tourbar">
   <span class="step" id="tstep"></span>
@@ -658,7 +712,7 @@ function renderMap(container, viewId, interactive){
 /* 全景模式 */
 function showMap(){
   mode='map';currentDetail=null;
-  hideTip();
+  hideTip();stopComet();
   const cv=$('#canvas');cv.innerHTML='';cv.className='svgmode';
   renderMap(cv,currentMap,true);
   renderCrumb();
@@ -668,7 +722,7 @@ function showMap(){
 /* 详情模式 */
 function showDetail(id){
   mode='detail';currentDetail=id;
-  hideTip();
+  hideTip();stopComet();
   const v=VIEWS.overview, node=v.nodes.find(n=>n.id===id), k=KIND[node.kind], d=DETAIL[id];
   const cv=$('#canvas');cv.innerHTML='';cv.className='detailmode';cv.style.width='';
   const div=document.createElement('div');div.className='detail';
@@ -698,11 +752,17 @@ function showDetail(id){
   renderCrumb();
   try{window.scrollTo({top:0});}catch(_){}
 }
-function openDetail(id){showDetail(id);}
+function openDetail(id){
+  const h='#d='+id;
+  if(location.hash===h)applyHash();else location.hash=h;   /* hash 是唯一状态源,前进后退免费获得 */
+}
+function goOverview(){
+  if(location.hash)location.hash=''; else showMap();
+}
 function renderCrumb(){
   const c=$('#crumb');c.innerHTML='';
   c.style.display=(mode==='detail')?'flex':'none';
-  const a=document.createElement('a');a.textContent='‹ Atlas 全景';a.onclick=showMap;c.appendChild(a);
+  const a=document.createElement('a');a.textContent='‹ Atlas 全景';a.onclick=goOverview;c.appendChild(a);
   if(mode==='detail'){
     const node=VIEWS.overview.nodes.find(n=>n.id===currentDetail);
     const s=document.createElement('span');s.textContent=' / ';c.appendChild(s);
@@ -746,7 +806,7 @@ function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;');}
   for(const k in KIND){const li=document.createElement('span');li.className='li';
   const dot=document.createElement('span');dot.className='dot';dot.style.background='var('+KIND[k].c+')';
   li.appendChild(dot);li.appendChild(document.createTextNode(KIND[k].label));lg.appendChild(li);}
-  const v=document.createElement('span');v.className='li';v.style.marginLeft='auto';v.textContent='v0.4.0-beta.2';lg.appendChild(v);})();
+  const v=document.createElement('span');v.className='li';v.style.marginLeft='auto';v.textContent='v0.4.0-beta.3';lg.appendChild(v);})();
 /* fit:按窗口内容比例动态选布局宽高比(1040~1160 / 488),再取 contain 尺寸 */
 function fitSvg(){
   if(mode!=='map')return;
@@ -799,25 +859,32 @@ function applyTourStep(){
   if(!tourOn||mode!=='map')return;
   const st=TOUR[tourIdx], focus=new Set(st.focus);
   document.querySelectorAll('#canvas>svg .node').forEach(g=>g.classList.toggle('dim',!focus.has(g.dataset.id)));
+  const hiPaths=[];
   document.querySelectorAll('#canvas>svg .edge').forEach(p=>{
     let e=null; try{e=JSON.parse(p.dataset.e);}catch(_){}
     const hi=e&&st.edges.some(x=>x[0]===e[0]&&x[1]===e[1]);
     p.classList.toggle('hi',hi); p.classList.toggle('dim',!hi);
+    if(hi)hiPaths.push(p);
   });
+  startComet(hiPaths);   /* 彗星沿高亮边从 from 流向 to:步进的方向是这一步的信息 */
   document.getElementById('tstep').textContent=(tourIdx+1)+' / '+TOUR.length;
   document.getElementById('ttext').textContent=st.text;
 }
 function startTour(){
   tourOn=true;tourIdx=0;
+  if(!/^#tour/.test(location.hash||''))location.hash='tour';
   if(mode!=='map'||currentMap!=='overview'){currentMap='overview';showMap();}
+  document.body.classList.add('touring');
   document.getElementById('tourbar').style.display='flex';
   applyTourStep();
 }
 function endTour(){
-  tourOn=false; stopTourPlay();
+  tourOn=false; stopTourPlay(); stopComet();
+  document.body.classList.remove('touring');
   document.querySelectorAll('#canvas>svg .node.dim,#canvas>svg .edge.dim,#canvas>svg .edge.hi')
     .forEach(x=>x.classList.remove('dim','hi'));
   document.getElementById('tourbar').style.display='none';
+  if(/^#tour/.test(location.hash||''))location.hash='';
 }
 function stepTour(d){tourIdx=Math.max(0,Math.min(TOUR.length-1,tourIdx+d));applyTourStep();}
 function stopTourPlay(){if(tourTimer){clearInterval(tourTimer);tourTimer=null;}document.getElementById('tplay').textContent='▶';}
@@ -831,15 +898,156 @@ document.getElementById('tprev').onclick=()=>stepTour(-1);
 document.getElementById('tnext').onclick=()=>stepTour(1);
 document.getElementById('tplay').onclick=toggleTourPlay;
 document.getElementById('texit').onclick=endTour;
+/* ================= 讲述彗星(借 archify Live 的 overlay 原则:原线样式不动,动效骑在面上) ================= */
+let cometRAF=null,cometLayer=null;
+function stopComet(){
+  if(cometRAF){cancelAnimationFrame(cometRAF);cometRAF=null;}
+  if(cometLayer){cometLayer.remove();cometLayer=null;}
+}
+function startComet(paths){
+  stopComet();
+  try{if(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)return;}catch(_){}
+  if(!paths||!paths.length)return;
+  const svg=paths[0].ownerSVGElement;if(!svg)return;
+  cometLayer=document.createElementNS(svgNS,'g');
+  cometLayer.setAttribute('pointer-events','none');
+  svg.appendChild(cometLayer);
+  const riders=paths.map((p,i)=>{
+    const mk=r=>el('circle',{r:r,fill:'var(--primary)'},cometLayer);
+    return {path:p,len:p.getTotalLength(),head:mk(3.2),echo:mk(1.8),off:i*0.35};
+  });
+  const fade=u=>u<0.06?u/0.06:(u>0.94?(1-u)/0.06:1);
+  const t0=performance.now();
+  const tick=now=>{
+    const t=(now-t0)/1000;
+    riders.forEach(r=>{
+      const u=((t/1.4)+r.off)%1;
+      const pt=r.path.getPointAtLength(u*r.len);
+      r.head.setAttribute('cx',pt.x);r.head.setAttribute('cy',pt.y);
+      r.head.setAttribute('opacity',fade(u).toFixed(2));
+      const ue=((u-0.045)+1)%1, pe=r.path.getPointAtLength(ue*r.len);
+      r.echo.setAttribute('cx',pe.x);r.echo.setAttribute('cy',pe.y);
+      r.echo.setAttribute('opacity',(fade(u)*0.4).toFixed(2));
+    });
+    cometRAF=requestAnimationFrame(tick);
+  };
+  cometRAF=requestAnimationFrame(tick);
+}
+
+/* ================= 节点搜索(借 archify Node Finder;索引从 KIND/VIEWS/DETAIL 运行时现算,不复制数据) ================= */
+const finder=$('#finder'),fInput=$('#finput'),fList=$('#flist');
+let finderOpen=false,helpOpen=false,fItems=[],fActive=0;
+const FIDX=(()=>{
+  const out=[];
+  for(const vid in VIEWS){
+    const isOv=vid==='overview';
+    const host=isOv?null:(Object.keys(DETAIL).find(k=>DETAIL[k].sub===vid)||null);
+    for(const n of VIEWS[vid].nodes){
+      const hid=isOv?n.id:host;
+      const ht=isOv?'全景 · 详情':((VIEWS.overview.nodes.find(x=>x.id===hid)||{}).title||vid);
+      out.push({id:n.id,title:n.title,sub:n.sub||'',kind:n.kind,host:hid,where:ht,
+        text:(n.title+' '+(n.sub||'')+' '+(n.tip?(' '+n.tip.sum):'')+' '+(DETAIL[n.id]?DETAIL[n.id].sum:'')).toLowerCase()});
+    }
+  }
+  return out;
+})();
+function openFinder(){
+  finderOpen=true;finder.classList.add('open');
+  fInput.value='';filterFinder('');
+  setTimeout(()=>fInput.focus(),0);
+}
+function closeFinder(){finderOpen=false;finder.classList.remove('open');fInput.blur();}
+function toggleFinder(){finderOpen?closeFinder():openFinder();}
+function openHelp(){helpOpen=true;$('#helpbox').classList.add('open');}
+function closeHelp(){helpOpen=false;$('#helpbox').classList.remove('open');}
+function toggleHelp(){helpOpen?closeHelp():openHelp();}
+function filterFinder(q){
+  const toks=q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if(!toks.length){fItems=FIDX.slice(0,20);}
+  else{
+    const t0=toks[0];
+    fItems=FIDX.filter(it=>toks.every(t=>it.text.includes(t)))
+      .sort((a,b)=>((b.title.toLowerCase().includes(t0))?1:0)-((a.title.toLowerCase().includes(t0))?1:0))
+      .slice(0,20);
+  }
+  fActive=0;renderFinder();
+}
+function renderFinder(){
+  if(!fItems.length){fList.innerHTML='<div class="empty">没有匹配的节点</div>';return;}
+  fList.innerHTML=fItems.map((it,i)=>{
+    const k=KIND[it.kind];
+    return '<div class="item'+(i===fActive?' active':'')+'" data-i="'+i+'">'
+      +'<span class="dot" style="background:var('+k.c+')"></span>'
+      +'<span>'+esc(it.title)+(it.sub?'<em>'+esc(it.sub)+'</em>':'')+'</span>'
+      +'<span class="where">'+esc(it.where)+'</span></div>';
+  }).join('');
+  const act=fList.querySelector('.item.active');
+  if(act)act.scrollIntoView({block:'nearest'});
+}
+function jumpTo(it){
+  closeFinder();
+  if(!DETAIL[it.host])return;
+  openDetail(it.host);
+  if(it.host!==it.id)requestAnimationFrame(()=>pulseSubNode(it.id));
+}
+function pulseSubNode(id){
+  const g=document.querySelector('.submap .node[data-id="'+id+'"]');
+  if(!g)return;
+  g.classList.add('pulse');
+  g.scrollIntoView({block:'nearest',behavior:'smooth'});
+  setTimeout(()=>g.classList.remove('pulse'),3600);
+}
+fInput.addEventListener('input',()=>filterFinder(fInput.value));
+fList.addEventListener('click',ev=>{const d=ev.target.closest('.item');if(d)jumpTo(fItems[+d.dataset.i]);});
+document.getElementById('finderBtn').onclick=toggleFinder;
+document.getElementById('helpBtn').onclick=toggleHelp;
+finder.addEventListener('click',ev=>{if(ev.target===finder)closeFinder();});
+document.getElementById('helpbox').addEventListener('click',ev=>{if(ev.target.id==='helpbox')closeHelp();});
+
+/* ================= 深链与历史:#d=<节点> / #tour / #tour=<n>(借 archify Passport 可分享链接) ================= */
+function applyHash(){
+  const h=location.hash||'';let m;
+  if((m=h.match(/^#d=([\w-]+)$/))){
+    if(tourOn)endTour();
+    if(DETAIL[m[1]])showDetail(m[1]);else goOverview();
+    return;
+  }
+  if((m=h.match(/^#tour(?:=(\d+))?$/))){
+    if(!tourOn)startTour();
+    if(m[1]!=null){tourIdx=Math.max(0,Math.min(TOUR.length-1,+m[1]-1));applyTourStep();}
+    return;
+  }
+  if(tourOn){endTour();return;}   /* endTour 自己清 tour hash,不再触发渲染 */
+  if(mode!=='map')showMap();
+}
+
+/* ================= 全局快捷键(优先级:面板 → 小抄 → 讲述 → 详情返回) ================= */
 window.addEventListener('keydown',ev=>{
+  if((ev.metaKey||ev.ctrlKey)&&(ev.key==='k'||ev.key==='K')){ev.preventDefault();toggleFinder();return;}
+  if(ev.key==='Escape'){
+    if(finderOpen){ev.preventDefault();closeFinder();return;}
+    if(helpOpen){ev.preventDefault();closeHelp();return;}
+    if(tourOn){endTour();return;}
+    if(mode==='detail'){goOverview();return;}
+    return;
+  }
+  if(finderOpen){
+    if(ev.key==='ArrowDown'){ev.preventDefault();fActive=Math.min(fItems.length-1,fActive+1);renderFinder();}
+    else if(ev.key==='ArrowUp'){ev.preventDefault();fActive=Math.max(0,fActive-1);renderFinder();}
+    else if(ev.key==='Enter'){ev.preventDefault();if(fItems[fActive])jumpTo(fItems[fActive]);}
+    return;
+  }
+  const tag=(document.activeElement&&document.activeElement.tagName)||'';
+  if(!/^(INPUT|TEXTAREA)$/.test(tag)&&ev.key==='?'){ev.preventDefault();toggleHelp();return;}
   if(!tourOn)return;
   if(ev.key==='ArrowRight'||ev.key===' '){ev.preventDefault();stepTour(1);}
   else if(ev.key==='ArrowLeft'){ev.preventDefault();stepTour(-1);}
-  else if(ev.key==='Escape'){endTour();}
 });
-/* boot;#tour 直入讲述模式(讲解场景:打开链接即讲述) */
+
+/* boot;深链直入:#tour(讲述) / #tour=N(第 N 步起讲) / #d=<节点>(详情页) */
 showMap();
-if(location.hash==='#tour')startTour();
+applyHash();
+window.addEventListener('hashchange',applyHash);
 </script>
 </body>
 </html>
