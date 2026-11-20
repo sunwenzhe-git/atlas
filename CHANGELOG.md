@@ -4,6 +4,21 @@
 
 ---
 
+## [Unreleased]
+
+### 🧭 只读上下文预览
+
+* 新增 `atlas workflow context`：按文件路径打印会注入的结构规范与约定，只读、不写盘、不改任务状态；
+* `--paths`（改动文件/目录，可多个）与 `--unit`（读任务卡 `paths` / `affected_domains`）二选一，都没有时 exit 2；`--json` 输出命中清单，便于脚本消费；
+* 显式 `--paths` 不回落 `tour.md`，与 `dispatch` 的注入口径一致；
+* 约定规范的排序改为只按**实际命中**的 glob 计具体度：通用指南列了更多目录，也不会挤掉对口的领域约定（如改前端时优先 `conventions/frontend/` 而非 `conventions/guides/`）。
+
+### 🧷 项目接线
+
+* `.gitignore` 接线新增 `.atlas` 白名单块：默认 `.atlas/*` 忽略引擎镜像，`!.atlas/tasks/`、`!.atlas/spec/` 放行项目规范与任务账本；带标记幂等，用户已手写任意 `.atlas` 规则时保留其口径不覆盖。
+
+---
+
 ## [v0.4.0-beta.2] - 2026-11-20
 
 ### 🧭 执行层最小上下文注入
