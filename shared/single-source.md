@@ -8,8 +8,8 @@
 
 | 信息 | 唯一真相源 | 派生视图 / 引用者 |
 |---|---|---|
-| 需求卡 | 执行层 任务的 `prd.md`（`.atlas/tasks/<NN-slug>/prd.md`） | 不另建 inbox 或需求文档 |
-| 结构事实（全局层 + 域级层） | `.atlas/spec/structure/`（结构环事实层（`paths:` 索引）） | PRD / E2E 环按需 Read |
+| 需求卡 | 执行层任务的 `prd.md`（`.atlas/tasks/<NN-slug>/prd.md`） | 不另建 inbox 或需求文档 |
+| 结构事实（全局层 + 域级层） | `.atlas/spec/structure/`（结构环事实层（`paths:` 索引）） | 各环按需 Read；`atlas workflow dispatch --paths` 按索引只注入命中规范 |
 | 域清单（候选 / 已定稿） | `.atlas/spec/structure/_meta.json`（机器）+ `tour.md` 域速查（人读）；structure 提议 → PRD 定稿回写 | PRD / E2E |
 | **域间依赖**（实现前置依赖） | **域级 PRD frontmatter `depends_on`**（语义 = 实现前置依赖，**只含**全局 `product/prd/prd.md` §五 mermaid 的**实线**；虚线 = 增强链路 / 数据回流，不入本字段） | 全局 §五 mermaid 域间关系图（实线边集）+ 域级正文「依赖域 / 上游 / 下游」——两者均为**派生视图**；`validate_prd.py` 参数 4「域间依赖」按实线边集对账（悬空引用 / 实线成环 / 不一致 ⇒ FAIL） |
 | 技术栈 + 快速启动（A 类，可选） | 项目根 `README.md` 的「技术栈 / 启动」两节 | 不入 spec；`_meta.json.categories` 记状态 |

@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 
 from _support.workflow_plan import load_tasks, PlanError
+from _support.workflow_context import render_specs, select_specs
 
 
 class DispatchError(ValueError):
@@ -41,11 +42,31 @@ def get_next_runnable_task(tasks_root: Path) -> dict | None:
     return None
 
 
-def assemble_curated_context(root: Path, task: dict) -> str:
-    """组装当前任务的最小上下文注入包。"""
+def _as_list(value) -> list[str]:
+    """路径 / 域字段既可能是 list 也可能是单个字符串；空值归一为空列表。"""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    return [str(v) for v in value if str(v).strip()]
+
+
+def assemble_curated_context(root: Path, task: dict,
+                             scope_paths: list[str] | None = None) -> str:
+    """组装当前任务的最小上下文注入包。
+
+    `scope_paths` = 本次改动文件/目录；缺省回落到任务卡的 `paths` 字段。
+    只注入命中 `paths:` 的规范（最多 3 份），不注入全仓无关 spec。
+    """
     root = root.resolve()
     t_id = task["id"]
     t_dir = Path(task.get("_dir") or (root / ".atlas" / "tasks" / t_id))
+    # 显式 `--paths`（含空串）与「任务卡没有路径」要区分：前者不回落兜底，
+    # 后者才允许走 `**` 导航兜底。
+    if scope_paths is not None:
+        scopes: list[str] | None = _as_list(scope_paths)
+    else:
+        scopes = _as_list(task.get("paths")) or None
 
     lines = [
         f"# 任务派发执行单 (Task Dispatch) — {task.get('title')}",
@@ -74,7 +95,7 @@ def assemble_curated_context(root: Path, task: dict) -> str:
         lines.append("- （无直接关联的业务 AC，遵循常规代码规范及单元测试）")
 
     # 关联受影响域 PRD 指针
-    domains = task.get("affected_domains") or []
+    domains = _as_list(task.get("affected_domains"))
     lines.extend([
         "",
         "## 3. 受影响域架构透镜 (Domain Focus)",
@@ -89,9 +110,16 @@ def assemble_curated_context(root: Path, task: dict) -> str:
     else:
         lines.append("- 通用基础设施 / 跨域")
 
+    # 最小结构上下文：按改动路径 / 受影响域自动注入
+    spec_set = select_specs(root, paths=scopes, domains=domains)
     lines.extend([
         "",
-        "## 4. 执行规范与完成定义 (Instructions for Agent)",
+        render_specs(spec_set, scope_paths=scopes, domains=domains),
+    ])
+
+    lines.extend([
+        "",
+        "## 5. 执行规范与完成定义 (Instructions for Agent)",
         "1. 请依据上述需求卡与 AC 断言完成代码修改；",
         "2. 修改完成后，请执行 `git add <改动文件>` 暂存修改；",
         "3. 运行暂存区独立审查与测试：",
@@ -105,7 +133,7 @@ def assemble_curated_context(root: Path, task: dict) -> str:
     return "\n".join(lines)
 
 
-def dispatch_task(root: Path, task: dict) -> Path:
+def dispatch_task(root: Path, task: dict, scope_paths: list[str] | None = None) -> Path:
     """执行派单流转：写入 dispatch.md 并将状态置为 in_progress。"""
     root = root.resolve()
     t_id = task["id"]
@@ -113,7 +141,7 @@ def dispatch_task(root: Path, task: dict) -> Path:
     t_dir.mkdir(parents=True, exist_ok=True)
 
     # 写入上下文派单包
-    ctx_text = assemble_curated_context(root, task)
+    ctx_text = assemble_curated_context(root, task, scope_paths=scope_paths)
     dispatch_file = t_dir / "dispatch.md"
     dispatch_file.write_text(ctx_text, encoding="utf-8")
 

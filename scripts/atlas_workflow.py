@@ -75,6 +75,9 @@ def cmd_plan(args: argparse.Namespace, root: Path) -> int:
     tasks_dir = _tasks_root(root)
     created: list[dict] = []
     for t in tasks:
+        paths = [str(p) for p in (getattr(args, "paths", None) or []) if str(p).strip()]
+        if paths:
+            t["paths"] = paths
         t_dir = tasks_dir / t["id"]
         if not args.dry_run:
             write_task_card(t_dir, t)
@@ -125,7 +128,7 @@ def cmd_dispatch(args: argparse.Namespace, root: Path) -> int:
         return 0
 
     try:
-        disp_file = dispatch_task(root, target_task)
+        disp_file = dispatch_task(root, target_task, scope_paths=getattr(args, "paths", None))
     except DispatchError as exc:
         return die(str(exc))
 
@@ -302,10 +305,14 @@ def main() -> int:
     p_plan = sub.add_parser("plan", help="根据需求分解任务并生成任务卡 (Task Cards)", parents=[common])
     p_plan.add_argument("--unit", required=True, help="大任务标识")
     p_plan.add_argument("--requirement", help="需求说明文本或文件路径")
+    p_plan.add_argument("--paths", nargs="+", default=None,
+                        help="本次需求涉及的改动路径 glob（写入任务卡，派发时用于最小上下文注入）")
 
     # dispatch
     p_disp = sub.add_parser("dispatch", help="提取最小上下文并向执行侧分发任务", parents=[common])
     p_disp.add_argument("--unit", help="指定分发的任务标识（默认自动调度就绪任务）")
+    p_disp.add_argument("--paths", nargs="+", default=None,
+                        help="改动路径/目录（按 paths: 索引只注入命中的规范；缺省读任务卡）")
 
     # verify
     p_ver = sub.add_parser("verify", help="对当前暂存区运行独立审查与测试并轨", parents=[common])
@@ -328,6 +335,8 @@ def main() -> int:
     p_run = sub.add_parser("run", help="串联闭环（Plan -> Dispatch -> Verify -> Finish；需先按派工单实现并暂存）", parents=[common])
     p_run.add_argument("--unit", required=True, help="大任务标识")
     p_run.add_argument("--requirement", help="需求说明文本或文件路径")
+    p_run.add_argument("--paths", nargs="+", default=None,
+                       help="改动路径/目录（plan 写入任务卡，dispatch 时用于最小注入）")
     p_run.add_argument("--check-cmd", help="确定性检查命令")
     p_run.add_argument("--round", type=int, help="审查轮次（缺省自动递增）")
     p_run.add_argument("--resolves", help="跨轮关闭声明文件")

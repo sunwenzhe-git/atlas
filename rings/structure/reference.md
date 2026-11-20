@@ -6,7 +6,7 @@
 
 ## 0. 一句话
 
-读代码（+ 可选旧实现），产出**结构事实**，直接落在 **`.atlas/spec/structure/`**（执行层的路径注入层）——同一份既是项目级事实，又能被 执行层 任务**原生注入**消费，无需再做一层桥。
+读代码（+ 可选旧实现），产出**结构事实与约定类规范**，直接落在 **`.atlas/spec/structure/`** 与 **`.atlas/spec/conventions/`**（执行层的路径注入层）——同一份既是项目级事实，又能被 执行层 任务**原生注入**消费，无需再做一层桥。
 
 - **事实区**由适配器 + 刷新脚本**确定性**维护；**语义区**由 AI / 结构环语义区（AI） 维护（见 §8）。
 - **与 PRD 环独立有序**：本环先跑、**提议候选域**；PRD 读本环产物并**定稿域**。两者不自动互相触发。
@@ -66,9 +66,12 @@
 └── {current,legacy}/<domain>/   # 域级事实（pull-only：无 paths，由 domains/<d>.md 链接）
     ├── apis.md             # D（无 Swagger 时）
     └── data-models.md      # E
+
+.atlas/spec/conventions/
+└── <topic>.md              # 约定类规范（如 testid）：paths = 精确 globs，薄注入
 ```
 
-- **只有 `tour.md` 与 `domains/<domain>.md` 带 `paths:`**（被注入）；其余事实文档**无 `paths`**，靠指针按需 Read，避免撞注入预算。
+- **只有 `tour.md`、`domains/<domain>.md`、`conventions/*.md` 带 `paths:`**（被注入）；其余事实文档**无 `paths`**，靠指针按需 Read，避免撞注入预算。
 
 > **模板**（骨架，含列头与 `atlas:facts` 标记）：`.atlas/templates/structure/`（`_meta.json` / `domain-tour.md` / `domain.md` / `global-{directory-map,routes}.md` / `role-{apis,data-models}.md`）。
 
@@ -93,6 +96,16 @@
 - 同 role 多 app：域级文件内按 app 加小节 /「应用」列。
 - 域目录只列有内容的域；某域某类别不适用 → 一句话「本类不适用于 <域> / <应用>」。
 - 绿地项目：可只有 `tour.md` + `_meta.json` 起步，域级随代码增长补齐。
+
+### 3.1 约定类规范（`conventions/`）
+
+开户 / 全量补齐时，除结构事实外还产出**项目约定**，供执行层按路径最小注入：
+
+- 落点：`.atlas/spec/conventions/<topic>.md`（如组件复用、错误处理、命名）。
+- **必须带 `paths:`**：精确 globs，禁止 `**` 逃逸；只改前端就只命中前端约定。
+- 内容只写「本仓怎么做」：适用条件、本仓模式、支撑源码 / 测试、反模式；不写 PRD / 用例 / 需求。
+- 事实区 / 语义区纪律与结构事实相同（§8）；不适用的模板段落直接删除，不留占位符。
+- `testid.md` **不归本环**：由 E2E 环的 `gen_testid_stub.py` 确定性生成（含 `paths:`），本环不写、不改，避免双写覆盖。
 
 ---
 

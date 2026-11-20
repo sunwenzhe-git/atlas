@@ -177,6 +177,13 @@ def write_task_card(task_dir: Path, task: dict) -> Path:
     prd_text = render_prd_markdown(task)
     prd_path.write_text(prd_text, encoding="utf-8")
 
+    prev = None
+    if task_json_path.is_file():
+        try:
+            prev = json.loads(task_json_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            prev = None
+
     meta = {
         "id": task["id"],
         "title": task["title"],
@@ -186,16 +193,17 @@ def write_task_card(task_dir: Path, task: dict) -> Path:
         "acs": task["acs"],
         "created_at": date.today().isoformat(),
     }
-    if task_json_path.is_file():
-        try:
-            prev = json.loads(task_json_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            prev = None
-        if isinstance(prev, dict):
-            if prev.get("status") in ("todo", "in_progress", "completed"):
-                meta["status"] = prev["status"]
-            if isinstance(prev.get("created_at"), str) and prev["created_at"]:
-                meta["created_at"] = prev["created_at"]
+    if task.get("paths"):
+        meta["paths"] = list(task["paths"])
+    if isinstance(prev, dict):
+        if prev.get("status") in ("todo", "in_progress", "completed"):
+            meta["status"] = prev["status"]
+        if isinstance(prev.get("created_at"), str) and prev["created_at"]:
+            meta["created_at"] = prev["created_at"]
+        # 重跑 plan（含 `atlas workflow run`）未显式给 --paths 时沿用已存路径，
+        # 否则派工单的最小注入会退回 tour 兜底（状态机可重放的前提）。
+        if "paths" not in meta and isinstance(prev.get("paths"), list):
+            meta["paths"] = prev["paths"]
     task_json_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     return task_dir
 

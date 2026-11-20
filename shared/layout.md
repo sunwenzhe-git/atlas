@@ -63,7 +63,7 @@ layout:
 │   │   ├── domains/<domain>.md     #   L2：paths = 该域 globs
 │   │   ├── global/{directory-map,routes}.md
 │   │   └── {current,legacy}/<domain>/{apis,data-models}.md
-│   └── spec/conventions/           # 约定类薄桩（当前仅 testid.md；派生视图）
+│   └── spec/conventions/           # 约定类薄桩（出厂仅 testid.md；开户可新增 <topic>.md）
 │       └── testid.md               #   paths = 前端 app globs；正文归 E2E 环契约
 ├── .atlas-evidence/                # 运行证据归档（manifest + trace/png/webm；只复制不判定，已忽略）
 ├── .impeccable/                    # impeccable detect 配置（可选外部工具；config.json 的 detector.ignoreRules 须与 product/design.md 的 detect 豁免双向一致）

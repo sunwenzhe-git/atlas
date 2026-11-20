@@ -21,7 +21,7 @@
 |---|---|---|
 | `apply <需求ID>` | **需求式跨环增量**：只改动本次需求影响的 PRD 章节 / E2E 分片与索引页面表；更新完才进实现 | 由 执行层 Plan 阶段的 `#### 1.6 项目级资产更新` 步骤 `[required · once]` 调用（见 §7） |
 | `all` | **按序全量**：`structure → prd → e2e` 逐一走各环自己的全量流程，建立 / 刷新整套项目级资产 | `origin: greenfield` 的新项目接入、或需重建基线时手动触发 |
-| **`adopt`** | **一次性接入开户**（2026-09-26 补；2026-09-27 补域级最小集；2026-10-15 补开户交尾交付物）：既有项目接入时**只跟 `structure` 全量**，再按「最小必填集」把 `product/prd/` 开起来——全局 `prd.md` 落 `范围形态：变更` + `覆盖度` + `基线`，**并为域清单里每个域开一份「开户最小集」域级 PRD**（`rings/prd/reference.md` §4）；**开户交尾补一件派生件**：跑一次 `python3 .atlas/scripts/gen_testid_stub.py --root .` 出实现期薄桩（= **老页面 testid 的实然盘点表**，`rings/e2e/reference.md` §4.1）；**不预设** E2E——它由后续每条需求按下面的门增量长出（E1：原型环已移除）；**开户问数（2026-10-16，`RFC-20261015-02` / issue #11）**：与 `product/stack-profile.yaml` 的既有声明同批向用户索取**靶场接入取证**——`e2e.app_base_url` + `e2e.app_login` **形态三选一必须显式**（有门 = `real` 四值；无门 = `mode: none`；纯前端桩 = `fabricated` + `storage_key`），并提醒运行期凭据只来自 `ATLAS_APP_USER` / `ATLAS_APP_PASSWORD`（运行者 / CI 设置，**询问不落盘**）——缺失会在下一次真跑准备日升档为生成器 `not_ready`（`shared/gates.md`「E2E 真跑」行） | `origin: adopt` 的项目**第一次**接入时手动触发；此后每条需求走 `apply <需求ID>` |
+| **`adopt`** | **一次性接入开户**（2026-09-26 补；2026-09-27 补域级最小集；2026-10-15 补开户交尾交付物）：既有项目接入时**只跟 `structure` 全量（含 `.atlas/spec/conventions/*.md` 约定开户）**，再按「最小必填集」把 `product/prd/` 开起来——全局 `prd.md` 落 `范围形态：变更` + `覆盖度` + `基线`，**并为域清单里每个域开一份「开户最小集」域级 PRD**（`rings/prd/reference.md` §4）；**开户交尾补一件派生件**：跑一次 `python3 .atlas/scripts/gen_testid_stub.py --root .` 出实现期薄桩（= **老页面 testid 的实然盘点表**，`rings/e2e/reference.md` §4.1）；**不预设** E2E——它由后续每条需求按下面的门增量长出（E1：原型环已移除）；**开户问数（2026-10-16，`RFC-20261015-02` / issue #11）**：与 `product/stack-profile.yaml` 的既有声明同批向用户索取**靶场接入取证**——`e2e.app_base_url` + `e2e.app_login` **形态三选一必须显式**（有门 = `real` 四值；无门 = `mode: none`；纯前端桩 = `fabricated` + `storage_key`），并提醒运行期凭据只来自 `ATLAS_APP_USER` / `ATLAS_APP_PASSWORD`（运行者 / CI 设置，**询问不落盘**）——缺失会在下一次真跑准备日升档为生成器 `not_ready`（`shared/gates.md`「E2E 真跑」行） | `origin: adopt` 的项目**第一次**接入时手动触发；此后每条需求走 `apply <需求ID>` |
 | **`backfill`** | **回流原语**（2026-09-28 补，`3509 §99`；详见 §5.2）：把**已裁决**的回填条目按「上游目标 + 改动类型」分组、攒批灌入上游应然资产与配置，跨环同步（含下游用例改挂），各环门照跑 | 收口时扫描本任务产生的回填 → 入队；**攒批**后手动触发（每批 ≤ 10 条） |
 
 - **需求 ID = 任务卡 id**（`task.json` 的 `id`，即 task 目录名）；**需求卡 = 该 task 的 `.atlas/tasks/<需求ID>/prd.md`**（`single-source.md` §1）。不另建 inbox。
@@ -242,7 +242,7 @@ apply 只对**本次受影响集合**落笔，**不整文件覆盖**任何项目
 - **需求 ID = 任务卡 id**；**需求卡 = task 的 `prd.md`**（D19/F2）。
 - **挂载点**：`atlas workflow plan` / `atlas workflow dispatch`：
   - `plan` 建卡时把「项目级资产更新」作为 `[required · once]` 步骤写入任务卡；
-  - `dispatch` 生成的 `.atlas/tasks/<ID>/dispatch.md` 常驻 `atlas apply <需求ID>` 指令与 enforcement 行；
+  - `dispatch` 生成的 `.atlas/tasks/<ID>/dispatch.md` 常驻 `atlas apply <需求ID>` 指令与 enforcement 行；并按 `--paths` / 任务卡 `paths` 对 `.atlas/spec/**` 的 `paths:` 索引做**最小注入**（只改前端就只注入前端域与前端约定，最多 3 份）；
   - `verify` 是实现在后的独立审查入口（`shared/independent-review.md` 实例⑤）。
 - **E2E 触发段（2026-11-03，`RFC-20261103-07`）**：实现完成后、`atlas workflow verify` 之前执行 `scripts/e2e_trigger.py`（归因 + 委托既有执行器；**不生成脚本、不替代真跑门**，详见 `rings/e2e/reference.md` §10.2）；收尾只给控制台命令，人工 review 不代劳。
 - **任务状态**（B3）：只用 `planning` / `in_progress` / `completed` 三态（`task.json` 的 `status`）；不改状态机、不加旁路状态。
