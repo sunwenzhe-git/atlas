@@ -4,6 +4,22 @@
 
 ---
 
+## [v0.4.0-beta.4] - 2026-11-20
+
+### 🧭 偏差处置与 ADR 否决态（`RFC-20261120-01`）
+
+* `validate_adr` 新增 `rejected` 合法状态：`accepted` / `rejected` 的 Decision 必须非空（rejected 写「为什么不引入」）；ADR 模板同步枚举，并加双源一致性钉；
+* `apply` 契约新增 §5.3「偏差三岔口」：实现期偏差按 `spec_gap` / `spec_amend` / `out_of_scope` 归因，只有 `spec_amend` 回写上游；
+* 收口清单新增步骤 12（偏差三岔口对账）与触发行，编号口径改为 1–5、7–12；`atlas_check` 结构漂移 WARN 追加处置指引。
+
+### 🔒 执行层收口（`#68` `#69` `#70`）
+
+* `atlas review` 新增 `impl_review.executor: cli|session`：无可用 CLI 时生成 `review-request.md` 派工包并以「待审」（exit 2）退出，会话子代理写 `cli.json` 后复跑完成转换/校验；`finish` 仍只认 `review.json` PASS（`#68`）；
+* `finish` 读取任务 AC 关联的 E2E 结论：`red` 阻断收口，索引缺失 / 无 AC 映射 / `skipped` 显式 `SKIP` 并落 `task.json`；验收走查留痕单独记录（`#69`）；
+* `finish` 收口后幂等归档到 `.atlas/tasks/archive/`；`load_tasks` 默认只看活跃任务，`status --all` 展示归档；新增 `atlas workflow archive` 供既存 `completed` 单元一次性迁移（`#70`）。
+
+---
+
 ## [v0.4.0-beta.3] - 2026-11-20
 
 ### 🧭 只读上下文预览
