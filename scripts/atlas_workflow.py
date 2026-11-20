@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 from datetime import date
@@ -54,6 +55,28 @@ def _read_tasks_root(root: Path) -> Path:
     return _tasks_root(root)
 
 
+def _prune_orphan_cards(tasks_dir: Path, unit: str, keep: set[str]) -> None:
+    """重跑 plan 后清理本轮不再生成的 todo 孤儿子卡（已派发/已完成不动）。"""
+    pat = re.compile(rf"^{re.escape(unit)}-\d+$")
+    if not tasks_dir.is_dir():
+        return
+    for d in sorted(tasks_dir.iterdir()):
+        if not (d.is_dir() and pat.match(d.name) and d.name not in keep):
+            continue
+        status = "todo"
+        task_json = d / "task.json"
+        if task_json.is_file():
+            try:
+                status = str(json.loads(task_json.read_text(encoding="utf-8"))
+                             .get("status") or "todo")
+            except (OSError, json.JSONDecodeError):
+                continue
+        if status != "todo" or (d / "dispatch.md").exists():
+            continue
+        shutil.rmtree(d)
+        print(f"  清理孤儿任务卡：{d.name}（本轮拆解已不再生成）")
+
+
 def cmd_plan(args: argparse.Namespace, root: Path) -> int:
     req_text = ""
     if args.requirement:
@@ -82,6 +105,9 @@ def cmd_plan(args: argparse.Namespace, root: Path) -> int:
         if not args.dry_run:
             write_task_card(t_dir, t)
         created.append({"id": t["id"], "title": t["title"], "dir": str(t_dir.relative_to(root))})
+
+    if not args.dry_run:
+        _prune_orphan_cards(tasks_dir, args.unit, {t["id"] for t in created})
 
     if args.json:
         print(json.dumps({"status": "ok", "unit": args.unit, "tasks": created},
@@ -117,6 +143,15 @@ def cmd_dispatch(args: argparse.Namespace, root: Path) -> int:
                     None)
         if not target_task:
             return die(f"未找到指定任务 {args.unit}（或其可执行子任务）")
+        status = target_task.get("status", "todo")
+        if status == "completed":
+            return die(f"任务 {target_task['id']} 已 completed，不能重复派发")
+        if status not in ("todo", "in_progress"):
+            return die(f"任务 {target_task['id']} 状态为 {status}，不可派发")
+        completed_ids = {t["id"] for t in all_tasks if t.get("status") == "completed"}
+        missing = [d for d in (target_task.get("depends_on") or []) if d not in completed_ids]
+        if missing:
+            return die(f"任务 {target_task['id']} 的前置依赖未完成：{', '.join(missing)}")
     else:
         target_task = get_next_runnable_task(tasks_dir)
         if not target_task:
@@ -161,6 +196,8 @@ def cmd_verify(args: argparse.Namespace, root: Path) -> int:
         return die("verify 步骤必须指定 --unit <ID>")
 
     review_script = HERE / "atlas_review.py"
+    if not args.dry_run and not _has_staged_changes(root):
+        return die("暂存区为空：请先实现并 `git add`，再运行 verify", code=2)
     round_no = getattr(args, "round", None) or _next_review_round(root, args.unit)
     cmd = [
         sys.executable, str(review_script),
@@ -191,7 +228,7 @@ def cmd_finish(args: argparse.Namespace, root: Path) -> int:
     all_tasks = load_tasks(tasks_dir)
     target_task = next((t for t in all_tasks if t["id"] == args.unit), None)
     if not target_task:
-        target_task = {"id": args.unit, "_dir": str(tasks_dir / args.unit)}
+        return die(f"未找到任务卡 {args.unit}（不能对账本外任务收口）", code=2)
 
     if args.dry_run:
         print(f"$ # 校验 {args.unit} 的 review.json 产物并流转状态至 completed (dry-run)")
@@ -215,6 +252,9 @@ def cmd_finish(args: argparse.Namespace, root: Path) -> int:
 def cmd_status(args: argparse.Namespace, root: Path) -> int:
     tasks_dir = _read_tasks_root(root)
     all_tasks = load_tasks(tasks_dir)
+    if args.unit:
+        all_tasks = [t for t in all_tasks
+                     if t["id"] == args.unit or t["id"].startswith(f"{args.unit}-")]
     if not all_tasks:
         print(f"当前无工作流任务卡（目录：{tasks_dir}）")
         return 0
@@ -254,6 +294,9 @@ def cmd_run(args: argparse.Namespace, root: Path) -> int:
     前置：实现已按派工单完成并 `git add` 暂存（Atlas 不写业务实现）。
     暂存区为空时停在 Dispatch 之后，给出下一步指令并返回 2。
     """
+    if args.dry_run:
+        print("$ # run dry-run：plan → dispatch → verify → finish（不写盘、不改状态）")
+        return 0
     print(f"=== [1/4] 执行 Plan 规划阶段 ===")
     rc = cmd_plan(args, root)
     if rc != 0:
@@ -356,7 +399,10 @@ def main() -> int:
     handler = dispatch_map.get(args.subcommand)
     if not handler:
         return die(f"未知子命令：{args.subcommand}")
-    return handler(args, root)
+    try:
+        return handler(args, root)
+    except PlanError as exc:
+        return die(str(exc))
 
 
 if __name__ == "__main__":

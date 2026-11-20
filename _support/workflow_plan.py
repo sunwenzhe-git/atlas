@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import date
 from pathlib import Path
@@ -164,6 +165,13 @@ def render_prd_markdown(task: dict) -> str:
     return "\n".join(lines)
 
 
+def atomic_write_json(path: Path, data: dict) -> None:
+    """任务账本写入必须原子：写临时文件后 os.replace，避免半截 JSON。"""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def write_task_card(task_dir: Path, task: dict) -> Path:
     """写入单个任务卡目录（包含 prd.md 与 task.json）。
 
@@ -204,7 +212,7 @@ def write_task_card(task_dir: Path, task: dict) -> Path:
         # 否则派工单的最小注入会退回 tour 兜底（状态机可重放的前提）。
         if "paths" not in meta and isinstance(prev.get("paths"), list):
             meta["paths"] = prev["paths"]
-    task_json_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(task_json_path, meta)
     return task_dir
 
 
@@ -216,11 +224,12 @@ def load_tasks(tasks_root: Path) -> list[dict]:
     for p in sorted(tasks_root.rglob("task.json")):
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(data, dict) and "id" in data:
-            data["_dir"] = str(p.parent)
-            tasks[data["id"]] = data
+        except (OSError, json.JSONDecodeError) as exc:
+            raise PlanError(f"任务卡损坏或不可读：{p}（{exc}）") from exc
+        if not (isinstance(data, dict) and data.get("id")):
+            raise PlanError(f"任务卡缺少 id：{p}")
+        data["_dir"] = str(p.parent)
+        tasks[data["id"]] = data
 
     # 简单拓扑排序
     sorted_tasks: list[dict] = []

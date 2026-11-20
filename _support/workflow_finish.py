@@ -12,13 +12,49 @@
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 from pathlib import Path
 
-from _support.workflow_plan import load_tasks
+from _support import review_scope_core as scope_core
+from _support.workflow_plan import load_tasks, atomic_write_json, UNIT_RE
 
 
 class FinishError(ValueError):
     """收口校验异常。"""
+
+
+REVIEW_DIR_PREFIX_RE = r"^\d{4}-\d{2}-\d{2}-impl-review-"
+
+
+def _staged_files(root: Path) -> list[str] | None:
+    try:
+        pr = subprocess.run(
+            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+            cwd=str(root), capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if pr.returncode != 0:
+        return None
+    return [line.strip() for line in pr.stdout.splitlines() if line.strip()]
+
+
+def _scope_matches(root: Path, data: dict) -> tuple[bool, str]:
+    """检查报告落盘后暂存区内容未被替换（v4 内容封口）。"""
+    scope = data.get("review_scope")
+    if not isinstance(scope, dict) or not scope.get("sha256"):
+        return True, ""  # 旧报告兼容：无内容锚，无法比对
+    staged = _staged_files(root)
+    if staged is None:
+        return False, "无法读取暂存区，不能确认审查内容未被替换（请在 git 仓库内重跑 verify）"
+    try:
+        manifest = scope_core.build_manifest(root, staged)
+    except Exception as exc:  # noqa: BLE001 —— 路径/状态异常一律视为不可封口
+        return False, f"暂存区内容无法重算摘要：{exc}"
+    if manifest.get("scope_sha256") != scope.get("sha256"):
+        return False, "审查后暂存区内容已变化（review_scope 摘要不一致）；请重新运行 verify"
+    return True, ""
 
 
 def check_task_review_passed(root: Path, unit: str) -> tuple[bool, str]:
@@ -29,7 +65,11 @@ def check_task_review_passed(root: Path, unit: str) -> tuple[bool, str]:
     if not reviews_dir.is_dir():
         return False, "未找到 product/reviews 目录（尚未执行独立审查）"
 
-    candidates = sorted(reviews_dir.glob(f"*-impl-review-{unit}"))
+    candidates = sorted(
+        p for p in reviews_dir.iterdir()
+        if p.is_dir() and re.fullmatch(
+            REVIEW_DIR_PREFIX_RE + re.escape(unit) + "$", p.name)
+    )
     if not candidates:
         return False, f"未找到任务 {unit} 的审查报告（须先执行 atlas review --unit {unit} --staged）"
 
@@ -52,6 +92,10 @@ def check_task_review_passed(root: Path, unit: str) -> tuple[bool, str]:
     if data.get("ok") is False:
         return False, "审查报告 ok=false（存在未解决的阻断问题）"
 
+    matched, why = _scope_matches(root, data)
+    if not matched:
+        return False, why
+
     return True, str(latest_dir)
 
 
@@ -59,8 +103,15 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
     """完成单个任务的收口流转。"""
     root = root.resolve()
     t_id = task["id"]
-    t_dir = Path(task.get("_dir") or (root / ".atlas" / "tasks" / t_id))
+    if not UNIT_RE.match(t_id):
+        raise FinishError(f"非法任务标识：{t_id!r}")
+    tasks_root = (root / ".atlas" / "tasks").resolve()
+    t_dir = Path(task.get("_dir") or (tasks_root / t_id)).resolve()
+    if t_dir != tasks_root and tasks_root not in t_dir.parents:
+        raise FinishError(f"任务目录越界：{t_dir}（必须在 {tasks_root} 之内）")
 
+    if not t_dir.is_dir():
+        raise FinishError(f"任务目录不存在：{t_dir}")
     if not force:
         passed, reason = check_task_review_passed(root, t_id)
         if not passed:
@@ -77,7 +128,7 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
         meta = task
 
     meta["status"] = "completed"
-    task_json_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(task_json_file, meta)
 
     # 检查整体工作流是否全部收工
     all_tasks = load_tasks(t_dir.parent)

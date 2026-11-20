@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from _support.workflow_plan import load_tasks, PlanError
+from _support.workflow_plan import load_tasks, PlanError, atomic_write_json
 from _support.workflow_context import render_specs, select_specs
 
 
@@ -156,6 +156,9 @@ def dispatch_task(root: Path, task: dict, scope_paths: list[str] | None = None) 
         meta = task
 
     meta["status"] = "in_progress"
-    task_json_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    paths = [str(p) for p in (scope_paths or []) if str(p).strip()]
+    if paths:
+        meta["paths"] = paths
+    atomic_write_json(task_json_file, meta)
 
     return dispatch_file

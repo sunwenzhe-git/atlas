@@ -212,3 +212,106 @@ def test_status_presents_task_list(tmp_path: Path) -> None:
     p = run(root, "status")
     assert p.returncode == 0
     assert "[T-06]" in p.stdout
+
+
+def test_finish_does_not_match_longer_unit(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    run(root, "plan", "--unit", "T-1", "--requirement", "短 id")
+    run(root, "dispatch", "--unit", "T-1")
+    run(root, "plan", "--unit", "T-10", "--requirement", "长 id")
+    run(root, "dispatch", "--unit", "T-10")
+    reviews = root / "product" / "reviews"
+    (reviews / "2026-11-19-impl-review-T-10").mkdir(parents=True)
+    (reviews / "2026-11-19-impl-review-T-10" / "review.json").write_text(
+        json.dumps({"schema_version": 4, "ok": True, "status": "PASS"}), encoding="utf-8")
+    p = run(root, "finish", "--unit", "T-1")
+    assert p.returncode == 1, "T-1 不得复用 T-10 的 PASS 报告"
+    assert "T-1" in p.stderr
+
+
+def test_dispatch_refuses_completed_and_blocked(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    run(root, "plan", "--unit", "T-11", "--requirement", "落实 AC-HOME-001")
+    run(root, "dispatch", "--unit", "T-11")
+    r_dir = root / "product" / "reviews" / "2026-11-19-impl-review-T-11"
+    r_dir.mkdir(parents=True)
+    (r_dir / "review.json").write_text(
+        json.dumps({"schema_version": 4, "ok": True, "status": "PASS"}), encoding="utf-8")
+    assert run(root, "finish", "--unit", "T-11").returncode == 0
+
+    p = run(root, "dispatch", "--unit", "T-11")
+    assert p.returncode == 2 and "completed" in p.stderr
+
+
+def test_finish_unknown_or_traversal_unit(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    p = run(root, "finish", "--unit", "NOPE", "--force")
+    assert p.returncode == 2
+    assert not (root / ".atlas" / "tasks" / "NOPE" / "task.json").exists()
+
+    p2 = run(root, "finish", "--unit", "../escape", "--force")
+    assert p2.returncode != 0
+
+
+def test_dispatch_paths_persist_to_card(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    run(root, "plan", "--unit", "T-12", "--requirement", "落实 AC-HOME-001")
+    p = run(root, "dispatch", "--unit", "T-12", "--paths", "apps/web/a.ts")
+    assert p.returncode == 0, p.stdout + p.stderr
+    meta = json.loads((root / ".atlas/tasks/T-12/task.json").read_text(encoding="utf-8"))
+    assert meta["paths"] == ["apps/web/a.ts"]
+
+
+def test_status_filters_by_unit_and_reports_corrupt_card(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    run(root, "plan", "--unit", "T-13", "--requirement", "落实 AC-HOME-001")
+    run(root, "plan", "--unit", "OTHER", "--requirement", "落实 AC-HOME-001")
+    p = run(root, "status", "--unit", "T-13")
+    assert p.returncode == 0
+    assert "T-13" in p.stdout and "OTHER" not in p.stdout
+
+    (root / ".atlas/tasks/OTHER/task.json").write_text("{bad", encoding="utf-8")
+    p2 = run(root, "status")
+    assert p2.returncode == 2
+    assert "任务卡损坏" in p2.stderr and "Traceback" not in p2.stderr
+
+
+def test_run_dry_run_writes_nothing(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    p = run(root, "run", "--unit", "T-14", "--requirement", "落实 AC-HOME-001", "--dry-run")
+    assert p.returncode == 0
+    assert not (root / ".atlas/tasks/T-14").exists()
+
+
+def test_plan_prunes_orphan_subcards(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    req2 = "### 步骤一：A AC-HOME-001\n### 步骤二：B"
+    run(root, "plan", "--unit", "T-15", "--requirement", req2)
+    assert (root / ".atlas/tasks/T-15-02").is_dir()
+    run(root, "plan", "--unit", "T-15", "--requirement", "落实 AC-HOME-001")
+    assert not (root / ".atlas/tasks/T-15-02").exists()
+
+
+def test_verify_refuses_empty_staged(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    run(root, "plan", "--unit", "T-16", "--requirement", "落实 AC-HOME-001")
+    p = run(root, "verify", "--unit", "T-16")
+    assert p.returncode == 2 and "暂存区为空" in p.stderr
+
+
+def test_finish_scope_mismatch_blocks_stale_review(tmp_path: Path) -> None:
+    sys.path.insert(0, str(PKG_ROOT))
+    from _support import review_scope_core as scope_core
+    from _support.workflow_finish import _scope_matches
+
+    root = make_clean_project(tmp_path)
+    assert subprocess.run(["git", "init", "-q"], cwd=root).returncode == 0
+    (root / "app.txt").write_text("v1", encoding="utf-8")
+    subprocess.run(["git", "add", "app.txt"], cwd=root, check=True)
+    manifest = scope_core.build_manifest(root, ["app.txt"])
+    data = {"review_scope": {"sha256": manifest["scope_sha256"]}}
+    assert _scope_matches(root, data)[0]
+    (root / "app.txt").write_text("v2", encoding="utf-8")
+    subprocess.run(["git", "add", "app.txt"], cwd=root, check=True)
+    ok, why = _scope_matches(root, data)
+    assert not ok and "已变化" in why

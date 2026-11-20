@@ -4,6 +4,26 @@
 
 ---
 
+## [Unreleased]
+
+### 🧭 执行层最小上下文注入
+
+* `atlas workflow dispatch` 按 `--paths` / 任务卡 `paths` 匹配 `.atlas/spec/**` 的 `paths:` 索引，只注入命中的结构事实与约定（结构优先、约定至多补 1 份、上限 3 份）；无路径时按 `affected_domains` 回退，完全无信号才注入 `tour.md`；
+* glob 语义对齐 Trellis：`**` 跨目录、`*` 不跨目录，目录 scope 与尾斜杠可命中；支持行内数组 / BOM / 行内注释 / 去重，绝对路径按项目根相对化，逃出根不命中；
+* `plan` / `run` 支持 `--paths`；重跑 `plan` 继承已存路径，同具体度下约定不再挤掉域透镜；注入围栏按正文最长反引号串自动加长。
+
+### 🔒 执行层稳定性
+
+* `finish` 按完整任务 id 精确匹配审查目录，杜绝 `T-1` 复用 `T-10` 的报告；收口前比对 `review_scope` 摘要，审查后暂存区内容变化会阻断；
+* `dispatch` 拒绝对 completed / 前置依赖未满足的任务重复派发；`finish` 拒绝账本外或越界 unit；`plan` 重跑清理未派发的孤儿子卡；
+* 任务账本改为原子写（tmp + replace），坏卡显式报错而非静默跳过；`run --dry-run` 不再落盘，`verify` 空暂存区提前返回 2，`status --unit` 生效。
+
+### 📚 规范开户口径
+
+* 规范开户合并进 `atlas-structure`（开户模式），references 随技能分发；`testid.md` 明确由 E2E 环生成，结构环不双写；
+* `AGENTS.md` 托管段收成 Trellis 式瘦指针：`.atlas/` 知识索引 + 装配≠开户 + plan/dispatch/verify/finish 入口 + §15 上报出口；恢复 Windows `python` 口径；
+* 同步 `docs/map` 计数与命令面（`--paths`、patches 1 族）、README、`shared/layout` 与 `apply/reference` adopt 说明。
+
 ## [v0.4.0-beta.1] - 2026-11-19
 
 ### 🧭 执行层自主化：移除 Trellis，Atlas workflow 接管
