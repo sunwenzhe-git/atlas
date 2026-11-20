@@ -152,6 +152,31 @@ def test_k_archive_card_hit(tmp_path: Path) -> None:
     assert codes(root) == []
 
 
+def _commit(root: Path, msg: str) -> None:
+    git(root, "add", "-A")
+    git(root, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", msg)
+
+
+def test_k_flat_archive_layout_is_fail(tmp_path: Path) -> None:
+    """扁平归档（archive/<ID>/）会让卡掉出扫描面：必须显式 FAIL，不得静默忽略。"""
+    root = new_repo(tmp_path)
+    write(root, ".atlas/tasks/archive/01-old/prd.md",
+          "atlas-acceptance: AC-SOLUTION-001\n\n" + MINIMAL_CONFIRMED)
+    write(root, ".atlas/tasks/archive/01-old/solution.md", "- acs: AC-SOLUTION-001\n")
+    _commit(root, "flat archive")
+    assert "archive_layout_invalid" in codes(root)
+
+
+def test_k_bad_month_archive_layout_is_fail(tmp_path: Path) -> None:
+    """月份层非 YYYY-MM（如 2026-13）同样不算合法归档：不静默接受。"""
+    root = new_repo(tmp_path)
+    write(root, ".atlas/tasks/archive/2026-13/01-old/prd.md",
+          "atlas-acceptance: AC-SOLUTION-001\n\n" + MINIMAL_CONFIRMED)
+    write(root, ".atlas/tasks/archive/2026-13/01-old/solution.md", "- acs: AC-SOLUTION-001\n")
+    _commit(root, "bad month archive")
+    assert "archive_layout_invalid" in codes(root)
+
+
 CONFIRMED_HEAD = ("## 六、Confirmed\n\n"
                   "| 确认项 | 口径 | 证据状态 | 证据指针 |\n"
                   "|---|---|---|---|\n")

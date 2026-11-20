@@ -19,7 +19,7 @@ from pathlib import Path
 
 AC_RE = re.compile(r"AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3}")
 UNIT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-ARCHIVE_DIR = "archive"  # `.atlas/tasks/archive/`：已收口任务的归档区（issue #70）
+ARCHIVE_DIR = "archive"  # `.atlas/tasks/archive/<YYYY-MM>/<ID>/`：已收口任务归档区（issue #70）
 
 
 class PlanError(ValueError):

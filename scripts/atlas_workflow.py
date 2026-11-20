@@ -37,7 +37,7 @@ from _support.workflow_dispatch import (  # noqa: E402
     get_next_runnable_task, dispatch_task, DispatchError
 )
 from _support.workflow_finish import (  # noqa: E402
-    finish_task, check_task_review_passed, FinishError, archive_task
+    finish_task, check_task_review_passed, FinishError, archive_task, archive_month
 )
 from _support.workflow_context import select_specs, render_specs  # noqa: E402
 
@@ -295,7 +295,11 @@ def cmd_finish(args: argparse.Namespace, root: Path) -> int:
 
 
 def cmd_archive(args: argparse.Namespace, root: Path) -> int:
-    """把已 completed 的活跃任务迁入 `.atlas/tasks/archive/`（幂等，一次性迁移，issue #70）。"""
+    """把已 completed 的任务迁入 `.atlas/tasks/archive/<YYYY-MM>/`（幂等，issue #70）。
+
+    除活跃任务外，历史扁平存档（`archive/<id>/`）或缺/错月份层的目录也视为待归档，
+    迁入当月以恢复判据与封条的扫描面。
+    """
     tasks_dir = _read_tasks_root(root)
     all_tasks = load_tasks(tasks_dir, include_archived=True)
     if args.unit:
@@ -304,9 +308,11 @@ def cmd_archive(args: argparse.Namespace, root: Path) -> int:
             return die(f"未找到任务卡 {args.unit}", code=2)
     else:
         targets = all_tasks
-    pending = [t for t in targets if not t.get("_archived")]
+    pending = [t for t in targets
+               if archive_month(Path(t["_dir"]), tasks_dir) is None]
     if args.dry_run:
-        print(f"$ # 归档 {len(pending)} 项到 {tasks_dir / 'archive'}（dry-run 不移动）")
+        print(f"$ # 归档 {len(pending)} 项到 {tasks_dir / 'archive'}/{date.today():%Y-%m}"
+              "（dry-run 不移动）")
         return 0
     if args.unit and pending and pending[0].get("status") != "completed":
         return die(f"任务 {args.unit} 尚未 completed，不能归档", code=1)
@@ -462,11 +468,13 @@ def main() -> int:
     # status
     p_stat = sub.add_parser("status", help="查看当前所有任务流转状态", parents=[common])
     p_stat.add_argument("--unit", help="查看指定任务")
-    p_stat.add_argument("--all", action="store_true", help="包含 .atlas/tasks/archive/ 中已归档的任务")
+    p_stat.add_argument("--all", action="store_true",
+                        help="包含 .atlas/tasks/archive/<YYYY-MM>/ 中已归档的任务")
 
     # archive
     p_arc = sub.add_parser("archive", parents=[common],
-                           help="把已 completed 的活跃任务迁入 .atlas/tasks/archive/（幂等一次性迁移）")
+                           help="把已 completed 的活跃任务迁入 .atlas/tasks/archive/<YYYY-MM>/"
+                                "（幂等一次性迁移）")
     p_arc.add_argument("--unit", help="只归档指定任务（缺省归档全部 completed）")
 
     # run (一键全流程)

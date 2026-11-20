@@ -22,6 +22,13 @@ import pytest
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = PKG_ROOT / "scripts" / "atlas_workflow.py"
+if str(PKG_ROOT) not in sys.path:
+    sys.path.insert(0, str(PKG_ROOT))
+
+
+def _month() -> str:
+    """归档月份目录名（与写入侧同口径：归档当天）。"""
+    return date.today().strftime("%Y-%m")
 
 
 def run(root: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
@@ -121,11 +128,18 @@ def test_finish_succeeds_with_valid_review(tmp_path: Path) -> None:
     assert p.returncode == 0, p.stdout + p.stderr
     assert "status: completed" in p.stdout
 
-    meta = json.loads((root / ".atlas" / "tasks" / "archive" / "T-05" / "task.json")
-                      .read_text(encoding="utf-8"))
+    archived_card = (root / ".atlas" / "tasks" / "archive" / _month() / "T-05")
+    meta = json.loads((archived_card / "task.json").read_text(encoding="utf-8"))
     assert meta["status"] == "completed"
     assert meta["e2e_precondition"]["status"] == "SKIP"  # 无 E2E 索引：显式 SKIP，不静默通过
     assert not (root / ".atlas" / "tasks" / "T-05").exists()  # 已归档出活跃区
+
+    # 正例：归档卡仍在判据（archive/*/*/prd.md）与封条（archive/*/<ID>/<tail>）的扫描面内
+    assert archived_card.joinpath("prd.md") in set(
+        (root / ".atlas" / "tasks").glob("archive/*/*/prd.md"))
+    from _support.solution_seal import _resolve_card_file
+    sealed = _resolve_card_file(root, ".atlas/tasks/T-05/prd.md")
+    assert sealed is not None and sealed.resolve() == (archived_card / "prd.md").resolve()
 
     # finish 幂等：已归档任务重跑不报错、不重复移动
     p2 = run(root, "finish", "--unit", "T-05")
@@ -232,8 +246,8 @@ def test_verify_session_executor_unblocks_finish(tmp_path: Path) -> None:
 
     p3 = run(root, "finish", "--unit", "T-12")
     assert p3.returncode == 0, p3.stdout + p3.stderr
-    meta = json.loads((root / ".atlas" / "tasks" / "archive" / "T-12" / "task.json")
-                      .read_text(encoding="utf-8"))
+    meta = json.loads((root / ".atlas" / "tasks" / "archive" / _month() / "T-12"
+                       / "task.json").read_text(encoding="utf-8"))
     assert meta["status"] == "completed"
 
 
@@ -357,7 +371,8 @@ def test_finish_records_e2e_pass_and_acceptance(tmp_path: Path) -> None:
 
     p = run(root, "finish", "--unit", "T-21")
     assert p.returncode == 0, p.stdout + p.stderr
-    meta = json.loads((root / ".atlas/tasks/archive/T-21/task.json").read_text(encoding="utf-8"))
+    meta = json.loads((root / ".atlas/tasks/archive" / _month() / "T-21/task.json")
+                      .read_text(encoding="utf-8"))
     assert meta["e2e_precondition"]["status"] == "PASS"
     assert meta["e2e_precondition"]["acceptance"]["status"] == "PASS"
 
@@ -373,7 +388,8 @@ def test_finish_skips_e2e_when_task_acs_unmapped(tmp_path: Path) -> None:
 
     p = run(root, "finish", "--unit", "T-22")
     assert p.returncode == 0, p.stdout + p.stderr
-    meta = json.loads((root / ".atlas/tasks/archive/T-22/task.json").read_text(encoding="utf-8"))
+    meta = json.loads((root / ".atlas/tasks/archive" / _month() / "T-22/task.json")
+                      .read_text(encoding="utf-8"))
     assert meta["e2e_precondition"]["status"] == "SKIP"
     assert "无法定位" in meta["e2e_precondition"]["reason"]
 
@@ -390,7 +406,7 @@ def test_archive_migrates_completed_and_status_all(tmp_path: Path) -> None:
     assert "[T-30]" in run(root, "status").stdout  # 尚未归档，仍在活跃区
     p = run(root, "archive", "--unit", "T-30")
     assert p.returncode == 0, p.stdout + p.stderr
-    assert (root / ".atlas/tasks/archive/T-30/task.json").is_file()
+    assert (root / ".atlas/tasks/archive" / _month() / "T-30/task.json").is_file()
 
     assert "[T-30]" not in run(root, "status").stdout
     p_all = run(root, "status", "--all")
@@ -398,6 +414,21 @@ def test_archive_migrates_completed_and_status_all(tmp_path: Path) -> None:
 
     p_again = run(root, "archive", "--unit", "T-30")
     assert p_again.returncode == 0 and "无待归档项" in p_again.stdout
+
+
+def test_archive_relocates_legacy_flat_layout(tmp_path: Path) -> None:
+    """历史扁平存档（archive/<ID>/）应迁入当月，重新进入判据扫描面。"""
+    root = make_clean_project(tmp_path)
+    flat = root / ".atlas" / "tasks" / "archive" / "T-40"
+    flat.mkdir(parents=True)
+    (flat / "task.json").write_text(json.dumps({
+        "id": "T-40", "title": "旧扁平存档", "status": "completed", "depends_on": [], "acs": [],
+    }), encoding="utf-8")
+
+    p = run(root, "archive", "--unit", "T-40")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert (root / ".atlas/tasks/archive" / _month() / "T-40/task.json").is_file()
+    assert not flat.exists()
 
 
 def test_archive_refuses_non_completed(tmp_path: Path) -> None:

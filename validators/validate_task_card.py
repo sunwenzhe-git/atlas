@@ -29,6 +29,7 @@ FENCE_RE = re.compile(r"^(```|~~~)")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 SCHEMA_RE = re.compile(r"^prd_schema:\s*(\d+)\s*$", re.M)
 ARCHIVE_SKIP_FRESH = {"status": "archived"}
+ARCHIVE_MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 class CardError(ValueError):
@@ -256,7 +257,19 @@ def validate(root: Path, today: date | None = None) -> tuple[list[dict], list[di
     for path in sorted(root.glob(".atlas/tasks/*/prd.md")):
         cards.append((path, "active"))
     for path in sorted(root.glob(".atlas/tasks/archive/*/*/prd.md")):
-        cards.append((path, "archived"))
+        month = path.parent.parent.name
+        if ARCHIVE_MONTH_RE.fullmatch(month):
+            cards.append((path, "archived"))
+        else:
+            errors.append({"code": "archive_layout_invalid",
+                           "message": f"归档月份目录不合法（{month!r}，应为 YYYY-MM）: "
+                                      f"{path.relative_to(root).as_posix()}"})
+    # 合法归档形态只有 `archive/<YYYY-MM>/<ID>/prd.md`；扁平存档（`archive/<ID>/`）
+    # 会静默掉出上面的扫描面、不再被判据覆盖，必须显式报错而不是视而不见。
+    for path in sorted(root.glob(".atlas/tasks/archive/*/prd.md")):
+        errors.append({"code": "archive_layout_invalid",
+                       "message": f"归档卡缺月度目录（应为 archive/<YYYY-MM>/<ID>/）: "
+                                  f"{path.relative_to(root).as_posix()}"})
     if not cards:
         # 成员侧不读父仓封条，无法区分「尚未建卡」与「有封条却缺卡」；
         # 后者由父仓 `validate_apply_record`（`card_absent`）判 FAIL，这里只 WARN。
