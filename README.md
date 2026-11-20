@@ -42,6 +42,7 @@
 - [十、贡献与流水线协同（RFC 机制）](#十贡献与流水线协同rfc-机制)
 - [十一、社区交流（钉钉群）](#十一社区交流钉钉群)
 - [十二、开源协议（License）](#十二开源协议license)
+- [十三、出处与署名（Attribution）](#十三出处与署名attribution)
 
 ---
 
@@ -571,6 +572,22 @@ Atlas 随包完整分发了一套自洽的高阶开发与评审套件：
 ## 十二、开源协议（License）
 
 本项目基于 **[Apache License, Version 2.0](LICENSE)** 协议开源。
+
+- 代码、脚本、模板、校验器：Apache-2.0。分发时请保留 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)，修改过的文件请标注。
+- 文档与规范正文（`docs/`、`rings/`、`skills/` 中面向人的说明性文字）：[CC BY 4.0](docs/LICENSE)。复制、改编、商用都需署名并附原文链接。
+- 引用本方法论：见 [CITATION.cff](CITATION.cff)（GitHub 仓库页会出现 “Cite this repository”）。
+
+---
+
+## 十三、出处与署名（Attribution）
+
+如果你在项目、文章或产品中采用了 Atlas 的 Project Harness 方法论（契约先行、机器门禁、变异证明、独立审查等），请在 README 或关于页面注明来源：
+
+> 本项目的工程治理思路来自 **Atlas — Project Harness 工作流治理引擎**：<https://github.com/sunwenzhe-git/atlas>
+
+这是一条署名请求，不是许可条款——方法论本身不受著作权保护，无法强制；但“来源可追溯”是这个项目愿意被复用的前提。
+
+`Atlas` 与 `Project Harness` 为项目名称，依 Apache-2.0 第 6 条，本许可不授予商标使用权。
 
 ---
 

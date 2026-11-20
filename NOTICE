@@ -1,0 +1,17 @@
+Atlas — Project Harness 工作流治理引擎
+Copyright 2026 sunwenzhe-git
+
+This product includes software developed as part of the Atlas project
+(https://github.com/sunwenzhe-git/atlas).
+
+本产品包含 Atlas 项目原创的工作流治理方法论、契约、校验器、模板与工程线束。
+分发本软件或其衍生作品时，请随附本 NOTICE 与根目录 LICENSE（Apache-2.0），
+并在衍生项目的 README 或关于页面注明来源：
+https://github.com/sunwenzhe-git/atlas
+
+文档与规范正文（docs/、rings/、skills/ 中面向人的说明性文字）另按
+Creative Commons Attribution 4.0 International（CC BY 4.0）授权，
+署名与链接要求见 docs/LICENSE。
+
+"Atlas" 与 "Project Harness" 为本项目名称；依 Apache License 2.0 第 6 条，
+本许可不授予任何商标使用权。

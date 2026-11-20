@@ -54,7 +54,7 @@ SKIP_SUFFIXES = (".pyc", ".DS_Store")
 # RFC-20261114-01：不含出厂测试目录 tests/（出厂测试回归源包验收面）。
 ASSEMBLY_COVER_DIRS = ("shared", "rings", "apply", "scripts", "templates", "adapters",
                        "validators", "patches", "_support", "skills", "extensions")
-ASSEMBLY_COVER_FILES = ("LICENSE",)
+ASSEMBLY_COVER_FILES = ("LICENSE", "NOTICE")
 
 # 缓存类豁免（与 SKIP_DIRS/SKIP_SUFFIXES 同口径）：清理基线闸不把运行态产物当采纳方内容。
 _CLEANUP_SKIP_DIRS = {"__pycache__", ".pytest_cache"}

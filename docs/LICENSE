@@ -1,0 +1,23 @@
+文档许可（Documentation License）— CC BY 4.0
+
+适用范围
+  本仓库中面向人的说明性文字：docs/ 目录（含 docs/guide、docs/map 等）、
+  rings/*/reference.md、skills/**/SKILL.md，以及其中的文字示例与图表。
+  代码（*.py、*.js、*.mjs、*.ts、模板、校验器、脚本）不受本文件约束，
+  仍按仓库根目录 LICENSE（Apache License 2.0）授权。
+
+许可
+  Creative Commons Attribution 4.0 International（CC BY 4.0）
+    https://creativecommons.org/licenses/by/4.0/legalcode
+    https://creativecommons.org/licenses/by/4.0/deed.zh-Hans
+
+你可以复制、转载、改编与商用，但必须履行以下义务：
+  1. 署名：给出作者 "Atlas Project" 与仓库链接
+     https://github.com/sunwenzhe-git/atlas；
+  2. 附许可链接：附上本许可的 URI（上面的链接即可，无须附全文）；
+  3. 标明修改：说明你对原文做了哪些改动。
+
+建议署名格式
+  来源：Atlas — Project Harness 工作流治理引擎
+        （https://github.com/sunwenzhe-git/atlas），
+        依 CC BY 4.0 使用，修改处已标注。

@@ -14,7 +14,7 @@
 | 文件 | 行数 | 角色 |
 |---|---|---|
 | `bin/atlas.js` | 553 | CLI 入口:命令面总表见 `printHelp`(`bin/atlas.js:18`)= init / update / upgrade / check / workflow / solution / review / eval / e2e / console / report / apply / version,分派在同文件 `switch (command)`;平台探测拆到 `bin/platform.js`(bash 只认 Git Bash、Python 按平台探测 3.10+) |
-| `install.py` | 922 | 装配单源:白名单拷贝 + 版本戳 + manifest + 70 条 `c()` 自检 + 图谱探测;叶子脚本(layout / apply-patches / apply-wiring / pkg_digest / ablation / evidence_archive)复用不重写 |
+| `install.py` | 928 | 装配单源:白名单拷贝 + 版本戳 + manifest + 71 条 `c()` 自检 + 图谱探测;叶子脚本(layout / apply-patches / apply-wiring / pkg_digest / ablation / evidence_archive)复用不重写 |
 | `install.sh` | 56 | 薄 wrapper:头部用法说明 + `exec python3 install.py`(装配逻辑零残留,自检门守) |
 | `scripts/atlas_workflow.py` | 450 | 执行层调度:plan / dispatch / context / verify / finish / status / run;任务账本 `.atlas/tasks`,`--paths`(最小注入) / `--round` / `--resolves` 透传;`context` 为只读查询(不写盘、不改状态) |
 | `scripts/pkg_digest.py` | — | 内容摘要算法单点(`ASSEMBLY_COVER_DIRS`,`scripts/pkg_digest.py:52`):装配版本门两侧共用,防双端漂移 |
@@ -25,7 +25,7 @@
 
 ### 1. 装配四步(`install.py`;`install.sh` 薄 wrapper)
 
-`[1/4]` 整包 → `.atlas/`(`atlas_dest`,`install.py:5`,白名单目录拷贝,不整目录删,保住 `.atlas/runs/` 运行态)→ `[2/4]` skill 瘦桩(引用契约不复制正文)→ `[3/4]` 骨架 → `[4/4]` 项目接线(AGENTS.md 指针 / 测试配置 / `.gitignore` / pi 扩展)→ 图谱后端探测(可选)→ 自检段(`say("自检")`,`install.py:664`,70 条 `c()` 声明)。`--dry-run`(F54)零落盘、双摘要可见化;`--update` 刷新已装配副本。
+`[1/4]` 整包 → `.atlas/`(`atlas_dest`,`install.py:5`,白名单目录拷贝,不整目录删,保住 `.atlas/runs/` 运行态)→ `[2/4]` skill 瘦桩(引用契约不复制正文)→ `[3/4]` 骨架 → `[4/4]` 项目接线(AGENTS.md 指针 / 测试配置 / `.gitignore` / pi 扩展)→ 图谱后端探测(可选)→ 自检段(`say("自检")`,`install.py:5`,71 条 `c()` 声明)。`--dry-run`(F54)零落盘、双摘要可见化;`--update` 刷新已装配副本。
 
 ### 2. 装配基线三件(D145/D146/D147)
 

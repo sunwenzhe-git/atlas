@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+title: "Atlas — Project Harness 工作流治理引擎"
+message: "采用本方法论或引用本项目时，请按此格式署名并附上仓库链接。"
+type: software
+authors:
+  - family-names: Sun
+    given-names: Wenzhe
+    alias: sunwenzhe-git
+repository-code: "https://github.com/sunwenzhe-git/atlas"
+url: "https://github.com/sunwenzhe-git/atlas"
+license: Apache-2.0
+keywords:
+  - project-harness
+  - ai-coding-agent
+  - workflow-governance
+  - spec-driven-development
+  - ai-native-engineering
+abstract: "以机器门禁、变异证明与独立审查约束 AI 编程全流程的工作流治理引擎：契约先行、证据闭环、可审计交付。"

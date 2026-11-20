@@ -157,7 +157,7 @@ export default defineConfig({
     },
 
     footer: {
-      message: 'Released under the Apache-2.0 License.',
+      message: '代码 Apache-2.0 · 文档 CC BY 4.0（转载署名 + 附原文链接）',
       copyright: 'Copyright © 2026 Atlas Authors. Governed by machines.'
     },
 

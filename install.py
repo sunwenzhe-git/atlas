@@ -595,6 +595,11 @@ def main() -> None:
         run(f"cp {SCRIPT_DIR}/LICENSE {atlas_dest}/LICENSE",
             action=lambda: cp_f(Path(SCRIPT_DIR, "LICENSE"), Path(atlas_dest, "LICENSE")))
 
+    # Apache-2.0 §4(d)：分发含 NOTICE 的作品时须随附 NOTICE（.atlas/ 是分发给采纳方的副本）。
+    if os.path.isfile(os.path.join(SCRIPT_DIR, "NOTICE")):
+        run(f"cp {SCRIPT_DIR}/NOTICE {atlas_dest}/NOTICE",
+            action=lambda: cp_f(Path(SCRIPT_DIR, "NOTICE"), Path(atlas_dest, "NOTICE")))
+
     # RFC-20261111-03 §5.3：`reader_version` 第二级读装配副本的 `.atlas/package.json`
     # （工具自身版本；被检查仓的 `package.json` 不参与分级）。
     pkg_json = os.path.join(SCRIPT_DIR, "package.json")
@@ -763,6 +768,7 @@ def main() -> None:
         check(label, path)
 
     c("共享契约", f"{atlas_dest}/shared/global-rules.md")
+    c("许可声明", f"{atlas_dest}/NOTICE")
     c("stack-profile 契约", f"{atlas_dest}/shared/stack-profile.md")
     c("单一真相源契约", f"{atlas_dest}/shared/single-source.md")
     c("布局契约", f"{atlas_dest}/shared/layout.md")

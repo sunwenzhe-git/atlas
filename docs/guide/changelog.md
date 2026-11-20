@@ -17,6 +17,12 @@
 
 * `.gitignore` 接线新增 `.atlas` 白名单块：默认 `.atlas/*` 忽略引擎镜像，`!.atlas/tasks/`、`!.atlas/spec/` 放行项目规范与任务账本；带标记幂等，用户已手写任意 `.atlas` 规则时保留其口径不覆盖。
 
+### 📜 许可与署名
+
+* 新增根 `NOTICE`（Apache-2.0 §4d），并随 `.atlas/` 装配分发、纳入 MANIFEST 摘要与自检声明；
+* `docs/`、`rings/`、`skills/` 中面向人的说明性文字单独按 CC BY 4.0 授权（`docs/LICENSE`：署名 + 附原文链接 + 标明修改），代码仍为 Apache-2.0；
+* 新增 `CITATION.cff`（GitHub 显示 “Cite this repository”）；README 增「出处与署名」段：采用本方法论的衍生项目请注明来源。
+
 ---
 
 ## [v0.4.0-beta.2] - 2026-11-20
