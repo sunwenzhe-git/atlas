@@ -126,7 +126,7 @@ jobs:
           $repo = (Get-Location).Path
           $nodeExe = (Get-Command node).Source
           $tmp = Join-Path $env:RUNNER_TEMP ("atlas-native-" + [guid]::NewGuid().ToString("N"))
-          New-Item -ItemType Directory -Force -Path (Join-Path $tmp ".atlas") | Out-Null
+          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
           Write-Host "::group::init"
           & $nodeExe "$repo\bin\atlas.js" init --target $tmp --assets-root docs
           if ($LASTEXITCODE -ne 0) { throw "init failed: $LASTEXITCODE" }
@@ -159,7 +159,7 @@ jobs:
         run: |
           $repo = (Get-Location).Path
           $tmp = Join-Path $env:RUNNER_TEMP ("atlas-gbk-" + [guid]::NewGuid().ToString("N"))
-          New-Item -ItemType Directory -Force -Path (Join-Path $tmp ".atlas") | Out-Null
+          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
           $oldEnc = [Console]::OutputEncoding
           try {
             [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding(936)
