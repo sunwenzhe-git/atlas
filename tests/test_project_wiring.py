@@ -125,6 +125,8 @@ def test_gitignore_fourth_touchpoint_appends_idempotently() -> None:
         assert r.returncode == 0, r.stdout
         text = f.read_text(encoding="utf-8")
         assert text.count(".adapter-out/") == 1
+        assert text.count(".atlas/*") == 1
+        assert "!.atlas/tasks/" in text and "!.atlas/spec/" in text
         run(tmp, "--apply")
         assert f.read_text(encoding="utf-8") == text
 

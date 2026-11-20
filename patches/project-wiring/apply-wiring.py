@@ -15,12 +15,16 @@
   3. `<项目根>/.pi/`（仅 pi 宿主）：把官方扩展落到 `.pi/extensions/atlas/index.ts`，
      并在 `.pi/settings.json` 的 `extensions[]` 里幂等登记一行（2026-10-15 补）。
 
-  4. `<项目根>/.gitignore`（仅已存在时）：幂等追加一行 `.adapter-out/`（2026-10-15 补）。
-     issue #8 后 atlas 全部中间产物统一落项目根该目录（适配器输出 / 漂移标记 /
-     图谱新鲜度标记），不忽略则 `git status` 常驻未跟踪噪声——**对所有接线项目成立**，
-     不只图谱用户。判据：文件**不存在 ⇒ 不首创**（跳过并在报告里给一行建议）；
-     内容已含 `.adapter-out` 字样 ⇒ 幂等跳过；出现 `!.adapter-out` 负模式 ⇒ 跳过，
-     不与用户既有规则打架。**本触点无退役对称**：`.gitignore` 不是本项目创建的文件，
+  4. `<项目根>/.gitignore`（仅已存在时）：幂等追加两类默认规则（2026-10-15 补）。
+     `.adapter-out/`：issue #8 后 atlas 全部中间产物统一落项目根该目录（适配器输出 /
+     漂移标记 / 图谱新鲜度标记），不忽略则 `git status` 常驻未跟踪噪声——**对所有接线项目成立**，
+     不只图谱用户。
+     `.atlas` 白名单：装配包本身是 `atlas update` 会整包刷新的镜像，不入库；项目自产的
+     `.atlas/spec/`（规范）与 `.atlas/tasks/`（任务账本）必须入库。
+     判据：文件**不存在 ⇒ 不首创**（跳过并在报告里给建议行）；
+     内容已含 `.adapter-out` 字样 ⇒ 幂等跳过；出现 `!.adapter-out` 负模式 ⇒ 跳过；
+     atlas 块已含标记 ⇒ 幂等跳过；用户已写任意 `.atlas` 规则 ⇒ 保留用户口径。
+     **本触点无退役对称**：`.gitignore` 不是本项目创建的文件，
      追加后永不回收（与 extractor 配置的「逐字节相等才清」不同——追加是单向动作，
      由报告行当刻告知用户）。
 
@@ -99,32 +103,65 @@ def wire_agents(target: Path) -> dict:
 # ----------------------------------------------------------------- .gitignore 兜底（2026-10-15 补，第 4 个触点）
 
 GITIGNORE_REL = ".gitignore"
-ADAPTER_OUT_LINE = ".adapter-out/"
+ADAPTER_OUT_ENTRY = ".adapter-out/\n"
+ADAPTER_OUT_KEY = ".adapter-out"
+
+# atlas 装配包默认忽略口径：引擎镜像不入库，项目产出（规范 + 任务账本）入库。
+ATLAS_IGNORE_MARKER = "# atlas：装配包不入库"
+ATLAS_IGNORE_BLOCK = (
+    ATLAS_IGNORE_MARKER + "；规范与任务账本入库（install.py 幂等维护）\n"
+    ".atlas/*\n"
+    "!.atlas/tasks/\n"
+    "!.atlas/spec/\n"
+)
+ATLAS_RULE_RE = re.compile(r"^\s*!?\.atlas(?:/|\*|\s|$)", re.M)
 
 
 def wire_gitignore(target: Path) -> dict:
-    """`.gitignore` 追加 `.adapter-out/`（issue #8 后所有接线项目都需要，不只图谱用户）。
+    """`.gitignore` 幂等追加两类默认规则：`.adapter-out/` 与 `.atlas` 白名单。
 
-    三条判据（缺失即跳过并显式说明，不猜）：
+    `.adapter-out/`：issue #8 后所有接线项目都需要（适配器输出 / 漂移标记），
+    不忽略则 `git status` 常驻未跟踪噪声。
+    `.atlas` 块：装配包是整包镜像（`atlas update` 刷新），不入库；项目自产的
+    `.atlas/spec/`（规范）与 `.atlas/tasks/`（任务账本）必须入库。
+
+    判据（缺失即跳过并显式说明，不猜）：
       * 文件**不存在 ⇒ 不首创**——根 `.gitignore` 是用户自有文件，本脚手不替用户从零创建，
         只在报告里给出建议行；
-      * 内容已含 `.adapter-out` **子串** ⇒ 已忽略，幂等跳过（子串判据兼容
-        `.adapter-out`、`.adapter-out/*` 等一切等价写法）；
-      * 出现 `!.adapter-out` 负模式 ⇒ 意见相反，跳过不与用户打架。
+      * `.adapter-out` 已含子串 ⇒ 幂等跳过；出现 `!.adapter-out` 负模式 ⇒ 跳过，不打架；
+      * atlas 块已含标记 ⇒ 幂等跳过；用户已写任意 `.atlas` 规则 ⇒ 保留用户口径，跳过该块。
     """
     path = target / GITIGNORE_REL
     if not path.is_file():
         return {"file": GITIGNORE_REL, "status": "skipped",
-                "detail": f"无 {GITIGNORE_REL} ⇒ 不首创（建议手动加一行 {ADAPTER_OUT_LINE}）"}
+                "detail": (f"无 {GITIGNORE_REL} ⇒ 不首创（建议手动加 "
+                           f"`.adapter-out/`、`.atlas/*`、`!.atlas/tasks/`、`!.atlas/spec/`）")}
     text = path.read_text(encoding="utf-8")
-    if "!" + ADAPTER_OUT_LINE.rstrip("/") in text:
-        return {"file": GITIGNORE_REL, "status": "skipped",
-                "detail": "存在 !.adapter-out 负模式 ⇒ 不与用户既有规则打架"}
-    if ADAPTER_OUT_LINE.rstrip("/") in text:
-        return {"file": GITIGNORE_REL, "status": "skipped", "detail": "已忽略 .adapter-out"}
-    new_text = (text if text.endswith("\n") else text + "\n") + ADAPTER_OUT_LINE + "\n"
+    additions: list[str] = []
+    labels: list[str] = []
+    notes: list[str] = []
+
+    if "!" + ADAPTER_OUT_KEY in text:
+        notes.append("存在 !.adapter-out 负模式 ⇒ 不与用户既有规则打架")
+    elif ADAPTER_OUT_KEY in text:
+        notes.append("已忽略 .adapter-out")
+    else:
+        additions.append(ADAPTER_OUT_ENTRY)
+        labels.append(".adapter-out/")
+
+    if ATLAS_IGNORE_MARKER in text:
+        notes.append("已含 atlas 忽略块")
+    elif ATLAS_RULE_RE.search(text):
+        notes.append("已有 .atlas 规则 ⇒ 保留用户口径")
+    else:
+        additions.append(ATLAS_IGNORE_BLOCK)
+        labels.append(".atlas 白名单")
+
+    if not additions:
+        return {"file": GITIGNORE_REL, "status": "skipped", "detail": "；".join(notes)}
+    new_text = (text if text.endswith("\n") else text + "\n") + "".join(additions)
     return {"file": GITIGNORE_REL, "status": "applied",
-            "detail": "appended .adapter-out/ (atlas 中间产物单一位点，issue #8)",
+            "detail": "；".join(notes + ["appended " + " + ".join(labels)]),
             "_write": (path, new_text)}
 
 

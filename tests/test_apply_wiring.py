@@ -533,8 +533,16 @@ def test_pi_extension_failure_signature_behaviour() -> None:
 # ---------------------------------------------------------------- .gitignore 兜底（第 5 触点）
 
 
+ATLAS_IGNORE_BLOCK = (
+    "# atlas：装配包不入库；规范与任务账本入库（install.py 幂等维护）\n"
+    ".atlas/*\n"
+    "!.atlas/tasks/\n"
+    "!.atlas/spec/\n"
+)
+
+
 def test_wire_gitignore_appends_and_is_idempotent() -> None:
-    """已有 `.gitignore` 且未忽略 `.adapter-out` ⇒ 追加一行；重跑幂等（字节不变）。"""
+    """已有 `.gitignore` ⇒ 追加 `.adapter-out/` 与 `.atlas` 白名单；重跑幂等（字节不变）。"""
     wiring = load_wiring()
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -543,38 +551,60 @@ def test_wire_gitignore_appends_and_is_idempotent() -> None:
         res = wiring.wire_gitignore(root)
         assert res["status"] == "applied", res
         gi.write_text(res["_write"][1], encoding="utf-8")
-        assert gi.read_text(encoding="utf-8") == "node_modules/\n.adapter-out/\n"
+        assert gi.read_text(encoding="utf-8") == "node_modules/\n.adapter-out/\n" + ATLAS_IGNORE_BLOCK
 
         res2 = wiring.wire_gitignore(root)
         assert res2["status"] == "skipped" and "_write" not in res2, res2
-        assert gi.read_text(encoding="utf-8") == "node_modules/\n.adapter-out/\n"
+        assert gi.read_text(encoding="utf-8") == "node_modules/\n.adapter-out/\n" + ATLAS_IGNORE_BLOCK
 
 
-def test_wire_gitignore_skips_any_existing_adapter_out_form() -> None:
-    """内容已含 `.adapter-out` 子串（等价写法 `.adapter-out` / `.adapter-out/*`）⇒ 幂等跳过。
-
-    子串判据的理由：不猜用户写的形态是否与本行等价——已收住 `.adapter-out` 后任何追加
-    都只会造重复行，宁跳不叠。"""
+def test_wire_gitignore_appends_atlas_block_when_adapter_out_present() -> None:
+    """`.adapter-out` 已以等价写法收住 ⇒ 不重复追加，只补 `.atlas` 白名单；重跑幂等。"""
     wiring = load_wiring()
     for content in (".adapter-out\n", ".adapter-out/*\n"):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            (root / ".gitignore").write_text("node_modules/\n" + content, encoding="utf-8")
+            gi = root / ".gitignore"
+            gi.write_text("node_modules/\n" + content, encoding="utf-8")
             res = wiring.wire_gitignore(root)
-            assert res["status"] == "skipped" and "_write" not in res, (content, res)
-            assert (root / ".gitignore").read_text(encoding="utf-8") \
-                == "node_modules/\n" + content, "等价写法下不得追加重复行"
+            assert res["status"] == "applied", (content, res)
+            text = res["_write"][1]
+            assert text == "node_modules/\n" + content + ATLAS_IGNORE_BLOCK, (content, text)
+            gi.write_text(text, encoding="utf-8")
+            res2 = wiring.wire_gitignore(root)
+            assert res2["status"] == "skipped" and "_write" not in res2, (content, res2)
 
 
-def test_wire_gitignore_skips_when_user_negation_present() -> None:
-    """`!.adapter-out` 负模式 ⇒ 跳过，不与用户既有规则打架（意见相反时不动手）。"""
+def test_wire_gitignore_skips_adapter_out_negation_but_still_adds_atlas() -> None:
+    """`!.adapter-out` 负模式 ⇒ 不追加 `.adapter-out`，但 atlas 块仍按默认口径补。"""
     wiring = load_wiring()
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        (root / ".gitignore").write_text("node_modules/\n!.adapter-out/\n", encoding="utf-8")
+        gi = root / ".gitignore"
+        gi.write_text("node_modules/\n!.adapter-out/\n", encoding="utf-8")
         res = wiring.wire_gitignore(root)
-        assert res["status"] == "skipped" and "_write" not in res, res
-        assert "负模式" in res["detail"], res
+        assert res["status"] == "applied", res
+        text = res["_write"][1]
+        assert text == "node_modules/\n!.adapter-out/\n" + ATLAS_IGNORE_BLOCK, text
+        assert text.count(".adapter-out/") == 1, "不得与用户负模式打架"
+
+
+def test_wire_gitignore_respects_user_atlas_rules() -> None:
+    """用户已手写任意 `.atlas` 规则 ⇒ 保留其口径，不追加默认块。"""
+    wiring = load_wiring()
+    for content in (
+        ".atlas/*\n!.atlas/tasks/\n!.atlas/spec/\n",
+        ".atlas/\n",
+        "!.atlas/legacy/\n",
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            gi = root / ".gitignore"
+            gi.write_text("node_modules/\n" + content, encoding="utf-8")
+            res = wiring.wire_gitignore(root)
+            text = res["_write"][1] if "_write" in res else gi.read_text(encoding="utf-8")
+            assert "# atlas：装配包不入库" not in text, (content, text)
+            assert "保留用户口径" in res["detail"] or res["status"] == "skipped", (content, res)
 
 
 def test_wire_gitignore_never_creates_missing_file() -> None:
@@ -596,7 +626,8 @@ def test_wire_gitignore_handles_missing_trailing_newline() -> None:
         (root / ".gitignore").write_text("node_modules/", encoding="utf-8")  # 无尾部换行
         res = wiring.wire_gitignore(root)
         assert res["status"] == "applied", res
-        assert res["_write"][1] == "node_modules/\n.adapter-out/\n", res["_write"][1]
+        assert res["_write"][1] == "node_modules/\n.adapter-out/\n" + ATLAS_IGNORE_BLOCK, \
+            res["_write"][1]
 
 
 def test_wire_python_scaffold_skips_external_extractor_command() -> None:
