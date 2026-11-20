@@ -990,9 +990,11 @@ function jumpTo(it){
   openDetail(it.host);
   if(it.host!==it.id)requestAnimationFrame(()=>pulseSubNode(it.id));
 }
-function pulseSubNode(id){
+function pulseSubNode(id,tries){
   const g=document.querySelector('.submap .node[data-id="'+id+'"]');
-  if(!g)return;
+  if(!g){ /* hashchange 异步重建画布,rAF 级重试等它就位(约半秒封顶) */
+    if((tries||0)<30)requestAnimationFrame(()=>pulseSubNode(id,(tries||0)+1));
+    return; }
   g.classList.add('pulse');
   g.scrollIntoView({block:'nearest',behavior:'smooth'});
   setTimeout(()=>g.classList.remove('pulse'),3600);
