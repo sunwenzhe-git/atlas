@@ -16,11 +16,11 @@ import re
 import shutil
 import subprocess
 from collections import Counter
+from datetime import date
 from pathlib import Path
 
 from _support import review_scope_core as scope_core
 from _support.layout import LayoutError, load_layout
-from _support.siblings import load_module
 from _support.workflow_plan import ARCHIVE_DIR, load_tasks, atomic_write_json, UNIT_RE
 
 
@@ -29,6 +29,7 @@ class FinishError(ValueError):
 
 
 REVIEW_DIR_PREFIX_RE = r"^\d{4}-\d{2}-\d{2}-impl-review-"
+ARCHIVE_MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")  # `archive/<YYYY-MM>/<ID>/`
 
 
 def _staged_files(root: Path) -> list[str] | None:
@@ -117,6 +118,30 @@ def _acceptance_evidence(lay) -> dict:
             "reason": "找到验收走查留痕"}
 
 
+E2E_MAIN_COLUMNS = ["用例ID", "页面", "中文标题", "类型", "关联AC", "需求", "状态", "状态原因", "分片"]
+
+
+def _markdown_tables(text: str) -> list[tuple[list[str], list[list[str]]]]:
+    """轻量读取 Markdown 表（列头 + 行），与 `validators/validate_e2e_index.tables` 同口径。
+
+    不直接 import 校验器：`_support → validators` 反向依赖有棘轮上限
+    （`tests/test_shared_kernel.py`），新增依赖须先拆旧的。
+    """
+    out: list[tuple[list[str], list[list[str]]]] = []
+    block: list[list[str]] = []
+    for line in text.splitlines():
+        if line.strip().startswith("|"):
+            block.append([c.strip() for c in line.strip().strip("|").split("|")])
+        elif block:
+            out.append((block[0], [r for r in block[1:]
+                                   if not all(set(c) <= set("-: ") for c in r)]))
+            block = []
+    if block:
+        out.append((block[0], [r for r in block[1:]
+                               if not all(set(c) <= set("-: ") for c in r)]))
+    return out
+
+
 def check_e2e_precondition(root: Path, task: dict) -> dict:
     """收口前把 E2E 结论纳入校验输入（issue #69）。
 
@@ -134,16 +159,15 @@ def check_e2e_precondition(root: Path, task: dict) -> dict:
     if not index.is_file():
         return {"status": "SKIP", "reason": f"未找到 E2E 索引（{index.relative_to(root)}）：按人工责任处理"}
     try:
-        mod = load_module("validate_e2e_index")
-        tabs = mod.tables(index.read_text(encoding="utf-8"))
-    except Exception as exc:  # noqa: BLE001 —— 坏索引不能把收口判红，但必须显式 SKIP
-        return {"status": "SKIP", "reason": f"E2E 索引不可解析：{exc}"}
+        tabs = _markdown_tables(index.read_text(encoding="utf-8"))
+    except OSError as exc:
+        return {"status": "SKIP", "reason": f"E2E 索引不可读：{exc}"}
     if not tabs:
         return {"status": "SKIP", "reason": "E2E 索引无可解析表格"}
-    matched = next(((h, r) for h, r in tabs if h == mod.MAIN_COLUMNS), None)
+    matched = next(((h, r) for h, r in tabs if h == E2E_MAIN_COLUMNS), None)
     if matched is None:
         return {"status": "SKIP",
-                "reason": f"E2E 主表列头不可识别（期望 {mod.MAIN_COLUMNS}）"}
+                "reason": f"E2E 主表列头不可识别（期望 {E2E_MAIN_COLUMNS}）"}
     header, rows = matched
     grid = [dict(zip(header, r + [""] * (len(header) - len(r)))) for r in rows]
     acs = [str(a) for a in (task.get("acs") or []) if str(a).strip()]
@@ -167,13 +191,37 @@ def check_e2e_precondition(root: Path, task: dict) -> dict:
     return out
 
 
+def archive_month(t_dir: Path, tasks_root: Path) -> str | None:
+    """任务目录若已在 `archive/<YYYY-MM>/<ID>/` 下，返回月份名；否则 None。
+
+    月份层是判据侧的既有契约：`validators/validate_task_card.py` 按
+    `archive/*/*/prd.md` 找卡，封条按 `archive/*/<ID>/<tail>` 定位。写入侧
+    只用月度目录，避免归档卡静默掉出判据覆盖（issue #70）。
+    """
+    archive_root = (tasks_root / ARCHIVE_DIR).resolve()
+    try:
+        rel = t_dir.resolve().relative_to(archive_root)
+    except ValueError:
+        return None
+    if len(rel.parts) == 2 and ARCHIVE_MONTH_RE.match(rel.parts[0]):
+        return rel.parts[0]
+    return None
+
+
 def archive_task(root: Path, tasks_root: Path, t_dir: Path, t_id: str) -> dict:
-    """把已收口任务移到 `.atlas/tasks/archive/<id>/`（幂等；失败显式报错，issue #70）。"""
+    """把已收口任务移到 `.atlas/tasks/archive/<YYYY-MM>/<id>/`（幂等；issue #70）。
+
+    月份取归档当天。历史扁平存档（`archive/<id>/`）或缺/错月份层的目录会在
+    下次归档时迁入当月，从而重新进入判据与封条的扫描面。
+    """
     if not UNIT_RE.match(t_id):
         raise FinishError(f"非法任务标识：{t_id!r}")
-    dest = tasks_root / ARCHIVE_DIR / t_id
-    if t_dir == dest:
-        return {"status": "already", "path": str(dest.relative_to(root))}
+    root = root.resolve()
+    if archive_month(t_dir, tasks_root) is not None:
+        return {"status": "already", "path": str(t_dir.resolve().relative_to(root))}
+    dest = tasks_root / ARCHIVE_DIR / date.today().strftime("%Y-%m") / t_id
+    if dest.exists():
+        raise FinishError(f"归档目标已存在：{dest}（源目录仍在 {t_dir}；请人工核对后处理）")
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(t_dir), str(dest))
@@ -195,9 +243,11 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
 
     if not t_dir.is_dir():
         raise FinishError(f"任务目录不存在：{t_dir}")
-    archive_dest = tasks_root / ARCHIVE_DIR / t_id
-    if t_dir != archive_dest and archive_dest.exists():
-        raise FinishError(f"归档目标已存在：{archive_dest}（源目录仍在 {t_dir}；请人工核对后处理）")
+    if archive_month(t_dir, tasks_root) is None:
+        archive_dest = tasks_root / ARCHIVE_DIR / date.today().strftime("%Y-%m") / t_id
+        if archive_dest.exists():
+            raise FinishError(
+                f"归档目标已存在：{archive_dest}（源目录仍在 {t_dir}；请人工核对后处理）")
     if not force:
         passed, reason = check_task_review_passed(root, t_id)
         if not passed:
