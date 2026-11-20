@@ -13,7 +13,7 @@
 
 | 文件 | 角色 |
 |---|---|
-| `apply/reference.md`(320 行) | 执行契约本体(安装后位于 `.atlas/apply/reference.md`),四模式 / 三问门 / 影响面 / 增量边界全在这 |
+| `apply/reference.md`(340 行) | 执行契约本体(安装后位于 `.atlas/apply/reference.md`),四模式 / 三问门 / 影响面 / 增量边界全在这 |
 | `skills/atlas-apply/` | agent 执行入口(skill 薄桩) |
 | `atlas workflow plan` / `dispatch` | 把 apply 挂进 执行层 工作流的锚点式补丁 |
 | `scripts/write_claim.py`(204 行) | 并发写面仲裁的 claim 钩子(M3,RFC-20261022-01) |
@@ -52,7 +52,7 @@ agent 语义判断为主 + 结构证据约束;产出结构化清单(`affected_do
 
 共享表面(e2e-index 等)单写者纪律:动手前 `write_claim.py take --file <路径> --task <ID>`(原子文件 `.atlas/runs/write-claims/<hash>.json`,`O_CREAT|O_EXCL`),收口 `release`;残留由 atlas_check「写面残留」门 WARN 点名。claims 是运行态不进 git。
 
-### 5. 执行层 挂接(§7,`apply/reference.md:238`)
+### 5. 执行层 挂接(§7,`apply/reference.md:260`)
 
 挂载点 = `atlas workflow plan` 写进任务卡的 `#### 1.6 项目级资产更新(atlas apply)` 步骤 + `dispatch` 写进 `dispatch.md` 的 enforcement 行;不向宿主模板打补丁。失败 ⇒ 停在 planning 输出结构化报告,不得进实现。
 
