@@ -109,15 +109,17 @@
 
 ### `impl_review`（实现代码独立审查执行器，可选）
 
-实例⑤（`shared/independent-review.md` §10）的 CLI 执行器与模型声明。**段缺失 = 未配置**：`closeout.md` 步骤 10 输出 `SKIP` + 原因（不是通过）。
+实例⑤（`shared/independent-review.md` §10）的审查执行器声明。**段缺失 = 会话执行器**（`atlas review` 产派工包、由当前会话派 fresh-context 子代理审查，issue #68）；不再把未配置当 `SKIP` 空洞。
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `cli` | 否 | 外部 CLI 审查器名（如 `ocr`）；`null` / 缺失 = 未配置。`atlas review` 可用 `--cli` 覆盖。 |
-| `llm` | 否 | 审查模型标识；`null` / 缺失 = 未配置 ⇒ 步骤 10 `SKIP`。CLI 执行器与审查模型解耦，契约不写死具体模型。 |
+| `executor` | 否 | `cli`（外部 CLI 审查进程）\| `session`（当前会话派 fresh-context 子代理）。缺省：`cli` + `llm` 齐备走 CLI，否则回落 `session`。 |
+| `cli` | 否 | 外部 CLI 审查器名（如 `ocr`）；`executor: cli` 时必填。`atlas review` 可用 `--cli` 覆盖。 |
+| `llm` | 否 | 审查模型标识；`null` / 缺失 ⇒ 未显式声明 `executor: cli` 时回落 `session`；显式 `cli` 时以执行器默认模型运行（WARN）。CLI 执行器与审查模型解耦，契约不写死具体模型。 |
 
-- `atlas review` 只读这两格：缺 `cli` ⇒ exit 2；缺 `llm` ⇒ `SKIP`（`--cli` 显式覆盖时 WARN 放行，模型由 CLI 默认）。
-- 字段值暂不参与 `validate_stack_profile` 的枚举门（目前无稳定词表）；等第二个执行器出现再定。
+- `atlas review` 执行器判定：`--cli` 显式覆盖 ⇒ `cli`；否则按 `executor` 声明；未声明时 `cli` + `llm` 齐备 ⇒ `cli`，其余 ⇒ `session`。显式 `executor: cli` 但 `llm` 缺失 ⇒ 以 CLI 默认模型运行（WARN，不再 `SKIP`）。
+- `session` 模式：`atlas review` 只产 `review-request.md` 派工包（`cli.json` 骨架含 `manifest.coverage.selected[]`），以「待审」退出（exit 2，**不是通过**）；子代理产物落 `<报告目录>/cli.json` 后复跑即走完转换/校验。
+- 字段值暂不参与 `validate_stack_profile` 的枚举门（目前无稳定词表）；`executor` 的 `cli|session` 由 `atlas review` 运行时校验。
 
 ## 3. 适配器契约
 

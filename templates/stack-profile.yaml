@@ -95,12 +95,14 @@ e2e:
 #   mode: advisory                  # advisory（缺省）| enforce（仅 AC 挂载缺口硬阻断；维度恒 WARN）
 #   ac_marker: <adapter-specific>   # 挂载形态（可选，由 extractor 解释）
 
-# 实现代码独立审查（实例⑤，可选段，2026-11-03 RFC-20261103-05）。
-# cli = 外部 CLI 审查器名（如 ocr）；llm = 审查模型标识。
-# 段缺失 / null = 未配置：closeout 步骤 10 输出 SKIP + 原因（不是通过）。
+# 实现代码独立审查（实例⑤，可选段，2026-11-03 RFC-20261103-05；2026-11-20 issue #68 +executor）。
+# executor = cli（外部 CLI 审查进程）| session（当前会话派 fresh-context 子代理）。
+# 缺省：cli + llm 齐备走 CLI，否则回落 session（产 review-request.md 派工包；待审 ≠ 通过）。
+# 段缺失 = session（不再输出 SKIP 空洞）。
 # 契约见 shared/independent-review.md §10 与 shared/stack-profile.md §2。
-# 不启用时整段保持注释。
+# 不启用 CLI 时整段保持注释（默认即会话执行器）。
 # impl_review:
+#   executor: cli
 #   cli: ocr
 #   llm: <model-id>
 

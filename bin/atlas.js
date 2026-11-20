@@ -26,7 +26,7 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
   update    安全刷新当前项目中的 .atlas/ 工程线束与平台 Skills 至最新版本
   upgrade   自动拉取 npm 最新全局包升级全局 Atlas CLI
   check     运行项目级资产与门禁全套检查
-  workflow  自建全流程执行层调度（plan / dispatch / context / verify / finish / status / run）
+  workflow  自建全流程执行层调度（plan / dispatch / context / verify / finish / status / archive / run）
   solution  多仓方案层：init / adopt / status / check / lock / task（Phase 1 仅 federated）
   review    实例⑤实现代码独立审查一键编排（preview → CLI review → scope → convert → validate → closure）
   eval      消融对照跑分器（run：两 commit 对照出 ledger；gate：回归判定）

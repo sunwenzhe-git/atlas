@@ -7,6 +7,10 @@
     → scope manifest（coverage.completed / --reviewed-files）→ cli_review_convert
     → validate_review_report --scope-manifest → review_closure
 
+无可用 CLI（impl_review 未配置 / llm 为 null / executor: session）时走**会话执行器**
+（issue #68）：只产 `review-request.md` 派工包并以「待审」退出（exit 2，不是通过）；
+当前会话派 fresh-context 子代理写 `<报告目录>/cli.json` 后复跑，从 scope manifest 继续。
+
 用法：
 
     atlas review --unit <需求ID> --from main --to HEAD
@@ -15,8 +19,8 @@
     atlas review ... --dry-run          # 只跑 preview（只读）+ 打印将执行命令，不写盘
     atlas review ... --cli <name>       # 覆盖 stack-profile 的 impl_review.cli
 
-退出码：0 全步通过（WARN 不置红）；1 有 FAIL（converter/validator）；2 输入/前置错误；
-子步非 0/1/2 的原退出码透传（如外部 CLI 的 7）。纯标准库。
+退出码：0 全步通过（WARN 不置红）；1 有 FAIL（converter/validator）；2 输入/前置错误
+（含会话执行器的「待审」）；子步非 0/1/2 的原退出码透传（如外部 CLI 的 7）。纯标准库。
 """
 from __future__ import annotations
 
@@ -54,22 +58,48 @@ def info(msg: str) -> None:
 
 
 def load_impl_review(root: Path) -> dict:
-    """读 stack-profile 的 impl_review；缺段/缺文件 = None（调用方按 SKIP/未配处理）。"""
+    """读 stack-profile 的 impl_review；缺段/缺文件 = 全 None（调用方按会话执行器处理）。"""
     try:
         lay = load_layout(root)
     except LayoutError as exc:
-        return {"cli": None, "llm": None, "error": str(exc)}
+        return {"cli": None, "llm": None, "executor": None, "error": str(exc)}
     p = lay.stack_profile
     if not p.is_file():
-        return {"cli": None, "llm": None}
+        return {"cli": None, "llm": None, "executor": None}
     try:
         data = stack_profile.parse_profile(p.read_text(encoding="utf-8"))
     except Exception as exc:  # 解析失败不裸崩；按未配处理并保留原因
-        return {"cli": None, "llm": None, "error": str(exc)}
+        return {"cli": None, "llm": None, "executor": None, "error": str(exc)}
     impl = data.get("impl_review")
     if not isinstance(impl, dict):
-        return {"cli": None, "llm": None}
-    return {"cli": impl.get("cli"), "llm": impl.get("llm")}
+        return {"cli": None, "llm": None, "executor": None}
+    return {"cli": impl.get("cli"), "llm": impl.get("llm"),
+            "executor": impl.get("executor")}
+
+
+def resolve_executor(impl: dict, cli_override: str | None) -> tuple[str, str | None, str]:
+    """执行器判定：cli（外部进程）/ session（当前会话派 fresh-context 子代理）。
+
+    返回 (executor, cli, 说明)。未声明 executor 时：cli + llm 齐备才走 CLI，
+    否则回落 session —— 不再用 SKIP 把「未配置」伪装成已走完（issue #68）。
+    """
+    if cli_override:
+        return "cli", cli_override, "显式 --cli 覆盖"
+    declared = str(impl.get("executor") or "").strip().lower()
+    cli, llm = impl.get("cli"), impl.get("llm")
+    if declared not in ("", "cli", "session"):
+        raise SystemExit(die(f"impl_review.executor 只支持 cli|session，当前为 {declared!r}"))
+    if declared == "cli":
+        if not cli:
+            raise SystemExit(die("impl_review.executor=cli 但 impl_review.cli 未配置"
+                                 "（改 executor: session，或配置 cli + llm）"))
+        return "cli", cli, ""
+    if declared == "session":
+        return "session", None, ""
+    if cli and llm is not None:
+        return "cli", cli, ""
+    return "session", None, (
+        "impl_review.llm 未配置，CLI 不可执行" if cli else "impl_review.cli 未配置")
 
 
 def preview_argv(cli: str, ref_from: str | None = None, ref_to: str | None = None,
@@ -165,19 +195,66 @@ def run_inputs(root: Path, outdir: Path, enabled: bool) -> Path | None:
     return inputs
 
 
-def _coverage_paths(cli_json: Path) -> list[str]:
+def _coverage_paths(cli_json: Path, key: str = "completed") -> list[str]:
     try:
         data = json.loads(cli_json.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise SystemExit(die(f"读 {cli_json} 失败：{exc}"))
     coverage = ((data.get("manifest") or {}).get("coverage") or {}) if isinstance(data, dict) else {}
-    completed = coverage.get("completed") if isinstance(coverage, dict) else None
+    completed = coverage.get(key) if isinstance(coverage, dict) else None
     paths: list[str] = []
     for item in completed or []:
         p = item.get("path") if isinstance(item, dict) else item
         if isinstance(p, str) and p.strip():
             paths.append(p.strip().replace("\\", "/"))
     return sorted(set(paths))
+
+
+def write_review_request(unit: str, args: argparse.Namespace, background: Path,
+                         inputs_dir: Path | None, cli_json: Path, agent_dir: Path) -> Path:
+    """会话执行器派工包：给 fresh-context 子代理的指针清单 + 产出骨架（不复制正文）。"""
+    mode = "暂存区（HEAD..INDEX）" if args.staged else f"{args.ref_from}..{args.ref_to}"
+    manifest_ptr = (f"- 输入清单：`{inputs_dir / 'MANIFEST.json'}`（按清单读当前文件，不拷贝）"
+                    if inputs_dir is not None else "- 输入清单：未生成（缺资产，按当前代码事实调查）")
+    skeleton = {
+        "status": "completed",
+        "executor": "session-subagent",
+        "summary": {"files_reviewed": 0, "comments": 0},
+        "comments": [{
+            "severity": "critical|high|medium|low",
+            "category": "bug|security|performance|maintainability|test|style|documentation",
+            "path": "src/a.ts", "start_line": 1, "end_line": 2,
+            "content": "<问题描述 + 证据链（file:line）>", "suggestion_code": "",
+        }],
+        "warnings": [],
+        "manifest": {"coverage": {
+            "selected": [{"path": "src/a.ts"}],
+            "completed": [{"path": "src/a.ts"}],
+            "failed": [], "waived": [], "reused": [],
+        }},
+    }
+    lines = [
+        f"# 实现代码独立审查派工单 — {unit}", "",
+        "> 由 `atlas review` 生成（`impl_review.executor: session`）。本文件是**指针**，不复制正文。", "",
+        "## 独立性要求（硬）",
+        "- 派一个 **fresh-context 子代理** 执行审查：**不得**继承实现/生成时的上下文。",
+        "- 子代理只读下面的指针，不读整仓；**只写产物**，不得改业务代码、不得改暂存区。", "",
+        "## 权威输入", f"- 背景：`{background}`", manifest_ptr,
+        "- 审查焦点三问：`.atlas/shared/independent-review.md` §10.4", "",
+        "## 审查范围", f"- 模式：{mode}",
+        "- 应审文件：在产物 `manifest.coverage.selected[]` 中逐项列出本次实审范围"
+        "（缺该项 ⇒ 应审 N 不可得，转换器拒绝产出）", "",
+        "## 产物", f"- 写到：`{cli_json}`",
+        "- 形态（CLI 同构 JSON，供 `cli_review_convert.py` 转换）：", "",
+        "```json", json.dumps(skeleton, ensure_ascii=False, indent=2), "```", "",
+        "## 完成后",
+        "- 复跑 `atlas workflow verify --unit <ID>`（或 `atlas review --unit <ID> --staged`）："
+        "读取本轮 `cli.json`，继续 scope manifest → 转换 → 校验 → 闭环。",
+        "- `finish` 仍只认 `review.json` 为 PASS；本派工包本身**不是通过**。", "",
+    ]
+    target = agent_dir / "review-request.md"
+    target.write_text("\n".join(lines), encoding="utf-8")
+    return target
 
 
 def _split_paths(value: str | None) -> list[str]:
@@ -245,15 +322,10 @@ def main() -> int:
     if args.round < 1:
         return die("round 必须 ≥ 1")
     impl = load_impl_review(root)
-    cli = args.cli or impl.get("cli")
-    if not cli:
-        return die("impl_review.cli 未配置（stack-profile），且未给 --cli")
-    if impl.get("llm") is None:
-        if not args.cli:
-            print("SKIP: impl_review.llm 未配置（不是通过；配好 llm 或显式 --cli 覆盖）")
-            return 0
-        print("WARN: impl_review.llm 未配置，--cli 显式覆盖（模型由 CLI 默认）", file=sys.stderr)
-    if not (shutil.which(cli) or Path(cli).expanduser().is_file()):
+    executor, cli, why = resolve_executor(impl, args.cli)
+    if executor == "cli" and impl.get("llm") is None:
+        print("WARN: impl_review.llm 未配置，CLI 模型由执行器默认", file=sys.stderr)
+    if executor == "cli" and not (shutil.which(cli) or Path(cli).expanduser().is_file()):
         return die(f"impl_review.cli 不存在/不可执行：{cli}")
 
     outdir = Path(args.out) if args.out else (
@@ -287,62 +359,103 @@ def main() -> int:
                     print(f"WARN: 确定性检查失败（exit={pr_chk.returncode}），继续执行审查以便汇总全部问题",
                           file=sys.stderr)
 
-    # 1) preview（只读；dry-run 也跑，为了报 N）
-    preview = preview_argv(cli, args.ref_from, args.ref_to, staged=args.staged)
-    if args.dry_run:
-        print("$ " + " ".join(preview))
-        pr = _run(preview, root, capture=True)
-        _show(pr, capture=True)
-        if pr.returncode != 0:
-            return pr.returncode
-        n = parse_preview_n(pr.stdout or "")
-        if n is None:
-            return die("preview 输出缺 `Will review N`（缺权威输入，不猜）")
-    else:
-        pr = _run(preview, root, capture=True)
-        _show(pr, capture=True)
-        if pr.returncode != 0:
-            return pr.returncode
-        n = parse_preview_n(pr.stdout or "")
-        if n is None:
-            return die("preview 输出缺 `Will review N`（缺权威输入，不猜）")
-    expected = args.expected_files if args.expected_files is not None else n
-    steps.append({"name": "preview", "status": "ok", "detail": f"Will review {n}"})
-    info(f"preview: Will review {n}（应审 N = {expected}）")
+    inputs_dir: Path | None = None
+    if executor == "cli":
+        # 1) preview（只读；dry-run 也跑，为了报 N）
+        preview = preview_argv(cli, args.ref_from, args.ref_to, staged=args.staged)
+        if args.dry_run:
+            print("$ " + " ".join(preview))
+            pr = _run(preview, root, capture=True)
+            _show(pr, capture=True)
+            if pr.returncode != 0:
+                return pr.returncode
+            n = parse_preview_n(pr.stdout or "")
+            if n is None:
+                return die("preview 输出缺 `Will review N`（缺权威输入，不猜）")
+        else:
+            pr = _run(preview, root, capture=True)
+            _show(pr, capture=True)
+            if pr.returncode != 0:
+                return pr.returncode
+            n = parse_preview_n(pr.stdout or "")
+            if n is None:
+                return die("preview 输出缺 `Will review N`（缺权威输入，不猜）")
+        expected = args.expected_files if args.expected_files is not None else n
+        steps.append({"name": "preview", "status": "ok", "detail": f"Will review {n}"})
+        info(f"preview: Will review {n}（应审 N = {expected}）")
 
-    # 2) background + inputs
-    if args.dry_run:
-        print(f"$ # background → {outdir / 'background.md'}（指针化；dry-run 不写）")
-        if args.inputs:
-            print(f"$ {sys.executable} {HERE / 'make_review_inputs.py'} --root {root} "
-                  f"--out {outdir / 'inputs'}")
+        # 2) background + inputs
+        if args.dry_run:
+            print(f"$ # background → {outdir / 'background.md'}（指针化；dry-run 不写）")
+            if args.inputs:
+                print(f"$ {sys.executable} {HERE / 'make_review_inputs.py'} --root {root} "
+                      f"--out {outdir / 'inputs'}")
+        else:
+            inputs_dir = run_inputs(root, outdir, args.inputs)
+            bg = build_background(root, outdir, args.unit, args, inputs_dir)
+            steps.append({"name": "background", "status": "ok", "detail": str(bg)})
+            if inputs_dir:
+                steps.append({"name": "inputs", "status": "ok",
+                              "detail": str(inputs_dir / "MANIFEST.json")})
+            else:
+                steps.append({"name": "inputs", "status": "WARN", "detail": "未生成（或缺资产）"})
+
+        # 3) CLI review
+        review = review_argv(cli, args.ref_from, args.ref_to, cli_json,
+                             outdir / "background.md", staged=args.staged)
+        if args.dry_run:
+            print("$ " + " ".join(review))
+        else:
+            pr = _run(review, root, capture=True)
+            _show(pr, capture=True)
+            if pr.returncode != 0:
+                steps.append({"name": "cli_review", "status": "FAIL",
+                              "detail": f"exit={pr.returncode}"})
+                if args.json:
+                    print(json.dumps({"unit": args.unit, "out": str(outdir), "steps": steps},
+                                     ensure_ascii=False, indent=1))
+                return pr.returncode
+            if not cli_json.is_file():
+                return die(f"CLI 未产出 {cli_json}（缺权威输入）")
+            steps.append({"name": "cli_review", "status": "ok", "detail": str(cli_json)})
     else:
+        # 会话执行器：本进程拉不起宿主子代理 ⇒ 产出派工包，等当前会话派 fresh-context
+        # 子代理写 cli.json 后复跑（issue #68；契约 shared/independent-review.md §10.1）。
+        if why:
+            info(f"INFO: {why} ⇒ 会话执行器（派 fresh-context 子代理）")
+        if args.dry_run:
+            print(f"$ # 会话执行器：正式运行将生成 {outdir / 'review-request.md'}，"
+                  f"等待会话子代理产出 {cli_json} 后复跑")
+            return 0
         inputs_dir = run_inputs(root, outdir, args.inputs)
         bg = build_background(root, outdir, args.unit, args, inputs_dir)
         steps.append({"name": "background", "status": "ok", "detail": str(bg)})
         if inputs_dir:
-            steps.append({"name": "inputs", "status": "ok", "detail": str(inputs_dir / "MANIFEST.json")})
+            steps.append({"name": "inputs", "status": "ok",
+                          "detail": str(inputs_dir / "MANIFEST.json")})
         else:
             steps.append({"name": "inputs", "status": "WARN", "detail": "未生成（或缺资产）"})
-
-    # 3) CLI review
-    review = review_argv(cli, args.ref_from, args.ref_to, cli_json,
-                         outdir / "background.md", staged=args.staged)
-    if args.dry_run:
-        print("$ " + " ".join(review))
-    else:
-        pr = _run(review, root, capture=True)
-        _show(pr, capture=True)
-        if pr.returncode != 0:
-            steps.append({"name": "cli_review", "status": "FAIL",
-                          "detail": f"exit={pr.returncode}"})
-            if args.json:
-                print(json.dumps({"unit": args.unit, "out": str(outdir), "steps": steps},
-                                 ensure_ascii=False, indent=1))
-            return pr.returncode
         if not cli_json.is_file():
-            return die(f"CLI 未产出 {cli_json}（缺权威输入）")
-        steps.append({"name": "cli_review", "status": "ok", "detail": str(cli_json)})
+            packet = write_review_request(args.unit, args, bg, inputs_dir, cli_json, outdir)
+            steps.append({"name": "session_review", "status": "PENDING", "detail": str(packet)})
+            rerun = f"atlas review --unit {args.unit}"
+            rerun += " --staged" if args.staged else f" --from {args.ref_from} --to {args.ref_to}"
+            rerun += f" --round {args.round}" if args.round != 1 else ""
+            if args.json:
+                print(json.dumps({"unit": args.unit, "out": str(outdir), "steps": steps,
+                                  "status": "PENDING"}, ensure_ascii=False, indent=1))
+            else:
+                info(f"PENDING: 会话执行器待审（不是通过）—— 派工包 {packet}")
+                info(f"  1) 派 fresh-context 子代理按派工包审查，写 {cli_json}")
+                info(f"  2) 复跑 {rerun}（读取 cli.json 后继续转换/校验/收口）")
+            return 2
+        selected = _coverage_paths(cli_json, "selected")
+        expected = args.expected_files if args.expected_files is not None else len(selected)
+        if not expected:
+            return die("会话审查缺 manifest.coverage.selected[]（应审 N 不可得）；"
+                       "请按派工包补全或显式传 --expected-files")
+        steps.append({"name": "session_review", "status": "ok", "detail": str(cli_json)})
+        info(f"session: 读取会话子代理产物 {cli_json}（应审 N = {expected}）")
 
     # 4) scope manifest（只覆盖实审集；不覆盖全工作区）
     reviewed = _coverage_paths(cli_json) if cli_json.is_file() else []

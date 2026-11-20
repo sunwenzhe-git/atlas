@@ -4,8 +4,9 @@
 夹具 = 临时项目：最小 stack-profile（`impl_review` 指向 fixture CLI）+ 最小 PRD/E2E 资产 +
 fake CLI（preview 输出 `Will review 1`；review 写 coverage.completed = src/a.ts）。
 
-覆盖：全链 v4 / dry-run 不写盘 / preview 与 review 失败透传 / `impl_review.llm` 缺 ⇒ SKIP /
-`--cli` 覆盖 / delta flags / inputs 失败只 WARN / **真 CLI flag 形态锁**（对照
+覆盖：全链 v4 / dry-run 不写盘 / preview 与 review 失败透传 / `impl_review.llm` 缺 ⇒
+回落到会话执行器（issue #68）/ 会话执行器派工包 + 子代理产物复跑收口 / `--cli` 覆盖 /
+delta flags / inputs 失败只 WARN / **真 CLI flag 形态锁**（对照
 `shared/closeout.md` 步骤 10 的两条命令，契约改一处即红）。
 
 变异证明（编号属本文件）：M169 去掉 `--scope-manifest` 传给 validator ⇒ 全链 FAIL；
@@ -51,7 +52,8 @@ out.write_text(json.dumps({
 
 
 def make_project(root: Path, *, llm: str | None = "fake-model", cli: str | None = None,
-                  assets: bool = True) -> Path:
+                  assets: bool = True, executor: str | None = None,
+                  impl_review: bool = True) -> Path:
     (root / "src").mkdir(parents=True, exist_ok=True)
     (root / "src" / "a.ts").write_text("export const a = 1\n", encoding="utf-8")
     f = root / "fake_cli.py"
@@ -59,15 +61,20 @@ def make_project(root: Path, *, llm: str | None = "fake-model", cli: str | None 
     f.chmod(0o755)
     cli_path = cli or str(f)
     (root / "product").mkdir(parents=True, exist_ok=True)
-    (root / "product" / "stack-profile.yaml").write_text(
+    head = (
         "product: Demo\n"
         "origin: greenfield\n"
         "apps:\n  - name: web\n    path: src\n    kind: frontend\n    role: landing\n"
         "    stack: React\n"
         "adapters:\n  routes: null\n  api: null\n  models: null\n  tests: null\n"
         "e2e:\n  runner: node-playwright\n"
-        f"impl_review:\n  cli: {cli_path}\n  llm: {llm if llm is not None else 'null'}\n",
-        encoding="utf-8")
+    )
+    if impl_review:
+        head += "impl_review:\n"
+        if executor:
+            head += f"  executor: {executor}\n"
+        head += f"  cli: {cli_path}\n  llm: {llm if llm is not None else 'null'}\n"
+    (root / "product" / "stack-profile.yaml").write_text(head, encoding="utf-8")
     if assets:
         (root / "product" / "prd").mkdir(parents=True, exist_ok=True)
         (root / "product" / "prd" / "prd.md").write_text("# PRD\n", encoding="utf-8")
@@ -131,11 +138,75 @@ def test_review_failure_passthrough(tmp_path: Path) -> None:
     assert p.returncode == 7
 
 
-def test_llm_missing_skips(tmp_path: Path) -> None:
+SESSION_REVIEW = {
+    "status": "completed",
+    "summary": {"files_reviewed": 1, "comments": 0},
+    "comments": [], "warnings": [],
+    "manifest": {"coverage": {
+        "selected": [{"path": "src/a.ts"}],
+        "completed": [{"path": "src/a.ts"}],
+        "failed": [], "waived": [], "reused": [],
+    }},
+}
+
+
+def test_llm_missing_falls_back_to_session(tmp_path: Path) -> None:
+    """llm 缺失不再 SKIP 空洞：回落会话执行器并产派工包（issue #68）。"""
     root = make_project(tmp_path, llm=None)
     p = run(root, *BASE)
-    assert p.returncode == 0 and "SKIP" in p.stdout
-    assert not (root / "product" / "reviews").exists()
+    assert p.returncode == 2, p.stdout + p.stderr
+    assert "PENDING" in p.stdout and "会话执行器" in p.stdout
+    d = report_dir(root)
+    assert (d / "review-request.md").is_file()
+    assert not (d / "review.json").exists()
+
+
+def test_missing_impl_review_uses_session_executor(tmp_path: Path) -> None:
+    """整段未配置 = 会话执行器，而不是 die / SKIP。"""
+    root = make_project(tmp_path, impl_review=False)
+    p = run(root, *BASE)
+    assert p.returncode == 2, p.stdout + p.stderr
+    assert "PENDING" in p.stdout
+    d = report_dir(root)
+    text = (d / "review-request.md").read_text(encoding="utf-8")
+    assert "fresh-context" in text and "coverage.selected" in text
+    assert "cli.json" in text
+
+
+def test_declared_session_executor_ignores_cli(tmp_path: Path) -> None:
+    root = make_project(tmp_path, executor="session")
+    p = run(root, *BASE)
+    assert p.returncode == 2, p.stdout + p.stderr
+    assert "PENDING" in p.stdout
+    assert (report_dir(root) / "review-request.md").is_file()
+
+
+def test_session_executor_completes_after_cli_json(tmp_path: Path) -> None:
+    """子代理产出 cli.json 后复跑：走完转换/校验/闭环，finish 仍只认 PASS。"""
+    root = make_project(tmp_path, impl_review=False)
+    p1 = run(root, *BASE)
+    assert p1.returncode == 2, p1.stdout + p1.stderr
+    d = report_dir(root)
+    (d / "cli.json").write_text(json.dumps(SESSION_REVIEW), encoding="utf-8")
+    p2 = run(root, *BASE)
+    assert p2.returncode == 0, p2.stdout + p2.stderr
+    review = json.loads((d / "review.json").read_text(encoding="utf-8"))
+    assert review["status"] == "PASS" and review["reviewed"] == 1
+    assert review["review_scope"]["files"][0]["path"] == "src/a.ts"
+
+
+def test_session_executor_requires_n(tmp_path: Path) -> None:
+    """缺 coverage.selected 且未给 --expected-files ⇒ 应审 N 不可得，拒绝产出。"""
+    root = make_project(tmp_path, impl_review=False)
+    run(root, *BASE)
+    d = report_dir(root)
+    payload = dict(SESSION_REVIEW)
+    payload["manifest"] = {"coverage": {"completed": [{"path": "src/a.ts"}]}}
+    (d / "cli.json").write_text(json.dumps(payload), encoding="utf-8")
+    p = run(root, "--unit", "U", "--from", "main", "--to", "HEAD")
+    assert p.returncode == 2, p.stdout + p.stderr
+    assert "coverage.selected" in p.stderr
+    assert not (d / "review.json").exists()
 
 
 def test_cli_override_wins(tmp_path: Path) -> None:

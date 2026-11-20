@@ -19,6 +19,7 @@ from pathlib import Path
 
 AC_RE = re.compile(r"AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3}")
 UNIT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+ARCHIVE_DIR = "archive"  # `.atlas/tasks/archive/`：已收口任务的归档区（issue #70）
 
 
 class PlanError(ValueError):
@@ -178,6 +179,8 @@ def write_task_card(task_dir: Path, task: dict) -> Path:
     重跑 plan 不得把已推进的状态打回 `todo`（状态机单调：todo < in_progress < completed）；
     已有 task.json 时沿用其 status 与 created_at。
     """
+    if task.get("id") == ARCHIVE_DIR:
+        raise PlanError(f"任务标识 {ARCHIVE_DIR!r} 与归档目录保留名冲突")
     task_dir.mkdir(parents=True, exist_ok=True)
     prd_path = task_dir / "prd.md"
     task_json_path = task_dir / "task.json"
@@ -216,12 +219,21 @@ def write_task_card(task_dir: Path, task: dict) -> Path:
     return task_dir
 
 
-def load_tasks(tasks_root: Path) -> list[dict]:
-    """读取所有任务元数据并进行依赖拓扑排序。"""
+def load_tasks(tasks_root: Path, *, include_archived: bool = False) -> list[dict]:
+    """读取任务元数据并做依赖拓扑排序。
+
+    `include_archived=False`（缺省）只扫**活跃**任务；归档在
+    `<tasks_root>/archive/`（issue #70，由 finish / `atlas workflow archive` 迁入），
+    带 `_archived: True` 标记，只能经 `include_archived=True` 或 `status --all` 看到。
+    """
     if not tasks_root.is_dir():
         return []
     tasks: dict[str, dict] = {}
     for p in sorted(tasks_root.rglob("task.json")):
+        rel = p.relative_to(tasks_root)
+        archived = bool(rel.parts) and rel.parts[0] == ARCHIVE_DIR
+        if archived and not include_archived:
+            continue
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -229,6 +241,8 @@ def load_tasks(tasks_root: Path) -> list[dict]:
         if not (isinstance(data, dict) and data.get("id")):
             raise PlanError(f"任务卡缺少 id：{p}")
         data["_dir"] = str(p.parent)
+        if archived:
+            data["_archived"] = True
         tasks[data["id"]] = data
 
     # 简单拓扑排序

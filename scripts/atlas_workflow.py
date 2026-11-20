@@ -9,7 +9,8 @@
   atlas workflow dispatch [--unit <ID>]
   atlas workflow verify --unit <ID> [--staged] [--check-cmd <CMD>]
   atlas workflow finish --unit <ID>
-  atlas workflow status [--unit <ID>]
+  atlas workflow status [--unit <ID>] [--all]
+  atlas workflow archive [--unit <ID>]
   atlas workflow run --unit <ID> [--requirement <TEXT_OR_FILE>] [--check-cmd <CMD>]
 
 退出码：0 成功；1 门禁未通过/失败；2 参数错误/输入缺失。纯标准库。
@@ -36,7 +37,7 @@ from _support.workflow_dispatch import (  # noqa: E402
     get_next_runnable_task, dispatch_task, DispatchError
 )
 from _support.workflow_finish import (  # noqa: E402
-    finish_task, check_task_review_passed, FinishError
+    finish_task, check_task_review_passed, FinishError, archive_task
 )
 from _support.workflow_context import select_specs, render_specs  # noqa: E402
 
@@ -122,7 +123,8 @@ def cmd_plan(args: argparse.Namespace, root: Path) -> int:
 
 def cmd_dispatch(args: argparse.Namespace, root: Path) -> int:
     tasks_dir = _read_tasks_root(root)
-    all_tasks = load_tasks(tasks_dir)
+    # 显式 --unit 时连归档一起查：已 completed 的任务要给出「已完成」而不是「未找到」。
+    all_tasks = load_tasks(tasks_dir, include_archived=bool(args.unit))
     if not all_tasks:
         return die(f"未找到任何任务卡（可在 {tasks_dir} 先运行 atlas workflow plan）")
 
@@ -260,13 +262,13 @@ def cmd_finish(args: argparse.Namespace, root: Path) -> int:
         return die("finish 步骤必须指定 --unit <ID>")
 
     tasks_dir = _read_tasks_root(root)
-    all_tasks = load_tasks(tasks_dir)
+    all_tasks = load_tasks(tasks_dir, include_archived=True)
     target_task = next((t for t in all_tasks if t["id"] == args.unit), None)
     if not target_task:
         return die(f"未找到任务卡 {args.unit}（不能对账本外任务收口）", code=2)
 
     if args.dry_run:
-        print(f"$ # 校验 {args.unit} 的 review.json 产物并流转状态至 completed (dry-run)")
+        print(f"$ # 校验 {args.unit} 的 review.json + E2E 前置，流转 completed 并归档 (dry-run)")
         return 0
 
     try:
@@ -278,15 +280,61 @@ def cmd_finish(args: argparse.Namespace, root: Path) -> int:
         print(json.dumps(res, ensure_ascii=False, indent=2))
     else:
         print(f"atlas workflow finish @ {args.unit}   status: completed")
+        e2e = res.get("e2e_precondition") or {}
+        print(f"  E2E 前置：{e2e.get('status', '?')} —— {e2e.get('reason', '')}")
+        acceptance = e2e.get("acceptance") or {}
+        if acceptance:
+            print(f"  验收走查：{acceptance.get('status', '?')} —— {acceptance.get('reason', '')}")
+        arch = res.get("archived") or {}
+        if arch:
+            print(f"  归档：{arch.get('status')} -> {arch.get('path')}")
         print(f"  进度：{res['completed_tasks']}/{res['total_tasks']} 已完成")
         if res.get("all_done"):
             print("  ★ 全部工作单元已顺利完成收口！")
     return 0
 
 
+def cmd_archive(args: argparse.Namespace, root: Path) -> int:
+    """把已 completed 的活跃任务迁入 `.atlas/tasks/archive/`（幂等，一次性迁移，issue #70）。"""
+    tasks_dir = _read_tasks_root(root)
+    all_tasks = load_tasks(tasks_dir, include_archived=True)
+    if args.unit:
+        targets = [t for t in all_tasks if t["id"] == args.unit]
+        if not targets:
+            return die(f"未找到任务卡 {args.unit}", code=2)
+    else:
+        targets = all_tasks
+    pending = [t for t in targets if not t.get("_archived")]
+    if args.dry_run:
+        print(f"$ # 归档 {len(pending)} 项到 {tasks_dir / 'archive'}（dry-run 不移动）")
+        return 0
+    if args.unit and pending and pending[0].get("status") != "completed":
+        return die(f"任务 {args.unit} 尚未 completed，不能归档", code=1)
+    if not pending:
+        print("无待归档项（目标任务已归档或无可归档任务）")
+        return 0
+    moved: list[dict] = []
+    for t in pending:
+        if t.get("status") != "completed":
+            print(f"跳过 {t['id']}：status={t.get('status')}（只归档 completed）")
+            continue
+        try:
+            info = archive_task(root, tasks_dir, Path(t["_dir"]), t["id"])
+        except FinishError as exc:
+            return die(str(exc), code=1)
+        moved.append({"id": t["id"], **info})
+    if args.json:
+        print(json.dumps({"archived": moved}, ensure_ascii=False, indent=2))
+    else:
+        print(f"atlas workflow archive   归档 {len(moved)} 项：")
+        for item in moved:
+            print(f"  - [{item['id']}] {item['status']} -> {item['path']}")
+    return 0
+
+
 def cmd_status(args: argparse.Namespace, root: Path) -> int:
     tasks_dir = _read_tasks_root(root)
-    all_tasks = load_tasks(tasks_dir)
+    all_tasks = load_tasks(tasks_dir, include_archived=getattr(args, "all", False))
     if args.unit:
         all_tasks = [t for t in all_tasks
                      if t["id"] == args.unit or t["id"].startswith(f"{args.unit}-")]
@@ -302,7 +350,8 @@ def cmd_status(args: argparse.Namespace, root: Path) -> int:
     for t in all_tasks:
         stat = t.get("status", "unknown")
         icon = "✓" if stat == "completed" else ("▶" if stat == "in_progress" else "○")
-        print(f"  {icon} [{t['id']}] {t.get('title')} ({stat})")
+        suffix = " [archived]" if t.get("_archived") else ""
+        print(f"  {icon} [{t['id']}] {t.get('title')} ({stat}){suffix}")
         if t.get("acs"):
             print(f"      ACs: {', '.join(t['acs'])}")
     return 0
@@ -413,6 +462,12 @@ def main() -> int:
     # status
     p_stat = sub.add_parser("status", help="查看当前所有任务流转状态", parents=[common])
     p_stat.add_argument("--unit", help="查看指定任务")
+    p_stat.add_argument("--all", action="store_true", help="包含 .atlas/tasks/archive/ 中已归档的任务")
+
+    # archive
+    p_arc = sub.add_parser("archive", parents=[common],
+                           help="把已 completed 的活跃任务迁入 .atlas/tasks/archive/（幂等一次性迁移）")
+    p_arc.add_argument("--unit", help="只归档指定任务（缺省归档全部 completed）")
 
     # run (一键全流程)
     p_run = sub.add_parser("run", help="串联闭环（Plan -> Dispatch -> Verify -> Finish；需先按派工单实现并暂存）", parents=[common])
@@ -435,6 +490,7 @@ def main() -> int:
         "verify": cmd_verify,
         "finish": cmd_finish,
         "status": cmd_status,
+        "archive": cmd_archive,
         "run": cmd_run,
     }
     handler = dispatch_map.get(args.subcommand)

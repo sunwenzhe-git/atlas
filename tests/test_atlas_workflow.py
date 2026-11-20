@@ -121,8 +121,16 @@ def test_finish_succeeds_with_valid_review(tmp_path: Path) -> None:
     assert p.returncode == 0, p.stdout + p.stderr
     assert "status: completed" in p.stdout
 
-    meta = json.loads((root / ".atlas" / "tasks" / "T-05" / "task.json").read_text(encoding="utf-8"))
+    meta = json.loads((root / ".atlas" / "tasks" / "archive" / "T-05" / "task.json")
+                      .read_text(encoding="utf-8"))
     assert meta["status"] == "completed"
+    assert meta["e2e_precondition"]["status"] == "SKIP"  # 无 E2E 索引：显式 SKIP，不静默通过
+    assert not (root / ".atlas" / "tasks" / "T-05").exists()  # 已归档出活跃区
+
+    # finish 幂等：已归档任务重跑不报错、不重复移动
+    p2 = run(root, "finish", "--unit", "T-05")
+    assert p2.returncode == 0, p2.stdout + p2.stderr
+    assert "already" in p2.stdout
 
 
 def test_finish_blocks_warn_report(tmp_path: Path) -> None:
@@ -188,6 +196,45 @@ def test_plan_writes_atlas_store(tmp_path: Path) -> None:
     p = run(root, "plan", "--unit", "T-11", "--requirement", "落实 AC-HOME-001")
     assert p.returncode == 0, p.stdout + p.stderr
     assert (root / ".atlas" / "tasks" / "T-11" / "task.json").is_file()
+
+
+def test_verify_session_executor_unblocks_finish(tmp_path: Path) -> None:
+    """无审查 CLI 的宿主：verify 先待审（派工包），子代理产物落盘后复跑即可收口（issue #68）。"""
+    root = make_clean_project(tmp_path)
+    subprocess.run(["git", "init"], cwd=str(root), check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=str(root), check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=str(root), check=True)
+    (root / "src").mkdir(parents=True, exist_ok=True)
+    (root / "src" / "a.ts").write_text("export const a = 1\n", encoding="utf-8")
+    run(root, "plan", "--unit", "T-12", "--requirement", "落实 AC-HOME-001")
+    run(root, "dispatch", "--unit", "T-12")
+    subprocess.run(["git", "add", "src/a.ts"], cwd=str(root), check=True)
+
+    p1 = run(root, "verify", "--unit", "T-12")
+    assert p1.returncode == 2, p1.stdout + p1.stderr
+    assert "PENDING" in p1.stdout and "review-request.md" in p1.stdout
+
+    r_dir = root / "product" / "reviews" / f"{date.today().isoformat()}-impl-review-T-12"
+    (r_dir / "cli.json").write_text(json.dumps({
+        "status": "completed",
+        "summary": {"files_reviewed": 1, "comments": 0},
+        "comments": [], "warnings": [],
+        "manifest": {"coverage": {
+            "selected": [{"path": "src/a.ts"}],
+            "completed": [{"path": "src/a.ts"}],
+            "failed": [], "waived": [], "reused": [],
+        }},
+    }), encoding="utf-8")
+
+    p2 = run(root, "verify", "--unit", "T-12")
+    assert p2.returncode == 0, p2.stdout + p2.stderr
+    assert (r_dir / "review.json").is_file()
+
+    p3 = run(root, "finish", "--unit", "T-12")
+    assert p3.returncode == 0, p3.stdout + p3.stderr
+    meta = json.loads((root / ".atlas" / "tasks" / "archive" / "T-12" / "task.json")
+                      .read_text(encoding="utf-8"))
+    assert meta["status"] == "completed"
 
 
 def test_next_review_round_autoincrements(tmp_path: Path) -> None:
@@ -260,6 +307,105 @@ def test_dispatch_paths_persist_to_card(tmp_path: Path) -> None:
     assert p.returncode == 0, p.stdout + p.stderr
     meta = json.loads((root / ".atlas/tasks/T-12/task.json").read_text(encoding="utf-8"))
     assert meta["paths"] == ["apps/web/a.ts"]
+
+
+E2E_HEADER = (
+    "| 用例ID | 页面 | 中文标题 | 类型 | 关联AC | 需求 | 状态 | 状态原因 | 分片 |\n"
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+)
+
+
+def _write_pass_review(root: Path, unit: str) -> None:
+    r_dir = root / "product" / "reviews" / f"2026-11-19-impl-review-{unit}"
+    r_dir.mkdir(parents=True, exist_ok=True)
+    (r_dir / "review.json").write_text(
+        json.dumps({"schema_version": 4, "ok": True, "status": "PASS"}), encoding="utf-8")
+
+
+def _write_e2e_index(root: Path, row: str) -> None:
+    p = root / "product" / "e2e" / "e2e-index.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("# E2E 索引\n\n" + E2E_HEADER + row + "\n", encoding="utf-8")
+
+
+def test_finish_blocks_e2e_red_for_task_acs(tmp_path: Path) -> None:
+    """#69：本任务 AC 关联的 E2E 用例为 red 时，finish 必须阻断。"""
+    root = make_clean_project(tmp_path)
+    run(root, "plan", "--unit", "T-20", "--requirement", "落实 AC-HOME-001")
+    run(root, "dispatch", "--unit", "T-20")
+    _write_pass_review(root, "T-20")
+    _write_e2e_index(
+        root, "| E2E-HOME-001 | home | 首页 | 功能 | AC-HOME-001 | T-20 | red | 断言失败 | cases/home.md |")
+
+    p = run(root, "finish", "--unit", "T-20")
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "red" in p.stderr and "E2E" in p.stderr
+    meta = json.loads((root / ".atlas/tasks/T-20/task.json").read_text(encoding="utf-8"))
+    assert meta["status"] != "completed"
+
+
+def test_finish_records_e2e_pass_and_acceptance(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    run(root, "plan", "--unit", "T-21", "--requirement", "落实 AC-HOME-001")
+    run(root, "dispatch", "--unit", "T-21")
+    _write_pass_review(root, "T-21")
+    _write_e2e_index(
+        root, "| E2E-HOME-001 | home | 首页 | 功能 | AC-HOME-001 | T-21 | green | | cases/home.md |")
+    acc = root / "product" / "e2e" / "reviews" / "2026-11-20-acceptance-home"
+    acc.mkdir(parents=True)
+    (acc / "README.md").write_text("# 验收走查\n", encoding="utf-8")
+
+    p = run(root, "finish", "--unit", "T-21")
+    assert p.returncode == 0, p.stdout + p.stderr
+    meta = json.loads((root / ".atlas/tasks/archive/T-21/task.json").read_text(encoding="utf-8"))
+    assert meta["e2e_precondition"]["status"] == "PASS"
+    assert meta["e2e_precondition"]["acceptance"]["status"] == "PASS"
+
+
+def test_finish_skips_e2e_when_task_acs_unmapped(tmp_path: Path) -> None:
+    """任务卡无 AC：E2E 结论无法定位适用面 ⇒ 显式 SKIP，不静默当通过。"""
+    root = make_clean_project(tmp_path)
+    run(root, "plan", "--unit", "T-22", "--requirement", "普通任务")
+    run(root, "dispatch", "--unit", "T-22")
+    _write_pass_review(root, "T-22")
+    _write_e2e_index(
+        root, "| E2E-OTHER-001 | other | 其他 | 功能 | AC-OTHER-001 | T-99 | red | x | cases/other.md |")
+
+    p = run(root, "finish", "--unit", "T-22")
+    assert p.returncode == 0, p.stdout + p.stderr
+    meta = json.loads((root / ".atlas/tasks/archive/T-22/task.json").read_text(encoding="utf-8"))
+    assert meta["e2e_precondition"]["status"] == "SKIP"
+    assert "无法定位" in meta["e2e_precondition"]["reason"]
+
+
+def test_archive_migrates_completed_and_status_all(tmp_path: Path) -> None:
+    """#70：既存 completed 单元可一次性迁入 archive；status 默认只看活跃，--all 才显示归档。"""
+    root = make_clean_project(tmp_path)
+    t_dir = root / ".atlas" / "tasks" / "T-30"
+    t_dir.mkdir(parents=True)
+    (t_dir / "task.json").write_text(json.dumps({
+        "id": "T-30", "title": "旧完成项", "status": "completed", "depends_on": [], "acs": [],
+    }), encoding="utf-8")
+
+    assert "[T-30]" in run(root, "status").stdout  # 尚未归档，仍在活跃区
+    p = run(root, "archive", "--unit", "T-30")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert (root / ".atlas/tasks/archive/T-30/task.json").is_file()
+
+    assert "[T-30]" not in run(root, "status").stdout
+    p_all = run(root, "status", "--all")
+    assert "[T-30]" in p_all.stdout and "[archived]" in p_all.stdout
+
+    p_again = run(root, "archive", "--unit", "T-30")
+    assert p_again.returncode == 0 and "无待归档项" in p_again.stdout
+
+
+def test_archive_refuses_non_completed(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    run(root, "plan", "--unit", "T-31", "--requirement", "普通任务")
+    p = run(root, "archive", "--unit", "T-31")
+    assert p.returncode == 1 and "尚未 completed" in p.stderr
+    assert (root / ".atlas/tasks/T-31/task.json").is_file()
 
 
 def test_status_filters_by_unit_and_reports_corrupt_card(tmp_path: Path) -> None:

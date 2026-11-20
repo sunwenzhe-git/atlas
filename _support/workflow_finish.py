@@ -13,11 +13,15 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
+from collections import Counter
 from pathlib import Path
 
 from _support import review_scope_core as scope_core
-from _support.workflow_plan import load_tasks, atomic_write_json, UNIT_RE
+from _support.layout import LayoutError, load_layout
+from _support.siblings import load_module
+from _support.workflow_plan import ARCHIVE_DIR, load_tasks, atomic_write_json, UNIT_RE
 
 
 class FinishError(ValueError):
@@ -99,6 +103,85 @@ def check_task_review_passed(root: Path, unit: str) -> tuple[bool, str]:
     return True, str(latest_dir)
 
 
+def _acceptance_evidence(lay) -> dict:
+    """用户验收走查留痕：`<e2e>/reviews/*-acceptance-*/README.md`（缺 ⇒ SKIP，人工责任）。"""
+    reviews = lay.e2e_reviews_dir
+    if not reviews.is_dir():
+        return {"status": "SKIP", "reason": "无 E2E 验收走查留痕目录（人工责任）"}
+    docs = sorted(p for p in reviews.glob("*-acceptance-*")
+                  if p.is_dir() and (p / "README.md").is_file())
+    if not docs:
+        return {"status": "SKIP", "reason": "未见 *-acceptance-*/README.md（用户验收走查为人工责任）"}
+    latest = docs[-1]
+    return {"status": "PASS", "path": str(latest.relative_to(lay.root)),
+            "reason": "找到验收走查留痕"}
+
+
+def check_e2e_precondition(root: Path, task: dict) -> dict:
+    """收口前把 E2E 结论纳入校验输入（issue #69）。
+
+    - 与本任务 AC 关联的用例存在 `red` ⇒ `FAIL`（阻断收口）；
+    - 索引缺失 / 任务卡无 AC / 本任务 AC 未出现在索引 / 含 `skipped` ⇒ `SKIP`（显式记录原因，
+      不静默当作通过）；
+    - 其余（`green` / `blocked` 带原因）⇒ `PASS`。
+    验收走查留痕单独记录，不改变 E2E 结论（缺留痕 = `SKIP`，人工责任）。
+    """
+    try:
+        lay = load_layout(root)
+    except LayoutError as exc:
+        return {"status": "SKIP", "reason": f"布局不可解析：{exc}"}
+    index = lay.e2e_index
+    if not index.is_file():
+        return {"status": "SKIP", "reason": f"未找到 E2E 索引（{index.relative_to(root)}）：按人工责任处理"}
+    try:
+        mod = load_module("validate_e2e_index")
+        tabs = mod.tables(index.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 —— 坏索引不能把收口判红，但必须显式 SKIP
+        return {"status": "SKIP", "reason": f"E2E 索引不可解析：{exc}"}
+    if not tabs:
+        return {"status": "SKIP", "reason": "E2E 索引无可解析表格"}
+    matched = next(((h, r) for h, r in tabs if h == mod.MAIN_COLUMNS), None)
+    if matched is None:
+        return {"status": "SKIP",
+                "reason": f"E2E 主表列头不可识别（期望 {mod.MAIN_COLUMNS}）"}
+    header, rows = matched
+    grid = [dict(zip(header, r + [""] * (len(header) - len(r)))) for r in rows]
+    acs = [str(a) for a in (task.get("acs") or []) if str(a).strip()]
+    if not acs:
+        return {"status": "SKIP", "reason": "任务卡未声明 AC，无法定位 E2E 适用面", "acs": []}
+    scoped = [g for g in grid if any(a in (g.get("关联AC") or "") for a in acs)]
+    if not scoped:
+        return {"status": "SKIP", "reason": f"本任务 AC 未出现在 E2E 索引：{acs}", "acs": acs}
+    counts = dict(Counter((g.get("状态") or "") for g in scoped))
+    cases = [g.get("用例ID") or "?" for g in scoped]
+    red = [cid for cid, g in zip(cases, scoped) if (g.get("状态") or "") == "red"]
+    skipped = [cid for cid, g in zip(cases, scoped) if (g.get("状态") or "") == "skipped"]
+    out = {"acs": acs, "cases": cases, "counts": counts,
+           "acceptance": _acceptance_evidence(lay)}
+    if red:
+        out.update(status="FAIL", reason=f"E2E 关联用例存在 red：{red}")
+    elif skipped:
+        out.update(status="SKIP", reason=f"E2E 关联用例含 skipped（不得当通过）：{skipped}")
+    else:
+        out.update(status="PASS", reason=f"E2E 关联用例无 red（{counts}）")
+    return out
+
+
+def archive_task(root: Path, tasks_root: Path, t_dir: Path, t_id: str) -> dict:
+    """把已收口任务移到 `.atlas/tasks/archive/<id>/`（幂等；失败显式报错，issue #70）。"""
+    if not UNIT_RE.match(t_id):
+        raise FinishError(f"非法任务标识：{t_id!r}")
+    dest = tasks_root / ARCHIVE_DIR / t_id
+    if t_dir == dest:
+        return {"status": "already", "path": str(dest.relative_to(root))}
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(t_dir), str(dest))
+    except OSError as exc:
+        raise FinishError(f"归档失败：{t_dir} → {dest}（{exc}）") from exc
+    return {"status": "moved", "path": str(dest.relative_to(root))}
+
+
 def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
     """完成单个任务的收口流转。"""
     root = root.resolve()
@@ -112,12 +195,19 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
 
     if not t_dir.is_dir():
         raise FinishError(f"任务目录不存在：{t_dir}")
+    archive_dest = tasks_root / ARCHIVE_DIR / t_id
+    if t_dir != archive_dest and archive_dest.exists():
+        raise FinishError(f"归档目标已存在：{archive_dest}（源目录仍在 {t_dir}；请人工核对后处理）")
     if not force:
         passed, reason = check_task_review_passed(root, t_id)
         if not passed:
             raise FinishError(f"任务 {t_id} 无法收口：{reason}")
 
-    # 更新 task.json 状态为 completed
+    e2e = check_e2e_precondition(root, task)
+    if e2e["status"] == "FAIL":
+        raise FinishError(f"任务 {t_id} 无法收口：{e2e['reason']}")
+
+    # 更新 task.json 状态为 completed（E2E 前置结论一并落盘，issue #69）
     task_json_file = t_dir / "task.json"
     if task_json_file.is_file():
         try:
@@ -128,10 +218,14 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
         meta = task
 
     meta["status"] = "completed"
+    meta["e2e_precondition"] = e2e
     atomic_write_json(task_json_file, meta)
 
-    # 检查整体工作流是否全部收工
-    all_tasks = load_tasks(t_dir.parent)
+    # 归档（issue #70）：completed 任务移出活跃区；幂等，失败显式报错
+    archived = archive_task(root, tasks_root, t_dir, t_id)
+
+    # 检查整体工作流是否全部收工（含归档任务）
+    all_tasks = load_tasks(tasks_root, include_archived=True)
     total = len(all_tasks)
     completed_count = sum(1 for t in all_tasks if t.get("status") == "completed")
 
@@ -141,4 +235,6 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
         "total_tasks": total,
         "completed_tasks": completed_count,
         "all_done": (total > 0 and completed_count == total),
+        "e2e_precondition": e2e,
+        "archived": archived,
     }

@@ -14,7 +14,7 @@
 
 - 开工：`atlas workflow plan --unit <ID> [--paths <glob...>]` → `atlas workflow dispatch [--paths <file...>]`
 - 提交前：`atlas workflow verify --unit <ID>`（未通过不得提交或收口）
-- 收口：`atlas workflow finish --unit <ID>`（另需 E2E 全绿 + 用户验收走查）
+- 收口：`atlas workflow finish --unit <ID>`（读独立审查 PASS + 本任务 AC 关联的 E2E 结论：`red` 阻断，缺数据显式 `SKIP`；完成后任务移入 `.atlas/tasks/archive/`）
 - **平台口径（Windows）**：契约里的 `python3` 用 `python` 替代（需 Python 3.10+）。
 
 撞到「规则本身不合业务」不许静默绕过：按 `.atlas/shared/global-rules.md` §15 提炼设计问题后 `atlas report` 上报。

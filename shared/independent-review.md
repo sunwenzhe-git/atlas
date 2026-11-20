@@ -13,7 +13,7 @@
 | ① | PRD（`atlas prd review`） | `rings/prd/reference.md` §8 | **不扇出**（单审查者：本实例的维度本身就是跨域一致性判据） | 生成阶段（诊断 / 定位对齐 / 范围冻结 / 逐域落地） | `.atlas/spec/structure/` 事实 + 范围冻结结论 | 交付用户 review 前的自检 |
 | ② | E2E 用例 | `rings/e2e/reference.md` §12 | 页面分片（复用 testid 双向校验的同一分区键）+ 超阈值（**20 条或 500 行**）按用例 ID 区间再切 + **一个全局审查者** | `prd` \| `e2e` | 域级 PRD 的 AC + 该页用例分片 testid 清单 | 阻断脚本生成 |
 | ④ | 设计决策 | 本文件 §8 | 按 **frontier 轮次**（一轮问答一次） | 无资产回退（对象是决策本身） | 设计树 + 前沿问题 + 该轮推荐 | 低风险一致 ⇒ 自动通过；**`global-rules.md §7` 四条一律人工** |
-| ⑤ | 实现代码（CLI 式独立审查；2026-09-29 接入并首跑） | 本文件 §10 | **不扇出**（单审查者：diff 即范围） | `implement` \| `prd` \| `e2e` | 需求卡 + 受影响域级 PRD 的 AC + 受影响用例分片（经 background 类机制注入，不喂整仓） | 收口完成门：有 `Critical` ⇒ 域不收口（与「E2E 全 green」并列，挂 `closeout.md` 步骤 10） |
+| ⑤ | 实现代码（CLI / 会话子代理独立审查；2026-09-29 接入并首跑；2026-11-20 issue #68 补 `session` 执行器） | 本文件 §10 | **不扇出**（单审查者：diff 即范围） | `implement` \| `prd` \| `e2e` | 需求卡 + 受影响域级 PRD 的 AC + 受影响用例分片（经 background 类机制注入，不喂整仓） | 收口完成门：有 `Critical` ⇒ 域不收口（与「E2E 全 green」并列，挂 `closeout.md` 步骤 10） |
 
 - **报告落点**：`product/<环>/reviews/<日期>-<范围>/`（各环产物目录下的 `reviews/`，与 `C11①` 的人工缺口清单目录 `product/reviews/` **不同角色**，不得混用）。
 - **四处骨架同构**是本契约存在的理由：各写一遍 = 四份正文，必漂（`shared/single-source.md` §1）。
@@ -195,19 +195,23 @@ atlas-grill（提炼刺痛代价与致命冲突） → 用户拍板关键抉择
 
 ### 10.1 执行器与输出
 
-- 执行器 = **CLI 式独立审查进程**（读 git diff 出结构化 findings）：fresh context 由**进程边界**保证（比子代理更彻底）；**无落盘修复能力** ⇒ 骨架第 1 条「只审不改」天然成立。具体工具与模型归 `product/stack-profile.yaml` 的 `impl_review` 声明（CLI 执行器与审查模型解耦，null = 使用默认值；契约不写死特定模型）。
+- 执行器 = `product/stack-profile.yaml` 的 `impl_review.executor` 声明（issue #68）：
+  - **`cli`** = **CLI 式独立审查进程**（读 git diff 出结构化 findings）：fresh context 由**进程边界**保证；**无落盘修复能力** ⇒ 骨架第 1 条「只审不改」天然成立。
+  - **`session`** = 当前会话派 **fresh-context 子代理**：`atlas review` 产 `review-request.md` 派工包（指针清单 + 产物骨架）并以「待审」退出；子代理只读派工包里的指针、**只写 `cli.json`**，不改业务代码 / 暂存区 ⇒ 骨架第 1 条同样成立；fresh context 由「不继承生成上下文」保证。
+  - **未声明 executor**：`cli` + `llm` 齐备才走 CLI，否则回落 `session`（不再用 `SKIP` 空洞把「未配置」伪装成已走完）。
+  具体工具与模型归 `product/stack-profile.yaml` 的 `impl_review` 声明（CLI 执行器与审查模型解耦，null = 使用默认值；契约不写死特定模型）。
 - 业务上下文（「这次该干什么」）由**调用方组装后注入**（CLI 的 background 类参数）：内容 = 需求卡摘要 + 受影响域的 AC + 相关用例断言——这是 §6 第 4 条上下文最小化的落点，**不喂整仓**。
 - 输出经 `scripts/cli_review_convert.py` 转**本契约 §3 的 `review.json`**（CLI 原始 JSON 作为输入侧证据留报告目录）：CLI 的 JSON 是给通用 CI 用的形态，门禁读它 = 在门口信任模型结论。严重度四档→三档**写死**（critical→`Critical`；high / medium→`Major`；low→`Minor`；**未知档位 ⇒ 转换器显式失败**，不猜）；category 闭集（bug / security / performance / maintainability / test / style / documentation）外的归 `other`（骨架 §2.7，不计门禁）。
 
 ### 10.2 应审 N / 实审 M（硬；§6 第 8 条在此实例的落地）
 
-- N = **CLI `--preview` 的 Will review 数**（`.md` 等不支持扩展名会被 CLI 排除——契约与文档面本就不属实例 ⑤ 的对象，**不得**用 git diff 全量计数，会假 `WARN`）；M = **CLI `manifest.coverage.completed[]` 的去重文件数**（coverage 存在时；无 coverage 才回退 `summary.files_reviewed`）。`reused`/`waived`/`failed` 均**不计入 M**——OCR v1.13.3 自身口径为 `selected = completed + reused + failed + waived` 四态互斥分区，`reused` = resume 会话沿用上一轮的审查结果、`waived` = 带非空理由的显式豁免（CLI 自己强制 `waived item requires a non-empty reason`），两者本轮**都没有再审**。**M < N、预算击穿、`cli_status=partial|failed` 或 `failed_files` 非空 ⇒ `WARN` 起步**；coverage 缺 `completed[]` / CLI 不报实审数 ⇒ 转换器**拒绝产出**（缺权威输入不得给「通过」，骨架 §2.6）。
+- N = **CLI `--preview` 的 Will review 数**（`.md` 等不支持扩展名会被 CLI 排除——契约与文档面本就不属实例 ⑤ 的对象，**不得**用 git diff 全量计数，会假 `WARN`）；`session` 执行器无 preview ⇒ N = `cli.json` 的 `manifest.coverage.selected[]` 去重数（派工包要求逐项列出本次应审范围），缺失时须显式 `--expected-files`，否则**拒绝产出**。M = **CLI `manifest.coverage.completed[]` 的去重文件数**（coverage 存在时；无 coverage 才回退 `summary.files_reviewed`）。`reused`/`waived`/`failed` 均**不计入 M**——OCR v1.13.3 自身口径为 `selected = completed + reused + failed + waived` 四态互斥分区，`reused` = resume 会话沿用上一轮的审查结果、`waived` = 带非空理由的显式豁免（CLI 自己强制 `waived item requires a non-empty reason`），两者本轮**都没有再审**。**M < N、预算击穿、`cli_status=partial|failed` 或 `failed_files` 非空 ⇒ `WARN` 起步**；coverage 缺 `completed[]` / CLI 不报实审数 ⇒ 转换器**拒绝产出**（缺权威输入不得给「通过」，骨架 §2.6）。
 - **delta v3**：`head_sha` 必备；`reviewed_files` = coverage completed 或 `--reviewed-files`；`selected_files` 记录 coverage；数量/成员/selected 对账只 WARN。v2 delta 缺 `head_sha` 只 WARN（兼容）。
 - 动机：实测取证——CLI 会对超大 diff **静默跳过文件**，属「静默少审」族（`3509 §B100`）。对账不是附加项，是**接入前提**。
 
 ### 10.3 门禁与回流
 
-- 有 `Critical` ⇒ **域不收口**（完成门侧，与「E2E 全 green」并列）。已接入（2026-09-29）：完成门与 `closeout.md` 步骤 10 已挂；**`impl_review.llm` 为 null ⇒ 审查 `SKIP` + 原因**（不阻断 E2E 侧结论，也不算已审）。
+- 有 `Critical` ⇒ **域不收口**（完成门侧，与「E2E 全 green」并列）。已接入（2026-09-29）：完成门与 `closeout.md` 步骤 10 已挂；**无可执行 CLI**（`impl_review` 未配置 / `llm` 为 null / 显式 `executor: session`）⇒ **会话执行器**：`atlas review` 产 `review-request.md` 派工包并以「待审」退出（**不是通过**），当前会话派 fresh-context 子代理产出 `cli.json` 后复跑，继续 scope manifest → 转换 → 校验 → 闭环；`finish` 仍只认 `review.json` PASS（issue #68）。
 - 修复**回流 执行层 Execute**，改完重跑（round +1）；**不走 CLI 自身的修复通道**（若有）。
 - finding 的回退环**默认 `implement`**；triage 判明「AC / 断言本身错」⇒ 改判 `prd` / `e2e` 并登记 backfill 队列（`apply/reference.md` §5.2「发现」入口之一）。
 - **报告落点**：`product/reviews/<日期>-impl-review-<范围>/`（与 ④ 的 §8.4 同惯例；CLI 原始 JSON 留档为输入侧证据）。
