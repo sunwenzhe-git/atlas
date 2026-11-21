@@ -325,7 +325,7 @@ def test_f40_ts_test_with_only_pytest_config_gets_no_command() -> None:
     为何要紧：该产出「非空且形态合法」⇒ 骗过 §6.2 的接线前置（`§B118` 只识别「产出为空」），
     把错误事实喂进事实区，且它会随 `refresh_structure --chain` 反复回来。
 
-    变异证明：把 runner 退回「只看配置存在性」⇒ `run_command == RUN_PYTEST`，本用例红。
+    变异证明 **M62**：把 runner 退回「只看配置存在性」⇒ `run_command == RUN_PYTEST`，本用例红。
     """
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)

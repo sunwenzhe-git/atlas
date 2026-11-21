@@ -169,12 +169,21 @@ def derive(root: Path) -> dict[str, str]:
             facts["编排门行"] = str(rows)
     for p in test_files:
         facts[f"用例数.{p.name}"] = str(count_tests(p))
-    # 变异编号上限：钉子定义在 tests/；门册自身的提及不参与派生（否则读到占位里的旧值，自我循环）
+    # 变异编号上限：钉子定义在 tests/；门册自身的提及不参与派生（否则读到占位里的旧值，自我循环）。
+    # 2026-11-21 改扫 **docstring**（钉的声明面）：裸文本扫描会把变异测试夹具载荷字符串里的
+    # 钉号（如 M195 反例里注入的幽灵钉 M999）当成事实——M10「字符串幽灵」教训的又一形态。
     best: tuple[int, str] = (0, "")
     for p in test_files:
-        for m in re.finditer(r"(?<![A-Za-z0-9_])M(\d+)([a-z]?)(?![A-Za-z0-9_])",
-                             p.read_text(encoding="utf-8")):
-            best = max(best, (int(m.group(1)), m.group(2)))
+        tree = ast.parse(p.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Module, ast.ClassDef,
+                                     ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            doc = ast.get_docstring(node)
+            if not doc:
+                continue
+            for m in re.finditer(r"(?<![A-Za-z0-9_])M(\d+)([a-z]?)(?![A-Za-z0-9_])", doc):
+                best = max(best, (int(m.group(1)), m.group(2)))
     if best[0]:
         facts["变异编号上限"] = f"M{best[0]}{best[1]}"
     # 无钉的空仓不出键：真实仓若本键缺失，正文占位会按「未知键」当场炸，不会静默放过。

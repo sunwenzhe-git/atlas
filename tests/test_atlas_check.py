@@ -868,6 +868,8 @@ def test_review_input_manifest_uses_stack_profile_cases_dir_override() -> None:
 
 
 # ---- 「装配版本」对账（P3，2026-10-05）----
+# 变异钉 M59/M59b（门册装配版本行登记）：M59b = 版本对账判据退回「只看 VERSION 存在」
+# ⇒ 坏戳（源已变、戳未变）必须红的用例红。
 
 
 def _stamp(source: Path, root: Path) -> str:
@@ -896,6 +898,11 @@ def test_check_version_ok_when_source_unchanged() -> None:
 
 
 def test_check_version_warns_when_source_advanced() -> None:
+    """M59b（装配版本坏戳）：源已推进、戳未更新 ⇒ WARN 对账必须咬住。
+
+    门册装配版本行登记 M59/M59b；本测即 M59b 实现证据——判据退回「只看 VERSION 存在」
+    则本用例绿（假绿），即钉红形态。
+    """
     with tempfile.TemporaryDirectory() as td:
         src, root = Path(td) / "atlas", Path(td) / "proj"
         (src / "scripts").mkdir(parents=True)

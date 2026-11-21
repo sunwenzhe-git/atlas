@@ -268,6 +268,8 @@ def test_f38_categories_prose_mention_is_not_a_declaration() -> None:
 
     四侧坏输入逐条对齐 issue 现场实证：前三条旧实现在**假绿**，第四条是旧实现唯一能
     正确报红的形态。
+
+    变异证明 **M60**：判据退回全文子串匹配 ⇒ 本用例红（描述「尚未完成」被判已完成）。
     """
     cases = {
         "待核准：…核准后补写为 added": "描述『尚未补写』却含 added",
@@ -316,7 +318,7 @@ def test_f42_adapter_gaps_are_warned_not_failed() -> None:
     （逐件判定表判「接」但本栈 0 命中）。采用者会把 (b) 读成 (a)，而该类别的
     `structure ↔ 代码` 对账平面永久缺口且无人知道它不是预期的。
 
-    变异证明：摘掉 `add_warn` 分支 ⇒ 本用例红（缺口重新变成不可见）。
+    变异证明 **M63**：摘掉 `add_warn` 分支 ⇒ 本用例红（缺口重新变成不可见）。
     """
     meta = dict(META)
     meta["adapter_gaps"] = {"routes": "0 命中（文件式路由 + .tsx）"}

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import ast
 import re
+import subprocess
 from pathlib import Path
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
@@ -429,9 +430,54 @@ def check_pin_registration() -> dict:
             else "测试侧声明的钉全部在门册出现"}
 
 
+def check_pin_implementation() -> dict:
+    """**变异钉实现完整性（反向）**：门册登记的 `M<id>` 必须有线束面实现证据。
+
+    治「门册声称已实现、线束里找不到」的幽灵钉——M20–M24 曾长期虚挂，`0eac771`
+    自认单向时明写「幽灵钉仍归人」。2026-11-21 复盘 R3/P3 补上那一向。
+
+    证据面 = git tracked 的**线束文本**（代码 + 环契约 + 模板 + 针线脚本）；显式排除
+    `shared/gates.md` 自身（登记声明不算证据）与 `docs/`、`proposals/`、`duty-review/`、
+    `2026-*/`（报告/审计/提案目录——报告「提及」会洗白幽灵）。非 git 环境（副本态 /
+    最小夹具）退化为全目录文本扫描。区间展开与字面提取与正向 `check_pin_registration`
+    同口径。
+    """
+    gates = PKG_ROOT / "shared" / "gates.md"
+    if not gates.is_file():
+        return {"check": "变异钉实现", "ok": True, "skip": True, "detail": "副本态无 gates.md"}
+    text = gates.read_text(encoding="utf-8")
+    registered = set(re.findall(r"(?<![A-Za-z0-9_])M\d+[a-z]?(?![A-Za-z0-9_])", text))
+    for a, b in re.findall(
+            r"(?<![A-Za-z0-9_])M(\d+)[a-z]?\s*[–\-~]\s*M(\d+)[a-z]?(?![A-Za-z0-9_])", text):
+        registered |= {f"M{i}" for i in range(int(a), int(b) + 1)}
+    suffix = re.compile(r"\.(py|js|ts|mjs|cjs|sh|yaml|yml|md|html|json|mts)$")
+    excluded = ("2026-", "duty-review/", "proposals/", "docs/", ".github/")
+    have: set[str] = set()
+    if (PKG_ROOT / ".git").exists():
+        out = subprocess.run(["git", "ls-files"], capture_output=True, text=True,
+                             cwd=PKG_ROOT).stdout.splitlines()
+        rels = [r for r in out if r.strip()]
+    else:
+        rels = [q.relative_to(PKG_ROOT).as_posix().replace("\\", "/")
+                for q in sorted(PKG_ROOT.rglob("*")) if q.is_file()]
+    for rel in rels:
+        if rel == "shared/gates.md" or rel.startswith(excluded) or not suffix.search(rel):
+            continue
+        f = PKG_ROOT / rel
+        if not f.is_file():
+            continue
+        have |= set(re.findall(r"(?<![A-Za-z0-9_])M\d+[a-z]?(?![A-Za-z0-9_])",
+                               f.read_text(encoding="utf-8")))
+    ghosts = sorted(registered - have, key=lambda s: (int(re.sub(r"\D", "", s)), s))
+    return {"check": "变异钉实现", "ok": not ghosts, "skip": False,
+            "detail": (f"门册登记但线束面无实现证据（幽灵钉）：{ghosts}" if ghosts
+                       else f"{len(registered)} 枚登记钉全部有线束面实现证据")}
+
+
 def scan() -> list[dict]:
     return [check_ring_refs_self_marking(), check_template_keys(), check_shared_refs(),
             check_registry_counts(), check_ledger_tokens(), check_pin_registration(),
+            check_pin_implementation(),
             check_contract_field_refs(), check_veto_word_pins(), check_skill_budget()]
 
 
@@ -490,6 +536,36 @@ def test_pin_registration_real_repo() -> None:
     """真实仓：测试侧声明的钉必须全部在门册出现。"""
     res = check_pin_registration()
     assert res["ok"], res["detail"]
+
+
+def test_pin_implementation_real_repo() -> None:
+    """真实仓：门册登记的钉必须全部有线束面实现证据（反向，`0eac771` 补那一向）。
+
+    M20–M24 曾长期虚挂（登记在门册、线束无实现），当时只能归人——本判据把那一向
+    机器化；证据面显式排除报告/提案/审计目录（提及会洗白幽灵）。
+    """
+    res = check_pin_implementation()
+    assert res["ok"], res["detail"]
+
+
+def test_m195_ghost_pin_must_fail(tmp_path, monkeypatch) -> None:
+    """M195：门册登记了线束里不存在的钉（幽灵钉）⇒ 反向判据红；补实现证据后复绿。
+
+    反例取 M20–M24 的形态：登记行存在、全仓无实现痕迹——正是 2026-11-21 复盘
+    R3 反向钉盘点之前机器分不清的那一类（本次盘点实测咬出 M21/M25 两个真幽灵）。
+    """
+    import sys as _sys
+    repo = _mk_ledger_repo(tmp_path)
+    monkeypatch.setattr(_sys.modules[__name__], "PKG_ROOT", repo)
+    gates = repo / "shared" / "gates.md"
+    gates.write_text(gates.read_text(encoding="utf-8") + "| x | M999 |\n",
+                     encoding="utf-8")
+    res = check_pin_implementation()
+    assert not res["ok"] and "M999" in res["detail"], res
+    (repo / "tests" / "test_x.py").write_text(
+        'def test_x():\n    """变异钉 M999：注入坏输入 ⇒ 红。"""\n    pass\n',
+        encoding="utf-8")
+    assert check_pin_implementation()["ok"], "补实现证据后必须复绿"
 
 
 def _mk_ledger_repo(tmp: Path) -> Path:
@@ -556,6 +632,63 @@ def test_m22_validator_count_drift_must_fail(tmp_path, monkeypatch) -> None:
     gates.write_text(gates.read_text(encoding="utf-8").replace("〔数:校验器=1〕", "〔数:校验器=2〕"),
                      encoding="utf-8")
     assert check_gates_gates_are_scheduled()["ok"], "写回正确值必须复绿"
+
+
+def test_m21_sec13_status_word_must_fail(tmp_path, monkeypatch) -> None:
+    """M21：`DESIGN.md §13` 写回推进状态词必须红（治「§13 复述状态必漂」，`3509 §126`）。
+
+    门册 canonical 行 2026-11-17 即登记本钉，实现当时缺席（幽灵）——2026-11-21
+    复盘 R3 反向钉盘点补齐：判据 = §13 出现任一禁词 ⇒ `check_registry_counts` 红。
+    """
+    import sys as _sys
+    repo = _mk_ledger_repo(tmp_path)
+    monkeypatch.setattr(_sys.modules[__name__], "PKG_ROOT", repo)
+    assert check_registry_counts()["ok"], "fixture 起点必须绿"
+    design = repo / "DESIGN.md"
+    design.write_text(
+        design.read_text(encoding="utf-8").replace(
+            "见 `validators/validate_{a,b}.py`。",
+            "已落地：见 `validators/validate_{a,b}.py`。"),
+        encoding="utf-8")
+    res = check_registry_counts()
+    assert not res["ok"] and "推进状态词" in res["detail"], res
+    design.write_text(
+        design.read_text(encoding="utf-8").replace("已落地：", ""),
+        encoding="utf-8")
+    assert check_registry_counts()["ok"], "还原后必须复绿"
+
+
+def test_m25_removing_contract_seed_row_must_fail(tmp_path, monkeypatch) -> None:
+    """M25：摘掉契约 §2 的字段声明 ⇒ 模板键判据红（`3509 §125`–`§128`）。
+
+    门册 canonical 行登记本钉（独立审计驱动），实现当时缺席（幽灵）——2026-11-21
+    复盘 R3 反向钉盘点补齐。原声明指向 `seed`，但模板的 e2e 段已整体注释化
+    （`template_structure` 不再产出 e2e 键，判据② 不会比对它）——登记面与实况
+    脱节的又一实证；钉的机制不变（契约侧少声明 ⇒ 模板键越界红），落点改取
+    模板活键 `apps.path`（2026-11-21 注记）。
+    """
+    import shutil
+    import sys as _sys
+    src_root = PKG_ROOT  # 真仓契约/模板作夹具源（先取，后 monkeypatch）
+    repo = _mk_ledger_repo(tmp_path)
+    monkeypatch.setattr(_sys.modules[__name__], "PKG_ROOT", repo)
+    (repo / "shared").mkdir(exist_ok=True)
+    (repo / "templates").mkdir(exist_ok=True)
+    shutil.copy(src_root / "shared" / "stack-profile.md", repo / "shared" / "stack-profile.md")
+    shutil.copy(src_root / "templates" / "stack-profile.yaml",
+                repo / "templates" / "stack-profile.yaml")
+    assert check_template_keys()["ok"], "真实契约+模板起点必须绿"
+    contract = repo / "shared" / "stack-profile.md"
+    text = contract.read_text(encoding="utf-8")
+    # 契约解析按节内反引号 token 全收：apps 节内所有 `path` token 都要中性化
+    # 才算「摘掉 §2 的 apps.path 字段声明」。
+    parts = re.split(r"(^### `apps\[\]?`.*\n)", text, maxsplit=1, flags=re.M)
+    assert len(parts) == 3 and "`path`" in parts[2], "契约 §2 apps 节缺 path 声明"
+    contract.write_text(parts[0] + parts[1] + parts[2].replace("`path`", "path"), encoding="utf-8")
+    res = check_template_keys()
+    assert not res["ok"] and "`apps.path` 不在契约" in res["detail"], res
+    contract.write_text(text, encoding="utf-8")
+    assert check_template_keys()["ok"], "还原后必须复绿"
 
 
 def test_m23_design_validator_token_stale_must_fail(tmp_path, monkeypatch) -> None:

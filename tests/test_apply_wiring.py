@@ -100,7 +100,10 @@ def test_wire_python_scaffold_skips_factory_template_frontend_project() -> None:
 
     判据：模板原样 + 无 Python 特征文件 ⇒ `is_python_project` 必须为假、门必须 skip、
     **不得**落下 pytest.ini。（旧测用空目录当夹具 ⇒ 永远看不到这个形态，故本测以
-    `templates/stack-profile.yaml` 逐字节为夹具。）"""
+    `templates/stack-profile.yaml` 逐字节为夹具。）
+
+    变异证明 **M51a**：探测退回 raw 文本匹配 ⇒ 本用例（模板夹具回归）红。
+    """
     wiring = load_wiring()
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -162,7 +165,10 @@ def test_wire_python_scaffold_removes_own_stray_ini_in_non_python_project() -> N
 
 
 def test_wire_python_scaffold_keeps_user_edited_ini() -> None:
-    """用户改过的 pytest.ini（内容 ≠ 兜底内容）⇒ 一字不动，只跳过（「只删自己写的」）。"""
+    """用户改过的 pytest.ini（内容 ≠ 兜底内容）⇒ 一字不动，只跳过（「只删自己写的」）。
+
+    变异证明 **M51b**：摘掉「逐字节相等才清」护栏 ⇒ 本用例红（用户文件被误删）。
+    """
     wiring = load_wiring()
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -542,7 +548,12 @@ ATLAS_IGNORE_BLOCK = (
 
 
 def test_wire_gitignore_appends_and_is_idempotent() -> None:
-    """已有 `.gitignore` ⇒ 追加 `.adapter-out/` 与 `.atlas` 白名单；重跑幂等（字节不变）。"""
+    """已有 `.gitignore` ⇒ 追加 `.adapter-out/` 与 `.atlas` 白名单；重跑幂等（字节不变）。
+
+    变异证明 **M65**：摘掉 `.gitignore` 触点 ⇒ 本用例红（第五触点不再落盘；本测即注册行
+    所指的 fifth-touchpoint 用例，旧名 `test_gitignore_fifth_touchpoint_appends_idempotently`
+    已退役为现名）。
+    """
     wiring = load_wiring()
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)

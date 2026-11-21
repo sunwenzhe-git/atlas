@@ -1352,6 +1352,10 @@ def test_testids_landing_fail_detail_includes_repair_hint() -> None:
 
 
 def test_e2e_index_row_field_fail_includes_repair_hint() -> None:
+    """M159a（行字段）：FAIL 指引必须点名行字段修法。
+
+    变异协议：摘掉该指引分支 ⇒ 本用例红（`RFC-20261030-01` 四段）。
+    """
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         mk_prototype(root)
@@ -1366,6 +1370,10 @@ def test_e2e_index_row_field_fail_includes_repair_hint() -> None:
 
 
 def test_e2e_index_orphan_dead_fail_includes_repair_hint() -> None:
+    """M159b（孤儿死链）：FAIL 指引必须区分孤儿与死链两个修法方向。
+
+    变异协议：摘掉该指引分支 ⇒ 本用例红（`RFC-20261030-01` 四段、还原逐字节一致）。
+    """
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         mk_prototype(root)
@@ -1379,6 +1387,10 @@ def test_e2e_index_orphan_dead_fail_includes_repair_hint() -> None:
 
 
 def test_e2e_index_block_field_fail_includes_repair_hint() -> None:
+    """M159c（分片块）：FAIL 指引必须点名缺的块字段。
+
+    变异协议：摘掉该指引分支 ⇒ 本用例红（`RFC-20261030-01` 四段）。
+    """
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         mk_prototype(root)
@@ -1391,7 +1403,10 @@ def test_e2e_index_block_field_fail_includes_repair_hint() -> None:
 
 
 def test_repair_hint_not_added_on_pass() -> None:
-    """PASS 分支不得带修复后缀：提示只在 FAIL 时出现。"""
+    """M159d（PASS 无后缀）：PASS 分支不得带修复后缀，提示只在 FAIL 时出现。
+
+    变异协议：指引改成无条件追加 ⇒ 本用例红（`RFC-20261030-01` 四段、还原逐字节一致）。
+    """
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         mk_prototype(root)
@@ -4350,6 +4365,8 @@ def test_f39_hyphenated_slug_nodes_resolve() -> None:
 
     旧节点 id 正则 `\\w+` 不含连字符 ⇒ `ops-console` 被切在连字符处，切出的残片再也
     解析不回来，带连字符的域 slug 因此**不可用作节点 id**。
+
+    变异证明 **M61**：节点 id 正则退回 `\\w+`（或 `domain_name` 退回 `\\S+`）⇒ 本用例红。
     """
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)

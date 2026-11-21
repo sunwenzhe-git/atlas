@@ -1051,6 +1051,9 @@ def test_semver_lt_is_single_source_across_kernel_and_cli() -> None:
 
     2026-11-17 前两份实现分叉：不可解析时内核判 False、CLI 退回字符串比较。
     现统一为 `_support/semver.lt`，不可解析 ⇒ False（fail-closed）。
+
+    变异钉 **M6b**（门册 solution 行「M1–M10 + M6b 舱内变异钉」，`RFC-20261111-01` §2.4）：
+    比较器退回字符串比较 ⇒ 预发布有序断言（`0.3.0-beta.1` 必须 True）红。
     """
     core = cli._load_solution()
     cases = [

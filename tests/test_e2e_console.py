@@ -843,6 +843,9 @@ def test_resolve_pw_refuses_to_clobber_foreign_path(monkeypatch) -> None:
 def test_probe_browser_three_states(monkeypatch) -> None:
     """`_support/pw_runner.py::probe_browser` 三态 + 旁路不 spawn：
 
+    （变异钉 **M12a/M12b**——门册 E2E 真跑行「M12a/M12b 探针两态」的实现证据，
+    本测覆盖各态的判定面。）
+
     ① playwright 自算路径**存在** ⇒ ok；② 给出不存在的路径 ⇒ 不成立且出路文案点名
     `npx playwright install chromium`；③ 探针自身报错（如模块未导出 chromium）⇒ 如实给尾行原因；
     ④ `ATLAS_PLAYWRIGHT_CHANNEL` 已设 ⇒ 旁路（launch 走系统通道浏览器，缓存判据不适用）——
