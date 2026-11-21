@@ -48,7 +48,7 @@ P3 不是「自动消融」，而是把**事务边界**工具化，并让未关�
 
 **P3-b 已实现（2026-11-02）**：`run` 子命令（argv 无 shell / timeout / 输出 cap / 环境注入）；`install.sh --update` 的 active 互锁；`host_warning` 进「消融残留」WARN；`--state` 状态面快照/还原。
 
-**不做（永不）**：自动还原；仓内备份；生产级 `ATLAS_ABLATE` 开关；整线束 on/off；自动冲突合并；LLM 分类；`status --json`（保留最小文本输出）。
+**不做（永不）**：自动还原；仓内备份；生产级 `ATLAS_ABLATE` 开关；整线束 on/off（**工具面永不**——2026-11-21 D207 显式收窄：装配级 L0 对照改由**双独立准备快照的人工流程**承载，不经本工具、不进活仓切换，协议见 `research/2026-11-21-ablation-outcome-campaign-runbook.md` §7 与 `DESIGN.md` D207）；自动冲突合并；LLM 分类；`status --json`（保留最小文本输出）。
 
 ### 2.2 状态布局（per-root，项目外唯一真相）
 
