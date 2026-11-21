@@ -11,6 +11,7 @@
 - feat(release): 发版提交白名单——`chore(release)` 只准含 7 个版本落点，夹带即拒且不带逃生口；查两处（测试门禁前查 HEAD + 建提交后复查），堵「手工预制发版提交→复用发版」旁路（复盘 R5；`787dd42` 曾夹带 install.py/golden/specs 20 文件）
 - feat(ledger,guide): 裸数字 lint（`--lint-bare-numbers`，M194）+ `docs/map` 五处「12 器」转派生占位（实为 13）+ 新派生键 前置SKIP器/前置SKIP清单（散文写 7 列 6 的枚举漂移一并治）+ guide changelog 镜像化（release.py 从根 CHANGELOG 生成，退役人工写入口）+ preflight 触发映射补派生源 `scripts/atlas_check.py`、`validators/`（复盘 R1/L1/C3/R4）
 - feat(skill): atlas-ablate 重定位「自进化减法引擎」（D206）——目的从门禁价值证明改为自进化减负（周期锚=模型代际，目标函数=质量×速度×token）；漏斗制三层（成本账本筛短名单→守卫语料豁免→捆绑摘除 A/B，每代 ≈12–30 任务跑，零新代码）；减法判据四护栏（保险型豁免=30案台账+灾难面／双证据立案／最小持续2代／复归触发器）+ 降频档位；质量判分（后置未参战门册+人盲评二元+质量噪声带）；跨代账本三指纹+方向性案例研究措辞；旧「不给删留结论」纪律作废（四护栏承接）；SKILL 重写 + 层3 runbook 落 research/（双评审首轮各3 Blocker 修后再审，修订版终审双通过）
+- fix(gate): `validate_task_card` 收域级 AC 词形 + PRD 存在性校验（D208）——workflow plan 生成的域级 AC 验收行不再必然 `card_acceptance_invalid`；域级编号须在采纳仓 PRD 真实存在（杜撰 ⇒ 新码 `card_acceptance_absent`，比原形态校验更严）；方案层 token 投影语义不变；+3 测试（27 条）
 - feat(ablation): RFC-20261101-04「不做（永不）：整线束 on/off」显式收窄为工具面（D207）——装配级 L0 宏观锚改双独立快照人工流程（每代 ≤6 跑，预登记五件套），不经 ablation 工具、不进活仓切换
 - feat(canonical): 变异钉双向化——新增 `check_pin_implementation`（门册登记 ⊖ 线束实现即红，M195），盘点清残留：真幽灵 M21/M25 补实现、9 枚实现存在未标号补标、M2x 简写与 M65 陈旧指向修正、`变异编号上限` 派生改扫 docstring（夹具载荷钉号不再当事实）；判据类 review 必填「真实样本@commit + 应判不中的反例」（复盘 R3/P3）
 

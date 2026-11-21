@@ -303,3 +303,34 @@ def test_delivery_gate_cli_exits_1_on_untracked_card(tmp_path: Path) -> None:
          "--root", str(root)], capture_output=True, text=True)
     assert res.returncode == 1
     assert "card_untracked" in res.stdout
+
+
+# —— 2026-11-21 域级 AC 词形批（workflow plan 产物兼容；见 validators 内注释锚） ——
+
+DOMAIN_PRD = "product/prd/home-prd.md"
+
+
+def _domain_repo(tmp: Path, *, acceptance: str) -> Path:
+    root = new_repo(tmp, acceptance=acceptance)
+    write(root, DOMAIN_PRD,
+          "---\nprd_schema: 2\n---\n\n## 五、AC\n\n"
+          "| AC | 描述 |\n|---|---|\n| AC-HOME-001 | 页脚版本标识 |\n")
+    git(root, "add", "-A")
+    git(root, "-c", "user.email=a@b", "-c", "user.name=a",
+        "commit", "-qm", "domain prd")
+    return root
+
+
+def test_domain_ac_accepted_when_present_in_prd(tmp_path: Path) -> None:
+    root = _domain_repo(tmp_path, acceptance="atlas-acceptance: AC-HOME-001")
+    assert codes(root) == []
+
+
+def test_domain_ac_absent_in_prd_is_fabrication(tmp_path: Path) -> None:
+    root = _domain_repo(tmp_path, acceptance="atlas-acceptance: AC-HOME-999")
+    assert "card_acceptance_absent" in codes(root)
+
+
+def test_domain_ac_malformed_shape_rejected(tmp_path: Path) -> None:
+    root = _domain_repo(tmp_path, acceptance="atlas-acceptance: AC-HOME-12")
+    assert "card_acceptance_invalid" in codes(root)

@@ -24,6 +24,10 @@ NONE_RE = re.compile(
     r"^none(?:[（(](.*?)[）)])?$", re.S)
 KV_RE = re.compile(r"(\w+)\s*=\s*([^；;]+)")
 AC_TOKEN_RE = re.compile(r"^AC-(?:SOLUTION|CONTRACT)-\d{3}$")
+# 域级 AC 词形（2026-11-21 自进化 campaign T5 实测：workflow plan 产物为域级 AC，
+# 与本器词表冲突致 plan 产物必然 FAIL；维护者拍板「门收域级编号」——D206 系；
+# 方案层两词保留专属投影语义，不并入本词形）
+DOMAIN_AC_TOKEN_RE = re.compile(r"^AC-(?!SOLUTION-|CONTRACT-)[A-Z][A-Z0-9_]*-\d{3}$")
 REVIEW_RE = re.compile(r"^REVIEW-\d{8}-\d{2}$")
 FENCE_RE = re.compile(r"^(```|~~~)")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -105,6 +109,23 @@ def pointer_acs(card_dir: Path) -> list[str]:
     if not m:
         return []
     return [t.strip() for t in re.split(r"[,，、]", m.group(1)) if t.strip()]
+
+
+def _prd_ac_tokens(root: Path) -> set[str]:
+    """采纳仓域级 PRD 中出现过的 AC 编号全集（存在性校验数据源）。
+
+    glob 口径与 prd_schema 一致（`prd/*.md` 与 `*/prd/*.md`）；全文词匹配
+    （\b 边界），防杜撰编号，不要求特定表格形态。
+    """
+    tokens: set[str] = set()
+    for path in sorted(root.glob("prd/*.md")) + sorted(root.glob("*/prd/*.md")):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in re.finditer(r"\bAC-[A-Z][A-Z0-9_]*-\d{3}\b", text):
+            tokens.add(m.group(0))
+    return tokens
 
 
 def prd_schema(root: Path) -> int:
@@ -310,11 +331,24 @@ def validate(root: Path, today: date | None = None) -> tuple[list[dict], list[di
                 errors.append({"code": "card_none_due_expired",
                                "message": f"{rel}: none due={due} 已过期"})
         else:
-            bad = [t for t in acs if not AC_TOKEN_RE.match(t)]
+            bad = [t for t in acs if not (AC_TOKEN_RE.match(t)
+                                          or DOMAIN_AC_TOKEN_RE.match(t))]
             if bad:
                 errors.append({"code": "card_acceptance_invalid",
                                "message": f"{rel}: AC 形态非法 {bad}"})
-            extra = [t for t in acs if t not in expected]
+            prd_tokens = _prd_ac_tokens(root)
+            extra = []
+            for token in acs:
+                if AC_TOKEN_RE.match(token):
+                    # 方案层 token：走 (req, member) 投影（solution.md acs 集合）
+                    if token not in expected:
+                        extra.append(token)
+                elif DOMAIN_AC_TOKEN_RE.match(token):
+                    # 域级 token：必须真实存在于采纳仓域级 PRD（防杜撰，RFC-20261121-01）
+                    if token not in prd_tokens:
+                        errors.append({"code": "card_acceptance_absent",
+                                       "message": f"{rel}: AC 编号在域级 PRD 中不存在"
+                                                  f"（疑似杜撰）: {token}"})
             if extra:
                 errors.append({"code": "card_acceptance_out_of_scope",
                                "message": f"{rel}: AC 不在该 (req, member) 的 acs 集合内: "
