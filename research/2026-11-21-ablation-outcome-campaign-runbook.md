@@ -246,3 +246,10 @@ SKIP。全程 ~4 分钟。**第一个硬 token 数：fresh-context 审查子代�
 抓、零次被门抓**（validate_prd 不查跨文档字面量一致性）——机械解法候选
 （一致性小门 or 页脚版本单源派生）进观察名单待拍板。4/4 归档，逐项 =
 playground `EXPERIMENTS.md` R4。
+
+**R5 终章（T5 E2E 补齐，2026-11-21）**：§12 设计期审查四轮 2.88M tokens
+（r1 FAIL 抓 4 真缺陷——导航用例整条不可证伪等；r4 PASS）+ 观测点迁页脚
+镜像 + spec 生成 + **D208 首例合法通过**（plan 产物域级 AC 验收行过
+task-card 门）→ **任务 5/5 收口，fast 21 行 0 FAIL**（13 ok / 1 WARN 软提示）。
+首代总账：审查子代理 8 轮约 3.4M tokens；W1/W2/W3 观察名单见
+playground `EXPERIMENTS.md` R5 终章。
