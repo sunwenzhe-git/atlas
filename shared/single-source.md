@@ -9,6 +9,7 @@
 | 信息 | 唯一真相源 | 派生视图 / 引用者 |
 |---|---|---|
 | 需求卡 | 执行层任务的 `prd.md`（`.atlas/tasks/<NN-slug>/prd.md`） | 不另建 inbox 或需求文档 |
+| **需求原文（外部原件的仓内转换稿）** | 任务卡目录 `work/需求PDF-全文.md`（带 `<!-- page N -->` 页码锚、空白页保留裸锚；正文逐字不改写；**不在仓内的需求视为不存在，不得进入实现**，2026-11-21 登记） | `requirement-items.md` / `coverage-matrix.md` / 实现引用与冲突裁决 |
 | 结构事实（全局层 + 域级层） | `.atlas/spec/structure/`（结构环事实层（`paths:` 索引）） | 各环按需 Read；`atlas workflow dispatch --paths` 按索引只注入命中规范 |
 | 域清单（候选 / 已定稿） | `.atlas/spec/structure/_meta.json`（机器）+ `tour.md` 域速查（人读）；structure 提议 → PRD 定稿回写 | PRD / E2E |
 | **域间依赖**（实现前置依赖） | **域级 PRD frontmatter `depends_on`**（语义 = 实现前置依赖，**只含**全局 `product/prd/prd.md` §五 mermaid 的**实线**；虚线 = 增强链路 / 数据回流，不入本字段） | 全局 §五 mermaid 域间关系图（实线边集）+ 域级正文「依赖域 / 上游 / 下游」——两者均为**派生视图**；`validate_prd.py` 参数 4「域间依赖」按实线边集对账（悬空引用 / 实线成环 / 不一致 ⇒ FAIL） |
@@ -46,3 +47,4 @@
 - **`data-testid` 的应然归用例分片，实然归前端源码**（2026-09-26 立，2026-09-28 按 E1 改写）——真相源分层：**应然** = `product/e2e/cases/*.md` 分片的 `testid:` 清单（实现按它命名、不得自造，`rings/e2e/reference.md` §4.1）；**实然** = 前端源码 `data-testid` 扫描。旧项目接入时前端通常**没有** `testid`，按分片应然写用例得到的是「待实现面」差集——**不得**把旧代码的 CSS 选择器 / DOM 结构拓成应然。
 - **项目级长效架构决策唯一在 `product/adr/`**（2026-10-13 登记）：跨需求的全局长效技术决策落 `product/adr/NNNN-<slug>.md`；单需求内的业务实现细节归域级 PRD；无需求卡的人工修订批次归 `product/reviews/<日期>-<主题>/`。任何技术决策一旦落盘即为生效契约，推翻时新建并标记 `superseded`，严禁在别处复制正文。
 - **前端复用决策记录归 任务卡 Plan / dispatch.md**（2026-10-31 登记，D177）：能力 / 参考实现 / 决策 / 缺口 / 验证只在任务 Plan / Design 保留一份；`.atlas/shared/frontend-reuse.md` 是**执行期程序契约**（非门、非真相源），不持有记录、不生成组件索引、不参与门禁。
+- **需求原文优先序与条目覆盖**（2026-11-21 登记，`#71/#72/#73`）：权威源排序 = **需求原文（转换稿） > 任务 prd.md > 设计文档 > 代码惯例**；正式名与用户可见文案（标签 / placeholder / 按钮 / 提示语）必须**引用**来源章节，不许自拟、不许复制简写；文档间矛盾登记冲突并按 `global-rules.md` §15 上报，**不许就地二选一**。开工前置产物两件落任务卡目录（plan 带 `--requirement` 时自动生成骨架）：`requirement-items.md`（条目表：`ID | 页码 | 章节 | 原文`，原文逐字、限定语保留，文末声明总数，表行数 = 总数自检）+ `coverage-matrix.md`（**需求条目覆盖矩阵**：行 = 条目 ID，列 = PRD / 设计文档 / 实现 / E2E，格值 = 覆盖（位置）/ 不涉及（理由）/ `UNRESOLVED`；与 PRD 环 §7 追溯覆盖矩阵、`RFC-20261111-04` 派生覆盖矩阵三者互不替代）。矩阵留空格 / 含 `UNRESOLVED` ⇒ `atlas workflow verify` **WARN**（判据 = `_support/workflow_verify.py`，纪律面起步；升格 FAIL 条件 = 出现第一个 WARN 被放行后的实际漏单，另案）。

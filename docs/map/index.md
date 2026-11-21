@@ -109,7 +109,7 @@
 | skills | 〔数:skills=9〕(含 frontend-design) | `skills/` |
 | 环 | 〔数:环=3〕(structure / prd / e2e;原型环 E1 已退役) | `rings/` |
 | 共享契约 | 〔数:共享契约=9〕 份 | `shared/` |
-| 共享内核 | 〔数:共享内核=25〕 件 | `_support/` |
+| 共享内核 | 〔数:共享内核=26〕 件 | `_support/` |
 | install.py 自检声明 | 〔数:自检声明=71〕 条 | `install.py` |
 | 最大单件 | `〔数:最大单件文件=scripts/gen_e2e_scripts.py〕` 〔数:最大单件行数=3425〕 行 | — |
 

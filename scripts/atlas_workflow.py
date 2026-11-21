@@ -31,8 +31,10 @@ if str(HERE.parent) not in sys.path:
     sys.path.insert(0, str(HERE.parent))
 
 from _support.workflow_plan import (  # noqa: E402
-    decompose_requirement, write_task_card, load_tasks, PlanError
+    decompose_requirement, write_task_card, load_tasks, PlanError,
+    REQUIREMENT_ITEMS_FILE
 )
+from _support.workflow_verify import coverage_matrix_findings  # noqa: E402
 from _support.workflow_dispatch import (  # noqa: E402
     get_next_runnable_task, dispatch_task, DispatchError
 )
@@ -105,7 +107,9 @@ def cmd_plan(args: argparse.Namespace, root: Path) -> int:
             t["paths"] = paths
         t_dir = tasks_dir / t["id"]
         if not args.dry_run:
-            write_task_card(t_dir, t)
+            # plan 显式给过 --requirement ⇒ 需求驱动卡：同步写条目表 + 覆盖矩阵骨架
+            # （#72/#73 开工前置产物；重跑不覆盖已填内容）。
+            write_task_card(t_dir, t, with_requirement_items=bool(args.requirement))
         created.append({"id": t["id"], "title": t["title"], "dir": str(t_dir.relative_to(root))})
 
     if not args.dry_run:
@@ -177,6 +181,9 @@ def cmd_dispatch(args: argparse.Namespace, root: Path) -> int:
         print(f"atlas workflow dispatch @ {target_task['id']} [in_progress]")
         print(f"  派工单就绪：{disp_file.relative_to(root)}")
         print(f"  请依据派工单实现代码，完成后暂存并运行 `atlas workflow verify --unit {target_task['id']}`")
+        if (Path(disp_file).parent / REQUIREMENT_ITEMS_FILE).is_file():
+            print("  开工前：填 requirement-items.md（条目表逐条枚举，#72）；"
+                  "verify 前补全 coverage-matrix.md 四列覆盖（#73，空格/UNRESOLVED ⇒ WARN）")
     return 0
 
 
@@ -253,6 +260,11 @@ def cmd_verify(args: argparse.Namespace, root: Path) -> int:
     if not args.json:
         print(f"atlas workflow verify @ {args.unit} 启动独立质检管线（round {round_no}）...")
     pr = subprocess.run(cmd, text=True)
+    # 需求条目覆盖对账（#71/#72/#73，纪律面 WARN 起步）：独立审查通过后对账，
+    # 缺口打到 stderr、不改退出码（升格 FAIL 另案）。
+    if pr.returncode == 0 and not args.dry_run:
+        for finding in coverage_matrix_findings(_read_tasks_root(root) / args.unit):
+            print(f"WARN（需求条目覆盖）: {finding}", file=sys.stderr)
     # 本命令的退出码契约 = 0/1/2；子步的原生码（如 7）归一到 1。
     return pr.returncode if pr.returncode in (0, 1, 2) else 1
 

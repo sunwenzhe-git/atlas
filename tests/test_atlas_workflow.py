@@ -7,6 +7,7 @@
 3. Verify 阶段：参数透传与 staged 调用；
 4. Finish 阶段：无合格 review.json 时强制阻断，有合规报告时顺利收口；
 5. Status 阶段：任务清单与依赖状态呈现。
+6. 需求条目与覆盖（#71/#72/#73）：plan 骨架生成、覆盖矩阵判据词表、条目 ⇄ 矩阵差集对账。
 """
 from __future__ import annotations
 
@@ -539,3 +540,113 @@ def test_context_requires_paths_or_unit(tmp_path: Path) -> None:
     root = make_clean_project(tmp_path)
     p = run(root, "context")
     assert p.returncode == 2 and "至少提供" in p.stderr
+
+
+# ── 需求条目与覆盖（#71/#72/#73，2026-11-21）────────────────────────────────
+
+from _support.workflow_verify import coverage_matrix_findings  # noqa: E402
+
+
+def test_plan_with_requirement_writes_items_and_matrix(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    p = run(root, "plan", "--unit", "T-01", "--requirement", "请落实 AC-HOME-001")
+    assert p.returncode == 0, p.stdout + p.stderr
+    task_dir = root / ".atlas" / "tasks" / "T-01"
+    items_text = (task_dir / "requirement-items.md").read_text(encoding="utf-8")
+    assert "| ID | 页码 | 章节 | 原文 |" in items_text
+    assert "条目总数" in items_text
+    matrix_text = (task_dir / "coverage-matrix.md").read_text(encoding="utf-8")
+    assert "| ID | PRD | 设计文档 | 实现 | E2E |" in matrix_text
+
+
+def test_plan_without_requirement_skips_skeletons(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    p = run(root, "plan", "--unit", "T-03")
+    assert p.returncode == 0, p.stdout + p.stderr
+    task_dir = root / ".atlas" / "tasks" / "T-03"
+    assert not (task_dir / "requirement-items.md").exists()
+    assert not (task_dir / "coverage-matrix.md").exists()
+
+
+def test_coverage_matrix_skips_cards_without_items(tmp_path: Path) -> None:
+    assert coverage_matrix_findings(tmp_path) == []
+
+
+def _write_items(task_dir: Path, ids: list[str], *, no_req_marker: bool = False) -> None:
+    lines = ["# 需求条目表", "", "| ID | 页码 | 章节 | 原文 |", "|---|---|---|---|"]
+    lines += [f"| {i} | p{i} | §1 | 原文 {i} |" for i in ids]
+    if no_req_marker:
+        lines += ["", "条目总数：0（本卡无外部需求原件）"]
+    (task_dir / "requirement-items.md").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_matrix(task_dir: Path, rows: list[tuple[str, ...]],
+                  header: str = "| ID | PRD | 设计文档 | 实现 | E2E |") -> None:
+    lines = ["# 需求条目覆盖矩阵", "", header, "|---|---|---|---|---|"]
+    lines += ["| " + " | ".join(r) + " |" for r in rows]
+    (task_dir / "coverage-matrix.md").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_matrix_missing_is_reported(tmp_path: Path) -> None:
+    _write_items(tmp_path, ["R-001"])
+    findings = coverage_matrix_findings(tmp_path)
+    assert len(findings) == 1 and "coverage-matrix.md 不存在" in findings[0]
+
+
+def test_items_zero_rows_undeclared_is_reported(tmp_path: Path) -> None:
+    _write_items(tmp_path, [])
+    findings = coverage_matrix_findings(tmp_path)
+    assert any("零数据行" in f for f in findings)
+
+
+def test_items_zero_rows_declared_only_matrix_missing(tmp_path: Path) -> None:
+    _write_items(tmp_path, [], no_req_marker=True)
+    findings = coverage_matrix_findings(tmp_path)
+    assert len(findings) == 1 and "coverage-matrix.md 不存在" in findings[0]
+
+
+def test_matrix_blank_and_unresolved_cells_are_reported(tmp_path: Path) -> None:
+    _write_items(tmp_path, ["R-001", "R-002"])
+    _write_matrix(tmp_path, [
+        ("R-001", "覆盖（new-version-selector.tsx）", "", "不涉及（无 UI）", "覆盖（cases/app.md）"),
+        ("R-002", "UNRESOLVED", "覆盖（prd.md）", "覆盖（impl.ts）", "覆盖（e2e.md）"),
+    ])
+    findings = coverage_matrix_findings(tmp_path)
+    assert any("留空" in f and "R-001" in f for f in findings)
+    assert any("UNRESOLVED" in f and "R-002" in f for f in findings)
+    assert not any("漏覆盖" in f or "幽灵行" in f for f in findings)
+
+
+def test_matrix_illegal_cell_value_is_reported(tmp_path: Path) -> None:
+    _write_items(tmp_path, ["R-001"])
+    _write_matrix(tmp_path, [("R-001", "已做", "覆盖（b）", "覆盖（c）", "覆盖（d）")])
+    findings = coverage_matrix_findings(tmp_path)
+    assert any("值非法" in f and "已做" in f for f in findings)
+
+
+def test_matrix_bad_header_is_reported(tmp_path: Path) -> None:
+    _write_items(tmp_path, ["R-001"])
+    _write_matrix(tmp_path, [("R-001", "覆盖（a）", "覆盖（b）", "覆盖（c）", "覆盖（d）")],
+                  header="| ID | PRD | 设计 | 实现 | E2E |")
+    findings = coverage_matrix_findings(tmp_path)
+    assert any("表头缺「设计文档」" in f for f in findings)
+
+
+def test_matrix_clean_passes(tmp_path: Path) -> None:
+    _write_items(tmp_path, ["R-001"])
+    _write_matrix(tmp_path, [("R-001", "覆盖（prd.md）", "覆盖（design.md）",
+                              "覆盖（impl.ts）", "覆盖（e2e.md）")])
+    assert coverage_matrix_findings(tmp_path) == []
+
+
+def test_matrix_row_diff_reported_both_directions(tmp_path: Path) -> None:
+    _write_items(tmp_path, ["R-001", "R-002"])
+    _write_matrix(tmp_path, [
+        ("R-001", "覆盖（a）", "覆盖（b）", "覆盖（c）", "覆盖（d）"),
+        ("R-999", "覆盖（a）", "覆盖（b）", "覆盖（c）", "覆盖（d）"),
+    ])
+    findings = coverage_matrix_findings(tmp_path)
+    assert any("漏覆盖" in f and "R-002" in f for f in findings)
+    assert any("幽灵行" in f and "R-999" in f for f in findings)

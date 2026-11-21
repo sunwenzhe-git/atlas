@@ -6,6 +6,7 @@
 
 ## [Unreleased]
 
+- feat(workflow): 需求条目覆盖三件套（`#71/#72/#73`）——`single-source.md` 登记「需求原文（外部原件的仓内转换稿）」为真相源（带页码锚、空白页保留）并把权威源排序写死（需求原文 > 任务 prd.md > 设计文档 > 代码惯例；矛盾登记冲突按 §15 上报，不许就地二选一）；`plan --requirement` 自动生成 `requirement-items.md` 条目表骨架（`ID | 页码 | 章节 | 原文`，文末总数自检；重跑不覆盖已填）与 `coverage-matrix.md` 覆盖矩阵骨架（行=条目 ID，列=PRD/设计文档/实现/E2E）；`verify` 独立审查通过后跑条目覆盖对账（新增 `_support/workflow_verify.py`：矩阵缺席 / 格留空 / 值出词表 / UNRESOLVED / 条目⇄矩阵双向差集 ⇒ **WARN 纪律面起步**，升格 FAIL 另案；非需求驱动卡沉默不判）；`dispatch` 输出开工前提醒
 - feat(release): 发版提交白名单——`chore(release)` 只准含 7 个版本落点，夹带即拒且不带逃生口；查两处（测试门禁前查 HEAD + 建提交后复查），堵「手工预制发版提交→复用发版」旁路（复盘 R5；`787dd42` 曾夹带 install.py/golden/specs 20 文件）
 - feat(ledger,guide): 裸数字 lint（`--lint-bare-numbers`，M194）+ `docs/map` 五处「12 器」转派生占位（实为 13）+ 新派生键 前置SKIP器/前置SKIP清单（散文写 7 列 6 的枚举漂移一并治）+ guide changelog 镜像化（release.py 从根 CHANGELOG 生成，退役人工写入口）+ preflight 触发映射补派生源 `scripts/atlas_check.py`、`validators/`（复盘 R1/L1/C3/R4）
 - feat(skill): atlas-ablate 重定位「自进化减法引擎」（D206）——目的从门禁价值证明改为自进化减负（周期锚=模型代际，目标函数=质量×速度×token）；漏斗制三层（成本账本筛短名单→守卫语料豁免→捆绑摘除 A/B，每代 ≈12–30 任务跑，零新代码）；减法判据四护栏（保险型豁免=30案台账+灾难面／双证据立案／最小持续2代／复归触发器）+ 降频档位；质量判分（后置未参战门册+人盲评二元+质量噪声带）；跨代账本三指纹+方向性案例研究措辞；旧「不给删留结论」纪律作废（四护栏承接）；SKILL 重写 + 层3 runbook 落 research/（双评审首轮各3 Blocker 修后再审，修订版终审双通过）

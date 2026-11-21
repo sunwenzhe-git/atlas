@@ -173,11 +173,71 @@ def atomic_write_json(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
-def write_task_card(task_dir: Path, task: dict) -> Path:
+REQUIREMENT_ITEMS_FILE = "requirement-items.md"
+COVERAGE_MATRIX_FILE = "coverage-matrix.md"
+
+
+def write_requirement_items(task_dir: Path, task: dict) -> Path:
+    """需求条目表骨架（#72 开工前置产物）：先枚举再动手。
+
+    无外部需求原件的卡显式声明豁免（`条目总数：0（本卡无外部需求原件）`）；
+    已存在则跳过——重跑 plan 不覆盖已填内容。
+    """
+    path = task_dir / REQUIREMENT_ITEMS_FILE
+    if path.exists():
+        return path
+    path.write_text("\n".join([
+        f"# 需求条目表 — {task['title']}",
+        "",
+        "> 开工前置产物（#72）：本卡承接的需求条目逐条枚举，**开工前完成**；"
+        "原文逐字不改写，限定语（如「实际以接口为准」）必须保留。",
+        "> 需求原件（PDF / 图片）先转成带页码锚的 Markdown 落本卡 `work/需求PDF-全文.md`"
+        "（页码锚 `<!-- page N -->`，空白页保留裸锚，正文逐字可回查）；「页码」列对齐该锚。",
+        "> 表格类需求按行拼接为一句，不改措辞；文末声明条目总数与页码分布，"
+        "表行数必须等于声明总数。",
+        "> 本卡确无外部需求原件时写：`条目总数：0（本卡无外部需求原件）`。",
+        "",
+        "| ID | 页码 | 章节 | 原文 |",
+        "|---|---|---|---|",
+        "",
+        "条目总数：待填",
+        "页码分布：待填",
+        "",
+    ]), encoding="utf-8")
+    return path
+
+
+def write_coverage_matrix(task_dir: Path, task: dict) -> Path:
+    """需求条目覆盖矩阵骨架（#73）：行 = 条目 ID，列 = 四个资产面。
+
+    已存在则跳过；矩阵格值词表与 verify 判据见 `_support/workflow_verify.py`。
+    """
+    path = task_dir / COVERAGE_MATRIX_FILE
+    if path.exists():
+        return path
+    path.write_text("\n".join([
+        f"# 需求条目覆盖矩阵 — {task['title']}",
+        "",
+        "> 每格只能是「覆盖（位置）」或「不涉及（理由）」，两者都给不出写 `UNRESOLVED`；"
+        "留空格或存在 UNRESOLVED ⇒ `atlas workflow verify` WARN（纪律面起步，升格 FAIL 另案）。",
+        "> 行 = `requirement-items.md` 的条目 ID；实现列以**当前代码**取证，"
+        "文档说覆盖而代码没有按未覆盖处理。",
+        "",
+        "| ID | PRD | 设计文档 | 实现 | E2E |",
+        "|---|---|---|---|---|",
+        "",
+    ]), encoding="utf-8")
+    return path
+
+
+def write_task_card(task_dir: Path, task: dict, *,
+                    with_requirement_items: bool = False) -> Path:
     """写入单个任务卡目录（包含 prd.md 与 task.json）。
 
     重跑 plan 不得把已推进的状态打回 `todo`（状态机单调：todo < in_progress < completed）；
     已有 task.json 时沿用其 status 与 created_at。
+    `with_requirement_items=True`（plan 显式给了 `--requirement`）时同步写需求条目表与
+    条目覆盖矩阵骨架（#71/#72/#73：需求原文入库 → 条目枚举 → 覆盖对账）。
     """
     if task.get("id") == ARCHIVE_DIR:
         raise PlanError(f"任务标识 {ARCHIVE_DIR!r} 与归档目录保留名冲突")
@@ -216,6 +276,9 @@ def write_task_card(task_dir: Path, task: dict) -> Path:
         if "paths" not in meta and isinstance(prev.get("paths"), list):
             meta["paths"] = prev["paths"]
     atomic_write_json(task_json_path, meta)
+    if with_requirement_items:
+        write_requirement_items(task_dir, task)
+        write_coverage_matrix(task_dir, task)
     return task_dir
 
 
