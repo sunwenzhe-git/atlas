@@ -5628,3 +5628,87 @@ def test_testid_listed_entries_strip_inline_comment() -> None:
         encoding="utf-8")
     usage = vt.case_testid_usage(md)
     assert usage[0][2] == {"home-cta-btn", "home-title"}, usage
+
+
+# ── 文案齐套（#74，2026-11-21）──────────────────────────────────────────────
+
+COPY_SPEC_WARN = """
+
+**文案规范**
+
+| 场景 | 文案 |
+|---|---|
+| 空状态 | 暂无应用，点击新建应用开始创建 |
+| 操作成功 | 首页 |
+| 操作失败 | 不适用（查询类操作） |
+"""
+
+COPY_SPEC_OK = """
+
+**文案规范**
+
+| 场景 | 文案 |
+|---|---|
+| 操作成功 | 首页 |
+| 空状态 | 不适用（无空态） |
+"""
+
+COPY_SPEC_PLACEHOLDER = """
+
+**文案规范**
+
+| 场景 | 文案 |
+|---|---|
+| 空状态 | [必填] |
+| 操作失败 | 不适用（查询类操作） |
+"""
+
+
+def _copy_level(spec: str | None) -> tuple[str, str]:
+    """跑校验器返回「文案齐套」的 (level, detail)；spec=None ⇒ 不写文案规范表。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root)
+        mk_index(root)
+        mk_prd(root)
+        if spec is not None:
+            p = root / "product" / "prd" / "demo-prd.md"
+            p.write_text(p.read_text(encoding="utf-8") + spec, encoding="utf-8")
+        res = ve.validate(root)
+        hit = [c for c in res.checks if c["check"] == "文案齐套"]
+        assert hit, [c["check"] for c in res.checks]
+        return hit[0]["level"], hit[0]["detail"]
+
+
+def test_copy_coverage_warns_on_unasserted_copy() -> None:
+    """文案规范声明的文案没被任何 text/contains 断言 ⇒ WARN 点名漏项；豁免行不收。"""
+    level, detail = _copy_level(COPY_SPEC_WARN)
+    assert level == "WARN", detail
+    assert "暂无应用，点击新建应用开始创建" in detail
+    assert "不适用" not in detail.split("漏断言")[1].split("（💡")[0]
+
+
+def test_copy_coverage_passes_when_all_asserted() -> None:
+    """CASE_GOOD 自带 `text home-title 首页`，文案规范只声明「首页」⇒ 全覆盖 PASS。"""
+    level, detail = _copy_level(COPY_SPEC_OK)
+    assert level == "PASS", detail
+    assert "1 条" in detail
+
+
+def test_copy_coverage_na_without_spec() -> None:
+    level, detail = _copy_level(None)
+    assert level == "N/A" and "无文案规范表" in detail
+
+
+def test_copy_coverage_na_when_all_placeholder() -> None:
+    """全占位/不适用 ⇒ N/A 门控态（未走到这一步，不是通过）。"""
+    level, detail = _copy_level(COPY_SPEC_PLACEHOLDER)
+    assert level == "N/A" and "全为占位/不适用" in detail
+
+
+def test_copy_coverage_substring_hit_counts() -> None:
+    """断言值包含文案（更长串嵌着声明文案）也算命中——contains 断言的合法形态。"""
+    spec = "\n\n**文案规范**\n\n| 场景 | 文案 |\n|---|---|\n| 操作成功 | 首页 |\n| 空状态 | 页 |\n"
+    level, _ = _copy_level(spec)
+    assert level == "PASS"

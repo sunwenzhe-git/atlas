@@ -472,6 +472,96 @@ def seed_models_check(root: Path, blocks: dict[str, dict]) -> tuple[str, str]:
         ("PASS", f"{len(seeds)} 条用例的 seed 与 {len(models)} 个表/模型对账通过")
 
 
+# ── 文案齐套（#74，2026-11-21，WARN 纪律面）─────────────────────────────────
+
+_COPY_SPEC_HEADING = "文案规范"
+_COPY_VERBS = ("text", "contains", "waitFor")
+_COPY_SKIP_PREFIXES = ("不适用", "待定", "待补充", "TODO", "N/A", "NA", "<")
+
+
+def _usable_copy(value: str) -> bool:
+    """文案规范值是否为可对账的真文案：占位 `[必填]` / 豁免「不适用（…）」/ 待定等不收。"""
+    v = value.strip()
+    if not v or v in {"-", "—"} or v.startswith(_COPY_SKIP_PREFIXES):
+        return False
+    return v not in {"[必填]", "必填"}
+
+
+def _collect_spec_copy(prd_files: list[Path]) -> list[tuple[str, str]]:
+    """收各域级 PRD `**文案规范**` 标题后第一张「场景 | 文案」表的文案列。"""
+    declared: list[tuple[str, str]] = []
+    for pf in prd_files:
+        lines = pf.read_text(encoding="utf-8", errors="replace").splitlines()
+        i = 0
+        while i < len(lines):
+            if _COPY_SPEC_HEADING not in lines[i]:
+                i += 1
+                continue
+            j = i + 1
+            while j < len(lines) and not lines[j].lstrip().startswith("|"):
+                j += 1
+            rows: list[list[str]] = []
+            while j < len(lines) and lines[j].lstrip().startswith("|"):
+                rows.append([c.strip() for c in
+                             lines[j].strip().strip("|").split("|")])
+                j += 1
+            if rows and any("场景" in c for c in rows[0]) \
+                    and any("文案" in c for c in rows[0]):
+                data = [r for r in rows[1:]
+                        if not all(set(c) <= set("-: ") for c in r)]
+                vidx = next(k for k, c in enumerate(rows[0]) if "文案" in c)
+                declared.extend((r[vidx], pf.name) for r in data
+                                if len(r) > vidx and r[vidx])
+            i = max(j, i + 1)
+    return declared
+
+
+def _copy_assert_values(blocks: dict) -> list[str]:
+    """收分片 step/expected 文案承载动词（text/contains/waitFor 带值）的期望值段。
+
+    先剥 `#` 注释尾巴（同 §B95 口径）与行首前缀（`initial:` / `after:<N>`）；
+    `$变量` 是运行时取数（D191），不参与字面比对。
+    """
+    values: list[str] = []
+    for b in blocks.values():
+        for key in ("step", "expected"):
+            for ln in b.get(key) or []:
+                s = _strip_prefix(str(ln)).split("#")[0].strip()
+                if not s:
+                    continue
+                toks = s.split()
+                if toks[0] not in _COPY_VERBS or len(toks) < 3:
+                    continue
+                v = _unquote_value(s.split(None, 2)[2]).strip()
+                if v and not v.startswith("$"):
+                    values.append(v)
+    return values
+
+
+def copy_coverage_check(prd_files: list[Path], blocks: dict) -> tuple[str, str]:
+    """文案齐套（#74，2026-11-21，WARN 纪律面）：PRD 文案规范 ⇄ 分片文案断言差集。
+
+    「文案 ⇔ 实现 ❌ 不建独立门，由运行期文案断言承担」（gates 门册）的承担方齐套判据：
+    AC 文案规范**声明了**的文案，用例里**真有** text/contains 断言吗——漏断言 ⇒ WARN
+    （升格 FAIL = 出现第一个 WARN 被放行后的实际漏单，另案）。
+
+    - PRD 侧只收 `**文案规范**` 表的「场景 | 文案」数据行；字段表「错误提示文案」列与
+      散文案不在本判据（那归 AC 反向覆盖链路与需求条目覆盖矩阵）；
+    - 命中 = 断言值等于文案或包含文案；文案全占位 / 无文案规范表 ⇒ `N/A` 门控态
+      （「未走到这一步」，不是通过）。
+    """
+    declared = _collect_spec_copy(prd_files)
+    usable = sorted({v for v, _ in declared if _usable_copy(v)})
+    if not usable:
+        return "N/A", "门控态：域级 PRD 无文案规范表（或全为占位/不适用）——未走到这一步，不是通过"
+    asserted = _copy_assert_values(blocks)
+    misses = [v for v in usable if not any(a == v or v in a for a in asserted)]
+    if misses:
+        return "WARN", ("文案规范漏断言=" + _format_list(misses)
+                        + "（💡 对应用例补 text/contains 断言；确不进 UI ⇒ 文案规范改「不适用（理由）」）")
+    return "PASS", f"文案规范 {len(usable)} 条全部被用例文案断言覆盖"
+
+
 def upload_fixture_check(root: Path, blocks: dict[str, dict], lay=None) -> tuple[str, str]:
     """`upload` 行的 fixture 引用闭环（契约 §5.5，B201-1，2026-10-12）。
 
@@ -1847,6 +1937,9 @@ def validate(root: Path) -> Result:
             (f"{_format_list(tol_hits)} (💡 改为显式前置复位或值断言；确属业务文案/已评估 ⇒ 行尾 `# 容忍: <理由>` 豁免)")
             if tol_hits else "")
     res.add("文案为渲染后文案", "PASS" if not i18n else "WARN", f"疑似 i18n/枚举={_format_list(i18n)}")
+    # 文案齐套（#74，2026-11-21，WARN 纪律面）：域级 PRD 文案规范表 ⇄ 分片文案断言差集
+    _lvl, _det = copy_coverage_check(prd_files, blocks)
+    res.add("文案齐套", _lvl, _det)
     # 契约 §5.7：结构化 `seed:` 的实体 × 字段 ⇔ structure 的 data-models 事实（静态对账）
     _lvl, _det = seed_models_check(root, blocks)
     res.add("seed × models 对账", _lvl, _det)
