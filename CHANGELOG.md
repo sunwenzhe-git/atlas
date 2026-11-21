@@ -4,7 +4,7 @@
 
 ---
 
-## [Unreleased]
+## [v0.4.0-beta.5] - 2026-11-21
 
 - feat(e2e): 文案齐套判据（`#74`）——`validate_e2e_index` 新增「文案齐套」检查：域级 PRD `**文案规范**` 表「场景 | 文案」列 ⇄ 分片 step/expected 的 text/contains/waitFor 期望值差集（`$变量` 运行时取数不比对、`#` 注释先剥、占位 `[必填]`/「不适用（…）」/待定不收）；漏断言 ⇒ **WARN 纪律面**（升格 FAIL 另案）；全占位/无表 ⇒ `N/A` 门控态；v3 真实仓实测 57 条声明文案 37 条漏断言出声；门册行与 docs/map 同步、用例数锚 205→210（+5 测试）
 - feat(workflow): 需求条目覆盖三件套（`#71/#72/#73`）——`single-source.md` 登记「需求原文（外部原件的仓内转换稿）」为真相源（带页码锚、空白页保留）并把权威源排序写死（需求原文 > 任务 prd.md > 设计文档 > 代码惯例；矛盾登记冲突按 §15 上报，不许就地二选一）；`plan --requirement` 自动生成 `requirement-items.md` 条目表骨架（`ID | 页码 | 章节 | 原文`，文末总数自检；重跑不覆盖已填）与 `coverage-matrix.md` 覆盖矩阵骨架（行=条目 ID，列=PRD/设计文档/实现/E2E）；`verify` 独立审查通过后跑条目覆盖对账（新增 `_support/workflow_verify.py`：矩阵缺席 / 格留空 / 值出词表 / UNRESOLVED / 条目⇄矩阵双向差集 ⇒ **WARN 纪律面起步**，升格 FAIL 另案；非需求驱动卡沉默不判）；`dispatch` 输出开工前提醒

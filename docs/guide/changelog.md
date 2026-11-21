@@ -4,6 +4,20 @@
 
 ---
 
+## [v0.4.0-beta.5] - 2026-11-21
+
+- feat(e2e): 文案齐套判据（`#74`）——`validate_e2e_index` 新增「文案齐套」检查：域级 PRD `**文案规范**` 表「场景 | 文案」列 ⇄ 分片 step/expected 的 text/contains/waitFor 期望值差集（`$变量` 运行时取数不比对、`#` 注释先剥、占位 `[必填]`/「不适用（…）」/待定不收）；漏断言 ⇒ **WARN 纪律面**（升格 FAIL 另案）；全占位/无表 ⇒ `N/A` 门控态；v3 真实仓实测 57 条声明文案 37 条漏断言出声；门册行与 docs/map 同步、用例数锚 205→210（+5 测试）
+- feat(workflow): 需求条目覆盖三件套（`#71/#72/#73`）——`single-source.md` 登记「需求原文（外部原件的仓内转换稿）」为真相源（带页码锚、空白页保留）并把权威源排序写死（需求原文 > 任务 prd.md > 设计文档 > 代码惯例；矛盾登记冲突按 §15 上报，不许就地二选一）；`plan --requirement` 自动生成 `requirement-items.md` 条目表骨架（`ID | 页码 | 章节 | 原文`，文末总数自检；重跑不覆盖已填）与 `coverage-matrix.md` 覆盖矩阵骨架（行=条目 ID，列=PRD/设计文档/实现/E2E）；`verify` 独立审查通过后跑条目覆盖对账（新增 `_support/workflow_verify.py`：矩阵缺席 / 格留空 / 值出词表 / UNRESOLVED / 条目⇄矩阵双向差集 ⇒ **WARN 纪律面起步**，升格 FAIL 另案；非需求驱动卡沉默不判）；`dispatch` 输出开工前提醒
+- feat(release): 发版提交白名单——`chore(release)` 只准含 7 个版本落点，夹带即拒且不带逃生口；查两处（测试门禁前查 HEAD + 建提交后复查），堵「手工预制发版提交→复用发版」旁路（复盘 R5；`787dd42` 曾夹带 install.py/golden/specs 20 文件）
+- feat(ledger,guide): 裸数字 lint（`--lint-bare-numbers`，M194）+ `docs/map` 五处「12 器」转派生占位（实为 13）+ 新派生键 前置SKIP器/前置SKIP清单（散文写 7 列 6 的枚举漂移一并治）+ guide changelog 镜像化（release.py 从根 CHANGELOG 生成，退役人工写入口）+ preflight 触发映射补派生源 `scripts/atlas_check.py`、`validators/`（复盘 R1/L1/C3/R4）
+- feat(skill): atlas-ablate 重定位「自进化减法引擎」（D206）——目的从门禁价值证明改为自进化减负（周期锚=模型代际，目标函数=质量×速度×token）；漏斗制三层（成本账本筛短名单→守卫语料豁免→捆绑摘除 A/B，每代 ≈12–30 任务跑，零新代码）；减法判据四护栏（保险型豁免=30案台账+灾难面／双证据立案／最小持续2代／复归触发器）+ 降频档位；质量判分（后置未参战门册+人盲评二元+质量噪声带）；跨代账本三指纹+方向性案例研究措辞；旧「不给删留结论」纪律作废（四护栏承接）；SKILL 重写 + 层3 runbook 落 research/（双评审首轮各3 Blocker 修后再审，修订版终审双通过）
+- fix(ergonomics): `workflow_finish` scope 拦截三分类诊断（W2-②）——extra（审查产物误入暂存面 ⇒ 指名 unstage 指引，重跑 verify 无效）/ missing / changed（⇒ 重新审查）分道指路，替换原「请重新运行 verify」死循环指引；`atlas review` 会话派工包新增「探索预算（硬）」节（W1 模板化：只读指针与实审集、工具上界 N+8、复审收窄、异常扩面须登记 warnings；`independent-review.md` §10.4 同步补方向性纪律行）
+- feat(gate): `validate_prd` 新增「版本口径一致」独立行（W3-① 缩形，首版 WARN）——frontmatter version ⇔ 变更记录最新数据行 + 规则/AC 表内 semver 字面量全链一致（自进化 campaign T3/T4 四次实证失败全部命中本面）；+3 测试（17 条）
+- docs(rubric): 层 3 盲评 rubric v0 落 research（五维二元 + indistinguishable 纪律 + 版本化头），runbook §4.3 挂指针
+- fix(gate): `validate_task_card` 收域级 AC 词形 + PRD 存在性校验（D208）——workflow plan 生成的域级 AC 验收行不再必然 `card_acceptance_invalid`；域级编号须在采纳仓 PRD 真实存在（杜撰 ⇒ 新码 `card_acceptance_absent`，比原形态校验更严）；方案层 token 投影语义不变；+3 测试（27 条）
+- feat(ablation): RFC-20261101-04「不做（永不）：整线束 on/off」显式收窄为工具面（D207）——装配级 L0 宏观锚改双独立快照人工流程（每代 ≤6 跑，预登记五件套），不经 ablation 工具、不进活仓切换
+- feat(canonical): 变异钉双向化——新增 `check_pin_implementation`（门册登记 ⊖ 线束实现即红，M195），盘点清残留：真幽灵 M21/M25 补实现、9 枚实现存在未标号补标、M2x 简写与 M65 陈旧指向修正、`变异编号上限` 派生改扫 docstring（夹具载荷钉号不再当事实）；判据类 review 必填「真实样本@commit + 应判不中的反例」（复盘 R3/P3）
+
 ## [v0.4.0-beta.4] - 2026-11-20
 
 ### 🧭 偏差处置与 ADR 否决态（`RFC-20261120-01`）
