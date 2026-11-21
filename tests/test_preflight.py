@@ -58,7 +58,10 @@ def test_maps_module_name_and_path_references(tmp_path):
     mapping, uncovered = preflight.select(
         root, ["scripts/foo.py", "validators/bar.py"])
     assert mapping["scripts/foo.py"] == ["tests/test_a.py"]
-    assert mapping["validators/bar.py"] == ["tests/test_a.py"]
+    # validators/* 是派生键的源（复盘 R4）：不再走字面量回退，直接进账本窄集
+    ledger = ["tests/test_canonical_consistency.py", "tests/test_gate_registry.py",
+              "tests/test_ledger_snapshot.py", "tests/test_map_anchors.py"]
+    assert mapping["validators/bar.py"] == ledger
     assert uncovered == []
 
 
@@ -73,6 +76,7 @@ def test_ledger_and_assembly_narrow_sets(tmp_path):
     root = _mk_root(tmp_path)
     mapping, _ = preflight.select(
         root, ["DESIGN.md", "shared/gates.md", "docs/map/index.md",
+               "scripts/atlas_check.py", "validators/validate_x.py",
                "install.py", ".github/workflows/tests.yml"])
     ledger = ["tests/test_canonical_consistency.py", "tests/test_ledger_snapshot.py",
               "tests/test_map_anchors.py", "tests/test_gate_registry.py"]
@@ -80,6 +84,9 @@ def test_ledger_and_assembly_narrow_sets(tmp_path):
                 "tests/test_project_wiring.py"]
     assert mapping["DESIGN.md"] == sorted(ledger)
     assert mapping["shared/gates.md"] == sorted(ledger)
+    # 派生源改动必须触发账本测试（复盘 R4/C4/B2：改源必改派生值）
+    assert mapping["scripts/atlas_check.py"] == sorted(ledger)
+    assert mapping["validators/validate_x.py"] == sorted(ledger)
     assert mapping["install.py"] == sorted(assembly)
     assert mapping[".github/workflows/tests.yml"] == sorted(assembly)
 

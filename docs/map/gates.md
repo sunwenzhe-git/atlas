@@ -14,7 +14,7 @@
 | 文件 | 角色 |
 |---|---|
 | `scripts/atlas_check.py`(1223 行) | 统一检查入口 / 编排器(**只聚合,不改判据**) |
-| `validators/`(12 器) | 判据本体,每器一行输出 |
+| `validators/`(〔数:校验器文件=13〕 器) | 判据本体,每器一行输出 |
 | `shared/gates.md`(187 行) | 门登记总账:六列(门 / 对账平面 / 查什么 / **不查什么** / 预算 / 假绿测试等级);§4.1 另有无门约束登记(不参与门计数) |
 | `scripts/mutation_proof.py`(155 行) | 变异证明工具:把缺陷放回去看门红不红,还原须逐字节一致 + 报告须含注入 diff |
 | `tests/`(77 文件) | 出厂测试套件(`check-all.py --only atlas` 全绿为出厂条件) |
@@ -31,7 +31,7 @@
 
 | 门行 | 实现 | 一句话判据 |
 |---|---|---|
-| 12 个 validate_* | `check_validators` :217 | 逐器调用,一门一行;前置文件缺失 ⇒ SKIP(`_gate_preconditions` :70 定义 7 器的三态前置) |
+| 〔数:校验器=13〕 个 validate_* | `check_validators` :217 | 逐器调用,一门一行;前置文件缺失 ⇒ SKIP(`_gate_preconditions` :70 定义 〔数:前置SKIP器=7〕 器的三态前置) |
 | 对齐测试(.atlas/tests) | `check_factory` :264 | 装配副本跑 pytest;目录不存在 = 装配未含测试(F53 三形态 SKIP) |
 | 生成物最新 | `check_generated` :320 | gen_e2e_scripts 干跑 diff;exit 3 = not_ready SKIP |
 | 审查报告形态 | `check_review_report` :376 | 最新 E2E 审查报告复算(validate_review_report 单源) |
@@ -44,7 +44,7 @@
 
 **辅助机制**:失败详情落 `.atlas/runs/last-check-error.log`(全绿轮自动清);每轮观测事件追加 `.atlas/runs/check-events.jsonl`(门名/状态/耗时,**观测面不参与判定**);成功真跑写 `.atlas/runs/e2e-summary.json`(带 git_head/dirty 溯源)。
 
-## 12 个校验器(判据本体)
+## 〔数:校验器=13〕 个校验器(判据本体)
 
 | 校验器 | 对账平面 | 核心判据 |
 |---|---|---|
@@ -63,13 +63,13 @@
 
 ## 变异证明协议(治「假门禁」)
 
-流程四段(治「门会不会咬」):**注入坏输入 ⇒ 门必红 ⇒ 还原逐字节一致 ⇒ 复绿**;报告须含注入 diff(2026-10-17 立:无它则「反向破坏的是不是自述那一处」不可独立复现——M88 夹具教训)。工具 `scripts/mutation_proof.py` 不承载判据,钉子全部登记在门册右列(编号已至 〔数:变异编号上限=M193〕)。
+流程四段(治「门会不会咬」):**注入坏输入 ⇒ 门必红 ⇒ 还原逐字节一致 ⇒ 复绿**;报告须含注入 diff(2026-10-17 立:无它则「反向破坏的是不是自述那一处」不可独立复现——M88 夹具教训)。工具 `scripts/mutation_proof.py` 不承载判据,钉子全部登记在门册右列(编号已至 〔数:变异编号上限=M194〕)。
 
 同族的「可执行性判据本体」纪律(D101/DR4):可执行/可用类前置判据必须 ① 真跑一次功能性探针 ② 有反面包(「东西在但用不了」必须红) ③ 失败原因不被吞。同族复发两轮才立此行(#1 恒绿门 / #24 路径存在当充要)。
 
 ## 三态前置表 `_gate_preconditions`(`scripts/atlas_check.py:76`)
 
-7 个校验器声明了「前置文件缺失 ⇒ SKIP」:stack_profile(无 profile)/ structure(结构环未跑)/ design_exemptions(无设计档案)/ e2e_mocks(无用例资产)/ ac_alignment(无 PRD)/ adr(无 ADR 目录)。**SKIP 是合法降级不是放行**——文案必须带「未就绪,非失败」与出路。
+〔数:前置SKIP器=7〕 个校验器声明了「前置文件缺失 ⇒ SKIP」（清单单源 = `scripts/atlas_check.py` `_gate_preconditions`，AST 实收——散文枚举曾漏 task_card，改派生）：〔数:前置SKIP清单=stack_profile/structure/design_exemptions/e2e_mocks/ac_alignment/adr/task_card〕。**SKIP 是合法降级不是放行**——文案必须带「未就绪,非失败」与出路。
 
 ## 显式盲区
 
@@ -87,7 +87,7 @@
 | D79(2026-10-15) | 真跑级逐格纪律:无咬合证据不得预填 |
 | D101/D124 | 运行器判据本体(可导入性)/ 浏览器就绪探针 |
 | D145(2026-10-23) | MANIFEST 逐文件装配基线(配对校验先行) |
-| M 系编号 | 已至 〔数:变异编号上限=M193〕,全部登记在门册右列 |
+| M 系编号 | 已至 〔数:变异编号上限=M194〕,全部登记在门册右列 |
 
 ## 讲述时的三个抓手
 

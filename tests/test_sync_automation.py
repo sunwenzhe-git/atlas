@@ -352,3 +352,37 @@ def test_guard_never_rewrites_changelog(tmp_path):
     cg.main(["--root", str(repo), "--range", "HEAD~1..HEAD"])
     after = {rel: (repo / rel).read_bytes() for rel in cg.CHANGELOGS}
     assert before == after, "守卫只提示，绝不自动改写 changelog"
+
+
+# ── guide changelog 镜像化（2026-11-21 复盘 L2/R1-C3）─────────────────────────
+
+def test_guide_changelog_is_generated_mirror() -> None:
+    """镜像等式：guide == guide_mirror_text(根 CHANGELOG) 恒成立。
+
+    guide 不再有人工写入口——发版由 release.py 整体重生成，批内根新增
+    [Unreleased] 行不改变镜像（段被剥掉）。手工改 guide ⇒ 本测试红。
+    """
+    root_text = (HERE.parent / "CHANGELOG.md").read_text(encoding="utf-8")
+    guide_text = (HERE.parent / "docs" / "guide" / "changelog.md").read_text(encoding="utf-8")
+    assert guide_text == cg.guide_mirror_text(root_text), (
+        "docs/guide/changelog.md ≠ 根 CHANGELOG 的生成镜像——该页已退役人工写入口，"
+        "改动请写根 CHANGELOG 的 [Unreleased]，guide 由下次发版重生成")
+
+
+def test_guide_mirror_strips_unreleased_and_is_idempotent(tmp_path) -> None:
+    """镜像函数判据：剥 [Unreleased] 段、其余逐字节一致；幂等。"""
+    root = tmp_path / "CHANGELOG.md"
+    root.write_text(
+        "# c\n\n---\n\n## [Unreleased]\n\n- 批内新增行\n\n## [v1]\n\n- 已发版\n",
+        encoding="utf-8")
+    mirrored = cg.guide_mirror_text(root.read_text(encoding="utf-8"))
+    assert mirrored == "# c\n\n---\n\n## [v1]\n\n- 已发版\n", repr(mirrored)
+    assert cg.guide_mirror_text(mirrored) == mirrored, "镜像必须幂等（无 Unreleased 段即原样）"
+
+
+def test_guide_mirror_mutation_must_fail(tmp_path) -> None:
+    """反例：guide 被手工改动（与镜像差一行）⇒ 等式判红。"""
+    root_text = "# c\n\n## [v1]\n\n- a\n"
+    hand_edited = root_text.replace("- a\n", "- a\n- 手工塞进 guide 的一行\n")
+    assert hand_edited != cg.guide_mirror_text(root_text), (
+        "镜像等式必须能区分手工改动与生成物")

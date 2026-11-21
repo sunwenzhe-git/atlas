@@ -273,12 +273,14 @@ def check_ledger_tokens() -> dict:
     `〔数:key=value〕`，value 必须等于 `scripts/ledger_snapshot.derive` 的输出。
     与句式白名单的差别：机器认 key 不认写法，新增数字只要登记成键就自动被覆盖；
     缺源/未知键由生成器响亮失败（不静默 0、不静默放过）。
+    2026-11-21 复盘 R1/L1 增补裸数字 lint（M194）：忘了登记占位的「器/校验器族」
+    裸计数也判红——占位门对没登记的散文第二副本原本天然免疫。
     """
     import sys as _sys
     scripts = str(PKG_ROOT / "scripts")
     if scripts not in _sys.path:
         _sys.path.insert(0, scripts)
-    from ledger_snapshot import SnapshotError, derive, rewrite
+    from ledger_snapshot import SnapshotError, derive, lint_bare_numbers, rewrite
 
     bad: list[str] = []
     try:
@@ -296,6 +298,9 @@ def check_ledger_tokens() -> dict:
             bad.append(f"{rel}：{e}")
             continue
         bad += [f"{rel}〔数:{key}〕写 {old} ≠ 源 {new}" for key, old, new in drifts]
+    # 裸数字 lint（2026-11-21 复盘 R1/L1，M194）：占位门只认已登记的 `〔数:〕`，
+    # 忘了登记的散文第二副本天然免疫——lint 把那一向补上（器/校验器族）。
+    bad += [f"裸计数 {v}" for v in lint_bare_numbers(PKG_ROOT)]
     return {"check": "派生数字占位对账", "ok": not bad, "skip": False,
             "detail": "；".join(bad) if bad
             else "占位全部等于唯一源（`ledger_snapshot.derive`）"}

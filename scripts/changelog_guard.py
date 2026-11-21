@@ -51,6 +51,23 @@ class GuardError(Exception):
     pass
 
 
+def guide_mirror_text(root_text: str) -> str:
+    """`docs/guide/changelog.md` 的生成镜像 = 根 CHANGELOG 减去 `[Unreleased]` 段。
+
+    2026-11-21 复盘 L2/R1-C3：`7831b68` 宣布「权威收敛为 CHANGELOG.md」两天后仍要
+    手补 guide 的 `[Unreleased]`（release.py 收拢硬前置）——双写没死。改为发版时由
+    `release.py sync_version_files` 整体生成，guide 不再有人工写入口。镜像等式
+    （`tests/test_sync_automation.py` 对账）：guide == guide_mirror_text(根文) 恒成立；
+    批内根新增 `[Unreleased]` 行不改变镜像（段被剥掉），发版收拢后随根重生成。
+    """
+    m = re.search(r"^##\s*\[Unreleased\][^\n]*\n?", root_text, flags=re.M)
+    if not m:
+        return root_text
+    nxt = re.search(r"^##\s+", root_text[m.end():], flags=re.M)
+    tail = root_text[m.end() + nxt.start():] if nxt else ""
+    return root_text[:m.start()] + tail
+
+
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
 

@@ -28,7 +28,33 @@ TESTS_GLOB = "test_*.py"
 C_DECL_RE = re.compile(r'^\s*c\("', re.M)  # 与 canonical 同口径：只认双引号 c("
 PIN_DECL_RE = re.compile(r"^\s*(M\d+[a-z]?)")
 
-DEFAULT_PATHS = ("docs/map/index.md", "shared/gates.md")
+DEFAULT_PATHS = ("docs/map/index.md", "docs/map/gates.md", "shared/gates.md")
+
+# 裸数字 lint（2026-11-21 复盘 R1/L1）：受管正文里「N 器 / N 个校验器 / N 个 validate_*」
+# 族计数若未登记 `〔数:〕` 占位，就是同一事实的散文第二副本，无门可查——L1 实证
+# `docs/map` 四处写 12 实为 13 存活多日。`N 行` 声明归 `test_map_anchors`（M155），
+# changelog / guide 属历史快照语境不扫；负向环视排除 `2.2 校验器` 这类节号引用误报。
+LINT_GLOBS = ("docs/map/*.md", "shared/*.md")
+LINT_FILES = ("README.md",)
+BARE_NUM_RE = re.compile(
+    r"(?<![\d.])(\d+)\s*(个\s*)?(器|校验器|validate_[a-z*]+|个测试文件|个出厂测试)")
+
+
+def lint_bare_numbers(root: Path) -> list[str]:
+    """扫受管正文的未登记裸计数，返回违规清单（`path:line: 片段`）；空 = 绿。"""
+    root = root.resolve()
+    targets = [p for g in LINT_GLOBS for p in sorted(root.glob(g))]
+    targets += [root / f for f in LINT_FILES]
+    bad: list[str] = []
+    for p in targets:
+        if not p.is_file():
+            continue
+        for i, ln in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+            m = BARE_NUM_RE.search(ln)
+            if m:
+                frag = ln[max(0, m.start() - 24):m.end() + 24].strip()
+                bad.append(f"{p.relative_to(root).as_posix()}:{i}: …{frag}…")
+    return bad
 
 
 class SnapshotError(RuntimeError):
@@ -75,6 +101,29 @@ def _validators(root: Path) -> int:
     raise SnapshotError("scripts/atlas_check.py 无 VALIDATORS 赋值：校验器数无法计算")
 
 
+def _precondition_validators(root: Path) -> list[str] | None:
+    """`scripts/atlas_check.py` `_gate_preconditions` 声明 SKIP 三态前置的校验器（AST 实收）。
+
+    单源动机（复盘 R1/L1）：`docs/map/gates.md` 散文写「7 个校验器」却只枚举了 6 个
+    （漏 `validate_task_card`）——计数与清单各自手抄、各自漂。此处按声明顺序实收，
+    计数与清单两个键同源。函数整体缺席 ⇒ 返回 None 不出键（同 `编排门行` 先例：
+    最小 fixture / 副本态不拦；真实仓若正文写了占位而键缺失，按未知键当场炸）。
+    """
+    src_path = root / "scripts" / "atlas_check.py"
+    if not src_path.is_file():
+        return None
+    for node in ast.walk(ast.parse(src_path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.FunctionDef) and node.name == "_gate_preconditions":
+            keys = [k.value for n in ast.walk(node) for k in getattr(n, "keys", [])
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                    and k.value.startswith("validate_")]
+            if not keys:
+                raise SnapshotError(
+                    "_gate_preconditions 无 validate_* 键：前置 SKIP 清单无法计算（不静默 0）")
+            return keys
+    return None
+
+
 def _orchestrator_rows(text: str) -> int | None:
     """`shared/gates.md` §2.2 表的编排层数据行数（表头与分隔线不计）。"""
     parts = re.split(r"^### 2\.2", text, maxsplit=1, flags=re.M)
@@ -91,6 +140,10 @@ def derive(root: Path) -> dict[str, str]:
     facts: dict[str, str] = {}
     facts["校验器"] = str(_validators(root))
     facts["校验器文件"] = str(len(list(_require_dir(root, "validators").glob("validate_*.py"))))
+    pres = _precondition_validators(root)
+    if pres is not None:
+        facts["前置SKIP器"] = str(len(pres))
+        facts["前置SKIP清单"] = "/".join(k.removeprefix("validate_") for k in pres)
     test_files = sorted(_require_dir(root, "tests").glob(TESTS_GLOB))
     if not test_files:
         raise SnapshotError("tests/ 下无测试文件：派生层无法计算（不静默 0）")
@@ -173,9 +226,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--root", default=str(Path(__file__).resolve().parents[1]))
     ap.add_argument("--write", action="store_true", help="按源改写占位值（缺省只报告）")
     ap.add_argument("--json", action="store_true", help="打印全部派生键值")
+    ap.add_argument("--lint-bare-numbers", action="store_true",
+                    help="扫受管正文未登记的裸计数（器/校验器族）；命中 exit 1，不依赖派生源")
     args = ap.parse_args(argv)
 
     root = Path(args.root).resolve()
+    if args.lint_bare_numbers:
+        bad = lint_bare_numbers(root)
+        if bad:
+            print("FAIL：裸计数未登记占位（〔数:〕）:\n  " + "\n  ".join(bad))
+            return 1
+        print("OK：受管正文无未登记裸计数（器/校验器族）")
+        return 0
     try:
         facts = derive(root)
     except SnapshotError as e:

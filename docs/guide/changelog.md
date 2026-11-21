@@ -1,6 +1,6 @@
 # 更新日志 (CHANGELOG)
 
-本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 语义化版本规范与 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 变更记录规范。本页随发版同步，逐批记账以仓库根 `CHANGELOG.md` 为准；请勿只在本页追加。
+本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/) 语义化版本规范与 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 变更记录规范。
 
 ---
 
@@ -99,61 +99,68 @@
 
 ### 🛡 Pi 宿主扩展：turn_end 门禁告警按失败签名去重
 
-* 项目里存在历史遗留门禁失败时，`turn_end` 原先裸看退出码、每轮复读同一句告警（issue #67）。现在消费 `atlas_check.py --fast --json` 失败集，以 sha256(门名+退出码+详情) 为签名与 `.atlas/runs/pi-turn-failures.json` 基线差分：新增/变化才告警（点名新红门）、复读静默、首轮静默建基线、收缩回写（复发再提醒）、输出不可解析静默不动基线。执行级判据挂假宿主真扩展跑通 issue 全场景（`tests/test_apply_wiring.py` 26→28）。
+* 项目里存在历史遗留的门禁失败时，`turn_end` 原先裸看退出码，每个带工具调用的回合都复读同一句「可能触发门禁异常」，真新增反而被淹没（issue #67）。现在消费 `atlas_check.py --fast --json` 的失败集，以 sha256(门名+退出码+详情) 为签名，与 `.atlas/runs/pi-turn-failures.json` 基线差分：只有新增/变化的失败才告警（点名新红门），同一失败复读静默；首轮静默建基线（升级后第一轮不提示历史失败）；失败集合收缩也回写基线，修复后复发能再提醒一次；`--json` 输出不可解析时静默且不动基线，执行异常不伪装成门禁回归。执行级判据挂假宿主真扩展跑通 issue 全部六场景 + 升级路径。
 
 ## [v0.3.0-beta.4] - 2026-11-17
 
 ### 🧭 `atlas upgrade` 跟着运行路径装，不再诱导 sudo
 
-* 两份安装并存时，`upgrade` 原先按 npm 默认 prefix 装，撞上 root 所有的目录报 EACCES 并建议 sudo。现在优先升级正在运行的那份（`--prefix`），不一致时打印两份路径与生效那份；不可写时给出非 sudo 处置。源码树运行会提示按默认 prefix 新增一份。
-
----
+* 机器上有两份安装时（例如用户 prefix `~/n` 与系统 `/usr/local`），`upgrade` 原先固定按 npm 默认 prefix 安装，撞上 root 所有的目录报 EACCES，并建议 `sudo npm install -g`。现在优先升级**正在运行的那份**（按它所在的 prefix 传 `--prefix`）；检测到默认 prefix 不一致时打印两份路径、标明哪份生效，只动正在运行的那份；目标不可写时给出非 sudo 处置（用户级 prefix / nvm/fnm / install.sh）。源码树运行时明确提示会按 npm 默认 prefix 新增一份。
 
 ## [v0.3.0-beta.3] - 2026-11-17
 
-### 🛡 清单版本门：0.3.0 预发布读 v2
+### 🛡 清单版本门：0.3.0 预发布不再被误判成旧读者
 
-* 全局安装 `0.3.0-beta.2` 在 v2 清单仓库上 `atlas solution check` 直接 exit 2（`manifest_schema_unsupported`），并连带打穿父仓 `check --fast` 的 AC 对齐与 apply record 两条检查。根因：门把正式版号 `0.3.0` 当界，而按 semver `0.3.0-beta.2 < 0.3.0`。门改用 0.3.0 预发布线（`0.3.0-0`）；`0.2.x` 仍只读 v1，`0.3.0` 正式版读 v2，不可解析仍不放行。
+* 全局安装 0.3.0-beta.2 在 v2 清单仓库上 `atlas solution check` 直接 exit 2（`manifest_schema_unsupported`），并连带打穿父仓 `check --fast` 的 AC 对齐与 apply record 两条检查；根因是门拿正式版号 `0.3.0` 当界，而 `0.3.0-beta.2 < 0.3.0` 按 semver 成立。门改用 0.3.0 预发布线（`0.3.0-0`），比较器语义不变：0.2.x 仍只读 v1，不可解析仍不放行，0.3.0 正式版读 v2（含正反例钉）。
+
+### 🧩 分层与版本比较（P1 / 2A）
+
+* 两份 semver 比较合成一份：判不出版本时统一「不放行」，不再出现两处结论相反；并加了一条钉，同一组输入在两处必须一致（`49c58e3`）；
+* 给「内核反过来依赖校验器」加了棘轮：现有几处登记在案、每处写明暂时拆不掉的原因，新增一处就红；相关 docstring 改成如实说明这是已知倒置（`f2b3b45`）。
+* `_support/solution.py` 顶部加了分节地图，并把两个被反向调用的路径助手下沉到 §2（`70f9d4b`）；只调位置、不拆文件（P4 结论 C）。
+
+### 🚦 批次门与记账
+
+* 新增「按这批改了哪些文件挑测试」的批次预检：改完就能跑，跑不到测试的文件会显式标「无覆盖」，不静默放过（`54918df`）；
+* CI 的 POSIX 任务改用同一条预检入口，不再单独写死两个测试文件；Windows 仍保留固定基线作平台对照（`9a685de`）；
+* changelog 守卫搬进 `scripts/`、随装配下发；判定改为只认根 `CHANGELOG.md`，每批一行（`e0b0d59`、`7831b68`）；
+* 决策作废统一成「只改该行」的行级标记（删除线 + `【已作废 日期：原因 / 承接 D 号】`），只约束增量，存量不迁移（2026-11-17）。
+
+### 🧪 E2E 账本：缺来源按 E1 切点归因
+
+* 旧账里没有 `source` 的事件不再一律当成 prototype：早于 2026-09-27（E1 退役日）才算原型存量，之后或判定不了归 `unknown`；写侧本来就恒写来源，新事件不会再被算进退役来源（`dbb64f5`）。
+
+### 🧾 账本单一源（补记 11-17 已推送批次）
+
+* 提案评审模板开始强制写「最强反方」和「怎么证伪它」，评审不再只看结论（`de6990a`）；
+* 新增一个自动算账的小工具：测试文件数、校验器数、变异编号上限等从源算，不再手抄（`9d0d52d`）；
+* 实现地图的数字快照改成自动对账：只改数字不改地图，门会直接红（`23d771e`）；
+* 门册里手写的各类计数改成占位，删掉五条「按句式猜数字」的旧正则（`b0c230d`）；
+* 实现地图各章的版本号只在页头写一次，不再逐章手抄（`99acadc`）；
+* 门册「校验器数量」也改成自动算，并把口径落进决策 D201（`7fb581a`）；
+* 实现地图文件条目里漏网的「N 个测试文件」纳入自动计数（`1a17306`）；
+* 门册「编排门行」的行数改为自动算，不再手写（`0357bea`）；
+* 新增一道检查：测试里声明的变异钉必须与门册登记一致，少登记就红（`0eac771`）；
+* 留档 2026-11-17 的设计缺陷审计与账本单一源设计案（`96fcd8b`）。
 
 ---
 
 ## [v0.3.0-beta.2] - 2026-11-15
 
-### 🧪 E2E 文本期门：R3 机器化 + R11 扩面到 `select`（2026-11-15）
+### 🧪 E2E 文本期门：R3 机器化 + R11 扩面到 `select`
 
-* `validators/validate_e2e_index.py`：`同控件回读禁令` 纳入 `select`（`select X v` 后无 refresh/goto 即 `value X v` ⇒ FAIL）；新增门 **`断言异源（R3）`**——非 `initial:` / `unchanged:` 断言若全部落在被交互动作操作过的控件上 ⇒ FAIL（`waitFor` / `read` 不计入，`request` / `api` 天然异源）；
-* 契约 `rings/e2e/reference.md` §5.6 R11 与 §8.2 门表同步扩面；
-* `tests/test_validators.py`：`select` 回读由「豁免」改判红，新增 R3 门正反例；`test_validators.py` 202 passed；
-* 现场取证：跨网同步 E2E 002-006 / 011 / 014 / 019 由假绿转真红（用例内容未动、断言未放宽）。
+* `validators/validate_e2e_index.py`：`同控件回读禁令` 纳入 `select`；新增门 **`断言异源（R3）`**——非 `initial:` / `unchanged:` 断言若全部落在被交互动作操作过的控件上 ⇒ FAIL（`waitFor` / `read` 不计入，`request` / `api` 天然异源）；契约 `rings/e2e/reference.md` §5.6 / §8.2 同步；
+* `validators/validate_e2e_mocks.py`：`mode: on` 时每份 fixture 缺 `<fixture>.schema.json` ⇒ **FAIL**；新增 `scripts/gen_fixture_schemas.py`（`--write` 落盘，只锁形状）；
+* `scripts/gen_e2e_scripts.py`：`hidden` 发射改为「先 `not.toHaveCount(0)` 再 `toBeHidden()`」，新增断言动词 `absent`（`toHaveCount(0)`）；
+* 契约 `rings/e2e/reference.md` §5.8 增「系统级套件另环」；新增项目侧 `product/e2e/system/` 样板（无环境 skip，不冒充通过）。
 
-### 🧪 E2E fixture 契约：mode=on 强制伴生 schema（2026-11-15）
+### 🧪 AC 文法扩容与解析器口径统一
 
-* `validators/validate_e2e_mocks.py`：`mode: on` 时每份 fixture 缺 `<fixture>.schema.json` ⇒ **FAIL**（此前无 schema 即 PASS，桩形状漂移没有任何契约）；
-* 新增 `scripts/gen_fixture_schemas.py`：从 fixture / 真实响应推断收紧 schema（对象层 `additionalProperties: false`），`--write` 落盘；**推断只锁形状，字段名/类型是否与后端一致仍须真实响应快照核对**；
-* 契约 `rings/e2e/reference.md` §5.8 / §8.3 同步；单测覆盖「干净态 PASS / 缺 schema FAIL」与生成器嵌套合并。
-
-### 🧪 系统级套件成环（2026-11-15）
-
-* 契约 `rings/e2e/reference.md` §5.8 增「系统级套件另环」硬约定：环境缺失整目录 skip、造数含 `agent-` 前缀并清理、`SKIP` 不计通过、禁止固定源 id / 共享 state；
-* 新增项目侧 `product/e2e/system/`（pytest 直连真实后端）样板：接口外层 `data:null` 契约、空 ids 拒绝、entry-switches 布尔契约三条；无环境时 3 skipped（不冒充通过）。
-* 后端 AC 覆盖的 `backend_test.mode: enforce` 开关在既有 `validate_ac_alignment.py` 中已存在，文档补明用途（缺省仍 advisory/WARN）。
-
-### 🧪 E2E 断言语义：`hidden` 要求存在，新增 `absent`（2026-11-15）
-
-* `scripts/gen_e2e_scripts.py`：`hidden` 发射改为「先 `not.toHaveCount(0)` 再 `toBeHidden()`」——元素不存在时 Playwright 的 `toBeHidden()` 会通过，会把「功能块被裁掉」误判成「按预期隐藏」；新增断言动词 `absent`（`toHaveCount(0)`）表达「不渲染 / 不存在」；
-* `validators/validate_e2e_index.py` 词表与 R3 异源分母同步；
-* 契约 `rings/e2e/reference.md` §5.5 动词表同步；零步基线口径改写为「mock 用例逐例豁免，同页非 mock 探针照跑」（`validate_e2e_mocks` 的 WARN 文案同步，行为不变）；
-* 单测：`tests/test_e2e_hidden_absent.py`（hidden 存在性守卫 / absent 计数 0 / 基线逐例豁免），`test_gen_e2e_scripts.py` 170 passed。
-
-### 🧪 AC 文法扩容与解析器口径统一（2026-11-15）
-
-* `_support/solution.py`：`requirements[].acs` 不再自带旧正则副本（`AC-[A-Z0-9]+-\d{3}`），与 D 批 crosswalk 共用 `_AC_TOKEN_RE` 单源——`AC-V2-DP-01`（连字符前缀段 + 2 位序号）通过，`AC-SYNC-006` 等 3 位旧号继续可用，**4 位及以上仍判非法**（只扩容纳面，不放松判别）；
-* 同一文法同步到 `_support/ac_coverage.py`、`_support/ac_crosswalk.py`、`_support/solution_e2e.py`、`_support/solution_task.py`、`validators/validate_prd.py`、`validators/validate_e2e_index.py`、`validators/validate_ac_alignment.py` 与 `adapters/ac/{pytest,js,junit}.py`；
-* `_support/ac_crosswalk.py`：成员 PRD 域改为取 front matter 的 `domain_code`（与 AC 前缀同口径；`domain` 是域 slug `cross-network-sync`，不是同一口径），无 `domain_code` 的存量 PRD 回落 `domain`；冲突仍报 `member_domain_mismatch`，`detail.source` 标明取用字段；
-* `scripts/atlas_apply_seal.py`：`--card` 按**成员仓内相对路径**解析（与读侧 `member_dir / card.path` 同口径，单仓布局仍允许根下相对路径）；卡未声明 `atlas-acceptance`（或解析为空）时封条照签，但打 `[WARN]`，不再静默签出空投影；
-* `validators/validate_prd.py`：`prd/` 目录白名单只放行 solution 契约文件 `ac-crosswalk.md` / `ac-crosswalk-waivers.md`（其它散落 `.md` 仍判非标准文件）；`domain_code` 允许连字符段（`V2-DP`），不再只截到首段；
-* 单测：`test_solution_e2e.py`（2 位 / 3 位正例 + 4 位反例）、`test_ac_crosswalk.py`（成员 AC 文法、`domain_code` 优先 / 冲突 / 回落、真实 reader 接线）、`test_apply_record.py`（无验收项告警）、`test_validators.py`（白名单只放行两个文件名）；
-* 发版门清障：`shared/gates.md` 与 `docs/map` 计数锚随实况回正（80 个测试文件 / `test_validators.py` 205 条 / 生成器 3425 行）；`rings/e2e/reference.md` 系统级套件条目去掉具体测试框架名（`test_no_framework_names` 守恒门）。
+* `_support/solution.py`：`requirements[].acs` 去掉旧正则副本，与 D 批 crosswalk 共用 `_AC_TOKEN_RE` 单源——`AC-V2-DP-01`（连字符前缀段 + 2 位序号）通过，`AC-SYNC-006` 等 3 位旧号继续可用，**4 位及以上仍判非法**；
+* `_support/ac_crosswalk.py`：成员 PRD 域取 front matter 的 `domain_code`（`domain` 是域 slug，不是同一口径），无 `domain_code` 时回落 `domain`；冲突仍报 `member_domain_mismatch`，`detail.source` 标明取用字段；
+* `scripts/atlas_apply_seal.py`：`--card` 按成员仓内相对路径解析；卡未声明 `atlas-acceptance` 时封条照签但打 `[WARN]`，不再静默签出空投影；
+* `validators/validate_prd.py`：`prd/` 白名单只放行 `ac-crosswalk.md` / `ac-crosswalk-waivers.md`；`domain_code` 允许连字符段（`V2-DP`）；
+* 发版门清障：`shared/gates.md` 与 `docs/map` 计数锚随实况回正；`rings/e2e/reference.md` 系统级套件条目去掉具体测试框架名。
 
 ---
 
@@ -165,15 +172,15 @@
 
 ### 🤖 巡检面：`families.py --json` 双轨批（`RFC-20261114-06`）
 
-* **人读轨不动，尾部加机器段**：`duty-review/families.py` 新增 `--json`（`--json <path>` 与 `<path> --json` 皆通），输出 compact 单行 JSON；无旗标输出逐字节不变。
-* **`duty_signals.sh` 两次调用**：原行一字不动，其下加机器段 marker + `--json` 调用（922 字节，≤1KB 增量线）。
-* **钉与变异**：`tests/test_duty_bug_families.py` 19 → 22 条；变异 MB24–MB26。介质不动——只加读取侧出口（D200）。
+* **人读轨不动，尾部加机器段**：`duty-review/families.py` 新增 `--json`（扫描剥离旗标，`--json <path>` 与 `<path> --json` 皆通），输出 compact 单行 JSON（`ledger` / `cutoff` / `families[{family,count,exact,last_date,active,verdict,warns[]}]` / `warns`）；显式挑字段序列化（rows 内含 `ids` / `exact_ids` 两个 set，直接 `json.dumps` 必炸），不重复人读文本；台账缺 ⇒ 空族 + `cutoff=null`，不崩不编造。无旗标输出逐字节不变（实测同台账 sha256 一致）。
+* **`duty_signals.sh` 两次调用**：`:30` 原行一字不动，其下加 marker `== bugs.md 族 JSON (机器段,供脚本取数) ==` + `--json` 调用；文件头自述改「人读为主，尾部机器段供脚本取数」。JSON 机器段实测 922 字节（≤1KB 增量线）。
+* **钉与变异**：`tests/test_duty_bug_families.py` 19 → 22 条（同源逐字段对照 / warns 双轨等值 / no-flag 单源直通）；变异 MB24–MB26 四段协议。介质（`bugs.md` / `QUEUE.md`）不动——承 D154 拒 JSON/SQLite 搬介质，只加读取侧出口（D200）。
 
 ### 🤖 同步自动化：changelog 批次规则 + docs/map 计数锚刷新器（`RFC-20261114-04` 阶段 0/1/2a）
 
 * **批次收口 changelog 规则**（`shared/closeout.md` §1 落档）：批次 = 未推送提交或 `--range`；只对**触装配面**的 feat/fix 要求两份 `[Unreleased]` 各 ≥1 行新增；docs / test / chore 豁免；
-* **docs/map 计数锚刷新器**：`tests/refresh_count_anchors.py` 薄 CLI——缺省 dry-run，`--write` 写计数锚并复跑自检；版本串只报告；
-* **changelog_guard shadow 模式**：违规批次先照常放行、旁路留证，积累实证后再转硬门。
+* **docs/map 计数锚刷新器**：`tests/refresh_count_anchors.py` 薄 CLI——缺省 dry-run，`--write` 写 `N 行` 锚 / index.md 实收快照 / html `N 行` 与 ×N 计数，写后同进程复跑三函数、余漂非零 exit 1；检测真源复用 `test_map_anchors` 四函数；
+* **changelog_guard shadow 模式**：违规批次先照常放行、旁路留证（shadow 不阻断发版），积累实证后再转硬门。
 
 ### 🔧 修复：适配器扫描面两条（issue #64 / #65）
 
@@ -182,30 +189,35 @@
 
 ### 🤝 协作方法面：`atlas-onegate` 入装配 + KICKOFF 协议档（`RFC-20261114-07` 落刀批）
 
-* **`skills/atlas-onegate`**（随装配分发）：需求起手三件套 + 一次对齐门（零口令）、三类才问人、方案与代码 review 意见四分法处置、全档提案并行双评审——用户不再做确认 / 评审接力的传话中枢；
+* **`skills/atlas-onegate`**（随装配分发）：需求起手三件套 + 一次对齐门（零口令）、三类才问人（缺信息 / 缺权限 / 真取舍，其余假设推进留痕）、方案细节与代码 review 意见四分法处置、全档提案并行双评审（同一冻结输入 + 合流四规则）——用户不再做确认 / 评审接力的传话中枢；
 * **`proposals/KICKOFF-requirement-protocol.md`**：协议正文（非 RFC 工作方法档）+ proposals/README 指针 + README「九、自带技能生态」第 5 节。
+
+---
 
 ## [v0.2.0-beta.36] - 2026-11-14
 
 ### 📦 装配面：装配集摘除出厂测试目录 `tests/`（`RFC-20261114-01`）
 
-* **四表同批摘除**（`pkg_dirs` / `ASSEMBLY_COVER_DIRS` / `package.json files` / `BACKFLOW_DIRS`）：出厂测试回归源包验收面；新装配态对齐门落 F53 SKIP（无跑齐义务 + 残留随更新移除）；历史残留 `.atlas/tests` 带基线闸清理；`tests/test_assembly_surface.py` 四表守恒钉 + golden 重录。
+* **四表同批摘除**：`install.py pkg_dirs` / `pkg_digest.ASSEMBLY_COVER_DIRS` / `package.json files` / `backflow.BACKFLOW_DIRS` 不再携带 `tests/`——出厂测试回归**源包验收面**，采纳仓不再为「没见过的疤痕」付全量出厂价（动机实证：采纳仓对齐门 9m22s + 7 failed 与采纳方无关的红）。新装配态下对齐测试门落 F53 三态 SKIP（文案出路修订：无跑齐义务 + 残留随更新移除）。
+* **历史装配残留清理闸**：`.atlas/tests` 显式清理（MANIFEST 基线闸：纯出厂残留删、基线外/hash 不符拒绝 `--force` 越过）。
+* **守恒钉**：新增 `tests/test_assembly_surface.py` 四表守恒钉 + `test_tools` F30 反向钉（cover ⊆ pkg_dirs ∪ {skills}）+ golden 重录（装配集四表一变即 `--record` 纪律）。
 
 ### 🔧 修复：playground 真跑门不可用（issue #63）
 
-* **对齐测试门在装配副本恒红的真根因**：`tests/test_atlas_solution.py` 3 条 B-0 安装器集成测试漏挂装配态 `skipif` ⇒ 副本态 `FileNotFoundError` 恒红（源包态照跑 / 装配态如实 SKIP，双侧实测）。
-* **超时静默截断改为可诊断**：超时回传部分输出 + 预算值；对齐门超时行 = 预算值 + 实跑秒数 + 最后进度。判据不变（钉 = `test_factory_timeout_row_is_diagnosable`，M-63a/M-63b）。
-* **对齐门预算提值 900s → 1800s**（判据面变更，随方案上报待追认）：实测定标 535s 静默 / 681s 单并行会话 / 发版日 ~3× 推算 ~1600s；结构性出路（按文件分片）另案 RFC。
-* **真跑回归外层预算 900s → 2400s**：旧外层小于门内预算 = 负载日外层先杀（issue #63「900s 无输出不退出」第二层根因）。
-* **fixture 注红批 trace 断言跟进 D194 落点**：断言改指 `/tmp/atlas-e2e/<basename>/evidence/`（D194 仓外运行面），带注红时间窗防历史证据假绿。
+* **对齐测试门在装配副本恒红的真根因**：`tests/test_atlas_solution.py` 的 3 条 B-0 安装器集成测试（V-06 拒升 / `main()` 写前拒 / `package.json` 落点）直接引用源包根的 `install.py`，漏挂装配态守卫 ⇒ 装配副本里 `FileNotFoundError` 恒红——即使时间无限，装配态对齐门也过不去。补挂同文件既有先例的 `skipif`（源包态照跑、装配态如实 SKIP），双侧实测（源包 3 passed / 装配 3 skipped）。
+* **超时静默截断改为可诊断**：`atlas_check.run()` 超时不再只回 `"TIMEOUT"`，回传已捕获的部分输出与预算值；对齐门超时行专有文案 = 预算值 + 实跑秒数 + 最后进度行。判据不变（超时依旧 FAIL 进 failures），钉 = `test_factory_timeout_row_is_diagnosable`（M-63a/M-63b）。
+* **对齐门预算提值 900s → 1800s**（判据面变更，随方案上报待追认）：装配副本全量出厂测试实测 535s（静默）/ 681s（1 并行会话负载）/ 发版日 ~3× 推算 ~1600s，900s 余量仅 1.68× 即 issue #63 撞顶形态；`FACTORY_TIMEOUT_S` 常量化。结构性出路（按文件分片）另案 RFC。
+* **真跑回归外层预算 900s → 2400s**：旧外层小于门内预算——负载日对齐门装不进 900s 时外层先杀，是 issue #63「900s 无输出不退出」的第二层根因（真跑门未触达的直接原因）。外层必须 ≥ 门内上限 + E2E 段。
+* **fixture 注红批 trace 断言跟进 D194 落点**：D194（beta.35）把运行产物移出仓（`/tmp/atlas-e2e/<basename>/`：`current/` 为运行目录、失败构件由 config 的 global teardown 归档 `evidence/`），fixture 仍断言仓内 `runs/.atlas-run` ⇒ 恒空——beta.35 发版全量回归排除 playground，这层咬合迟到一批，issue #63 复跑咬出。断言改指 D194 落点并带注红时间窗（防同名仓历史证据喂出假绿）。
+* **实测定标**（2026-11-13，装配副本 76 文件 / 1750 项）：串行全量 535s（3 failed / 1686 passed / 61 skipped——3 失败即上述漏守卫）；单文件耗时分布前二 = `test_apply_record` 245.7s（76 测试 × 嵌套 git init/commit 子进程密集）/ `test_atlas_solution` 111.5s，前 10 文件占 78%。
 
 ## [v0.2.0-beta.35] - 2026-11-13
 
 ### 🧪 E2E 环：`read` 运行时取数原语 + 存在类数据纪律（D191）
 
-* **`read` 动词**：`read <testid>[N] -> <名>`（渲染后可见文案 trim）/ `read <testid>[N] <attr> -> <名>`（属性）。值段 `$<名>` 引用（fill/type 值与 text/contains/value/attr 期望值；成对双引号承载含空格值）；变量用例级、先读后用、不得重复定义；含变量断言不参与零步基线。
+* **`read` 动词**：`read <testid>[N] -> <名>`（渲染后可见文案 trim）/ `read <testid>[N] <attr> -> <名>`（属性）。值段 `$<名>` 引用（fill/type 值与 text/contains/value/attr 期望值；成对双引号承载含空格值）；变量用例级、先读后用、不得重复定义；含变量断言不参与零步基线。动机：存在类数据（预期命中/操作已存在记录的目标值）此前只能编造生成期字面量，换环境必挂且 fill 回读恒真假绿（现场：某跨网同步记录页 007 编造 24 位编号 6s 假绿通过）。
 * **§5.7 存在类/输入类二分（硬）**：输入类值字面量合法；存在类值禁止编造——合法来源三分 = 运行时 `read` / `seed:` / `mock:` fixture，皆不可行 ⇒ 回 prd 环重敲 AC。
-* **§5.6 R11 同控件回读禁令（机器门）**：非豁免前缀的 `value X v`，X 曾被同值 fill/type 且其间无 refresh/goto ⇒ 文本期 FAIL；空值豁免。校验器四新门：`read 语法合法` / `read 变量先读后用` / `同控件回读禁令`（FAIL）+ `存在类锚定提示`（WARN）。
+* **§5.6 R11 同控件回读禁令（机器门）**：非豁免前缀的 `value X v`，X 曾被同值 fill/type 且其间无 refresh/goto ⇒ 文本期 FAIL；空值豁免（清空语义）。校验器四新门：`read 语法合法` / `read 变量先读后用` / `同控件回读禁令`（FAIL）+ `存在类锚定提示`（同一 ≥12 位数字字面量同现 step 与 expected ⇒ WARN，走 D10）。§12 D1/D10 补判例。生成物对无 `read`/引号/`$` 的存量分片逐字节零变化。
 
 ### 🧪 E2E 环：`send` 请求动作与变量插值（D199）
 
@@ -213,7 +225,7 @@
 
 ### 🖥️ 评审控制台：持窗收窗时点唯一化 + 视口/配色声明式（D126 / D188 / D190）
 
-* **起跑下一条前收掉旧保留窗口**：跑完与超时仍绝不自动关，唯一自动结束时点 = 下一条起跑；成员仓分组只渲染头部摘要。
+* **起跑下一条前收掉旧保留窗口**：跑完与超时仍绝不自动关，唯一自动结束时点 = 下一条起跑；成员仓分组只渲染头部摘要（名 / 计数 / 评审四态 / 状态），不展开成员用例。
 * **`e2e.viewport` / `e2e.color_scheme`**：声明式落到 `use.viewport` / `use.colorScheme`，非法值生成期报错；`validate_stack_profile` 同步形态门。
 
 ### 🔐 E2E 登录态：执行前预检 + 一次性登录入口（`RFC-20261112-01`）
@@ -229,6 +241,7 @@
 ---
 
 ## [v0.2.0-beta.34] - 2026-11-13
+
 
 ### 🚦 验收资产契约 C 批（封条与任务卡门，`RFC-20261111-03`）
 
@@ -258,42 +271,7 @@
 * **i3-reachable 同秒竞态**：手工写锁固定旧 `locked_at`，整文件语境必现的「锁逐字节相同 ⇒ commit 无差异 exit 1」拆雷。
 * **门册三修**：发版门行 `pytest.skip` 框架名违规改写；E2E 真跑行回长即拆（撤下无提交树锚点的 D198 子句，D198 条款待其落地批自行入册）；duty 基线自感知族最近日期复冻（11-11，出库归纳行带日期）。
 
-### 🚦 验收资产契约 B-0（`RFC-20261111-03`）
-
-* **清单 v2 可读可写**：`parse_manifest_text` 支持 `definition:` 一层嵌套（`domain` / `path`）与 `acceptance_cutover` / `min_atlas` 标量；`definition: null` 归一为 `None`，不再落进 `unknown` 被静默跳过；未知顶层键与未知 `definition` 子键一律报错（`manifest_field_unknown` / `definition_field_unknown`）。
-* **版本门 `{1, 2}`**：0.3.x 同时接受 v1 / v2 清单；`0.4.0` 只接受 v2 的版本门按 `reader_version` 注入，随 B 批后续提交落地。`init` 按 `reader_version` 分支：`< 0.4.0` 写 v1，`0.4.0` 写 v2 + `definition`；v1 仓的 v2 只由 `migrate` 产生。
-* **`atlas solution migrate --to 2`**：只补缺（`definition` / `acceptance_cutover` / `min_atlas`，以及 PRD front matter 的 `prd_version` / `prd_schema`），已有字段一律不动，**不自动 `lock`**；落盘前按 B-0 白名单校验 `definition.path`（只接受 `<assets_root>/prd/solution-prd.md`），非默认名 ⇒ 拒绝且不写任何文件。`--check-members` 只读打印逐成员卡片的 `git add -f` 命令（active 与 archive 的实际路径）。
-* **`install --update` 拦截**：仓内 v1 清单 + 来包 ≥ 0.4.0 ⇒ 拒绝刷新 `.atlas` 并打印迁移命令，避免覆盖后新工具对 v1 硬拒、迁移命令也跑不起来。
-* **#54 判据放宽**：任务目录 `cases.md`（含 `archive/<month>/` 与成员任务目录）只要出现用例行即报 `task_dir_case_duplicate`，不看 ID 前缀是否 `E2E-*`；0.3.x WARN、0.4.0 起 FAIL。
-* **`--lenient`**：只放宽「成员工作区缺席」（记 `SKIP`）；仓内存在封条即拒绝执行（exit 2）。只有锁、没有封条时可用。
-* **`--allow-dangling-acs` 退役点改为 0.4.0**（谓词 `semver_lt(version, "0.4.0")`）；`0.3.x` 仍注册该开关。
-
-### 🚦 验收资产契约 B 批（`RFC-20261111-03` definition 门 / PRD 档位）
-
-* **`definition.commit` 首刷标记**：0.4.0 `init` 写 v2 + `definition`（`path/domain/prd_version/prd_schema/prd_date/sha256/blob/commit`）；首锁 `commit: null` 只报 `definition_commit_pending` WARN，首次 `lock --update` 后写真实 commit，此后回退为 null ⇒ `definition_commit_unverifiable` FAIL。
-* **完整历史主判据**：首刷判定扫锁文件的 `git log -m --full-history --format=%H HEAD -- atlas.solution.lock.json`；必须同时带 `--full-history` 与 `-m`，否则 merge 会漏掉历史非 null 提交。残余：force-push 抹掉提交后只剩 `acceptance_cutover != null` 兜底。
-* **`--allow-unverifiable-chain`**：窄开关，只把「提交对象本地缺失」这一类 `definition_commit_unverifiable` 降 WARN；不复用 `--lenient`，不降「已刷新后回退为 null」。
-* **`definition_unbound`**：清单 v2 + 锁 `schema_version: 2` 而 `definition` 缺失 / 为 null ⇒ FAIL；v2 清单 + 锁 1 的 B-0 中间态不判。
-* **`acceptance_cutover` 一致性**：首次刷新后清单与锁任一侧有值且不等 ⇒ `acceptance_cutover_mismatch` FAIL（该码为本批补的命名）；`init` 首锁刻意不写 cutover。
-* **PRD 档位**：模板与 `init` / `migrate` 写 `prd_version: 1` / `prd_schema: 1`；`prd_schema: 2` 立即要求 Assumptions「证据状态 / 证据指针」两列（缺 ⇒ `evidence_columns_missing` FAIL），`1` 缓冲到 `2027-06-30`（含前 WARN，`2027-07-01` 起 FAIL）。
-* **具名常量**：`ACCEPTANCE_CUTOVER_DEFAULT = 2027-03-31`、`MIN_ATLAS_FOR_V2 = 0.4.0`，`init` 与 `migrate` 共用；本批不提供 `--cutover` CLI，需手改清单后重跑 `lock --update`。
-
-### 🚦 方案层 AC 门禁收紧（#50，`RFC-20261111-01`）
-
-* **AC 定义行默认 FAIL**：`requirements[].acs` 引用 `solution-prd.md` 中不存在的定义行时，`atlas solution check` 默认报 FAIL、exit 1，不再依赖 `--strict`。
-* **定义源不可用单出口**：PRD 缺失 / `assets_root` 路径不匹配 / 零定义共用空集 guard，报「AC 定义源不可用」，不把全部 AC 误判悬空；`check` 与 `task status` 走同一 helper。
-* **`--fix-acs`**：只按行移除悬空 token（保留其它字节、键序与行尾注释）；同 id 块 / `acs:` 行无法唯一定位、删空某条 requirement 时拒绝且不半写；`--apply` 写回后重跑 gate 定退出码。
-* **临时宽限**：`--allow-dangling-acs` 仅放行 A 类悬空，写死 `0.4.0` 移除 / 最迟 `2026-12-31` / owner `@sunwenzhe`；`0.4.0` 起该选项不再注册。
-
-### 🚦 维度门升 FAIL + 休眠态改 N/A（2026-11-11）
-
-* **`AC × 覆盖维度` 升 FAIL**：缺口 / 未知维度由 WARN 升为 FAIL；跨网传输副本实测 0 新增红、零成本，不设宽限（不改版本号）。
-* **休眠态不再假绿**：页未就绪（`page_ready=False`）导致本项不跑时输出 `N/A` + 「页未就绪，本项未测（涉及页：…）」，不再报「0 条…全量覆盖」；「零证据用例须挂结构类 AC」在零证据用例 0 条 / PRD 无「结构类 AC 清单」段时同样 `N/A` + 未测原因，不报空集合 PASS。
-* 契约同步：`rings/e2e/reference.md` §8.2、`shared/gates.md`、`DESIGN.md` D130。
-
-### 📋 台账
-
-* `duty-review/bugs.md` #50 状态转为 `已修·待复验`（2026-11-11）；D156 留出证据未取，不记闭族。
+---
 
 ## [v0.2.0-beta.33] - 2026-11-10
 
@@ -356,13 +334,13 @@
 
 ## [v0.2.0-beta.30] - 2026-11-06
 
-### 🧭 E2E 覆盖维度生成纪律三件套（RFC-20261106-01 / D184）
+### 🧭 E2E 覆盖维度生成纪律三件套（RFC-20261106-01）
 
-* **契约**：`rings/e2e/reference.md` §6.1 新增「逐维自检」生成提示（C01–C14 逐维自答表）与「数据构造」提示；`apply/reference.md` §5 新增「PRD AC 表第 4 列默认声明」流程义务（表头同批校正 / 服务端维度分流后端列 / adopt 豁免 / 只及受影响行）。
-* **定位**：零新门、零新字段、零校验器改动；对账仍由既有「AC × 覆盖维度」门（WARN）承担；升级出口补「记缺口维度不计入缺口计数」区隔（首轮实测产出）。
-* **测试**：`tests/test_coverage_dim_prompt_anchors.py` 三条文本锚钉。
+* **契约**：`rings/e2e/reference.md` §6.1 新增「逐维自检」生成提示（C01–C14 逐维自答表，命中落用例；「界面不可表达 ⇒ 记缺口」唯一落点 = 域级 PRD §六 Assumptions & Defaults，禁挂「不可验 AC 清单」）与「数据构造」提示（C03/C12 生成期给具体值，料不足先回 prd 环补六件套、不得自造文案）；`apply/reference.md` §5 新增「PRD AC 表第 4 列默认声明」流程义务（表头不符逐字判据须同批校正；服务端维度分流后端列 D153；adopt 开户轮豁免；只及本次受影响行、不溯及存量）。
+* **定位**：全部提示级 / 流程级——零新门、零新字段、零校验器改动；`gen_e2e_scripts.py` 不动，生成物逐字节零变化承诺保持；对账仍由既有「AC × 覆盖维度」门（WARN）承担，WARN→FAIL 棘轮与「四类义务回归」待试跑项目四判据实测后另案（设计决策 D184）。
+* **测试**：新增 `tests/test_coverage_dim_prompt_anchors.py` 三条文本锚钉（§6.1 自检块维度记号集合 == §5.2 现解析闭集【等值断言】/ 数据构造块在位 / apply 块结构前缀）；计数面随实况刷新（`shared/gates.md`、`docs/map/` 三处 56→57、328→331）。
+* **首轮实测与升级出口区隔**：试跑仓四判据首跑（D184 首次真实咬合）——声明率 100% / 对账门 N/A→PASS / 抽检三行吻合 / 类型分布未移动（根因 = 表达边界：C03 值域撞 R9 恒真、`unchanged:` 需提交性动作 ⇒ 记缺口落域级 PRD §六，不硬造）；RFC §4 补「记缺口维度不计入缺口计数」区隔，词汇边界挂观察室（触发 = 第二个真实消费面）。
 
----
 ## [v0.2.0-beta.29] - 2026-11-05
 
 ### 🧭 多仓 solution 层 Phase 1（federated，RFC-20261104-02）
@@ -451,7 +429,6 @@
 * **测试**：新增 `tests/test_gate_registry.py` 3 钉（`E2E 真跑` 行 ≤1,600 且唯一 / 全行恰 6 格 / 无空格格）+ 登记行解析函数；`tests/test_duty_bug_families.py` 基线复冻到 2026-11-03（#31 成为首条带 `〔…〕` 字段的库内条目）。
 * **缺陷登记**：`duty-review/bugs.md` #31 —— `results.json` 未被指纹免疫闭集排除（`e2e_console.py` 目录族不含 `.atlas-run`），真跑后控制台已审条目假 `stale`，违反 D128 立条目标；实证 = `REVIEW-20261103-01` Major-2，修复另案。
 * **评审**：`REVIEW-20261103-01/02` 双「修后通过」；必修项已落（`.last-run.json` 归类依据改引 `DESIGN.md:597` + 机器面闭集、`DESIGN.md` D144 补 M149/M150 咬合叙述与 D103 回指改口、判据格逐字节恢复）。
-
 
 ### 🧭 Windows 装配入口 fail-closed + Trellis 探测平台自适（2026-11-03 外部现场）
 

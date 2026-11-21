@@ -5,7 +5,8 @@
 1. 代理检查：默认检测并应用 7897 本地代理，保证 GitHub 联通；
 2. 真实版本推导：以 npm registry dist-tags + git tag 为唯一真相源，杜绝跳号事故；
 3. 测试门禁：发版前严格执行全量 pytest 校验；
-4. 多处版本落点同步：package.json, README.md(双连字符), docs config, CHANGELOG(两份)；
+4. 多处版本落点同步：package.json, README.md(双连字符), docs config, CHANGELOG；
+   guide changelog 由根 CHANGELOG 生成镜像（不再手写第二份）；
    发版提交白名单：chore(release) 提交只准含版本落点，夹带即拒（含手工预制提交旁路）；
 5. Git 提交、打 Tag、推送、GitHub Release 补建与 NPM 发布（--tag beta + latest dist-tag）；
 6. 轮询并验证 npm registry 异步生效状态。
@@ -325,19 +326,24 @@ def sync_version_files(new_version: str, dry_run: bool = False) -> list[str]:
         if not dry_run:
             changelog_path.write_text(new_cl_text, encoding="utf-8")
 
-    # 5. docs/guide/changelog.md (同步收拢 [Unreleased] 为 [vX.Y.Z])
+    # 5. docs/guide/changelog.md = 根 CHANGELOG 的生成镜像（2026-11-21 复盘 L2/R1-C3：
+    #    「权威收敛」声明后两天仍要手补 guide 的 [Unreleased]——双写没死。改为发版时
+    #    整体生成，guide 不再有人工写入口；镜像 = 根文减 [Unreleased] 段，等式由
+    #    tests/test_sync_automation.py 对账。此时根已收拢，镜像 == 根文）
     guide_cl_path = ROOT_DIR / "docs" / "guide" / "changelog.md"
-    if guide_cl_path.exists():
-        guide_cl_text = guide_cl_path.read_text(encoding="utf-8")
-        if "## [Unreleased]" in guide_cl_text:
-            new_gcl_text = guide_cl_text.replace(
-                "## [Unreleased]",
-                f"## [v{new_version}] - {today_str}",
-                1,
-            )
+    root_cl_path = ROOT_DIR / "CHANGELOG.md"
+    if guide_cl_path.exists() and root_cl_path.exists():
+        import sys as _sys
+        _scripts = str(ROOT_DIR / "scripts")
+        if _scripts not in _sys.path:
+            _sys.path.insert(0, _scripts)
+        from changelog_guard import guide_mirror_text
+
+        mirrored = guide_mirror_text(root_cl_path.read_text(encoding="utf-8"))
+        if guide_cl_path.read_text(encoding="utf-8") != mirrored:
             modified.append("docs/guide/changelog.md")
             if not dry_run:
-                guide_cl_path.write_text(new_gcl_text, encoding="utf-8")
+                guide_cl_path.write_text(mirrored, encoding="utf-8")
 
     return modified
 

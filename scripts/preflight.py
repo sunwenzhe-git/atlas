@@ -45,8 +45,12 @@ ASSEMBLY_TESTS = (
     "tests/test_project_wiring.py",
 )
 
-LEDGER_FILES = {"DESIGN.md"}
-LEDGER_PREFIXES = ("shared/", "docs/map/")
+LEDGER_FILES = {"DESIGN.md", "scripts/atlas_check.py"}
+LEDGER_PREFIXES = ("shared/", "docs/map/", "validators/")
+# 2026-11-21 复盘 R4/C4/B2：`scripts/atlas_check.py`（校验器数源）与 `validators/`
+# （校验器文件数源）是派生键的**源**——改源必改派生值，却不触发账本测试，导致
+# 「12 器 vs 13」存活多日（B2）与行数锚发版前 1 分钟才复位（C4）。显式入映射，
+# 不再依赖回退的文件名字面量反查。
 ASSEMBLY_FILES = {"install.py", "install.sh", "package.json"}
 ASSEMBLY_PREFIXES = ("bin/", ".github/")
 

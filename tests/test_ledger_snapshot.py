@@ -119,3 +119,44 @@ def test_per_file_gauge_parity_with_canonical() -> None:
         if a != b:
             diffs.append((p.name, a, b))
     assert not diffs, f"逐文件量具与 canonical 分叉：{diffs}"
+
+
+# ── 裸数字 lint（2026-11-21 复盘 R1/L1）──────────────────────────────────────
+
+def test_bare_number_lint_real_repo_is_green() -> None:
+    """真实仓：受管正文不得有未登记占位的「器/校验器族」裸计数。
+
+    L1 实证过反面：`docs/map` 四处写 12 实为 13 存活多日——canonical 的占位门
+    只查 `〔数:〕`，裸散文天然免疫；本 lint 补上那一向。
+    """
+    from ledger_snapshot import lint_bare_numbers
+    assert lint_bare_numbers(PKG_ROOT) == []
+
+
+def test_m194_bare_number_must_fail(tmp_path: Path) -> None:
+    """M194：受管正文裸计数（器/校验器族）未登记占位必须红；登记占位/非受管形态必须绿。"""
+    from ledger_snapshot import lint_bare_numbers
+    d = tmp_path / "docs" / "map"
+    d.mkdir(parents=True)
+    f = d / "x.md"
+    f.write_text("| `validators/`(12 器) |\n", encoding="utf-8")
+    bad = lint_bare_numbers(tmp_path)
+    assert len(bad) == 1 and "x.md:1" in bad[0], bad
+    # 登记占位后绿（占位内的数字被 〕 截断，不会误伤）
+    f.write_text("| `validators/`(〔数:校验器=13〕 器) |\n", encoding="utf-8")
+    assert lint_bare_numbers(tmp_path) == []
+    # 节号引用（2.2 校验器）不算裸计数——正则负向环视排除
+    f.write_text("M22′ 2.2 校验器数写回旧值\n", encoding="utf-8")
+    assert lint_bare_numbers(tmp_path) == []
+
+
+def test_m194_lint_catches_via_canonical_gate(tmp_path: Path, monkeypatch) -> None:
+    """M194 反例走 canonical 门：fixture 注入裸计数 ⇒ `check_ledger_tokens` 红。"""
+    import test_canonical_consistency as tcc
+    repo = tcc._mk_ledger_repo(tmp_path)
+    (repo / "docs" / "map").mkdir(parents=True)
+    (repo / "docs" / "map" / "x.md").write_text(
+        "| 2 个 validate_* |\n", encoding="utf-8")
+    monkeypatch.setattr(tcc, "PKG_ROOT", repo)
+    res = tcc.check_ledger_tokens()
+    assert not res["ok"] and "裸计数" in res["detail"], res

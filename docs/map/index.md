@@ -42,7 +42,7 @@
 | 5 | 三环资产引擎 | structure / prd / e2e 三环的环内规程契约 | `rings/*/reference.md`、`skills/atlas-*` | — |
 | 6 | apply 跨环编排 | 唯一编排件:需求 → 资产增量的四模式 | `apply/reference.md` | [apply.md](apply.md) |
 | 7 | E2E 生成与控制台 | 用例分片 → Playwright 脚本 + 慢动作评审台 | `scripts/gen_e2e_scripts.py`、`scripts/e2e_console.py` | [e2egen.md](e2egen.md) |
-| 8 | 门禁与校验 | 12 校验器 + 编排器 + 门册 + 变异证明 | `scripts/atlas_check.py`、`validators/` | [gates.md](gates.md) |
+| 8 | 门禁与校验 | 〔数:校验器=13〕 校验器 + 编排器 + 门册 + 变异证明 | `scripts/atlas_check.py`、`validators/` | [gates.md](gates.md) |
 | 9 | 评审与收口 | 独立审查产物链 + 收口触发派生 | `shared/independent-review.md`、`scripts/closeout_derive.py` | [review.md](review.md) |
 | 10 | 运营面 | 每日巡检 / 自感知上报 / 发版 | `duty-review/`、`scripts/atlas_report.py` | — |
 
