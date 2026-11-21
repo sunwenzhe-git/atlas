@@ -195,6 +195,10 @@ gate=False 域裁决——属 v2 团队内容工作，消融方只读不动。
   `solution-task` = 源仓实验分叉（非采纳仓）；`sandbox-legacy` / `sandbox-todo`
   = 2026-10-15 旧装配验收沙箱（R3–R8 历史已被记忆/报告收割）。五者不复活、
   不维护，**退役删除待用户拍板**。
+  【已执行 2026-11-21，用户拍板「都删了」】三个 worktree 摘除（分支
+  feat/e2e-trigger / feat/solution-phase1 / feat/solution-task 均已推 origin，
+  保留在主仓可随时找回）；两个 sandbox 打包备份至 /tmp（重启自清）后删除；
+  桌面现仅存 `atlas`（源仓）+ `atlas-playground`（自养宿主）。
 - 维护纪律入册：campaign 每代开始前 `install.sh --update` 对齐源包 + 基线保绿
   （0 FAIL；WARN 须预期态并记账）。
 
