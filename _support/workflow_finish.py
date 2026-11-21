@@ -46,7 +46,13 @@ def _staged_files(root: Path) -> list[str] | None:
 
 
 def _scope_matches(root: Path, data: dict) -> tuple[bool, str]:
-    """检查报告落盘后暂存区内容未被替换（v4 内容封口）。"""
+    """检查报告落盘后暂存区内容未被替换（v4 内容封口）。
+
+    三分类诊断（2026-11-21，自进化 campaign T3 三撞实测）：extra（暂存面多出实审集
+    之外的路径——典型 = 审查产物误入暂存）/ missing（实审文件未暂存）/ changed
+    （实审文件内容已变）。extra 全落审查产物目录 ⇒ 指引 unstage（该场景重跑
+    verify 无效）；changed ⇒ 指引重新审查。整体摘要一致即放行（快速路径）。
+    """
     scope = data.get("review_scope")
     if not isinstance(scope, dict) or not scope.get("sha256"):
         return True, ""  # 旧报告兼容：无内容锚，无法比对
@@ -57,9 +63,46 @@ def _scope_matches(root: Path, data: dict) -> tuple[bool, str]:
         manifest = scope_core.build_manifest(root, staged)
     except Exception as exc:  # noqa: BLE001 —— 路径/状态异常一律视为不可封口
         return False, f"暂存区内容无法重算摘要：{exc}"
-    if manifest.get("scope_sha256") != scope.get("sha256"):
-        return False, "审查后暂存区内容已变化（review_scope 摘要不一致）；请重新运行 verify"
-    return True, ""
+    if manifest.get("scope_sha256") == scope.get("sha256"):
+        return True, ""
+    files = scope.get("files") or []
+    if not files:
+        return False, ("审查后暂存区内容已变化（review_scope 摘要不一致；旧报告无逐文件锚，"
+                       "无法自动分类）：实审文件内容已变 ⇒ 须重新审查（fresh review）后重跑 "
+                       "verify；实审文件未变 ⇒ 通常是审查产物误入暂存面，unstage 后重跑 finish")
+    recorded = {f.get("path"): f.get("sha256", "") for f in files
+                if isinstance(f, dict) and f.get("path")}
+    review_prefixes = ("product/reviews/", "product/e2e/reviews/")
+    extra = sorted(set(staged) - set(recorded))
+    missing = sorted(set(recorded) - set(staged))
+    changed = []
+    for p in sorted(set(recorded) & set(staged)):
+        try:
+            m = scope_core.build_manifest(root, [p])
+        except Exception:  # noqa: BLE001
+            changed.append(p)
+            continue
+        entry = (m.get("files") or [{}])[0]
+        if entry.get("sha256") != recorded.get(p):
+            changed.append(p)
+    extra_review = [q for q in extra if q.startswith(review_prefixes)]
+    extra_other = [q for q in extra if not q.startswith(review_prefixes)]
+    parts = []
+    if extra_review:
+        parts.append("审查产物不得进暂存面：`git restore --staged "
+                     + " ".join(extra_review)
+                     + "` 后重跑 finish（实审文件未变时重跑 verify 无效）")
+    if extra_other:
+        parts.append("暂存面多出实审集之外的非审查产物路径：" + " ".join(extra_other)
+                     + "（纳入实审需重新审查）")
+    if missing:
+        parts.append("实审文件未暂存：" + " ".join(missing) + "；暂存后重跑 verify")
+    if changed:
+        parts.append("实审文件内容已变（" + " ".join(changed)
+                     + "）：须重新审查（fresh review）后重跑 verify")
+    if not parts:
+        parts.append("暂存面与实审集内容均一致但整体摘要不一致（罕见）；请重跑 verify")
+    return False, "；".join(parts)
 
 
 def check_task_review_passed(root: Path, unit: str) -> tuple[bool, str]:

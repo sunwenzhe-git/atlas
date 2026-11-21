@@ -241,6 +241,14 @@ def write_review_request(unit: str, args: argparse.Namespace, background: Path,
         "- 子代理只读下面的指针，不读整仓；**只写产物**，不得改业务代码、不得改暂存区。", "",
         "## 权威输入", f"- 背景：`{background}`", manifest_ptr,
         "- 审查焦点三问：`.atlas/shared/independent-review.md` §10.4", "",
+        "## 探索预算（硬）",
+        "- 只读本单指针与实审集（你产物 `manifest.coverage.selected[]` 的 N 个文件）；"
+        "工具调用上界 **≤ N + 8 次**（N = 实审文件数，自行计数）。",
+        "- 禁入 `product/reviews/`（含 findings/）与 `.atlas/tasks/` 的历史轮产物；"
+        "round ≥ 2 的复审只审上轮 findings 涉及文件及其直接引用。",
+        "- 逃生门：发现流程异常（脏工作区 / 轮次产物矛盾）允许扩面，"
+        "但必须在 cli.json `warnings` 登记扩面理由。",
+        "",
         "## 审查范围", f"- 模式：{mode}",
         "- 应审文件：在产物 `manifest.coverage.selected[]` 中逐项列出本次实审范围"
         "（缺该项 ⇒ 应审 N 不可得，转换器拒绝产出）", "",

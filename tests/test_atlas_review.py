@@ -171,6 +171,10 @@ def test_missing_impl_review_uses_session_executor(tmp_path: Path) -> None:
     text = (d / "review-request.md").read_text(encoding="utf-8")
     assert "fresh-context" in text and "coverage.selected" in text
     assert "cli.json" in text
+    # 探索预算节（2026-11-21，W1 模板化）：预算节存在 + 禁读行 + 逃生门
+    assert "## 探索预算（硬）" in text
+    assert "N + 8" in text and "禁入 `product/reviews/`" in text
+    assert "warnings" in text and "扩面理由" in text
 
 
 def test_declared_session_executor_ignores_cli(tmp_path: Path) -> None:

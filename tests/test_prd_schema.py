@@ -293,3 +293,57 @@ def test_validate_prd_wires_prd_schema_too_low(tmp_path: Path, monkeypatch) -> N
     assert rows[0]["status"] == "FAIL"
     assert "prd_schema_too_low" in rows[0]["detail"]
     assert "demo-prd.md" in rows[0]["detail"]
+
+
+# —— 2026-11-21 版本口径一致批（自进化 campaign T5 实测 W3 缩形；见 validators 内注释锚） ——
+
+def _version_repo(tmp_path: Path, *, version: str, changelog_last: str,
+                  rule_literal: str | None) -> list[dict]:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_vpr_ver_test", PKG_ROOT / "validators" / "validate_prd.py")
+    vpr = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(vpr)
+
+    prd_dir = tmp_path / "product" / "prd"
+    prd_dir.mkdir(parents=True)
+    (prd_dir / "prd.md").write_text(
+        "---\ndoc: prd-global\nproduct: demo\nversion: 0.1.0\n"
+        "date: \"2026-11-21\"\nstatus: draft\n---\n\n# demo\n", encoding="utf-8")
+    rule_row = (f"| `HOME-R-001` | 页脚常驻显示「版本 {rule_literal} · 构建 2026-11-21」"
+                " | `FN-HOME-003` | 页面加载 | P2 | home |\n") if rule_literal else ""
+    (prd_dir / "home-prd.md").write_text(
+        "---\ndoc: prd-domain\ndomain: home\nversion: " + version + "\n"
+        "date: \"2026-11-21\"\nstatus: draft\n---\n\n"
+        "## 四、业务规则（Rule Set）\n\n"
+        "| 规则 ID | 规则内容 | 所属功能 | 触发条件 | 优先级 | 影响范围 |\n"
+        "|---|---|---|---|---|---|\n"
+        + rule_row +
+        "## 六、变更记录\n\n"
+        "| 版本 | 日期 | 变更内容及原因 | 影响 | 结论与后续 |\n"
+        "|---|---|---|---|---|\n"
+        f"| {changelog_last} | 2026-11-21 | 首建 | 无 | 已收口 |\n", encoding="utf-8")
+    return [c for c in vpr.validate(tmp_path).checks if c["check"] == "版本口径一致"]
+
+
+def test_version_consistency_warns_when_changelog_lags_frontmatter(tmp_path: Path) -> None:
+    rows = _version_repo(tmp_path, version="0.1.4", changelog_last="0.1.3",
+                         rule_literal="0.1.4")
+    assert len(rows) == 1 and rows[0]["status"] == "WARN"
+    assert "变更记录最新行 0.1.3 ≠ frontmatter 0.1.4" in rows[0]["detail"]
+
+
+def test_version_consistency_warns_named_when_rule_literal_stale(tmp_path: Path) -> None:
+    rows = _version_repo(tmp_path, version="0.1.4", changelog_last="0.1.4",
+                         rule_literal="0.1.3")
+    assert rows[0]["status"] == "WARN"
+    assert "版本字面量 0.1.3 ≠ frontmatter 0.1.4" in rows[0]["detail"]
+    assert "home-prd.md:" in rows[0]["detail"]
+
+
+def test_version_consistency_passes_when_all_aligned(tmp_path: Path) -> None:
+    """反例（应判不中）：全链一致 ⇒ PASS 不报。"""
+    rows = _version_repo(tmp_path, version="0.1.4", changelog_last="0.1.4",
+                         rule_literal="0.1.4")
+    assert rows[0]["status"] == "PASS"

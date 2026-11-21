@@ -255,6 +255,21 @@ def section_of(text: str, num: str):
     return rest[: nxt.start()] if nxt else rest
 
 
+def _section_by_name(text: str, names: tuple[str, ...]):
+    """取标题行含任一 name 的 `## ` 节正文与起步行号（**节号不拘**）；不存在返回 None。
+
+    与 section_of 的差别：后者按节号锚定，前者按节名子串——变更记录/修订记录、
+    业务规则/验收标准等节在不同模板里的编号不一致，按名定位才跨模板成立。
+    """
+    heads = [(m.start(), m.group(0)) for m in re.finditer(r"^##\s+[^\n]*$", text, re.M)]
+    for i, (start, head) in enumerate(heads):
+        if any(n in head for n in names):
+            end = heads[i + 1][0] if i + 1 < len(heads) else len(text)
+            line_no = text.count("\n", 0, start) + 1
+            return text[start:end], line_no
+    return None
+
+
 def table_header_has(section: str, col: str) -> bool:
     """该节里是否存在某个表格，其表头含列 `col`（按单元格**全等**比较，不做子串匹配）。"""
     for ln in section.splitlines():
@@ -507,6 +522,40 @@ def validate(root: Path) -> Result:
                     + "（写 `无` 或补假设行；翻转触发器见 `rings/prd/reference.md` §7）")
         else:
             res.add("可无项显式（§六）", "PASS", "")
+        # ---- 版本口径一致（2026-11-21 自进化 campaign T5 实测 W3 缩形；独立行首版 WARN：
+        #      intra-PRD 判据——frontmatter version ⇔ 变更记录最新数据行 + 规则/AC 表内
+        #      semver 字面量；T3/T4 四次实证失败全部命中本面。首版 WARN：存量采纳仓可能
+        #      合法引用外源版本号，升 FAIL 前须复核语料。）
+        ver_warns = []
+        for d in domains:
+            dtext = d.read_text(encoding="utf-8")
+            fmv = frontmatter(dtext).get("version")
+            if not fmv:
+                continue
+            chg = _section_by_name(dtext, ("变更记录", "修订记录"))
+            if chg is not None:
+                header, rows = _table_rows(chg[0])
+                if rows:
+                    last = rows[-1][0].strip() if rows[-1] else ""
+                    if last and last != fmv:
+                        ver_warns.append(
+                            f"{d.name} 变更记录最新行 {last} ≠ frontmatter {fmv}")
+            for sec_name in ("业务规则", "规则", "验收标准"):
+                got = _section_by_name(dtext, (sec_name,))
+                if got is None:
+                    continue
+                sec, base = got
+                clean = re.sub(r"```.*?```", "", sec, flags=re.S)
+                for i, ln in enumerate(clean.splitlines(), 1):
+                    for lit in re.findall(r"\b\d+\.\d+\.\d+\b", ln):
+                        if lit != fmv:
+                            ver_warns.append(
+                                f"{d.name}:{base + i} 版本字面量 {lit} ≠ frontmatter {fmv}")
+        if ver_warns:
+            res.add("版本口径一致", "WARN",
+                    "；".join(ver_warns[:8]) + ("（其余略）" if len(ver_warns) > 8 else ""))
+        else:
+            res.add("版本口径一致", "PASS", "")
         # issue #47（D176）：独立 check 行（不并入参数 4 聚合——否则 WARN 会被升成 FAIL）。
         derived_na = 0
         derived_gaps: list[str] = []

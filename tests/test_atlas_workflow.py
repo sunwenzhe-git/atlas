@@ -492,7 +492,32 @@ def test_finish_scope_mismatch_blocks_stale_review(tmp_path: Path) -> None:
     (root / "app.txt").write_text("v2", encoding="utf-8")
     subprocess.run(["git", "add", "app.txt"], cwd=root, check=True)
     ok, why = _scope_matches(root, data)
-    assert not ok and "已变化" in why
+    assert not ok and "已变化" in why and "重新审查" in why
+
+
+def test_finish_scope_extra_review_products_points_to_unstage(tmp_path: Path) -> None:
+    """审查产物误入暂存面 ⇒ 指名路径 + unstage 指引（实审文件未变时重跑 verify 无效）。"""
+    sys.path.insert(0, str(PKG_ROOT))
+    from _support import review_scope_core as scope_core
+    from _support.workflow_finish import _scope_matches
+
+    root = make_clean_project(tmp_path)
+    assert subprocess.run(["git", "init", "-q"], cwd=root).returncode == 0
+    (root / "app.txt").write_text("v1", encoding="utf-8")
+    subprocess.run(["git", "add", "app.txt"], cwd=root, check=True)
+    manifest = scope_core.build_manifest(root, ["app.txt"])
+    data = {"review_scope": {"sha256": manifest["scope_sha256"],
+                             "files": manifest["files"]}}
+    assert _scope_matches(root, data)[0]
+    # 审查产物进入暂存面（实审文件 app.txt 未动）
+    rev = root / "product" / "reviews" / "2026-11-21-impl-review-X"
+    rev.mkdir(parents=True)
+    (rev / "review.json").write_text("{}", encoding="utf-8")
+    subprocess.run(["git", "add", "product/reviews/"], cwd=root, check=True)
+    ok, why = _scope_matches(root, data)
+    assert not ok
+    assert "git restore --staged product/reviews/2026-11-21-impl-review-X/review.json" in why
+    assert "重跑 verify 无效" in why
 
 
 def write_spec(root: Path, rel: str, globs: list[str], body: str) -> None:
