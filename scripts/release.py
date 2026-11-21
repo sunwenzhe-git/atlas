@@ -6,6 +6,7 @@
 2. 真实版本推导：以 npm registry dist-tags + git tag 为唯一真相源，杜绝跳号事故；
 3. 测试门禁：发版前严格执行全量 pytest 校验；
 4. 多处版本落点同步：package.json, README.md(双连字符), docs config, CHANGELOG(两份)；
+   发版提交白名单：chore(release) 提交只准含版本落点，夹带即拒（含手工预制提交旁路）；
 5. Git 提交、打 Tag、推送、GitHub Release 补建与 NPM 发布（--tag beta + latest dist-tag）；
 6. 轮询并验证 npm registry 异步生效状态。
 
@@ -38,6 +39,43 @@ DEFAULT_PROXY_PORT = 7897
 PROXY_URL = f"http://127.0.0.1:{DEFAULT_PROXY_PORT}"
 DEFAULT_REPO_SLUG = "sunwenzhe-git/atlas"
 ROOT_DIR = Path(__file__).resolve().parent.parent
+
+# 发版提交白名单（2026-11-21 复盘 R5：`787dd42` 经「手工预制发版提交 → 复用现有提交」
+# 旁路夹带 install.py / golden 重录 / specs 共 20 文件；10-25 的杂改动守卫只查工作树，
+# 查不到已提交内容）。判据 = 发版 chore 提交的文件集 ⊆ 版本落点；**不带逃生口**——
+# 真要夹带的改动先单独提交，永远可行；逃生口会被常态化（复盘 P2 失效条件）。
+VERSION_TARGETS = frozenset({
+    "package.json",
+    "README.md",
+    "docs/.vitepress/config.mts",
+    "docs/map/index.md",
+    "docs/map/atlas-map.html",
+    "CHANGELOG.md",
+    "docs/guide/changelog.md",
+})
+RELEASE_COMMIT_PREFIX = "chore(release):"
+
+
+def check_release_commit_scope(root: Path = ROOT_DIR, commit: str = "HEAD") -> None:
+    """被 tag 的发版提交不得夹带版本落点之外的文件（bisect / 单点回滚能力）。
+
+    只对 subject 以 `chore(release):` 开头的提交生效：维护者手工预制发版提交再复用
+    发版（G1 的实际旁路）时，这里的检查在烧 535s 全量测试**之前**就把它拒掉；
+    复用普通功能提交发版是既有路径，不在此判据内。
+    """
+    subject = run_cmd(["git", "log", "-1", "--format=%s", commit],
+                      cwd=root, use_proxy=False).stdout.strip()
+    if not subject.startswith(RELEASE_COMMIT_PREFIX):
+        return
+    files = [ln for ln in run_cmd(
+        ["git", "show", "--name-only", "--format=", commit],
+        cwd=root, use_proxy=False).stdout.splitlines() if ln.strip()]
+    strays = [f for f in files if f not in VERSION_TARGETS]
+    if strays:
+        raise RuntimeError(
+            f"发版提交 {commit} 夹带版本落点之外的文件（回滚/bisect 失效，复盘 R5）"
+            "——请先拆成独立提交再发版:\n  " + "\n  ".join(strays[:10])
+            + ("\n  …" if len(strays) > 10 else ""))
 
 
 def is_proxy_alive(port: int = DEFAULT_PROXY_PORT) -> bool:
@@ -557,6 +595,9 @@ def cmd_release(target_version: str | None = None, auto: bool = False, dry_run: 
                 print("已取消发布。")
                 return
 
+    # 1.5 发版提交白名单（复盘 R5）：HEAD 若是预制发版 chore，先于测试门禁查夹带
+    check_release_commit_scope()
+
     # 2. 测试门禁
     run_test_suite()
 
@@ -596,6 +637,9 @@ def cmd_release(target_version: str | None = None, auto: bool = False, dry_run: 
         run_cmd(f'git commit -m "chore(release): {tag_name}"')
     else:
         print("\n📦 无新增改动，复用现有提交发版。")
+
+    # 4.5 发版提交白名单复查（复盘 R5）：`git add -A` 建出的 chore 提交必须只含版本落点
+    check_release_commit_scope()
 
     # 5. 打 Tag
     print(f"🏷️  创建标签: {tag_name}")
