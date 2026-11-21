@@ -526,7 +526,7 @@ def _copy_assert_values(blocks: dict) -> list[str]:
     for b in blocks.values():
         for key in ("step", "expected"):
             for ln in b.get(key) or []:
-                s = _strip_prefix(str(ln)).split("#")[0].strip()
+                s = strip_inline_comment(_strip_prefix(str(ln))).strip()
                 if not s:
                     continue
                 toks = s.split()
