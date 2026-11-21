@@ -1,0 +1,194 @@
+cc088f5|2026-11-20 16:19|chore(release): v0.4.0-beta.4
+ace8d4e|2026-11-20 16:18|docs(map): 行数锚与 §7 指针复位（reference 340 / atlas_check 1223 / §7@260）
+13dd970|2026-11-20 15:30|fix(workflow): 归档落盘改月度目录，判据不再静默出域（#70）
+b69c264|2026-11-20 15:15|fix(workflow): E2E 索引解析留在 _support 内，不扩反向依赖清单（#69）
+7780603|2026-11-20 15:04|fix(workflow): 补齐会话执行器、E2E 收口前置与任务归档（#68 #69 #70）
+14e6bf2|2026-11-20 14:58|feat(adr,apply): 吸收「不做留证」与「偏差归因」两机制（RFC-20261120-01）
+f00d697|2026-11-20 14:45|feat(license): 补齐署名口径——NOTICE + 文档 CC BY 4.0 + CITATION
+e469a1d|2026-11-20 12:17|docs(map): 地图 UX 批收尾——pulse 高亮等 hashchange 重建画布的 rAF 级重试
+20d8b1d|2026-11-20 12:07|chore(release): v0.4.0-beta.3
+b689f47|2026-11-20 11:58|docs(changelog): 记录 workflow context 与 .gitignore 白名单
+2b1a8ba|2026-11-20 11:58|feat(wiring): .gitignore 默认追加 .atlas 白名单（引擎镜像不入库、规范与账本入库）
+32280ea|2026-11-20 11:58|feat(workflow): 新增只读 atlas workflow context 预览命中规范
+4fbb6de|2026-11-20 10:14|ci: 修正 Windows 原生 init 烟测预建 .atlas 触发覆盖守卫
+9548e20|2026-11-20 10:08|chore(release): v0.4.0-beta.2
+5c8a988|2026-11-20 09:58|fix(workflow): 收紧收口/派发状态机与账本原子性
+ae9a5ed|2026-11-20 09:43|fix(workflow): 修正最小注入的 glob/继承/围栏与规范开户口径
+787dd42|2026-11-19 19:27|chore(release): v0.4.0-beta.1
+e9423c3|2026-11-19 18:15|refactor(workflow): 移除 Trellis 宿主依赖，执行层收敛到 atlas workflow (D205)
+d657fa7|2026-11-19 14:56|chore(release): v0.3.0-beta.6
+cd00400|2026-11-19 14:46|docs(changelog): 为 D202 补齐 [Unreleased] 说明以备发版
+faafbcd|2026-11-19 14:20|feat(graph): 退役 cgc 外部 AST 图谱并确立轻量语义透镜 (RFC-20261119-01 / D202)
+e69bca9|2026-11-19 14:22|chore(release): v0.3.0-beta.5
+cbd967b|2026-11-19 14:03|docs(changelog): guide 页补 beta.5 批次 [Unreleased]（release.py 收拢硬前置）
+ad77741|2026-11-19 13:57|fix(harness): pi 扩展 turn_end 门禁告警按失败签名去重，历史失败不逐轮复读（issue #67）
+a7df338|2026-11-18 09:36|docs(real-run-day): 统一源包口径为运行中那份 CLI
+2eb19c3|2026-11-18 09:24|docs: 按 beta.4 对账升级路径与记账权威
+da6f2dd|2026-11-17 20:59|chore(release): v0.3.0-beta.4
+2191290|2026-11-17 20:59|docs(map): 同步 upgrade 修复后的用例计数
+196e854|2026-11-17 20:59|fix(cli): upgrade 跟着运行路径装，不再诱导 sudo
+f8e2fe6|2026-11-17 20:48|refactor(kernel): 把 §10 封条写侧抽成 solution_seal_ops
+afacccb|2026-11-17 20:25|test(solution): 让 prd_schema_gate_unarmed 两侧都能打中
+f58a1f0|2026-11-17 19:55|chore(release): v0.3.0-beta.3
+357d2bb|2026-11-17 19:45|fix(kernel): 清单版本门改用 0.3.0 预发布线，修复 beta 读者被拒 v2
+736473e|2026-11-17 19:13|docs(archive): 留档排期判断与拆分方案（2026-11-17）
+2e7b35d|2026-11-17 19:02|docs(kernel): solution.py 顶部加分节地图
+70f9d4b|2026-11-17 19:02|refactor(kernel): 把 _valid_task_slug / _assets_root 下沉到 §2 顶部
+318b553|2026-11-17 18:49|docs(shared): 决策作废改用行级标记，只约束增量
+93488ee|2026-11-17 18:35|docs(changelog): 记 2A 的 semver 单源与分层棘轮
+f2b3b45|2026-11-17 18:35|test(kernel): 反向依赖棘轮，_support → validators 只许减不许增
+49c58e3|2026-11-17 18:35|refactor(shared): semver 比较收敛为单源，不可解析统一 fail-closed
+3201315|2026-11-17 17:30|docs(duty-review): 增设已知环境红登记簿，明确缺陷/环境红/issue 的分工
+3d6c939|2026-11-17 17:26|fix(tests): 真跑回归缺 Playwright 时如实 skip 并写明原因
+4dcf1a4|2026-11-17 17:14|docs(map): 同步 e2e_console 行数声明
+e726887|2026-11-17 17:04|docs(changelog): 记 E1 来源归因修复
+dbb64f5|2026-11-17 17:04|fix(e2e): 缺 source 的事件按 E1 切点归因，不再一律算 prototype
+17ffaad|2026-11-17 17:00|refactor(gates): 校验器数改派生占位，收口 D201 残留
+f9ff819|2026-11-17 16:59|docs(changelog): 补 [Unreleased] 记账
+7831b68|2026-11-17 16:58|feat(changelog): 权威收敛为 CHANGELOG.md，每批一行
+e0b0d59|2026-11-17 16:57|refactor(scripts): changelog_guard 移入 scripts/ 随包分发
+9a685de|2026-11-17 16:57|ci: POSIX 批次门改走与本地同一条 preflight 入口
+54918df|2026-11-17 16:56|feat(preflight): 新增按改动文件映射测试的批次入口
+96fcd8b|2026-11-17 16:21|docs(audit): 留档 2026-11-17 设计缺陷审计与账本单一源设计案
+0eac771|2026-11-17 16:10|feat(canonical): 变异钉登记完整性检查（单向集合比对）
+0357bea|2026-11-17 16:09|feat(map): 「编排门行」登记为派生键并由占位渲染
+1a17306|2026-11-17 16:07|fix(map): html 文件条目的「N 个测试文件」纳入现有计数值域
+7fb581a|2026-11-17 15:58|docs(ledger): 门册校验器数转占位 + D201 裁决记录（收口）
+99acadc|2026-11-17 15:56|docs(map): 收掉章节版本串与门册两处手抄漂移（步 4）
+b0c230d|2026-11-17 15:51|refactor(gates): 计数改派生占位，删五条句式白名单正则（步 3）
+23d771e|2026-11-17 15:47|refactor(map): 数字快照改派生占位，check_snapshot 改重渲染门（步 2）
+9d0d52d|2026-11-17 15:45|feat(ledger): 新增派生数字生成器（账本单一源 · 步 1）
+de6990a|2026-11-17 13:39|docs(proposals): RFC 模板 §2.2 改写为「最强反方 + 证伪条件」
+dd80869|2026-11-15 19:16|chore(release): v0.3.0-beta.2
+efb83c1|2026-11-15 18:42|fix(validators): AC 文法扩容与解析口径统一（beta.2 发版门清障）
+7c3998e|2026-11-15 16:43|feat(e2e): 断言判据下沉——R3 异源门、R11 扩 select、不可验 AC 到期补偿、fixture schema 强制
+053c07d|2026-11-14 16:38|chore(release): v0.3.0-beta.1
+bf0e297|2026-11-14 16:29|test: 三处写死计数/基线随实况回正（0.3.0-beta.1 发版门清障）
+e443536|2026-11-14 16:08|docs(map): 符号 path:line 锚修复（models.py:115 / _lib.py:230，test_map_anchors --fix）
+78f2b4d|2026-11-14 16:07|docs(map): 计数锚刷新（refresh_count_anchors --write）
+42c6481|2026-11-14 16:07|docs(changelog): 两份 [Unreleased] 补齐批次窗口条目（0.3.0-beta.1 发版前置）
+f5a9350|2026-11-14 16:06|test(golden): 装配集 +atlas-onegate golden 重录（装配集一变即 --record 纪律）
+d053196|2026-11-14 16:05|feat(skills): atlas-onegate 仓内正本 + KICKOFF 协议档 + README 生态节（RFC-20261114-07 落刀批）
+f935469|2026-11-14 16:05|docs(duty): 案 10 结案登记（A）+ #51–#55 出库
+bd5bea1|2026-11-14 15:31|test(e2e): playground 真跑回归按次注入独立运行面（issue #66）
+8b6ac59|2026-11-14 15:30|fix(adapters): 默认扫描面按 apps[] 收窄并输出排除计数（issue #64）
+1f3aacb|2026-11-14 15:27|docs(proposals): RFC-20261114-07 v5 skill 归入 atlas 家族（atlas-onegate，仓内正本列落刀批）
+5b984d4|2026-11-14 15:26|fix(adapters): 非 UTF-8 源文件逐文件跳过并 WARN，不中断整次扫描（issue #65）
+445fbe8|2026-11-14 15:18|docs(proposals): RFC-20261114-07 v4 增机制四意见处置四分法（适用面扩至评审接力）
+1a2d313|2026-11-14 15:12|docs(proposals): RFC-20261114-07 触发面补零口令规则（用户纠正：方法默认生效，不起口令）
+28a8282|2026-11-14 15:10|docs(proposals): RFC-20261114-07 需求起手协议+并行双评审落盘（双评 dogfood 修后通过）
+3908196|2026-11-14 14:50|feat(sync): changelog_guard shadow 模式落盘（RFC-20261114-04 阶段 2a）
+460ef91|2026-11-14 14:36|feat(sync): changelog 批次规则 + docs/map 计数锚刷新器（RFC-20261114-04 阶段 0/1）
+68641aa|2026-11-14 14:30|fix(acceptance): SEAL_UPSTREAM_BIND_FROM 落值首版 D 批 tag 日期（案 10 A）
+3aa9307|2026-11-14 11:26|feat(duty): families.py --json 双轨机器段 + 3 钉 3 变异（D200 / RFC-20261114-06）
+65690c3|2026-11-14 09:04|docs(proposals): 三待办四提案落盘并过独立评审（RFC-20261114-02~05）
+69113d1|2026-11-14 06:55|chore(release): v0.2.0-beta.36
+2a09e0e|2026-11-14 06:44|fix(test): probe_browser 三态钉密闭化——delenv 通道环境再钉缓存判据分支
+2360e12|2026-11-14 01:26|test(golden): 装配集摘除批 golden 重录 + 提案收口回填（RFC-20261114-01）
+43ec05a|2026-11-14 00:58|fix(check): 对齐门装配态恒红三根全清 + 超时可诊断（issue #63）
+bfc8563|2026-11-14 00:54|feat(installer): 装配集摘除出厂测试目录 tests/（RFC-20261114-01）
+5e1169c|2026-11-13 23:16|chore(release): v0.2.0-beta.35
+f3a8f1f|2026-11-13 23:16|fix(tests): 按 D198 更新评审新鲜度标签（应用变化不再 stale）
+01e810a|2026-11-13 21:54|docs(gates): E2E 真跑行补回 D198 内容指纹条款（整行 1598≤1600）
+1f69893|2026-11-13 21:41|feat(e2e): read 取数原语 + 持窗收窗 + 视口/配色声明（D188–D191）
+b529a55|2026-11-13 20:19|chore(release): v0.2.0-beta.34
+65eee1d|2026-11-13 10:08|fix(gates): 清偿三笔门册手尾——框架名、E2E 行回长、duty 基线复冻
+01a15a4|2026-11-13 09:47|fix(test): 拆掉 i3-reachable 的同秒竞态（手工写锁固定旧 locked_at）
+87a0450|2026-11-13 09:18|docs(gates): 回正 test_validators 计数与 DESIGN 校验器清单（干净树 canonical 门复绿）
+104165f|2026-11-13 09:12|docs(map): 同步验收资产域计数与锚（12 器 / 74 tests / 1058 行 / main():966 / 内核 17 件）
+ac891d3|2026-11-12 20:58|feat(acceptance): 续签 reasons 复算两码（T-08/T-09/T-12）
+a7a7ba7|2026-11-12 20:32|feat(acceptance): #59 定义源命令面输出契约 + 写侧拒绝静默替换 + 自定义路径读者
+160d8e5|2026-11-12 20:27|docs(rfc): define seal move/reanchor semantics, renewal reason codes (v49 → v50)
+cf3e4e6|2026-11-12 20:18|feat(acceptance): 封条写侧 due 拒签 + 续签投影比对 + task acceptance --backfill
+40250e5|2026-11-12 19:57|fix(check): 补成员侧证据列 N/A 出口（evidence_columns_parent_only）
+29def6b|2026-11-12 19:21|test(solution): 补 D 批不可读 crosswalk 与父仓 Confirmed N/A 夹具
+2d46d4f|2026-11-12 19:21|fix(solution): 补 epoch_origin_history append-only 校验，堵住删项洗掉重指痕迹
+ecb52a5|2026-11-12 18:46|fix(solution): 按 RFC v49 收口封条互斥、retired 键锚固化与单提交仓 TOFU
+27aac6f|2026-11-12 18:09|fix(solution): 第四轮 C 批 7 条误判与覆盖声明
+b822917|2026-11-12 16:58|fix(solution): 修复 C 批封条第三轮 9 条误判与漏判
+18e714b|2026-11-12 16:37|docs(rfc): apply second D-batch feedback revision (v47 → v48)
+8437155|2026-11-12 16:21|feat(solution): 落地验收资产域 D 批 crosswalk 与契约 AC 门
+83f5413|2026-11-12 15:32|fix(solution): 修复 C 批封条返工的 5 条阻断与 9 条重要项
+3e44d62|2026-11-12 15:25|docs(rfc): apply D-batch implementation feedback (v46 → v47)
+1f92273|2026-11-12 14:37|feat(solution): 落地验收资产域 C 批封条与任务卡门
+a0bdd53|2026-11-12 12:30|feat(solution): B 批对齐 v45 —— 锁摘要三态、回滚/删键判据与任意 PRD 路径
+c15ccf7|2026-11-12 12:21|docs(rfc): freeze RFC-20261111-03 acceptance asset contract (v41→v45)
+7f94393|2026-11-12 11:03|test(solution): B 批 —— e2e validators 夹具升 v2 以过版本门
+affbb83|2026-11-12 11:03|feat(prd): B 批 —— prd_schema 2 模板与 Assumptions 证据两列
+3502296|2026-11-12 10:17|test(solution): B-0 夹具 —— ⓪ 层两条独立反例与切点评审门
+114c6f6|2026-11-12 10:17|feat(solution): B-0 —— 锁 ⓪ 层、切点评审门与三个纯函数
+c6ff399|2026-11-12 10:14|docs(rfc): 冻结 RFC-20261111-03 v40 基线并同步门册行数
+1d23dea|2026-11-11 17:39|docs(solution): B 批 6/N —— 补 definition 锁/首刷/错误码与 changelog 条目
+c401bf6|2026-11-11 17:36|refactor(solution): B 批 5/N —— 具名常量与 B 批 docstring 收口
+35371fa|2026-11-11 17:35|feat(solution): B 批 4/N —— definition_unbound 与 acceptance_cutover 一致性判据
+17cd766|2026-11-11 17:33|feat(solution): B 批 3/N —— PRD 写入 prd_version/prd_schema 与证据列谓词
+3c4b42f|2026-11-11 17:14|feat(solution): B 批 2/N —— definition.commit 首刷标记与完整历史主判据
+54babd9|2026-11-11 16:56|feat(solution): B 批 1/N —— init 在 reader_version_unknown 时 fail-closed
+0e602f0|2026-11-11 16:43|fix(install): 正向装配断言 .atlas/package.json，dry-run 守卫写明
+474f800|2026-11-11 16:43|fix(e2e): 回退 #54 表头门，用例行只按首列 ID 形态判定
+3bb60d8|2026-11-11 16:28|docs: changelog 未发布段统一 0.4.0，docs/map 行数快照同步
+8790f7e|2026-11-11 16:28|fix(e2e): reader_version 只认工具自身来源，收紧 #54 用例行判据
+19fc7ad|2026-11-11 16:27|fix(solution): 评审收口——migrate 写前校验与 install 守卫接线
+7ef1a0f|2026-11-11 15:57|docs(solution): P-4 五处落点翻到 0.4.0 并补 B-0 契约/帮助/地图
+7389738|2026-11-11 15:56|feat(e2e): #54 第二落点放宽到任意用例行与归档任务目录
+d30776c|2026-11-11 15:56|feat(solution): 清单 v2 解析、版本门 {1,2} 与 migrate --to 2（RFC-20261111-03 B-0）
+cbfb449|2026-11-11 13:57|docs(e2e): 契约同步维度门 FAIL 与休眠态 N/A 口径
+06a520c|2026-11-11 13:57|feat(e2e): 维度门升 FAIL 并修休眠态假绿
+411c971|2026-11-11 13:27|chore(map): 同步 e2e_console 行数与符号锚点
+e4614e3|2026-11-11 13:27|docs(e2e): 关联AC 多值口径落到契约与索引模板
+d7c03e9|2026-11-11 13:27|feat(e2e): 关联AC 多值消费点与用例第二落点校验（RFC-20261111-03 A 批）
+9cdb1a1|2026-11-11 12:29|chore(duty-review): #50 出库并复冻基线（残余盲区转 #59）
+23e9bc2|2026-11-11 11:02|docs(duty-review): #50 证据补 aa8fb46/53ec9e0；RFC-01 写清 J 的边界
+53ec9e0|2026-11-11 11:02|fix(solution-task): finding 按 (id, member) 分组，task_status 不再重复输出
+d6e6b07|2026-11-11 10:49|docs(duty-review): #50 证改为实现提交+用例名，观察行去掉留出集措辞（返工 I2/I3）
+aa8fb46|2026-11-11 10:49|fix(solution): 去重键补 member，跨 member finding 不再被吞（#50 返工 B1/B2/I1/M1）
+86a450d|2026-11-11 10:26|docs(proposal): e2e 提案字段改用「待 RFC 批准」写法（不引入契约误报）
+2616861|2026-11-11 10:21|feat(solution): AC 宽限版本门 + 契约/台账收口（#50 批次 3）
+c53a1ed|2026-11-11 10:12|feat(solution): --fix-acs 行级保字节移除悬空 AC（#50 批次 2）
+3620629|2026-11-11 10:04|feat(solution): 悬空 AC 默认 FAIL 且 check/task status 同源（#50 批次 1）
+e534145|2026-11-10 21:17|chore(release): v0.2.0-beta.33
+d63ad76|2026-11-10 21:17|docs(changelog): 补二期只读聚合视图与成员控制台待发段
+3c4a12d|2026-11-10 21:17|docs(map): 同步 e2e_console 行数锚 1590→1970
+5b0c871|2026-11-10 21:16|docs(map): 同步二期评审控制台符号行号锚
+a0814e0|2026-11-10 09:06|fix(e2e-console): 无本地 E2E 索引的成员不再拉起控制台
+67325e7|2026-11-10 08:54|feat(e2e-console): 父仓启动时自动拉起成员控制台
+3f038b2|2026-11-09 17:26|feat(e2e-console): 成员用例只读聚合与成员控制台入口
+cf40620|2026-11-09 11:11|test(solution-e2e): 二期只读聚合视图反面包
+1f74671|2026-11-09 11:10|docs(solution-e2e): 只读聚合视图契约与测试计数
+6ab4c8d|2026-11-09 11:10|fix(e2e-console): 草稿键加成员命名空间
+b8ccf8b|2026-11-09 11:09|feat(solution-e2e): 父仓只读聚合视图（RFC-20261108-02 二期）
+20a70ad|2026-11-09 08:43|docs(duty-review): #56 状态收口为已出库
+918c309|2026-11-08 21:56|chore(release): v0.2.0-beta.32
+a314f8d|2026-11-08 18:48|docs(solution-e2e): 模板补选择器样板，同步出厂测试计数 61
+a4115c3|2026-11-08 18:43|test(solution-e2e): 补空选 BLOCKED / 需求列非选择器 / 父仓写边界反面包
+052c3c8|2026-11-08 18:41|feat(solution-e2e): status 输出 AC 反向覆盖与 INCOMPLETE
+174027a|2026-11-08 18:37|test(solution-e2e): 补 H3/H5 跨成员隔离与 testid N/A 三条缓解
+43f29bf|2026-11-08 18:36|docs(solution-e2e): 父仓跨仓 E2E 契约与地图锚同批（一期）
+e6319c9|2026-11-08 18:36|feat(cli): atlas solution e2e status / verify / init（一期）
+427a2bc|2026-11-08 18:20|feat(console): 评审新鲜度按父仓模式分支 + run-time provenance（一期）
+88751d4|2026-11-08 18:17|feat(validators): 父仓模式 E2E 索引与 testid 门（一期）
+b9a221f|2026-11-08 18:13|feat(solution): 父仓跨仓 E2E 选择器与 solution check 专项（一期）
+6d461d6|2026-11-08 18:06|docs(proposals): 落 RFC-20261108-02 多仓方案层 E2E 一期方案
+73c5b9b|2026-11-08 14:16|docs(proposals): #56 补 D156 留出验证记录（未闭族）并修正台账指针
+0c8d196|2026-11-08 13:15|fix(test): 判据⑧改用装配戳识别副本态，并落 #56
+5a02e3b|2026-11-08 12:42|fix(test): 判据⑧ 在装配副本态判 N/A，不再 fail-closed
+6b4e8c6|2026-11-08 11:40|docs(changelog): 根 CHANGELOG 补 [Unreleased] 段
+9cb1817|2026-11-08 11:11|chore(docs): 清掉 D156 定案后的两处过期状态字段
+0e82b9e|2026-11-08 11:11|docs(proposals): D156 按 RFC 转移条件转定案
+9276e3c|2026-11-08 11:09|chore(duty-review): D156 观察行落盘 + #50–#55 入库并复冻族基线
+9211fc1|2026-11-08 10:34|docs(proposals): D156 三态确认为「单案修复（无留出集）」
+cad2d5d|2026-11-08 01:10|docs(release): 收口 RFC §4.6 否决词清单、批 4 延后结论与 Unreleased 变更记录
+beadf69|2026-11-08 01:08|fix(contract): 批 3b 恢复 REVIEW 定稿文案并收回过度否决词
+f2608b9|2026-11-08 00:55|feat(contract): 批 3 实现期纪律落盘（I2/I3/I4 + §2.5 门登记 + 地图锚 175）
+021bb38|2026-11-07 23:51|test(skill): 批 2 判据⑧ + 术语表四列（D187 定案）
+6ee7e43|2026-11-07 23:47|docs(skill): 批 1 frontend-design 拆分 —— 外移 2,769 字符至既有 references
+835b9f2|2026-11-07 23:31|docs(rfc): 批 0 复审修正 —— §4.5 必填字段与锚映射、候选条件化、VETO_WORDS 清单
+c0acc61|2026-11-07 23:09|docs(rfc): 批 0 落盘 RFC-20261107-01 与 D185/D186/D187 候选决策
+6e7855f|2026-11-07 21:37|chore(release): v0.2.0-beta.31
+6ee6319|2026-11-07 20:54|test(solution): 提交 init 自动生成的锁，修正 e2e 脏检查误判
+2fd6911|2026-11-07 19:57|docs(changelog): 补齐 v0.2.0-beta.31 的 [Unreleased] 两段
+ac08af0|2026-11-07 18:58|docs(solution): 统一 Phase 2/3/4 分期口径并补 README 多仓场景
+5571e53|2026-11-07 18:58|feat(solution): 锁升级为可复现 pin，补 diff 与 check --strict
+111065a|2026-11-06 14:23|chore(release): v0.2.0-beta.30
+8d330a6|2026-11-06 13:55|docs(rfc): RFC-20261106-01 首轮实测回填 + 升级出口「记缺口」计数区隔
+51a3102|2026-11-06 11:52|feat(e2e): RFC-20261106-01 覆盖维度生成纪律三件套（D184）——§6.1 逐维自检/数据构造提示 + apply AC 表第 4 列默认声明

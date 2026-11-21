@@ -1,0 +1,1447 @@
+@@cc088f5|2026-11-20|chore(release): v0.4.0-beta.4
+7	1	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+16	0	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+1	1	docs/map/index.md
+1	1	package.json
+
+@@ace8d4e|2026-11-20|docs(map): 行数锚与 §7 指针复位（reference 340 / atlas_check 1223 / §7@260）
+2	2	docs/map/apply.md
+2	2	docs/map/atlas-map.html
+1	1	docs/map/gates.md
+
+@@13dd970|2026-11-20|fix(workflow): 归档落盘改月度目录，判据不再静默出域（#70）
+1	1	_support/workflow_plan.py
+1	1	docs/map/cli.md
+1	1	patches/project-wiring/agent-pointer.md
+14	6	scripts/atlas_workflow.py
+38	7	tests/test_atlas_workflow.py
+25	0	tests/test_task_card.py
+14	1	validators/validate_task_card.py
+
+@@b69c264|2026-11-20|fix(workflow): E2E 索引解析留在 _support 内，不扩反向依赖清单（#69）
+64	14	_support/workflow_finish.py
+
+@@7780603|2026-11-20|fix(workflow): 补齐会话执行器、E2E 收口前置与任务归档（#68 #69 #70）
+100	4	_support/workflow_finish.py
+16	2	_support/workflow_plan.py
+1	1	bin/atlas.js
+1	1	docs/map/cli.md
+1	1	patches/project-wiring/agent-pointer.md
+180	67	scripts/atlas_review.py
+63	7	scripts/atlas_workflow.py
+8	4	shared/independent-review.md
+7	5	shared/stack-profile.md
+6	4	templates/stack-profile.yaml
+80	9	tests/test_atlas_review.py
+147	1	tests/test_atlas_workflow.py
+
+@@14e6bf2|2026-11-20|feat(adr,apply): 吸收「不做留证」与「偏差归因」两机制（RFC-20261120-01）
+10	0	CHANGELOG.md
+1	0	README.md
+20	0	apply/reference.md
+184	0	proposals/RFC-20261120-01-spec-drift-and-gap-attribution.md
+2	1	scripts/atlas_check.py
+13	2	shared/closeout.md
+1	1	shared/gates.md
+3	1	templates/adr/template.md
+32	1	tests/test_validate_adr.py
+10	6	validators/validate_adr.py
+
+@@f00d697|2026-11-20|feat(license): 补齐署名口径——NOTICE + 文档 CC BY 4.0 + CITATION
+6	0	CHANGELOG.md
+18	0	CITATION.cff
+17	0	NOTICE
+17	0	README.md
+1	1	docs/.vitepress/config.mts
+23	0	docs/LICENSE
+6	0	docs/guide/changelog.md
+3	3	docs/map/atlas-map.html
+2	2	docs/map/cli.md
+2	2	docs/map/index.md
+6	0	install.py
+1	0	package.json
+1	1	scripts/pkg_digest.py
+1	1	shared/gates.md
+
+@@e469a1d|2026-11-20|docs(map): 地图 UX 批收尾——pulse 高亮等 hashchange 重建画布的 rAF 级重试
+4	2	docs/map/atlas-map.html
+
+@@20d8b1d|2026-11-20|chore(release): v0.4.0-beta.3
+1	1	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+1	1	docs/guide/changelog.md
+218	10	docs/map/atlas-map.html
+1	1	docs/map/index.md
+1	1	package.json
+
+@@b689f47|2026-11-20|docs(changelog): 记录 workflow context 与 .gitignore 白名单
+15	0	CHANGELOG.md
+15	0	docs/guide/changelog.md
+
+@@2b1a8ba|2026-11-20|feat(wiring): .gitignore 默认追加 .atlas 白名单（引擎镜像不入库、规范与账本入库）
+57	20	patches/project-wiring/apply-wiring.py
+1	1	shared/gates.md
+49	18	tests/test_apply_wiring.py
+2	0	tests/test_project_wiring.py
+
+@@32280ea|2026-11-20|feat(workflow): 新增只读 atlas workflow context 预览命中规范
+1	1	README.md
+10	4	_support/workflow_context.py
+1	1	bin/atlas.js
+1	1	docs/map/cli.md
+42	1	scripts/atlas_workflow.py
+47	0	tests/test_atlas_workflow.py
+13	0	tests/test_workflow_context.py
+
+@@4fbb6de|2026-11-20|ci: 修正 Windows 原生 init 烟测预建 .atlas 触发覆盖守卫
+2	2	.github/workflows/tests.yml
+
+@@9548e20|2026-11-20|chore(release): v0.4.0-beta.2
+1	1	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+1	1	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+1	1	docs/map/index.md
+1	1	package.json
+
+@@5c8a988|2026-11-20|fix(workflow): 收紧收口/派发状态机与账本原子性
+20	0	CHANGELOG.md
+5	2	_support/workflow_dispatch.py
+56	5	_support/workflow_finish.py
+15	6	_support/workflow_plan.py
+20	0	docs/guide/changelog.md
+1	1	docs/map/cli.md
+48	2	scripts/atlas_workflow.py
+103	0	tests/test_atlas_workflow.py
+
+@@ae9a5ed|2026-11-20|fix(workflow): 修正最小注入的 glob/继承/围栏与规范开户口径
+1	1	README.md
+391	0	_support/workflow_context.py
+34	6	_support/workflow_dispatch.py
+18	10	_support/workflow_plan.py
+2	2	apply/reference.md
+9	1	docs/ecosystem/skills.md
+3	3	docs/map/atlas-map.html
+3	3	docs/map/cli.md
+1	1	docs/map/gates.md
+2	2	docs/map/index.md
+15	13	patches/project-wiring/agent-pointer.md
+15	2	rings/structure/reference.md
+10	1	scripts/atlas_workflow.py
+2	2	shared/gates.md
+1	1	shared/layout.md
+2	2	shared/single-source.md
+37	5	skills/atlas-structure/SKILL.md
+49	0	skills/atlas-structure/references/mcp-setup.md
+42	0	skills/atlas-structure/references/repository-analysis.md
+62	0	skills/atlas-structure/references/spec-task-planning.md
+75	0	skills/atlas-structure/references/spec-writing.md
+215	0	tests/test_workflow_context.py
+
+@@787dd42|2026-11-19|chore(release): v0.4.0-beta.1
+24	0	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+24	0	docs/guide/changelog.md
+4	4	docs/map/atlas-map.html
+1	1	docs/map/cli.md
+3	3	docs/map/index.md
+2	1	install.py
+1	1	package.json
+3	5	proposals/RFC-20261103-04-installer-golden/ablation-active.json
+26	18	proposals/RFC-20261103-04-installer-golden/dry-run-fresh.json
+0	206	proposals/RFC-20261103-04-installer-golden/dry-run-trellis.json
+114	166	proposals/RFC-20261103-04-installer-golden/fresh.json
+103	124	proposals/RFC-20261103-04-installer-golden/guard-dirty.json
+104	124	proposals/RFC-20261103-04-installer-golden/guard-untracked.json
+10	36	proposals/RFC-20261103-04-installer-golden/harness.py
+3	5	proposals/RFC-20261103-04-installer-golden/invalid-config.json
+3	5	proposals/RFC-20261103-04-installer-golden/missing-layout.json
+130	215	proposals/RFC-20261103-04-installer-golden/update.json
+5	4	specs/2026-11-19-retire-trellis/spec.md
+
+@@e9423c3|2026-11-19|refactor(workflow): 移除 Trellis 宿主依赖，执行层收敛到 atlas workflow (D205)
+3	4	.github/workflows/tests.yml
+84	89	DESIGN.md
+12	12	README.md
+17	19	RUNBOOK.md
+1	1	_support/layout.py
+1	1	_support/review_scope_core.py
+10	24	_support/solution.py
+2	2	_support/solution_seal.py
+51	56	_support/solution_task.py
+133	0	_support/workflow_dispatch.py
+93	0	_support/workflow_finish.py
+234	0	_support/workflow_plan.py
+3	3	adapters/_graph.py
+25	6	adapters/_jpa.py
+1	1	adapters/_lib.py
+1	1	adapters/ac/js.py
+1	1	adapters/ac/junit.py
+1	1	adapters/ac/pytest.py
+185	0	adapters/java_tests.py
+309	0	adapters/java_web.py
+1	1	adapters/models.py
+36	46	apply/reference.md
+23	30	bin/atlas.js
+0	29	bin/platform.js
+8	8	docs/concepts/architecture.md
+4	4	docs/concepts/layout.md
+1	1	docs/concepts/rings.md
+16	19	docs/design/distribution.md
+2	2	docs/design/e2e-ring.md
+19	19	docs/design/overview.md
+5	5	docs/design/prd-ring.md
+5	5	docs/design/structure-ring.md
+13	3	docs/ecosystem/skills.md
+1	1	docs/guide/how-it-works.md
+8	9	docs/guide/quick-start.md
+1	1	docs/index.md
+2	2	docs/innovations/assertions.md
+11	1	docs/map/adapters.md
+10	10	docs/map/apply.md
+25	26	docs/map/atlas-map.html
+7	7	docs/map/cli.md
+4	4	docs/map/gates.md
+1	1	docs/map/graph.md
+13	13	docs/map/index.md
+16	2	duty-review/QUEUE.md
+13	13	extensions/pi.ts
+64	124	install.py
+7	10	install.sh
+0	1	package.json
+10	11	patches/project-wiring/README.md
+7	6	patches/project-wiring/agent-pointer.md
+11	245	patches/project-wiring/apply-wiring.py
+0	31	patches/workflow-e2e-trigger/README.md
+0	263	patches/workflow-e2e-trigger/apply-patches.py
+0	1	patches/workflow-e2e-trigger/breadcrumb-in-progress-inline.insert.md
+0	1	patches/workflow-e2e-trigger/breadcrumb-in-progress.insert.md
+0	1	patches/workflow-e2e-trigger/e2e-console-at-3-5.insert.md
+0	1	patches/workflow-e2e-trigger/e2e-trigger-before-final-pass.insert.md
+0	43	patches/workflow-e2e-trigger/spec.json
+0	15	patches/workflow-plan-apply/1.6-plan-apply.insert.md
+0	59	patches/workflow-plan-apply/README.md
+0	263	patches/workflow-plan-apply/apply-patches.py
+0	1	patches/workflow-plan-apply/breadcrumb-planning-inline.insert.md
+0	1	patches/workflow-plan-apply/breadcrumb-planning.insert.md
+0	1	patches/workflow-plan-apply/phase-index-1.6.insert.md
+0	43	patches/workflow-plan-apply/spec.json
+0	39	patches/workflow-root-cause/README.md
+0	266	patches/workflow-root-cause/apply-patches.py
+0	1	patches/workflow-root-cause/root-cause-first-red.insert.md
+0	16	patches/workflow-root-cause/spec.json
+0	65	patches/workflow-skill-routing/README.md
+0	266	patches/workflow-skill-routing/apply-patches.py
+0	1	patches/workflow-skill-routing/breadcrumb-in-progress-inline.insert.md
+0	1	patches/workflow-skill-routing/breadcrumb-in-progress.insert.md
+0	1	patches/workflow-skill-routing/grilling-planning-inline.insert.md
+0	1	patches/workflow-skill-routing/grilling-planning.insert.md
+0	1	patches/workflow-skill-routing/no-negative-echo-in-progress-inline.insert.md
+0	1	patches/workflow-skill-routing/no-negative-echo-in-progress.insert.md
+0	1	patches/workflow-skill-routing/reuse-in-progress-inline.insert.md
+0	1	patches/workflow-skill-routing/reuse-in-progress.insert.md
+0	1	patches/workflow-skill-routing/reuse-planning-inline.insert.md
+0	1	patches/workflow-skill-routing/reuse-planning.insert.md
+0	106	patches/workflow-skill-routing/spec.json
+0	3	patches/workflow-skill-routing/ui-skill-note.insert.md
+62	0	proposals/BENCHMARK-20261119-02-playground.md
+86	0	proposals/BENCHMARK-20261119-03-full-workflow.md
+44	0	proposals/REVIEW-20261119-02-check-actor-dual.md
+124	0	proposals/REVIEW-20261119-03-five-mechanisms-synthesis-dual.md
+119	0	proposals/RFC-20261119-02-check-actor-auto-review.md
+635	0	proposals/RFC-20261119-03-five-open-source-mechanisms-synthesis.md
+10	10	rings/e2e/reference.md
+5	5	rings/prd/reference.md
+13	13	rings/structure/reference.md
+633	0	scripts/ablate_all.py
+181	0	scripts/adopt_static.py
+1	1	scripts/atlas_apply_seal.py
+147	16	scripts/atlas_check.py
+69	14	scripts/atlas_review.py
+3	3	scripts/atlas_solution.py
+354	0	scripts/atlas_workflow.py
+1	1	scripts/closeout_derive.py
+2	2	scripts/gen_testid_stub.py
+2	2	scripts/impact_reconcile.py
+5	5	scripts/impact_report.py
+21	21	scripts/refresh_structure.py
+197	0	scripts/run_playground_benchmark.py
+196	0	scripts/run_playground_full_workflow.py
+0	102	scripts/run_python.js
+6	6	shared/closeout.md
+3	3	shared/frontend-reuse.md
+9	8	shared/gates.md
+4	4	shared/global-rules.md
+5	5	shared/independent-review.md
+13	14	shared/layout.md
+8	8	shared/single-source.md
+8	8	shared/solution.md
+2	2	shared/stack-profile.md
+119	0	skills/atlas-ablate/SKILL.md
+6	6	skills/atlas-apply/SKILL.md
+2	2	skills/atlas-e2e/SKILL.md
+1	1	skills/atlas-prd/SKILL.md
+3	3	skills/atlas-structure/SKILL.md
+186	0	specs/2026-11-19-retire-trellis/spec.md
+63	0	specs/2026-11-19-retire-trellis/tasks.md
+1	1	templates/atlas.solution.yaml
+1	1	templates/prd/global.md
+2	2	templates/stack-profile.yaml
+4	4	templates/structure/domain-tour.md
+4	4	templates/structure/domain.md
+151	0	tests/test_ablate_all.py
+1	1	tests/test_ablation.py
+1	1	tests/test_ac_crosswalk.py
+213	0	tests/test_adopt_static.py
+0	469	tests/test_apply_patches.py
+2	2	tests/test_apply_record.py
+7	126	tests/test_apply_wiring.py
+36	1	tests/test_atlas_review.py
+10	11	tests/test_atlas_solution.py
+214	0	tests/test_atlas_workflow.py
+3	11	tests/test_cli_commands.py
+3	3	tests/test_closeout_derive.py
+15	298	tests/test_frontend_reuse_patch.py
+143	0	tests/test_gate_payload_policy.py
+1	1	tests/test_graph_backend.py
+5	5	tests/test_impact_reconcile.py
+1	1	tests/test_impact_report.py
+64	0	tests/test_install_profile.py
+18	20	tests/test_install_selfcheck.py
+1	1	tests/test_layout.py
+1	1	tests/test_map_anchors.py
+35	262	tests/test_project_wiring.py
+20	20	tests/test_refresh_facts.py
+0	109	tests/test_run_python_launcher.py
+13	13	tests/test_solution_e2e_validators.py
+18	44	tests/test_solution_task.py
+11	11	tests/test_structure_validator.py
+2	2	tests/test_task_acceptance_backfill.py
+14	14	tests/test_task_card.py
+2	2	tests/test_validate_walkthrough.py
+9	9	tests/test_validators.py
+134	0	validators/validate_adopt_facts.py
+6	6	validators/validate_e2e_index.py
+32	0	validators/validate_prd.py
+4	4	validators/validate_structure.py
+6	6	validators/validate_task_card.py
+3	3	validators/validate_testids.py
+4	4	validators/validate_walkthrough.py
+
+@@d657fa7|2026-11-19|chore(release): v0.3.0-beta.6
+1	1	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+1	1	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+1	1	docs/map/index.md
+1	1	package.json
+
+@@cd00400|2026-11-19|docs(changelog): 为 D202 补齐 [Unreleased] 说明以备发版
+10	0	CHANGELOG.md
+10	0	docs/guide/changelog.md
+
+@@faafbcd|2026-11-19|feat(graph): 退役 cgc 外部 AST 图谱并确立轻量语义透镜 (RFC-20261119-01 / D202)
+3	2	DESIGN.md
+1	1	_support/solution.py
+206	271	adapters/_graph.py
+5	9	adapters/routes.py
+7	8	apply/reference.md
+1	1	docs/map/adapters.md
+1	1	docs/map/apply.md
+4	4	docs/map/atlas-map.html
+7	7	docs/map/graph.md
+106	0	proposals/RFC-20261119-01-retire-ast-graph-and-aoci-adoption.md
+4	3	rings/structure/reference.md
+19	21	scripts/impact_report.py
+4	14	shared/stack-profile.md
+21	12	tests/test_impact_report.py
+10	26	tests/test_routes_graph_backend.py
+2	0	tests/test_stack_profile_graph.py
+2	0	validators/validate_stack_profile.py
+
+@@e69bca9|2026-11-19|chore(release): v0.3.0-beta.5
+1	1	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+1	1	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+1	1	docs/map/index.md
+1	1	package.json
+
+@@cbd967b|2026-11-19|docs(changelog): guide 页补 beta.5 批次 [Unreleased]（release.py 收拢硬前置）
+6	0	docs/guide/changelog.md
+
+@@ad77741|2026-11-19|fix(harness): pi 扩展 turn_end 门禁告警按失败签名去重，历史失败不逐轮复读（issue #67）
+6	0	CHANGELOG.md
+76	13	extensions/pi.ts
+1	1	shared/gates.md
+1	1	shared/global-rules.md
+153	0	tests/test_apply_wiring.py
+
+@@a7df338|2026-11-18|docs(real-run-day): 统一源包口径为运行中那份 CLI
+1	1	docs/guide/real-run-day.md
+
+@@2eb19c3|2026-11-18|docs: 按 beta.4 对账升级路径与记账权威
+1	1	README.md
+1	1	docs/design/distribution.md
+1	1	docs/guide/changelog.md
+4	3	docs/guide/quick-start.md
+1	1	docs/index.md
+
+@@da6f2dd|2026-11-17|chore(release): v0.3.0-beta.4
+1	1	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+1	1	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+1	1	docs/map/index.md
+1	1	package.json
+
+@@2191290|2026-11-17|docs(map): 同步 upgrade 修复后的用例计数
+2	2	docs/map/atlas-map.html
+1	1	docs/map/cli.md
+
+@@196e854|2026-11-17|fix(cli): upgrade 跟着运行路径装，不再诱导 sudo
+6	0	CHANGELOG.md
+79	4	bin/atlas.js
+8	0	docs/guide/changelog.md
+1	1	docs/map/index.md
+86	0	tests/test_cli_commands.py
+
+@@f8e2fe6|2026-11-17|refactor(kernel): 把 §10 封条写侧抽成 solution_seal_ops
+25	197	_support/solution.py
+215	0	_support/solution_seal_ops.py
+1	1	docs/map/atlas-map.html
+1	1	docs/map/index.md
+
+@@afacccb|2026-11-17|test(solution): 让 prd_schema_gate_unarmed 两侧都能打中
+10	5	tests/test_atlas_solution.py
+
+@@f58a1f0|2026-11-17|chore(release): v0.3.0-beta.3
+1	1	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+1	1	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+1	1	docs/map/index.md
+1	1	package.json
+
+@@357d2bb|2026-11-17|fix(kernel): 清单版本门改用 0.3.0 预发布线，修复 beta 读者被拒 v2
+4	0	CHANGELOG.md
+9	3	_support/solution.py
+8	0	docs/guide/changelog.md
+1	1	shared/gates.md
+29	0	tests/test_atlas_solution.py
+
+@@736473e|2026-11-17|docs(archive): 留档排期判断与拆分方案（2026-11-17）
+220	0	2026-11-17/monolith-split/outputs/solution-split-plan.md
+583	0	2026-11-17/open-issues-triage/outputs/open-issues-triage.md
+122	0	2026-11-17/open-issues-triage/work/facts.md
+
+@@2e7b35d|2026-11-17|docs(kernel): solution.py 顶部加分节地图
+1	0	CHANGELOG.md
+13	0	_support/solution.py
+
+@@70f9d4b|2026-11-17|refactor(kernel): 把 _valid_task_slug / _assets_root 下沉到 §2 顶部
+23	20	_support/solution.py
+
+@@318b553|2026-11-17|docs(shared): 决策作废改用行级标记，只约束增量
+2	1	CHANGELOG.md
+1	0	shared/global-rules.md
+
+@@93488ee|2026-11-17|docs(changelog): 记 2A 的 semver 单源与分层棘轮
+5	0	CHANGELOG.md
+
+@@f2b3b45|2026-11-17|test(kernel): 反向依赖棘轮，_support → validators 只许减不许增
+5	1	_support/solution_e2e.py
+30	0	tests/test_shared_kernel.py
+
+@@49c58e3|2026-11-17|refactor(shared): semver 比较收敛为单源，不可解析统一 fail-closed
+63	0	_support/semver.py
+13	16	_support/solution.py
+1	1	docs/map/atlas-map.html
+1	1	docs/map/index.md
+24	35	scripts/atlas_solution.py
+1	1	shared/gates.md
+33	0	tests/test_atlas_solution.py
+
+@@3201315|2026-11-17|docs(duty-review): 增设已知环境红登记簿，明确缺陷/环境红/issue 的分工
+2	0	RUNBOOK.md
+3	1	duty-review/README.md
+61	0	duty-review/env-reds.md
+
+@@3d6c939|2026-11-17|fix(tests): 真跑回归缺 Playwright 时如实 skip 并写明原因
+38	13	tests/test_atlas_verify_playground.py
+
+@@4dcf1a4|2026-11-17|docs(map): 同步 e2e_console 行数声明
+2	2	docs/map/atlas-map.html
+1	1	docs/map/e2egen.md
+1	1	docs/map/index.md
+
+@@e726887|2026-11-17|docs(changelog): 记 E1 来源归因修复
+4	0	CHANGELOG.md
+
+@@dbb64f5|2026-11-17|fix(e2e): 缺 source 的事件按 E1 切点归因，不再一律算 prototype
+1	1	_support/solution_e2e.py
+22	3	scripts/e2e_console.py
+31	0	tests/test_e2e_console.py
+
+@@17ffaad|2026-11-17|refactor(gates): 校验器数改派生占位，收口 D201 残留
+1	1	shared/gates.md
+6	4	tests/test_canonical_consistency.py
+
+@@f9ff819|2026-11-17|docs(changelog): 补 [Unreleased] 记账
+23	0	CHANGELOG.md
+
+@@7831b68|2026-11-17|feat(changelog): 权威收敛为 CHANGELOG.md，每批一行
+5	5	scripts/changelog_guard.py
+2	2	shared/closeout.md
+13	13	tests/test_sync_automation.py
+
+@@e0b0d59|2026-11-17|refactor(scripts): changelog_guard 移入 scripts/ 随包分发
+0	0	{tests => scripts}/changelog_guard.py
+1	1	shared/closeout.md
+
+@@9a685de|2026-11-17|ci: POSIX 批次门改走与本地同一条 preflight 入口
+19	5	.github/workflows/tests.yml
+
+@@54918df|2026-11-17|feat(preflight): 新增按改动文件映射测试的批次入口
+2	2	docs/map/atlas-map.html
+1	1	docs/map/gates.md
+1	1	docs/map/index.md
+195	0	scripts/preflight.py
+1	1	shared/gates.md
+3	0	tests/refresh_count_anchors.py
+126	0	tests/test_preflight.py
+
+@@96fcd8b|2026-11-17|docs(audit): 留档 2026-11-17 设计缺陷审计与账本单一源设计案
+353	0	2026-11-17/design-defect-audit/outputs/design-defect-audit.md
+90	0	2026-11-17/design-defect-audit/work/metrics.md
+269	0	2026-11-17/ledger-design/outputs/ledger-design.md
+85	0	2026-11-17/ledger-design/work/facts.md
+
+@@0eac771|2026-11-17|feat(canonical): 变异钉登记完整性检查（单向集合比对）
+2	2	docs/map/gates.md
+19	0	scripts/ledger_snapshot.py
+1	1	shared/gates.md
+51	2	tests/test_canonical_consistency.py
+
+@@0357bea|2026-11-17|feat(map): 「编排门行」登记为派生键并由占位渲染
+1	1	docs/map/index.md
+17	0	scripts/ledger_snapshot.py
+1	1	tests/test_sync_automation.py
+
+@@1a17306|2026-11-17|fix(map): html 文件条目的「N 个测试文件」纳入现有计数值域
+1	0	tests/test_map_anchors.py
+
+@@7fb581a|2026-11-17|docs(ledger): 门册校验器数转占位 + D201 裁决记录（收口）
+1	0	DESIGN.md
+1	1	docs/map/gates.md
+
+@@99acadc|2026-11-17|docs(map): 收掉章节版本串与门册两处手抄漂移（步 4）
+1	1	docs/map/adapters.md
+1	1	docs/map/apply.md
+1	1	docs/map/cli.md
+1	1	docs/map/e2egen.md
+4	4	docs/map/gates.md
+1	1	docs/map/graph.md
+1	1	docs/map/index.md
+1	1	docs/map/review.md
+9	0	scripts/ledger_snapshot.py
+1	1	shared/gates.md
+3	2	tests/test_canonical_consistency.py
+
+@@b0c230d|2026-11-17|refactor(gates): 计数改派生占位，删五条句式白名单正则（步 3）
+1	1	DESIGN.md
+26	26	shared/gates.md
+11	4	tests/refresh_count_anchors.py
+144	73	tests/test_canonical_consistency.py
+
+@@23d771e|2026-11-17|refactor(map): 数字快照改派生占位，check_snapshot 改重渲染门（步 2）
+8	8	docs/map/index.md
+7	1	tests/refresh_count_anchors.py
+28	16	tests/test_map_anchors.py
+15	7	tests/test_sync_automation.py
+
+@@9d0d52d|2026-11-17|feat(ledger): 新增派生数字生成器（账本单一源 · 步 1）
+2	2	docs/map/atlas-map.html
+1	1	docs/map/index.md
+172	0	scripts/ledger_snapshot.py
+1	1	shared/gates.md
+121	0	tests/test_ledger_snapshot.py
+
+@@de6990a|2026-11-17|docs(proposals): RFC 模板 §2.2 改写为「最强反方 + 证伪条件」
+6	6	proposals/TEMPLATE.md
+
+@@dd80869|2026-11-15|chore(release): v0.3.0-beta.2
+1	1	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+1	1	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+2	2	docs/map/index.md
+1	1	package.json
+
+@@efb83c1|2026-11-15|fix(validators): AC 文法扩容与解析口径统一（beta.2 发版门清障）
+19	0	CHANGELOG.md
+2	1	_support/ac_coverage.py
+18	7	_support/ac_crosswalk.py
+10	3	_support/solution.py
+1	1	_support/solution_e2e.py
+2	2	_support/solution_task.py
+2	2	adapters/ac/js.py
+1	1	adapters/ac/junit.py
+1	1	adapters/ac/pytest.py
+10	0	docs/guide/changelog.md
+4	4	docs/map/atlas-map.html
+2	2	docs/map/e2egen.md
+3	3	docs/map/index.md
+1	1	rings/e2e/reference.md
+26	4	scripts/atlas_apply_seal.py
+2	2	shared/gates.md
+64	1	tests/test_ac_crosswalk.py
+17	0	tests/test_apply_record.py
+33	0	tests/test_solution_e2e.py
+26	0	tests/test_validators.py
+2	2	validators/validate_ac_alignment.py
+3	3	validators/validate_e2e_index.py
+24	14	validators/validate_prd.py
+
+@@7c3998e|2026-11-15|feat(e2e): 断言判据下沉——R3 异源门、R11 扩 select、不可验 AC 到期补偿、fixture schema 强制
+30	0	docs/guide/changelog.md
+11	7	rings/e2e/reference.md
+19	4	scripts/gen_e2e_scripts.py
+119	0	scripts/gen_fixture_schemas.py
+42	0	tests/test_e2e_hidden_absent.py
+1	0	tests/test_gen_e2e_scripts.py
+49	0	tests/test_gen_fixture_schemas.py
+126	16	tests/test_validators.py
+78	10	validators/validate_e2e_index.py
+24	5	validators/validate_e2e_mocks.py
+51	2	validators/validate_prd.py
+
+@@053c07d|2026-11-14|chore(release): v0.3.0-beta.1
+1	1	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+1	1	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+2	2	docs/map/index.md
+1	1	package.json
+
+@@bf0e297|2026-11-14|test: 三处写死计数/基线随实况回正（0.3.0-beta.1 发版门清障）
+1	1	shared/gates.md
+4	2	tests/test_duty_bug_families.py
+2	1	tests/test_install_selfcheck.py
+
+@@e443536|2026-11-14|docs(map): 符号 path:line 锚修复（models.py:115 / _lib.py:230，test_map_anchors --fix）
+2	2	docs/map/adapters.md
+
+@@78f2b4d|2026-11-14|docs(map): 计数锚刷新（refresh_count_anchors --write）
+5	5	docs/map/adapters.md
+3	3	docs/map/atlas-map.html
+1	1	docs/map/index.md
+
+@@42c6481|2026-11-14|docs(changelog): 两份 [Unreleased] 补齐批次窗口条目（0.3.0-beta.1 发版前置）
+16	0	CHANGELOG.md
+22	0	docs/guide/changelog.md
+
+@@f5a9350|2026-11-14|test(golden): 装配集 +atlas-onegate golden 重录（装配集一变即 --record 纪律）
+2	2	proposals/RFC-20261103-04-installer-golden/ablation-active.json
+6	2	proposals/RFC-20261103-04-installer-golden/dry-run-fresh.json
+6	2	proposals/RFC-20261103-04-installer-golden/dry-run-trellis.json
+19	15	proposals/RFC-20261103-04-installer-golden/fresh.json
+15	15	proposals/RFC-20261103-04-installer-golden/guard-dirty.json
+16	16	proposals/RFC-20261103-04-installer-golden/guard-untracked.json
+2	2	proposals/RFC-20261103-04-installer-golden/invalid-config.json
+2	2	proposals/RFC-20261103-04-installer-golden/missing-layout.json
+22	16	proposals/RFC-20261103-04-installer-golden/update.json
+
+@@d053196|2026-11-14|feat(skills): atlas-onegate 仓内正本 + KICKOFF 协议档 + README 生态节（RFC-20261114-07 落刀批）
+5	0	README.md
+60	0	proposals/KICKOFF-requirement-protocol.md
+2	0	proposals/README.md
+79	0	skills/atlas-onegate/SKILL.md
+
+@@f935469|2026-11-14|docs(duty): 案 10 结案登记（A）+ #51–#55 出库
+4	2	duty-review/QUEUE.md
+1	6	duty-review/bugs.md
+
+@@bd5bea1|2026-11-14|test(e2e): playground 真跑回归按次注入独立运行面（issue #66）
+38	12	tests/test_atlas_verify_playground.py
+
+@@8b6ac59|2026-11-14|fix(adapters): 默认扫描面按 apps[] 收窄并输出排除计数（issue #64）
+123	1	adapters/_lib.py
+34	14	adapters/api.py
+71	48	adapters/models.py
+29	13	adapters/routes.py
+49	0	tests/test_adapter_api.py
+26	0	tests/test_adapter_models.py
+14	0	tests/test_adapter_routes.py
+
+@@1f3aacb|2026-11-14|docs(proposals): RFC-20261114-07 v5 skill 归入 atlas 家族（atlas-onegate，仓内正本列落刀批）
+3	1	proposals/RFC-20261114-07-requirement-kickoff-and-dual-review.md
+
+@@5b984d4|2026-11-14|fix(adapters): 非 UTF-8 源文件逐文件跳过并 WARN，不中断整次扫描（issue #65）
+5	2	adapters/_jpa.py
+21	2	adapters/_lib.py
+32	12	adapters/api.py
+17	14	adapters/models.py
+41	0	tests/test_adapter_api.py
+51	2	tests/test_adapter_models.py
+
+@@445fbe8|2026-11-14|docs(proposals): RFC-20261114-07 v4 增机制四意见处置四分法（适用面扩至评审接力）
+12	0	proposals/RFC-20261114-07-requirement-kickoff-and-dual-review.md
+
+@@1a2d313|2026-11-14|docs(proposals): RFC-20261114-07 触发面补零口令规则（用户纠正：方法默认生效，不起口令）
+3	0	proposals/RFC-20261114-07-requirement-kickoff-and-dual-review.md
+
+@@28a8282|2026-11-14|docs(proposals): RFC-20261114-07 需求起手协议+并行双评审落盘（双评 dogfood 修后通过）
+128	0	proposals/RFC-20261114-07-requirement-kickoff-and-dual-review.md
+
+@@3908196|2026-11-14|feat(sync): changelog_guard shadow 模式落盘（RFC-20261114-04 阶段 2a）
+1	0	shared/closeout.md
+217	0	tests/changelog_guard.py
+168	4	tests/test_sync_automation.py
+
+@@460ef91|2026-11-14|feat(sync): changelog 批次规则 + docs/map 计数锚刷新器（RFC-20261114-04 阶段 0/1）
+2	2	docs/map/atlas-map.html
+1	1	docs/map/index.md
+6	0	shared/closeout.md
+1	1	shared/gates.md
+305	0	tests/refresh_count_anchors.py
+182	0	tests/test_sync_automation.py
+
+@@68641aa|2026-11-14|fix(acceptance): SEAL_UPSTREAM_BIND_FROM 落值首版 D 批 tag 日期（案 10 A）
+4	0	CHANGELOG.md
+1	1	_support/solution.py
+6	0	docs/guide/changelog.md
+
+@@3aa9307|2026-11-14|feat(duty): families.py --json 双轨机器段 + 3 钉 3 变异（D200 / RFC-20261114-06）
+10	0	CHANGELOG.md
+1	1	DESIGN.md
+3	3	duty-review/README.md
+22	1	duty-review/families.py
+51	0	proposals/REVIEW-20261114-06-families-json-dual-track.md
+70	0	proposals/RFC-20261114-06-families-json-dual-track.md
+4	1	scripts/duty_signals.sh
+1	1	shared/gates.md
+96	1	tests/test_duty_bug_families.py
+
+@@65690c3|2026-11-14|docs(proposals): 三待办四提案落盘并过独立评审（RFC-20261114-02~05）
+90	0	proposals/RFC-20261114-02-rollout-intro-pack.md
+83	0	proposals/RFC-20261114-03-real-run-day-friction-ablation.md
+95	0	proposals/RFC-20261114-04-sync-automation.md
+80	0	proposals/RFC-20261114-05-proposal-clarify-section.md
+
+@@69113d1|2026-11-14|chore(release): v0.2.0-beta.36
+7	1	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+5	1	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+2	2	docs/map/index.md
+1	1	package.json
+
+@@2a09e0e|2026-11-14|fix(test): probe_browser 三态钉密闭化——delenv 通道环境再钉缓存判据分支
+5	0	tests/test_e2e_console.py
+
+@@2360e12|2026-11-14|test(golden): 装配集摘除批 golden 重录 + 提案收口回填（RFC-20261114-01）
+7	5	proposals/RFC-20261103-04-installer-golden/dry-run-fresh.json
+7	5	proposals/RFC-20261103-04-installer-golden/dry-run-trellis.json
+90	125	proposals/RFC-20261103-04-installer-golden/fresh.json
+73	116	proposals/RFC-20261103-04-installer-golden/guard-dirty.json
+74	117	proposals/RFC-20261103-04-installer-golden/guard-untracked.json
+1	1	proposals/RFC-20261103-04-installer-golden/missing-layout.json
+101	127	proposals/RFC-20261103-04-installer-golden/update.json
+3	3	proposals/RFC-20261114-01-assembly-drop-factory-tests.md
+
+@@43ec05a|2026-11-14|fix(check): 对齐门装配态恒红三根全清 + 超时可诊断（issue #63）
+11	0	CHANGELOG.md
+10	0	docs/guide/changelog.md
+1	0	duty-review/bugs.md
+34	3	scripts/atlas_check.py
+2	2	shared/gates.md
+40	0	tests/test_atlas_check.py
+6	0	tests/test_atlas_solution.py
+22	4	tests/test_atlas_verify_playground.py
+6	3	tests/test_duty_bug_families.py
+
+@@bfc8563|2026-11-14|feat(installer): 装配集摘除出厂测试目录 tests/（RFC-20261114-01）
+7	7	docs/map/atlas-map.html
+4	4	docs/map/cli.md
+5	5	docs/map/gates.md
+3	3	docs/map/index.md
+40	3	install.py
+2	1	install.sh
+0	1	package.json
+136	0	proposals/RFC-20261114-01-assembly-drop-factory-tests.md
+9	7	scripts/atlas_check.py
+3	2	scripts/backflow.py
+52	2	scripts/pkg_digest.py
+3	3	shared/gates.md
+117	0	tests/test_assembly_surface.py
+7	7	tests/test_backflow.py
+5	0	tests/test_tools.py
+
+@@5e1169c|2026-11-13|chore(release): v0.2.0-beta.35
+20	1	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+29	0	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+2	2	docs/map/index.md
+1	1	package.json
+
+@@f3a8f1f|2026-11-13|fix(tests): 按 D198 更新评审新鲜度标签（应用变化不再 stale）
+21	15	tests/test_e2e_console_solution.py
+
+@@01e810a|2026-11-13|docs(gates): E2E 真跑行补回 D198 内容指纹条款（整行 1598≤1600）
+1	1	shared/gates.md
+
+@@1f69893|2026-11-13|feat(e2e): read 取数原语 + 持窗收窗 + 视口/配色声明（D188–D191）
+10	0	CHANGELOG.md
+14	1	DESIGN.md
+628	0	_support/auth_state.py
+14	4	_support/evidence_archive.py
+121	0	_support/run_workspace.py
+102	30	_support/stack_profile.py
+16	0	_support/url_merge.py
+22	0	bin/atlas.js
+11	11	docs/map/atlas-map.html
+1	1	docs/map/cli.md
+10	10	docs/map/e2egen.md
+2	2	docs/map/gates.md
+7	7	docs/map/index.md
+494	0	proposals/RFC-20261111-04-prd-positive-fork-and-e2e-derivation.md
+336	0	proposals/RFC-20261112-01-e2e-auth-session-reuse.md
+48	17	rings/e2e/reference.md
+251	0	scripts/atlas_e2e_login.py
+484	135	scripts/e2e_console.py
+765	89	scripts/gen_e2e_scripts.py
+2	2	shared/gates.md
+3	3	shared/stack-profile.md
+2	0	skills/atlas-e2e/SKILL.md
+27	36	templates/e2e/console/app.js
+1	8	templates/e2e/console/console.css
+2	2	templates/e2e/console/index.html
+372	0	tests/test_e2e_auth_preflight.py
+205	9	tests/test_e2e_console.py
+604	9	tests/test_gen_e2e_scripts.py
+108	0	tests/test_run_workspace.py
+114	72	tests/test_solution_e2e_view.py
+230	1	tests/test_validators.py
+108	2	validators/validate_e2e_index.py
+9	7	validators/validate_e2e_mocks.py
+131	11	validators/validate_stack_profile.py
+19	4	validators/validate_testids.py
+
+@@b529a55|2026-11-13|chore(release): v0.2.0-beta.34
+33	0	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+29	1	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+1	1	docs/map/index.md
+1	1	package.json
+
+@@65eee1d|2026-11-13|fix(gates): 清偿三笔门册手尾——框架名、E2E 行回长、duty 基线复冻
+2	2	shared/gates.md
+4	3	tests/test_duty_bug_families.py
+
+@@01a15a4|2026-11-13|fix(test): 拆掉 i3-reachable 的同秒竞态（手工写锁固定旧 locked_at）
+4	0	tests/test_apply_record.py
+
+@@87a0450|2026-11-13|docs(gates): 回正 test_validators 计数与 DESIGN 校验器清单（干净树 canonical 门复绿）
+1	1	DESIGN.md
+1	1	shared/gates.md
+
+@@104165f|2026-11-13|docs(map): 同步验收资产域计数与锚（12 器 / 74 tests / 1058 行 / main():966 / 内核 17 件）
+12	12	docs/map/atlas-map.html
+17	17	docs/map/gates.md
+6	6	docs/map/index.md
+
+@@ac891d3|2026-11-12|feat(acceptance): 续签 reasons 复算两码（T-08/T-09/T-12）
+28	0	_support/solution_seal.py
+1	1	shared/gates.md
+86	2	tests/test_apply_record.py
+
+@@a7a7ba7|2026-11-12|feat(acceptance): #59 定义源命令面输出契约 + 写侧拒绝静默替换 + 自定义路径读者
+127	3	_support/solution.py
+12	3	_support/solution_e2e.py
+14	8	_support/solution_task.py
+333	0	tests/test_solution_definition_contract.py
+
+@@160d8e5|2026-11-12|docs(rfc): define seal move/reanchor semantics, renewal reason codes (v49 → v50)
+19	9	proposals/RFC-20261111-03-acceptance-asset-contract.md
+
+@@cf3e4e6|2026-11-12|feat(acceptance): 封条写侧 due 拒签 + 续签投影比对 + task acceptance --backfill
+9	0	_support/solution_seal.py
+1	1	docs/map/atlas-map.html
+1	1	docs/map/gates.md
+16	0	scripts/atlas_apply_seal.py
+147	2	scripts/atlas_solution.py
+2	1	shared/gates.md
+124	1	tests/test_apply_record.py
+114	0	tests/test_task_acceptance_backfill.py
+
+@@40250e5|2026-11-12|fix(check): 补成员侧证据列 N/A 出口（evidence_columns_parent_only）
+6	0	scripts/atlas_check.py
+1	1	shared/gates.md
+34	0	tests/test_ac_crosswalk.py
+
+@@29def6b|2026-11-12|test(solution): 补 D 批不可读 crosswalk 与父仓 Confirmed N/A 夹具
+27	0	tests/test_ac_crosswalk.py
+
+@@2d46d4f|2026-11-12|fix(solution): 补 epoch_origin_history append-only 校验，堵住删项洗掉重指痕迹
+63	5	_support/solution_seal.py
+2	2	shared/gates.md
+46	0	tests/test_apply_record.py
+
+@@ecb52a5|2026-11-12|fix(solution): 按 RFC v49 收口封条互斥、retired 键锚固化与单提交仓 TOFU
+22	1	_support/solution.py
+63	16	_support/solution_seal.py
+1	1	shared/gates.md
+99	8	tests/test_apply_record.py
+
+@@27aac6f|2026-11-12|fix(solution): 第四轮 C 批 7 条误判与覆盖声明
+82	26	_support/solution_seal.py
+1	1	shared/gates.md
+181	8	tests/test_apply_record.py
+45	12	validators/validate_apply_record.py
+
+@@b822917|2026-11-12|fix(solution): 修复 C 批封条第三轮 9 条误判与漏判
+1	1	_support/solution.py
+219	66	_support/solution_seal.py
+3	4	scripts/atlas_check.py
+5	5	shared/gates.md
+209	1	tests/test_apply_record.py
+35	7	tests/test_task_card.py
+11	3	validators/validate_apply_record.py
+40	12	validators/validate_task_card.py
+
+@@18e714b|2026-11-12|docs(rfc): apply second D-batch feedback revision (v47 → v48)
+12	12	proposals/RFC-20261111-03-acceptance-asset-contract.md
+
+@@8437155|2026-11-12|feat(solution): 落地验收资产域 D 批 crosswalk 与契约 AC 门
+588	0	_support/ac_crosswalk.py
+224	0	_support/solution.py
+2	1	_support/solution_task.py
+5	3	shared/gates.md
+1	1	shared/solution.md
+12	0	templates/prd/ac-crosswalk.md
+12	0	templates/prd/domain.md
+455	0	tests/test_ac_crosswalk.py
+105	0	tests/test_prd_contract_ac.py
+32	0	tests/test_release_gate.py
+17	0	tests/test_solution_task.py
+28	0	validators/validate_ac_alignment.py
+
+@@83f5413|2026-11-12|fix(solution): 修复 C 批封条返工的 5 条阻断与 9 条重要项
+1	1	_support/solution.py
+253	26	_support/solution_seal.py
+1	2	scripts/atlas_apply_seal.py
+2	2	shared/gates.md
+150	14	tests/test_apply_record.py
+2	2	tests/test_atlas_solution.py
+51	13	tests/test_task_card.py
+17	4	validators/validate_apply_record.py
+34	18	validators/validate_task_card.py
+
+@@3e44d62|2026-11-12|docs(rfc): apply D-batch implementation feedback (v46 → v47)
+37	17	proposals/RFC-20261111-03-acceptance-asset-contract.md
+
+@@1f92273|2026-11-12|feat(solution): 落地验收资产域 C 批封条与任务卡门
+307	3	_support/solution.py
+1244	0	_support/solution_seal.py
+134	0	scripts/atlas_apply_seal.py
+11	1	scripts/atlas_check.py
+34	1	scripts/atlas_solution.py
+2	0	shared/gates.md
+464	0	tests/test_apply_record.py
+214	0	tests/test_task_card.py
+83	0	validators/validate_apply_record.py
+296	0	validators/validate_task_card.py
+
+@@a0bdd53|2026-11-12|feat(solution): B 批对齐 v45 —— 锁摘要三态、回滚/删键判据与任意 PRD 路径
+268	26	_support/solution.py
+2	1	scripts/atlas_solution.py
+6	3	shared/gates.md
+259	7	tests/test_atlas_solution.py
+52	0	tests/test_prd_schema.py
+56	0	tests/test_release_gate.py
+88	0	tests/test_version_fallback.py
+18	0	validators/validate_prd.py
+
+@@c15ccf7|2026-11-12|docs(rfc): freeze RFC-20261111-03 acceptance asset contract (v41→v45)
+194	33	proposals/RFC-20261111-03-acceptance-asset-contract.md
+
+@@7f94393|2026-11-12|test(solution): B 批 —— e2e validators 夹具升 v2 以过版本门
+25	1	tests/test_solution_e2e_validators.py
+
+@@affbb83|2026-11-12|feat(prd): B 批 —— prd_schema 2 模板与 Assumptions 证据两列
+6	5	templates/prd/domain.md
+81	9	tests/test_prd_schema.py
+28	0	validators/validate_prd.py
+
+@@3502296|2026-11-12|test(solution): B-0 夹具 —— ⓪ 层两条独立反例与切点评审门
+834	21	tests/test_atlas_solution.py
+
+@@114c6f6|2026-11-12|feat(solution): B-0 —— 锁 ⓪ 层、切点评审门与三个纯函数
+17	3	_support/layout.py
+851	67	_support/solution.py
+81	12	scripts/atlas_solution.py
+4	1	shared/gates.md
+157	0	tests/test_path_at_single_source.py
+77	0	tests/test_solution_history_prefix.py
+107	0	tests/test_solution_versions.py
+
+@@c6ff399|2026-11-12|docs(rfc): 冻结 RFC-20261111-03 v40 基线并同步门册行数
+1	1	docs/map/atlas-map.html
+1	1	docs/map/gates.md
+2357	0	proposals/RFC-20261111-03-acceptance-asset-contract.md
+
+@@1d23dea|2026-11-11|docs(solution): B 批 6/N —— 补 definition 锁/首刷/错误码与 changelog 条目
+12	2	docs/guide/changelog.md
+1	1	shared/gates.md
+15	2	shared/solution.md
+
+@@c401bf6|2026-11-11|refactor(solution): B 批 5/N —— 具名常量与 B 批 docstring 收口
+11	4	_support/solution.py
+10	2	tests/test_atlas_solution.py
+
+@@35371fa|2026-11-11|feat(solution): B 批 4/N —— definition_unbound 与 acceptance_cutover 一致性判据
+31	0	_support/solution.py
+99	0	tests/test_atlas_solution.py
+
+@@17cd766|2026-11-11|feat(solution): B 批 3/N —— PRD 写入 prd_version/prd_schema 与证据列谓词
+107	7	_support/solution.py
+4	0	templates/prd/domain.md
+6	2	tests/test_atlas_solution.py
+171	0	tests/test_prd_schema.py
+
+@@3c4b42f|2026-11-11|feat(solution): B 批 2/N —— definition.commit 首刷标记与完整历史主判据
+252	11	_support/solution.py
+10	2	scripts/atlas_solution.py
+169	2	tests/test_atlas_solution.py
+
+@@54babd9|2026-11-11|feat(solution): B 批 1/N —— init 在 reader_version_unknown 时 fail-closed
+98	0	_support/solution.py
+48	5	tests/test_atlas_solution.py
+16	6	tests/test_solution_e2e_validators.py
+
+@@0e602f0|2026-11-11|fix(install): 正向装配断言 .atlas/package.json，dry-run 守卫写明
+2	2	docs/map/atlas-map.html
+1	1	docs/map/cli.md
+1	1	docs/map/index.md
+2	0	install.py
+34	0	tests/test_atlas_solution.py
+
+@@474f800|2026-11-11|fix(e2e): 回退 #54 表头门，用例行只按首列 ID 形态判定
+54	19	tests/test_solution_e2e_validators.py
+21	30	validators/validate_e2e_index.py
+
+@@3bb60d8|2026-11-11|docs: changelog 未发布段统一 0.4.0，docs/map 行数快照同步
+1	1	docs/guide/changelog.md
+4	4	docs/map/atlas-map.html
+2	2	docs/map/cli.md
+2	2	docs/map/index.md
+
+@@8790f7e|2026-11-11|fix(e2e): reader_version 只认工具自身来源，收紧 #54 用例行判据
+97	0	tests/test_solution_e2e_validators.py
+68	23	validators/validate_e2e_index.py
+
+@@19fc7ad|2026-11-11|fix(solution): 评审收口——migrate 写前校验与 install 守卫接线
+10	3	_support/solution.py
+28	5	install.py
+123	2	tests/test_atlas_solution.py
+
+@@7ef1a0f|2026-11-11|docs(solution): P-4 五处落点翻到 0.4.0 并补 B-0 契约/帮助/地图
+2	1	bin/atlas.js
+10	0	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+1	1	docs/map/cli.md
+1	1	docs/map/index.md
+2	0	duty-review/QUEUE.md
+2	0	duty-review/bugs.md
+1	1	shared/gates.md
+7	2	shared/solution.md
+1	1	tests/test_cli_commands.py
+
+@@7389738|2026-11-11|feat(e2e): #54 第二落点放宽到任意用例行与归档任务目录
+37	0	tests/test_solution_e2e_validators.py
+2	0	tests/test_validators.py
+89	11	validators/validate_e2e_index.py
+
+@@d30776c|2026-11-11|feat(solution): 清单 v2 解析、版本门 {1,2} 与 migrate --to 2（RFC-20261111-03 B-0）
+236	16	_support/solution.py
+65	0	install.py
+54	7	scripts/atlas_solution.py
+307	10	tests/test_atlas_solution.py
+
+@@cbfb449|2026-11-11|docs(e2e): 契约同步维度门 FAIL 与休眠态 N/A 口径
+1	1	DESIGN.md
+1	1	README.md
+6	0	docs/guide/changelog.md
+2	2	rings/e2e/reference.md
+2	2	shared/gates.md
+
+@@06a520c|2026-11-11|feat(e2e): 维度门升 FAIL 并修休眠态假绿
+70	24	tests/test_validators.py
+43	11	validators/validate_e2e_index.py
+
+@@411c971|2026-11-11|chore(map): 同步 e2e_console 行数与符号锚点
+2	2	docs/map/atlas-map.html
+2	2	docs/map/e2egen.md
+1	1	docs/map/index.md
+
+@@e4614e3|2026-11-11|docs(e2e): 关联AC 多值口径落到契约与索引模板
+2	2	rings/e2e/reference.md
+1	0	shared/solution.md
+1	0	templates/e2e/e2e-index.md
+
+@@d7c03e9|2026-11-11|feat(e2e): 关联AC 多值消费点与用例第二落点校验（RFC-20261111-03 A 批）
+20	2	_support/ac_coverage.py
+3	1	_support/solution_e2e.py
+6	1	scripts/e2e_console.py
+3	1	templates/e2e/console/app.js
+24	0	tests/test_e2e_console.py
+58	0	tests/test_solution_e2e_validators.py
+154	0	tests/test_validators.py
+75	11	validators/validate_e2e_index.py
+
+@@9cdb1a1|2026-11-11|chore(duty-review): #50 出库并复冻基线（残余盲区转 #59）
+1	2	duty-review/bugs.md
+6	4	tests/test_duty_bug_families.py
+
+@@23e9bc2|2026-11-11|docs(duty-review): #50 证据补 aa8fb46/53ec9e0；RFC-01 写清 J 的边界
+1	1	duty-review/bugs.md
+2	0	proposals/RFC-20261111-01-solution-gate-hardening.md
+
+@@53ec9e0|2026-11-11|fix(solution-task): finding 按 (id, member) 分组，task_status 不再重复输出
+4	4	_support/solution_task.py
+7	5	tests/test_atlas_solution.py
+
+@@d6e6b07|2026-11-11|docs(duty-review): #50 证改为实现提交+用例名，观察行去掉留出集措辞（返工 I2/I3）
+1	1	duty-review/QUEUE.md
+1	1	duty-review/bugs.md
+
+@@aa8fb46|2026-11-11|fix(solution): 去重键补 member，跨 member finding 不再被吞（#50 返工 B1/B2/I1/M1）
+2	2	_support/solution.py
+74	3	tests/test_atlas_solution.py
+
+@@86a450d|2026-11-11|docs(proposal): e2e 提案字段改用「待 RFC 批准」写法（不引入契约误报）
+289	0	proposals/RFC-20261111-02-apply-record-schema.md
+
+@@2616861|2026-11-11|feat(solution): AC 宽限版本门 + 契约/台账收口（#50 批次 3）
+11	1	_support/solution.py
+2	0	bin/atlas.js
+13	0	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+1	1	docs/map/cli.md
+1	1	docs/map/index.md
+2	0	duty-review/QUEUE.md
+1	1	duty-review/bugs.md
+424	0	proposals/RFC-20261111-01-solution-gate-hardening.md
+64	3	scripts/atlas_solution.py
+1	1	shared/gates.md
+4	2	shared/solution.md
+62	0	tests/test_atlas_solution.py
+11	0	tests/test_cli_commands.py
+3	2	tests/test_duty_bug_families.py
+
+@@c53a1ed|2026-11-11|feat(solution): --fix-acs 行级保字节移除悬空 AC（#50 批次 2）
+165	0	_support/solution.py
+35	4	scripts/atlas_solution.py
+185	0	tests/test_atlas_solution.py
+
+@@3620629|2026-11-11|feat(solution): 悬空 AC 默认 FAIL 且 check/task status 同源（#50 批次 1）
+7	2	_support/solution.py
+89	18	_support/solution_task.py
+189	0	tests/test_atlas_solution.py
+33	0	tests/test_cli_commands.py
+
+@@e534145|2026-11-10|chore(release): v0.2.0-beta.33
+1	1	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+1	1	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+2	2	docs/map/index.md
+1	1	package.json
+
+@@d63ad76|2026-11-10|docs(changelog): 补二期只读聚合视图与成员控制台待发段
+19	0	CHANGELOG.md
+19	0	docs/guide/changelog.md
+
+@@3c4a12d|2026-11-10|docs(map): 同步 e2e_console 行数锚 1590→1970
+2	2	docs/map/atlas-map.html
+1	1	docs/map/e2egen.md
+1	1	docs/map/index.md
+
+@@5b0c871|2026-11-10|docs(map): 同步二期评审控制台符号行号锚
+1	1	docs/map/e2egen.md
+
+@@a0814e0|2026-11-10|fix(e2e-console): 无本地 E2E 索引的成员不再拉起控制台
+1	1	rings/e2e/reference.md
+11	2	scripts/e2e_console.py
+1	1	shared/solution.md
+4	3	templates/e2e/console/app.js
+28	0	tests/test_solution_e2e_view.py
+
+@@67325e7|2026-11-10|feat(e2e-console): 父仓启动时自动拉起成员控制台
+1	1	rings/e2e/reference.md
+244	11	scripts/e2e_console.py
+1	1	shared/solution.md
+17	4	templates/e2e/console/app.js
+2	0	templates/e2e/console/console.css
+175	0	tests/test_solution_e2e_view.py
+
+@@3f038b2|2026-11-09|feat(e2e-console): 成员用例只读聚合与成员控制台入口
+639	0	proposals/HANDOFF-20261109-01-solution-e2e-usage.md
+6	0	rings/e2e/reference.md
+139	1	scripts/e2e_console.py
+1	0	shared/solution.md
+70	0	templates/e2e/console/app.js
+29	0	templates/e2e/console/console.css
+2	0	templates/e2e/console/index.html
+144	0	tests/test_solution_e2e_view.py
+
+@@cf40620|2026-11-09|test(solution-e2e): 二期只读聚合视图反面包
+3	2	tests/test_solution_e2e.py
+271	0	tests/test_solution_e2e_view.py
+
+@@1f74671|2026-11-09|docs(solution-e2e): 只读聚合视图契约与测试计数
+2	2	docs/map/atlas-map.html
+2	2	docs/map/gates.md
+1	1	docs/map/index.md
+8	0	rings/e2e/reference.md
+1	1	shared/gates.md
+8	0	shared/solution.md
+
+@@6ab4c8d|2026-11-09|fix(e2e-console): 草稿键加成员命名空间
+5	4	templates/e2e/console/app.js
+
+@@b8ccf8b|2026-11-09|feat(solution-e2e): 父仓只读聚合视图（RFC-20261108-02 二期）
+209	14	_support/solution_e2e.py
+28	2	scripts/atlas_solution.py
+
+@@20a70ad|2026-11-09|docs(duty-review): #56 状态收口为已出库
+1	1	duty-review/bugs.md
+
+@@918c309|2026-11-08|chore(release): v0.2.0-beta.32
+10	1	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+10	1	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+2	2	docs/map/index.md
+1	1	package.json
+
+@@a314f8d|2026-11-08|docs(solution-e2e): 模板补选择器样板，同步出厂测试计数 61
+2	2	docs/map/gates.md
+1	1	shared/gates.md
+2	0	templates/atlas.solution.yaml
+
+@@a4115c3|2026-11-08|test(solution-e2e): 补空选 BLOCKED / 需求列非选择器 / 父仓写边界反面包
+12	0	tests/test_e2e_console_solution.py
+24	0	tests/test_solution_e2e.py
+
+@@052c3c8|2026-11-08|feat(solution-e2e): status 输出 AC 反向覆盖与 INCOMPLETE
+65	2	_support/solution_e2e.py
+2	1	scripts/atlas_solution.py
+38	1	tests/test_solution_e2e.py
+
+@@174027a|2026-11-08|test(solution-e2e): 补 H3/H5 跨成员隔离与 testid N/A 三条缓解
+68	0	tests/test_e2e_console_solution.py
+6	1	validators/validate_testids.py
+
+@@43f29bf|2026-11-08|docs(solution-e2e): 父仓跨仓 E2E 契约与地图锚同批（一期）
+6	6	docs/map/atlas-map.html
+2	2	docs/map/e2egen.md
+2	2	docs/map/gates.md
+4	4	docs/map/index.md
+10	1	rings/e2e/reference.md
+10	1	shared/solution.md
+
+@@e6319c9|2026-11-08|feat(cli): atlas solution e2e status / verify / init（一期）
+70	0	scripts/atlas_solution.py
+115	0	tests/test_solution_e2e_cli.py
+
+@@427a2bc|2026-11-08|feat(console): 评审新鲜度按父仓模式分支 + run-time provenance（一期）
+49	10	scripts/e2e_console.py
+6	2	tests/test_e2e_console.py
+111	0	tests/test_e2e_console_solution.py
+
+@@88751d4|2026-11-08|feat(validators): 父仓模式 E2E 索引与 testid 门（一期）
+211	0	tests/test_solution_e2e_validators.py
+92	3	validators/validate_e2e_index.py
+22	0	validators/validate_testids.py
+
+@@b9a221f|2026-11-08|feat(solution): 父仓跨仓 E2E 选择器与 solution check 专项（一期）
+21	1	_support/case_block.py
+1	0	_support/case_id.py
+68	4	_support/solution.py
+337	0	_support/solution_e2e.py
+11	0	tests/test_atlas_solution.py
+278	0	tests/test_solution_e2e.py
+
+@@6d461d6|2026-11-08|docs(proposals): 落 RFC-20261108-02 多仓方案层 E2E 一期方案
+926	0	proposals/RFC-20261108-02-solution-e2e-aggregation.md
+
+@@73c5b9b|2026-11-08|docs(proposals): #56 补 D156 留出验证记录（未闭族）并修正台账指针
+2	2	duty-review/bugs.md
+122	0	proposals/REVIEW-20261108-02-judgement8-assembled-copy-heldout.md
+184	0	proposals/RFC-20261108-01-judgement8-assembled-copy-heldout.md
+
+@@0c8d196|2026-11-08|fix(test): 判据⑧改用装配戳识别副本态，并落 #56
+3	0	duty-review/bugs.md
+42	4	tests/test_canonical_consistency.py
+6	5	tests/test_duty_bug_families.py
+
+@@5a02e3b|2026-11-08|fix(test): 判据⑧ 在装配副本态判 N/A，不再 fail-closed
+7	0	tests/test_canonical_consistency.py
+
+@@6b4e8c6|2026-11-08|docs(changelog): 根 CHANGELOG 补 [Unreleased] 段
+11	0	CHANGELOG.md
+
+@@9cb1817|2026-11-08|chore(docs): 清掉 D156 定案后的两处过期状态字段
+1	1	duty-review/QUEUE.md
+1	1	proposals/RFC-20261107-01-impl-phase-discipline-and-skill-budget.md
+
+@@0e82b9e|2026-11-08|docs(proposals): D156 按 RFC 转移条件转定案
+2	2	proposals/RFC-20261107-01-impl-phase-discipline-and-skill-budget.md
+
+@@9276e3c|2026-11-08|chore(duty-review): D156 观察行落盘 + #50–#55 入库并复冻族基线
+3	1	duty-review/QUEUE.md
+6	0	duty-review/bugs.md
+221	0	proposals/PLAN-20261108-01-closeout.md
+10	7	tests/test_duty_bug_families.py
+
+@@9211fc1|2026-11-08|docs(proposals): D156 三态确认为「单案修复（无留出集）」
+24	0	proposals/REVIEW-20261108-01-closeout-d156-state-confirmation.md
+24	5	proposals/RFC-20261107-01-impl-phase-discipline-and-skill-budget.md
+
+@@cad2d5d|2026-11-08|docs(release): 收口 RFC §4.6 否决词清单、批 4 延后结论与 Unreleased 变更记录
+11	0	docs/guide/changelog.md
+4	3	proposals/RFC-20261107-01-impl-phase-discipline-and-skill-budget.md
+
+@@beadf69|2026-11-08|fix(contract): 批 3b 恢复 REVIEW 定稿文案并收回过度否决词
+1	1	docs/design/overview.md
+1	1	shared/closeout.md
+1	1	shared/global-rules.md
+2	2	shared/independent-review.md
+1	1	shared/layout.md
+1	1	shared/single-source.md
+1	2	tests/test_canonical_consistency.py
+
+@@f2608b9|2026-11-08|feat(contract): 批 3 实现期纪律落盘（I2/I3/I4 + §2.5 门登记 + 地图锚 175）
+1	1	docs/design/overview.md
+1	1	docs/map/atlas-map.html
+1	1	docs/map/gates.md
+3	3	proposals/RFC-20261107-01-impl-phase-discipline-and-skill-budget.md
+14	2	shared/closeout.md
+1	0	shared/gates.md
+8	0	shared/global-rules.md
+2	2	shared/independent-review.md
+1	1	shared/layout.md
+1	1	shared/single-source.md
+3	1	tests/test_canonical_consistency.py
+
+@@021bb38|2026-11-07|test(skill): 批 2 判据⑧ + 术语表四列（D187 定案）
+1	1	DESIGN.md
+5	5	proposals/RFC-20261107-01-impl-phase-discipline-and-skill-budget.md
+1	1	rings/prd/reference.md
+1	0	skills/atlas-apply/SKILL.md
+1	0	skills/atlas-e2e/SKILL.md
+1	1	skills/atlas-prd/SKILL.md
+3	3	templates/prd/global.md
+36	2	tests/test_canonical_consistency.py
+
+@@6ee7e43|2026-11-07|docs(skill): 批 1 frontend-design 拆分 —— 外移 2,769 字符至既有 references
+4	4	DESIGN.md
+32	0	proposals/REVIEW-20261107-01-impl-phase-discipline-and-skill-budget.md
+21	13	proposals/RFC-20261107-01-impl-phase-discipline-and-skill-budget.md
+9	70	skills/frontend-design/SKILL.md
+5	2	skills/frontend-design/references/anim-duration-easing.md
+12	0	skills/frontend-design/references/cwv-optimize-lcp.md
+10	0	skills/frontend-design/references/design-directives.md
+19	1	skills/frontend-design/references/design-system-map.md
+8	0	skills/frontend-design/references/resp-mobile-first.md
+
+@@835b9f2|2026-11-07|docs(rfc): 批 0 复审修正 —— §4.5 必填字段与锚映射、候选条件化、VETO_WORDS 清单
+3	3	DESIGN.md
+117	37	proposals/RFC-20261107-01-impl-phase-discipline-and-skill-budget.md
+
+@@c0acc61|2026-11-07|docs(rfc): 批 0 落盘 RFC-20261107-01 与 D185/D186/D187 候选决策
+4	1	DESIGN.md
+1	1	docs/map/gates.md
+212	0	proposals/RFC-20261107-01-impl-phase-discipline-and-skill-budget.md
+
+@@6e7855f|2026-11-07|chore(release): v0.2.0-beta.31
+1	1	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+1	1	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+2	2	docs/map/index.md
+1	1	package.json
+
+@@6ee6319|2026-11-07|test(solution): 提交 init 自动生成的锁，修正 e2e 脏检查误判
+4	2	tests/test_solution_e2e_console.py
+
+@@2fd6911|2026-11-07|docs(changelog): 补齐 v0.2.0-beta.31 的 [Unreleased] 两段
+20	0	CHANGELOG.md
+6	0	docs/guide/changelog.md
+
+@@ac08af0|2026-11-07|docs(solution): 统一 Phase 2/3/4 分期口径并补 README 多仓场景
+16	0	README.md
+14	0	docs/guide/changelog.md
+7	3	docs/guide/quick-start.md
+3	0	proposals/RFC-20261104-02-multi-repo-solution.md
+1	1	shared/layout.md
+68	16	shared/solution.md
+
+@@5571e53|2026-11-07|feat(solution): 锁升级为可复现 pin，补 diff 与 check --strict
+381	56	_support/solution.py
+17	4	scripts/atlas_solution.py
+1	1	shared/gates.md
+3	0	templates/atlas.solution.yaml
+128	0	tests/test_atlas_solution.py
+18	5	tests/test_solution_guards.py
+
+@@111065a|2026-11-06|chore(release): v0.2.0-beta.30
+1	1	CHANGELOG.md
+1	1	README.md
+1	1	docs/.vitepress/config.mts
+1	1	docs/guide/changelog.md
+2	2	docs/map/atlas-map.html
+2	2	docs/map/index.md
+1	1	package.json
+
+@@8d330a6|2026-11-06|docs(rfc): RFC-20261106-01 首轮实测回填 + 升级出口「记缺口」计数区隔
+1	0	CHANGELOG.md
+1	1	DESIGN.md
+9	0	docs/guide/changelog.md
+2	0	duty-review/QUEUE.md
+3	2	proposals/RFC-20261106-01-coverage-dim-generation-discipline.md
+
+@@51a3102|2026-11-06|feat(e2e): RFC-20261106-01 覆盖维度生成纪律三件套（D184）——§6.1 逐维自检/数据构造提示 + apply AC 表第 4 列默认声明
+8	0	CHANGELOG.md
+2	0	DESIGN.md
+3	0	apply/reference.md
+2	2	docs/map/apply.md
+3	3	docs/map/atlas-map.html
+1	1	docs/map/index.md
+33	0	proposals/REVIEW-20261106-01-coverage-dim-generation-discipline.md
+200	0	proposals/RFC-20261106-01-coverage-dim-generation-discipline.md
+20	0	rings/e2e/reference.md
+1	1	shared/gates.md
+74	0	tests/test_coverage_dim_prompt_anchors.py
