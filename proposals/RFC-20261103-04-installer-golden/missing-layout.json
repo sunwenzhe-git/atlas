@@ -1,7 +1,7 @@
 {
   "installer": [
     "bash",
-    "/private/tmp/atlas-golden-Z6mx/install.sh"
+    "/private/tmp/atlas-golden-rfc08/install.sh"
   ],
   "runs": [
     {
