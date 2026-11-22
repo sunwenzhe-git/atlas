@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -23,10 +24,18 @@ from pathlib import Path
 from _support import review_scope_core as scope_core
 from _support.layout import LayoutError, load_layout
 from _support.workflow_plan import ARCHIVE_DIR, load_tasks, atomic_write_json, UNIT_RE
+from _support.workflow_causes import FALLBACK_CAUSE
 
 
 class FinishError(ValueError):
-    """收口校验异常。"""
+    """收口校验异常。
+
+    `cause` 为 RFC-20261122-07 失败原因词表成员（缺省 `unclassified` = 保守扣预算，
+    fallback 规则）；调用方按 `cause` 分流退出码（同一位点不同 cause 不同码）。"""
+
+    def __init__(self, msg: str, cause: str | None = None):
+        super().__init__(msg)
+        self.cause = cause
 
 
 REVIEW_DIR_PREFIX_RE = r"^\d{4}-\d{2}-\d{2}-impl-review-"
@@ -150,13 +159,17 @@ def _scope_matches(root: Path, data: dict) -> tuple[bool, str]:
     return False, "；".join(parts)
 
 
-def check_task_review_passed(root: Path, unit: str) -> tuple[bool, str]:
-    """检查指定任务是否已产出合规的 review.json 且未被拦截。"""
+def check_task_review_passed(root: Path, unit: str) -> tuple[bool, str, str]:
+    """检查指定任务是否已产出合规的 review.json 且未被拦截；返回 `(passed, reason, cause)`。
+
+    `cause` 为 RFC-20261122-07 失败原因词表成员：报告缺失/未执行 ⇒ `no_review_report`
+    （不扣，流程顺序）；报告损坏不可读 ⇒ `environment`（不扣，文件级异常）；status ≠ PASS
+    或 ok=false ⇒ `review_not_passed`（扣）；内容封口红 ⇒ `scope_stale`（扣）。"""
     root = root.resolve()
     # 查找匹配的 review 报告目录
     reviews_dir = root / "product" / "reviews"
     if not reviews_dir.is_dir():
-        return False, "未找到 product/reviews 目录（尚未执行独立审查）"
+        return False, "未找到 product/reviews 目录（尚未执行独立审查）", "no_review_report"
 
     candidates = sorted(
         p for p in reviews_dir.iterdir()
@@ -164,32 +177,148 @@ def check_task_review_passed(root: Path, unit: str) -> tuple[bool, str]:
             REVIEW_DIR_PREFIX_RE + re.escape(unit) + "$", p.name)
     )
     if not candidates:
-        return False, f"未找到任务 {unit} 的审查报告（须先执行 atlas review --unit {unit} --staged）"
+        return False, f"未找到任务 {unit} 的审查报告（须先执行 atlas review --unit {unit} --staged）", "no_review_report"
 
     latest_dir = candidates[-1]
     review_file = latest_dir / "review.json"
     if not review_file.is_file():
-        return False, f"报告目录 {latest_dir.name} 缺少 review.json"
+        return False, f"报告目录 {latest_dir.name} 缺少 review.json", "no_review_report"
 
     try:
         data = json.loads(review_file.read_text(encoding="utf-8"))
     except Exception as exc:
-        return False, f"读取 {review_file} 失败：{exc}"
+        return False, f"读取 {review_file} 失败：{exc}", "environment"
 
     # 检查 review.json 是否合规且无阻塞项。字段口径以 cli_review_convert 的实际产出为准：
     # `status ∈ {PASS, WARN, FAIL}` + `ok` —— PASS 已由 `review_policy.calculate_status` 保证
     # 「无阻断 Critical、无 Major、无 M≠N 等下限」，此处不重复实现严重度判定（判据单源）。
     status = str(data.get("status") or "").strip().upper()
     if status != "PASS":
-        return False, f"审查报告状态未通过（status: {data.get('status')}；收口需 PASS，WARN/FAIL 均阻断）"
+        return False, f"审查报告状态未通过（status: {data.get('status')}；收口需 PASS，WARN/FAIL 均阻断）", "review_not_passed"
     if data.get("ok") is False:
-        return False, "审查报告 ok=false（存在未解决的阻断问题）"
+        return False, "审查报告 ok=false（存在未解决的阻断问题）", "review_not_passed"
 
     matched, why = _scope_matches(root, data)
     if not matched:
-        return False, why
+        return False, why, "scope_stale"
 
-    return True, str(latest_dir)
+    return True, str(latest_dir), ""
+
+
+# ───────────────── 存量缺陷登记 deferred（RFC-20261122-07 §3.1.3）─────────────────
+
+DEFERRED_FILE = "deferred.md"
+DEFERRED_HEADER = (
+    "# 存量缺陷登记（deferred；RFC-20261122-07 §3.1.3）\n\n"
+    "来源 = 最新轮独立审查报告的 `pre_existing` 未关闭 findings；"
+    "状态闭集复用 D154（开放｜已修·待复验｜已出库）。只登记不分诊（消费归巡检/人工节奏）。\n"
+)
+# D154 状态闭集（与 duty-review/bugs.md 制式段同源）：本登记面只产出「开放」，
+# 推进到「已修·待复验 / 已出库」由人工编辑。
+DEFERRED_STATUS_CLOSED = ("fixed", "false_positive", "intentional", "ignored")
+_DEFERRED_OPEN_RE = re.compile(r"^-\s+DW-\d+\s*〔[^〕]*｜开放")
+_DEFERRED_ID_RE = re.compile(r"DW-(\d+)")
+
+
+def _deferred_key(check: dict) -> str:
+    """幂等去重键：fingerprint 优先（审查契约中为可选字段，v2 推荐），缺省回退
+    `target + check 名 + detail` 的 sha256 前 16 位（复核轮 Nit 修正）。"""
+    fp = str(check.get("fingerprint") or "").strip()
+    if fp:
+        return f"fp={fp}"
+    raw = "|".join(str(check.get(k) or "") for k in ("target", "check", "detail"))
+    return f"k={hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]}"
+
+
+def deferred_open_count(t_dir: Path) -> int:
+    """deferred.md 中状态「开放」的条目数（`workflow status` 聚合口径；文件缺失 ⇒ 0）。"""
+    p = Path(t_dir) / DEFERRED_FILE
+    if not p.is_file():
+        return 0
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0
+    return sum(1 for ln in text.splitlines() if _DEFERRED_OPEN_RE.match(ln.strip()))
+
+
+def extract_deferred_findings(root: Path, task: dict, t_dir: Path) -> dict:
+    """把最新轮审查报告的存量缺陷（`pre_existing` ∧ 未关闭）登记进任务卡 deferred.md。
+
+    **在 finish 门判定之前调用**（RFC-20261122-07 复核轮 Major 修正）：open pre_existing
+    Critical/Major 会以 WARN 下限阻断收口（收口需 PASS），若绑定成功路径则头条病案
+    永远到不了台账——无论收口成败先落账，fingerprint 幂等兜底复跑重复。
+    只登记不分诊（bmad-loop sweep 的 LLM 分诊轮明确不吸收，`RFC-20261119-03` R1 同源）。
+    返回 `{registered, blocking}`（registered = 本次**新**登记条数）。"""
+    root = Path(root).resolve()
+    reviews_dir = root / "product" / "reviews"
+    unit = str(task.get("id") or "")
+    if not reviews_dir.is_dir() or not unit:
+        return {"registered": 0, "blocking": 0}
+    candidates = sorted(
+        p for p in reviews_dir.iterdir()
+        if p.is_dir() and re.fullmatch(
+            REVIEW_DIR_PREFIX_RE + re.escape(unit) + "$", p.name)
+    )
+    if not candidates:
+        return {"registered": 0, "blocking": 0}
+    try:
+        data = json.loads((candidates[-1] / "review.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"registered": 0, "blocking": 0}  # 报告损坏：登记面沉默（损坏由审查门点名）
+    checks = data.get("checks") or []
+    if not isinstance(checks, list):
+        return {"registered": 0, "blocking": 0}
+    round_no = str(data.get("round") or "").strip()
+    deferred_path = Path(t_dir) / DEFERRED_FILE
+    if deferred_path.is_file():
+        try:
+            existing = deferred_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return {"registered": 0, "blocking": 0}
+    else:
+        existing = DEFERRED_HEADER
+    next_no = 1 + max((int(m.group(1)) for m in _DEFERRED_ID_RE.finditer(existing)),
+                      default=0)
+    registered = 0
+    blocking = 0
+    lines: list[str] = []
+    for c in checks:
+        if not isinstance(c, dict) or c.get("pre_existing") is not True:
+            continue
+        disposition = str(c.get("disposition") or "open").strip().lower()
+        if disposition in DEFERRED_STATUS_CLOSED:
+            continue
+        key = _deferred_key(c)
+        if key in existing:
+            continue
+        level = str(c.get("level") or "unknown").strip() or "unknown"
+        detail = " ".join(str(c.get("detail") or "").split()) or "（无描述）"
+        target = str(c.get("target") or "").strip()
+        round_tag = f" r{round_no}" if round_no else ""
+        loc = f"（{target}）" if target else ""
+        lines.append(
+            f"- DW-{next_no} 〔{date.today().isoformat()}｜开放｜族:{level}｜证:{key}{round_tag}〕"
+            f"{detail}{loc}")
+        if level in ("Critical", "Major"):
+            blocking += 1
+        next_no += 1
+        registered += 1
+    if not registered:
+        return {"registered": 0, "blocking": 0}
+    try:
+        deferred_path.parent.mkdir(parents=True, exist_ok=True)
+        deferred_path.write_text(
+            existing.rstrip("\n") + "\n" + "\n".join(lines) + "\n", encoding="utf-8")
+    except OSError as exc:
+        print(f"WARN（deferred 登记失败）: {exc}", file=sys.stderr)
+        return {"registered": 0, "blocking": 0}
+    try:
+        shown = deferred_path.resolve().relative_to(root).as_posix()
+    except ValueError:
+        shown = str(deferred_path)
+    print(f"  存量缺陷登记：{registered} 条（其中阻断中 {blocking} 条）→ {shown}")
+    return {"registered": registered, "blocking": blocking}
 
 
 def _acceptance_evidence(lay) -> dict:
@@ -408,18 +537,19 @@ def archive_task(root: Path, tasks_root: Path, t_dir: Path, t_id: str) -> dict:
     下次归档时迁入当月，从而重新进入判据与封条的扫描面。
     """
     if not UNIT_RE.match(t_id):
-        raise FinishError(f"非法任务标识：{t_id!r}")
+        raise FinishError(f"非法任务标识：{t_id!r}", cause="no_task_card")
     root = root.resolve()
     if archive_month(t_dir, tasks_root) is not None:
         return {"status": "already", "path": str(t_dir.resolve().relative_to(root))}
     dest = tasks_root / ARCHIVE_DIR / date.today().strftime("%Y-%m") / t_id
     if dest.exists():
-        raise FinishError(f"归档目标已存在：{dest}（源目录仍在 {t_dir}；请人工核对后处理）")
+        raise FinishError(f"归档目标已存在：{dest}（源目录仍在 {t_dir}；请人工核对后处理）",
+                          cause="state_transition")
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(t_dir), str(dest))
     except OSError as exc:
-        raise FinishError(f"归档失败：{t_dir} → {dest}（{exc}）") from exc
+        raise FinishError(f"归档失败：{t_dir} → {dest}（{exc}）", cause="environment") from exc
     return {"status": "moved", "path": str(dest.relative_to(root))}
 
 
@@ -428,33 +558,42 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
     root = root.resolve()
     t_id = task["id"]
     if not UNIT_RE.match(t_id):
-        raise FinishError(f"非法任务标识：{t_id!r}")
+        raise FinishError(f"非法任务标识：{t_id!r}", cause="no_task_card")
     tasks_root = (root / ".atlas" / "tasks").resolve()
     t_dir = Path(task.get("_dir") or (tasks_root / t_id)).resolve()
     if t_dir != tasks_root and tasks_root not in t_dir.parents:
-        raise FinishError(f"任务目录越界：{t_dir}（必须在 {tasks_root} 之内）")
+        raise FinishError(f"任务目录越界：{t_dir}（必须在 {tasks_root} 之内）",
+                          cause="no_task_card")
 
     if not t_dir.is_dir():
-        raise FinishError(f"任务目录不存在：{t_dir}")
+        raise FinishError(f"任务目录不存在：{t_dir}", cause="no_task_card")
     if archive_month(t_dir, tasks_root) is None:
         archive_dest = tasks_root / ARCHIVE_DIR / date.today().strftime("%Y-%m") / t_id
         if archive_dest.exists():
             raise FinishError(
-                f"归档目标已存在：{archive_dest}（源目录仍在 {t_dir}；请人工核对后处理）")
+                f"归档目标已存在：{archive_dest}（源目录仍在 {t_dir}；请人工核对后处理）",
+                cause="state_transition")
+
+    # 存量缺陷登记（RFC-20261122-07 §3.1.3）：finish 门判定**之前**执行——无论收口
+    # 成败先落账（open pre_existing Critical/Major 以 WARN 下限阻断收口，绑定成功
+    # 路径则头条病案永远到不了台账；fingerprint 幂等兜底复跑重复）。
+    deferred_info = extract_deferred_findings(root, task, t_dir)
+
     if not force:
-        passed, reason = check_task_review_passed(root, t_id)
+        passed, reason, cause = check_task_review_passed(root, t_id)
         if not passed:
-            raise FinishError(f"任务 {t_id} 无法收口：{reason}")
+            raise FinishError(f"任务 {t_id} 无法收口：{reason}", cause=cause)
 
     e2e = check_e2e_precondition(root, task)
     if e2e["status"] == "FAIL":
-        raise FinishError(f"任务 {t_id} 无法收口：{e2e['reason']}")
+        raise FinishError(f"任务 {t_id} 无法收口：{e2e['reason']}", cause="e2e_red")
 
     # 结构事实新鲜度前置（RFC-20261122-05）：没刷 spec 拒收。--force 不绕本门
     # （force 语义 = 跳过人工审查，非跳过事实锚，评审 M4）。
     structure = check_structure_freshness(root)
     if structure["status"] == "FAIL":
-        raise FinishError(f"任务 {t_id} 无法收口：{structure['reason']}")
+        raise FinishError(f"任务 {t_id} 无法收口：{structure['reason']}",
+                          cause="freshness_fail")
 
     # 更新 task.json 状态为 completed（E2E 前置结论一并落盘，issue #69）
     task_json_file = t_dir / "task.json"
@@ -487,5 +626,6 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
         "all_done": (total > 0 and completed_count == total),
         "e2e_precondition": e2e,
         "structure_freshness": structure,
+        "deferred_registration": deferred_info,
         "archived": archived,
     }

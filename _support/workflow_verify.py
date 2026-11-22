@@ -472,7 +472,10 @@ def mechanism_doc_findings(root: Path, changed_files: list[str]) -> list[str]:
       交集 ⇒ WARN 点名（命中数 + 前 3 预览，3 秒可判误报）；
     - 死 paths：某篇全部 globs 对仓内文件全集零命中 ⇒ WARN「疑似死 paths」
       （治 paths 自身裸奔——代码整目录搬空后永不命中的静默死，评审 M2）；
-    - `pending` 冷启动豁免；单星 glob 逐条点名（词表拒收）；
+    - 死测试锚（RFC-20261122-07 §3.2.2 提示族扩展）：判据行 `〔测:…〕` 锚指向的
+      测试文件不存在 ⇒ WARN（可选但存活，只在已写锚的行上出声）；
+    - `pending` 冷启动豁免（paths 不判；测试锚仍判——锚存活与 paths 无关）；
+      单星 glob 逐条点名（词表拒收）；
     - 点名上限 `MECHANISM_WARN_CAP`，超出汇总一行；仓内无机制文档 ⇒ 沉默。"""
     root = Path(root)
     docs = discover_mechanism_docs(root)
@@ -512,4 +515,43 @@ def mechanism_doc_findings(root: Path, changed_files: list[str]) -> list[str]:
         findings.append(
             f"另有 {overflow} 篇机制文档命中本次改动"
             f"（超出单次点名上限 {MECHANISM_WARN_CAP}，略）")
+    findings.extend(_dead_anchor_findings(root, docs))
+    return findings
+
+
+# ───────────── 判据行测试锚（RFC-20261122-07 §3.2.2，可选但存活）─────────────
+
+_TEST_ANCHOR_RE = re.compile(r"〔测[:：]\s*([^〕]+?)\s*〕")
+
+
+def _dead_anchor_findings(
+        root: Path,
+        docs: list[tuple[str, list[str], list[str], bool]]) -> list[str]:
+    """机制文档判据行测试锚存活检测（WARN 提示族扩展，随装配分发——采纳仓可达）。
+
+    只消费已写锚的行（棘轮起点 = 可选；「新增行必带」的升格条件见 single-source
+    §58 第五条）：锚目标须为 `tests/` 前缀的仓内文件（可带 `::node`）；文件不存在
+    ⇒ 死锚 WARN；形态非法（非 `tests/` 前缀 / 越界）⇒ 形态 WARN。
+    **节点级存在性不机器判**（防 verify 挂 pytest 收集，盲区在
+    `shared/single-source.md` §57 登记行声明）；`pending` 篇同样判。"""
+    findings: list[str] = []
+    for rel, _globs, _bad, _pending in docs:
+        p = root / rel
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        body = _MECH_FM_RE.sub("", text, count=1)  # 只扫正文，不扫 frontmatter
+        for m in _TEST_ANCHOR_RE.finditer(body):
+            target = m.group(1).strip()
+            file_part = target.split("::", 1)[0].strip()
+            if not file_part.startswith("tests/") or ".." in file_part:
+                findings.append(
+                    f"{rel} 判据行测试锚 {target!r} 形态非法（须 tests/ 前缀的仓内文件，"
+                    "可带 ::node；RFC-20261122-07 §3.2.2）")
+                continue
+            if not (root / file_part).is_file():
+                findings.append(
+                    f"{rel} 判据行测试锚指向不存在的测试文件：{file_part}（死锚）"
+                    "——核对测试是否已改名/删除，或修正锚（RFC-20261122-07 §3.2.2）")
     return findings

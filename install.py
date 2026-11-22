@@ -678,6 +678,26 @@ def main() -> None:
         if not os.path.isfile(gitkeep):
             run(f"touch {gitkeep}", action=lambda g=gitkeep: Path(g).touch())
 
+    # workflow 参数模板（RFC-20261122-07 §3.1.1）：采纳仓可调 verify 尝试预算。
+    # create-if-missing：--update 与重装保留已有编辑（用户面配置，非包产物——
+    # 不在整包刷新白名单内，rm -rf 只清 pkg_dirs）。
+    config_yaml = os.path.join(atlas_dest, "config.yaml")
+    if os.path.isfile(config_yaml):
+        say("      = .atlas/config.yaml 已存在，保留")
+    elif DRY_RUN:
+        say("      [dry-run] + .atlas/config.yaml（workflow 参数模板）")
+    else:
+        run("write .atlas/config.yaml（workflow 参数模板，RFC-20261122-07）",
+            action=lambda: Path(config_yaml).write_text(
+                "# Atlas workflow 参数（RFC-20261122-07；install 建模板，"
+                "--update 保留本文件的已有编辑）\n"
+                "# 只认下列键，未知键被忽略；词表与缺省值单源 = _support/workflow_causes.py。\n"
+                "workflow:\n"
+                "  max_verify_attempts: 2"
+                "   # verify 失败（charged）预算上限；超限停下要求人工（退出码 3）\n",
+                encoding="utf-8"))
+        say("      -> .atlas/config.yaml（workflow 参数模板）")
+
     if os.path.isfile(stack_profile):
         say(f"      = {stack_profile_rel} 已存在，保留")
     elif DRY_RUN:
@@ -837,6 +857,7 @@ def main() -> None:
     c("stack-profile（资产根）", stack_profile)
     c("structure spec 根", os.path.join(TARGET, ".atlas", "spec", "structure"))
     c("testid 薄桩目录", os.path.join(TARGET, ".atlas", "spec", "conventions"))
+    c("workflow 参数配置", os.path.join(TARGET, ".atlas", "config.yaml"))
     c("e2e 用例分片目录", e2e_cases_dir)
 
     if INSTALL_WIRING and not DRY_RUN:

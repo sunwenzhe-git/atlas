@@ -107,9 +107,10 @@ def test_finish_blocks_without_review(tmp_path: Path) -> None:
     run(root, "plan", "--unit", "T-04", "--requirement", "普通任务")
     run(root, "dispatch", "--unit", "T-04")
 
-    # 未执行 review，尝试 finish 应被阻断
+    # 未执行 review，尝试 finish 应被阻断。退出码语义（RFC-20261122-07）：
+    # 报告缺失 = 流程顺序错（no_review_report，不扣）⇒ 2（前置不满足），非门红 1。
     p = run(root, "finish", "--unit", "T-04")
-    assert p.returncode == 1
+    assert p.returncode == 2
     assert "无法收口" in p.stderr or "未找到" in p.stderr
 
 
@@ -287,7 +288,8 @@ def test_finish_does_not_match_longer_unit(tmp_path: Path) -> None:
     (reviews / "2026-11-19-impl-review-T-10" / "review.json").write_text(
         json.dumps({"schema_version": 4, "ok": True, "status": "PASS"}), encoding="utf-8")
     p = run(root, "finish", "--unit", "T-1")
-    assert p.returncode == 1, "T-1 不得复用 T-10 的 PASS 报告"
+    # 退出码随 cause 分流更新（RFC-20261122-07：no_review_report ⇒ 2；v1 口径 rc==1 已废）
+    assert p.returncode == 2, "T-1 不得复用 T-10 的 PASS 报告"
     assert "T-1" in p.stderr
 
 
@@ -436,7 +438,8 @@ def test_archive_refuses_non_completed(tmp_path: Path) -> None:
     root = make_clean_project(tmp_path)
     run(root, "plan", "--unit", "T-31", "--requirement", "普通任务")
     p = run(root, "archive", "--unit", "T-31")
-    assert p.returncode == 1 and "尚未 completed" in p.stderr
+    # 顺序错归「前置不满足」（RFC-20261122-07 退出码语义修正：1→2）
+    assert p.returncode == 2 and "尚未 completed" in p.stderr
     assert (root / ".atlas/tasks/T-31/task.json").is_file()
 
 
@@ -1220,3 +1223,308 @@ def test_finish_adapterless_reanchor_channel_reachable(tmp_path: Path) -> None:
     assert meta_now["baseline"]["commit"] == sha2
     p = run(root, "finish", "--unit", "T-S11", "--force")
     assert p.returncode == 0, p.stdout + p.stderr
+
+
+# ── workflow 回收面（RFC-20261122-07：双轨失败分类学 + 尝试预算 + 退出码封闭）────
+
+import argparse  # noqa: E402
+
+from _support.workflow_causes import (  # noqa: E402
+    CAUSES, DEFAULT_MAX_VERIFY_ATTEMPTS, EXIT_BUDGET, EXIT_GATE_FAIL, EXIT_INTERRUPTED,
+    EXIT_OK, EXIT_USAGE, attempts_path, charged_count, exit_code_for, load_attempts,
+    max_verify_attempts, record_attempt,
+)
+
+
+def _verify_args(unit: str) -> argparse.Namespace:
+    return argparse.Namespace(unit=unit, dry_run=False, json=False, check_cmd=None,
+                              resolves=None, round=None, staged=True)
+
+
+def _wf_mod():
+    """进程内加载调度器模块（预算/记账断言用；e2e 面仍走 run() 子进程）。"""
+    spec = importlib.util.spec_from_file_location("atlas_workflow_recycle_mod", SCRIPT)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _staged_impl(root: Path, name: str = "a.ts") -> None:
+    (root / "src").mkdir(exist_ok=True)
+    (root / "src" / name).write_text("export const a = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", f"src/{name}"], cwd=str(root), check=True,
+                   capture_output=True)
+
+
+def test_verify_charged_failure_counts_and_budget_refuses(tmp_path, monkeypatch,
+                                                          capsys) -> None:
+    """M197：摘 cmd_verify 预算门调用 ⇒ 本测试超限段变绿（负断言）。
+    M198：摘 budget_exceeded 的不计数语义（词表改扣）⇒ 末段 charged==2 断言红。
+
+    verify rc==1（报告未过）⇒ blocking_critical 扣预算；charged 达缺省上限 2 ⇒
+    第三次拒绝 rc==3 + budget_exceeded 留痕行（不计数、cmd 写死 'verify'）。"""
+    root = make_clean_project(_git_repo(tmp_path))
+    _plan_and_dispatch(root, "T-B1")
+    _staged_impl(root)
+    mod = _wf_mod()
+    real_run = subprocess.run
+    fake = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
+    monkeypatch.setattr(
+        mod.subprocess, "run",
+        lambda argv, *a, **k: fake if any("atlas_review.py" in str(x) for x in argv)
+        else real_run(argv, *a, **k))
+    ns = _verify_args("T-B1")
+    assert mod.cmd_verify(ns, root) == 1
+    assert mod.cmd_verify(_verify_args("T-B1"), root) == 1
+    rc = mod.cmd_verify(_verify_args("T-B1"), root)
+    assert rc == EXIT_BUDGET
+    assert "预算超限" in capsys.readouterr().err
+    tasks_root = root / ".atlas" / "tasks"
+    rows, _ = load_attempts(tasks_root, "T-B1")
+    charged = [r for r in rows if r.get("charged") is True]
+    assert len(charged) == 2 and all(r["cause"] == "blocking_critical" for r in charged)
+    last = rows[-1]
+    assert (last["cause"], last["charged"], last["cmd"]) == ("budget_exceeded", False, "verify")
+    assert all(r.get("unit") == "T-B1" for r in rows)
+
+
+def test_verify_uncharged_staged_empty_never_blocks(tmp_path) -> None:
+    """不扣轨：staged_empty 入记账不计数——反复撞前置不触发预算拒绝（真 e2e）。"""
+    root = make_clean_project(tmp_path)
+    _plan_and_dispatch(root, "T-B2")
+    for _ in range(5):
+        p = run(root, "verify", "--unit", "T-B2")
+        assert p.returncode == EXIT_USAGE and "暂存区为空" in p.stderr
+    rows, _ = load_attempts(root / ".atlas" / "tasks", "T-B2")
+    assert len(rows) == 5
+    assert all(r["cause"] == "staged_empty" and r["charged"] is False for r in rows)
+    assert charged_count(root / ".atlas" / "tasks", "T-B2") == 0
+
+
+def test_verify_pending_records_uncharged(tmp_path) -> None:
+    """会话待审（rc==2 PENDING）⇒ no_review_report 不扣预算（真 e2e，无 mock）。"""
+    root = make_clean_project(_git_repo(tmp_path))
+    _plan_and_dispatch(root, "T-B3")
+    _staged_impl(root)
+    p = run(root, "verify", "--unit", "T-B3")
+    assert p.returncode == EXIT_USAGE and "PENDING" in p.stdout
+    rows, _ = load_attempts(root / ".atlas" / "tasks", "T-B3")
+    assert len(rows) == 1
+    assert (rows[0]["cause"], rows[0]["charged"]) == ("no_review_report", False)
+
+
+def test_verify_json_pause_reason_on_budget(tmp_path, monkeypatch, capsys) -> None:
+    """--json 暂停面：预算超限输出 {"status":"paused","paused_reason":...}。"""
+    root = make_clean_project(_git_repo(tmp_path))
+    _plan_and_dispatch(root, "T-B4")
+    _staged_impl(root)
+    mod = _wf_mod()
+    real_run = subprocess.run
+    fake = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
+    monkeypatch.setattr(
+        mod.subprocess, "run",
+        lambda argv, *a, **k: fake if any("atlas_review.py" in str(x) for x in argv)
+        else real_run(argv, *a, **k))
+    record_attempt(root / ".atlas" / "tasks", "T-B4", cmd="verify", cause="blocking_critical")
+    record_attempt(root / ".atlas" / "tasks", "T-B4", cmd="verify", cause="blocking_critical")
+    ns = argparse.Namespace(unit="T-B4", dry_run=False, json=True, check_cmd=None,
+                            resolves=None, round=None, staged=True)
+    rc = mod.cmd_verify(ns, root)
+    assert rc == EXIT_BUDGET
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"unit": "T-B4", "status": "paused",
+                       "paused_reason": "budget_exceeded"}
+
+
+def test_exit_code_allocation_closed() -> None:
+    """M199：摘退出码分配 budget 分支 ⇒ 本测试红（负断言）。
+
+    封闭分配 0/1/2/3/130；扣预算 ⇒ 1；budget_exceeded ⇒ 3；不扣 ⇒ 2；
+    fallback unclassified 保守扣 ⇒ 1；同位点不同 cause 不同码（no_review_report 2
+    vs review_not_passed 1）。"""
+    assert (EXIT_OK, EXIT_GATE_FAIL, EXIT_USAGE, EXIT_BUDGET, EXIT_INTERRUPTED) == (0, 1, 2, 3, 130)
+    for cause, charged in CAUSES.items():
+        if cause == "budget_exceeded":
+            assert exit_code_for(cause) == EXIT_BUDGET
+        else:
+            assert exit_code_for(cause) == (EXIT_GATE_FAIL if charged else EXIT_USAGE)
+    assert exit_code_for("unclassified") == EXIT_GATE_FAIL  # fallback 保守扣
+    assert exit_code_for("no_review_report") == EXIT_USAGE
+    assert exit_code_for("review_not_passed") == EXIT_GATE_FAIL
+
+
+def test_config_max_attempts_fail_soft(tmp_path) -> None:
+    """config fail-soft：无文件/无键/坏值/非正值（写 0 关预算）⇒ 缺省 2；显式值生效。"""
+    root = tmp_path
+    assert max_verify_attempts(root) == DEFAULT_MAX_VERIFY_ATTEMPTS == 2
+    cfg = root / ".atlas" / "config.yaml"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text("workflow:\n  max_verify_attempts: 5\n", encoding="utf-8")
+    assert max_verify_attempts(root) == 5
+    cfg.write_text("other:\n  key: 1\n", encoding="utf-8")
+    assert max_verify_attempts(root) == DEFAULT_MAX_VERIFY_ATTEMPTS
+    cfg.write_text("workflow:\n  max_verify_attempts: 0\n", encoding="utf-8")
+    assert max_verify_attempts(root) == DEFAULT_MAX_VERIFY_ATTEMPTS  # N2：0 = 放行 ⇒ 回缺省
+    cfg.write_text("workflow:\n  max_verify_attempts: abc\n", encoding="utf-8")
+    assert max_verify_attempts(root) == DEFAULT_MAX_VERIFY_ATTEMPTS
+
+
+def test_attempts_bad_lines_skipped_fail_soft(tmp_path) -> None:
+    """读侧 fail-soft：半行 JSON 跳过计数；status 人读面出坏行数，不炸。"""
+    root = make_clean_project(tmp_path)
+    _plan_and_dispatch(root, "T-B5")
+    record_attempt(root / ".atlas" / "tasks", "T-B5", cmd="verify",
+                   cause="blocking_critical")
+    p = attempts_path(root / ".atlas" / "tasks", "T-B5")
+    with p.open("a", encoding="utf-8") as fh:
+        fh.write('{"ts": "x", "unit": "T-B5", "cmd": "verify", "cause": "blo\n')  # 半行
+    rows, bad = load_attempts(root / ".atlas" / "tasks", "T-B5")
+    assert len(rows) == 1 and bad == 1
+    assert charged_count(root / ".atlas" / "tasks", "T-B5") == 1
+    out = run(root, "status", "--unit", "T-B5")
+    assert out.returncode == 0 and "坏行 1" in out.stdout
+
+
+# ── deferred 台账通道（RFC-20261122-07 §3.1.3）────────────────────────────────
+
+_DEFERRED_REPORT_CHECKS = [
+    {"id": "P1", "level": "Critical", "check": "legacy_bug", "target": "src/old.py:10",
+     "detail": "存量空指针", "pre_existing": True, "disposition": "open",
+     "fingerprint": "fp-legacy-001"},
+    {"id": "N1", "level": "Minor", "check": "nit", "target": "src/nit.py:2",
+     "detail": "存量命名", "pre_existing": True, "disposition": "open"},
+    {"id": "F1", "level": "Major", "check": "fixed_one", "target": "src/a.py:1",
+     "detail": "已修存量", "pre_existing": True, "disposition": "fixed",
+     "disposition_by": "维护者", "disposition_evidence": "diff"},
+    {"id": "C1", "level": "Major", "check": "fresh_bug", "target": "src/new.py:5",
+     "detail": "本次改动引入", "pre_existing": False, "disposition": "open"},
+]
+
+
+def _write_warn_report(root: Path, unit: str, *, checks: list, round_no: int = 1) -> None:
+    r_dir = root / "product" / "reviews" / f"2026-11-22-impl-review-{unit}"
+    r_dir.mkdir(parents=True, exist_ok=True)
+    (r_dir / "review.json").write_text(json.dumps({
+        "schema_version": 4, "ok": True, "status": "WARN", "round": round_no,
+        "checks": checks,
+    }), encoding="utf-8")
+
+
+def test_deferred_registered_even_when_blocked(tmp_path) -> None:
+    """M201：摘 extract_deferred_findings 调用 ⇒ 本测试 deferred.md 断言红（负断言）。
+
+    open pre_existing Critical 以 WARN 下限阻断收口（收口需 PASS）——即便如此
+    deferred.md 也要落账（提取在门判定之前）；本次改动引入的（pre_existing=False）
+    与已关闭的不登记。"""
+    root = make_clean_project(tmp_path)
+    _plan_and_dispatch(root, "T-D1")
+    _write_warn_report(root, "T-D1", checks=_DEFERRED_REPORT_CHECKS)
+    p = run(root, "finish", "--unit", "T-D1")
+    assert p.returncode == EXIT_GATE_FAIL and "WARN" in p.stderr  # 仍阻断
+    dw = (root / ".atlas" / "tasks" / "T-D1" / "deferred.md").read_text(encoding="utf-8")
+    assert "DW-1" in dw and "存量空指针" in dw and "族:Critical" in dw
+    assert "fp=fp-legacy-001" in dw and "r1" in dw
+    assert "DW-2" in dw and "存量命名" in dw and "族:Minor" in dw  # 无 fingerprint ⇒ 回退键
+    assert "k=" in dw
+    assert "已修存量" not in dw  # disposition 关闭 ⇒ 不登记
+    assert "本次改动引入" not in dw  # pre_existing=False ⇒ 不登记
+    assert "阻断中 1 条" in p.stdout and "登记：2 条" in p.stdout
+
+
+def test_deferred_fingerprint_idempotent_on_rerun(tmp_path) -> None:
+    """fingerprint 幂等：同报告复跑 finish 不产生重复 DW 条目（第二次零新登记不出声）。"""
+    root = make_clean_project(tmp_path)
+    _plan_and_dispatch(root, "T-D2")
+    _write_warn_report(root, "T-D2", checks=_DEFERRED_REPORT_CHECKS)
+    assert run(root, "finish", "--unit", "T-D2").returncode == EXIT_GATE_FAIL
+    assert run(root, "finish", "--unit", "T-D2").returncode == EXIT_GATE_FAIL
+    dw = (root / ".atlas" / "tasks" / "T-D2" / "deferred.md").read_text(encoding="utf-8")
+    assert "DW-1" in dw and "DW-2" in dw and "DW-3" not in dw
+
+
+def test_status_aggregates_attempts_and_deferred(tmp_path) -> None:
+    """status 双聚合（含 --json 逐卡字段）：attempts charged/坏行 + deferred 开放数。
+
+    先跑一次被阻断的 finish（触发 deferred 提取 + finish 失败记账），再查 status。"""
+    root = make_clean_project(tmp_path)
+    _plan_and_dispatch(root, "T-D3")
+    _write_warn_report(root, "T-D3", checks=_DEFERRED_REPORT_CHECKS)
+    assert run(root, "finish", "--unit", "T-D3").returncode == EXIT_GATE_FAIL
+    out = run(root, "status", "--unit", "T-D3")
+    assert out.returncode == 0
+    assert "charged 1/2" in out.stdout and "deferred 开放 2" in out.stdout
+    pj = run(root, "status", "--unit", "T-D3", "--json")
+    assert pj.returncode == 0
+    data = json.loads(pj.stdout)
+    task = next(t for t in data["tasks"] if t["id"] == "T-D3")
+    assert task["attempts"] == {"charged": 1, "uncharged": 0, "limit": 2, "bad_lines": 0}
+    assert task["deferred_open"] == 2
+
+
+def test_finish_charged_row_written_on_warn_block(tmp_path) -> None:
+    """finish 阻断按 cause 入记账：WARN 报告 ⇒ review_not_passed（扣）⇒ rc 1。"""
+    root = make_clean_project(tmp_path)
+    _plan_and_dispatch(root, "T-D4")
+    _write_warn_report(root, "T-D4", checks=[])
+    p = run(root, "finish", "--unit", "T-D4")
+    assert p.returncode == EXIT_GATE_FAIL  # 语义钉保持：review_not_passed 门红 rc==1
+    rows, _ = load_attempts(root / ".atlas" / "tasks", "T-D4")
+    assert len(rows) == 1
+    assert (rows[0]["cause"], rows[0]["charged"], rows[0]["cmd"]) == \
+        ("review_not_passed", True, "finish")
+
+
+# ── 机制文档判据行测试锚（RFC-20261122-07 §3.2.2，可选但存活）─────────────────
+
+def _mech_doc_with_anchors(root: Path, rel: str, globs: list[str],
+                           anchors: list[str]) -> None:
+    _mech_doc(root, rel, globs)
+    p = root / rel
+    body = p.read_text(encoding="utf-8") + "\n" + "".join(
+        f"行为陈述行〔测:{a}〕\n" for a in anchors)
+    p.write_text(body, encoding="utf-8")
+
+
+def test_mechanism_doc_dead_test_anchor_warns(tmp_path) -> None:
+    """M202：摘 _dead_anchor_findings 调用 ⇒ 本测试红（负断言）。
+
+    锚指向不存在的 tests 文件 ⇒ 死锚 WARN；存在的 ⇒ 沉默；非 tests/ 前缀 ⇒ 形态
+    WARN；节点级存在性不机器判（文件在即不 WARN）。"""
+    root = _git_repo(tmp_path)
+    (root / "backend" / "a.py").parent.mkdir(parents=True)
+    (root / "backend" / "a.py").write_text("x\n", encoding="utf-8")
+    # 夹具仓内造一个真实存在的 tests 文件（锚检查对夹具仓根，非 atlas 仓）
+    (root / "tests").mkdir(exist_ok=True)
+    (root / "tests" / "test_local.py").write_text("def test_x():\n    pass\n",
+                                                  encoding="utf-8")
+    _mech_doc_with_anchors(root, "docs/architecture/x.md", ["backend/**"], [
+        "tests/test_gone.py::test_a",      # 死锚：文件不存在
+        "tests/test_local.py::test_x",     # 文件在（节点级不判）⇒ 沉默
+        "scripts/foo.py",                  # 形态非法：非 tests/ 前缀
+    ])
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+    findings = mechanism_doc_findings(root, [])
+    assert any("死锚" in f and "tests/test_gone.py" in f for f in findings)
+    assert not any("test_local.py" in f and "死锚" in f for f in findings)
+    assert any("形态非法" in f and "scripts/foo.py" in f for f in findings)
+
+
+def test_mechanism_doc_pending_still_checks_anchor(tmp_path) -> None:
+    """pending 篇（paths 冷启动豁免）的死锚仍判——锚存活与 paths 无关。"""
+    root = _git_repo(tmp_path)
+    _mech_doc_with_anchors(root, "docs/architecture/new.md", ["pending"],
+                           ["tests/test_missing.py"])
+    findings = mechanism_doc_findings(root, ["anything.py"])
+    assert any("死锚" in f and "tests/test_missing.py" in f for f in findings)
+    assert not any("触及" in f or "疑似死 paths" in f for f in findings)  # paths 面豁免不变
+
+
+def test_mechanism_doc_anchor_free_lines_stay_silent(tmp_path) -> None:
+    """未写锚的行零出声（棘轮起点 = 可选，不强推）：无锚机制篇行为与 RFC-04 一致。"""
+    root = _git_repo(tmp_path)
+    (root / "backend" / "a.py").parent.mkdir(parents=True)
+    (root / "backend" / "a.py").write_text("x\n", encoding="utf-8")
+    _mech_doc(root, "docs/architecture/plain.md", ["backend/**"])
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+    assert mechanism_doc_findings(root, []) == []

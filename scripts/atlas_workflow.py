@@ -14,7 +14,12 @@
   atlas workflow archive [--unit <ID>]
   atlas workflow run --unit <ID> [--requirement <TEXT_OR_FILE|需求落点>] [--check-cmd <CMD>]
 
-退出码：0 成功；1 门禁未通过/失败；2 参数错误/输入缺失。纯标准库。
+退出码（封闭分配，RFC-20261122-07，单源 `_support/workflow_causes.py`）：
+  0 成功；1 判定失败·门红（扣预算类）；2 用法错误/前置不满足/环境异常/流程顺序（不扣）；
+  3 verify 尝试预算超限暂停（要求人工）；130=中断（SIGINT 信号死亡天然产生，
+  无 die() 路径发出）。4–129 与 131+ 不分配。同一位点不同 cause 不同码：
+  finish 的门红（review 未过/封口红/新鲜度/E2E red）⇒ 1，其 no_review_report/
+  environment 类 ⇒ 2。纯标准库。
 """
 from __future__ import annotations
 
@@ -45,7 +50,11 @@ from _support.workflow_dispatch import (  # noqa: E402
 )
 from _support.workflow_finish import (  # noqa: E402
     finish_task, check_task_review_passed, FinishError, archive_task, archive_month,
-    scan_review_rounds
+    scan_review_rounds, deferred_open_count
+)
+from _support.workflow_causes import (  # noqa: E402
+    EXIT_BUDGET, FALLBACK_CAUSE, charged_count, exit_code_for, load_attempts,
+    max_verify_attempts, record_attempt
 )
 from _support.workflow_context import select_specs, render_specs  # noqa: E402
 from _support.workflow_progress import progress_snapshot, render_progress  # noqa: E402
@@ -275,8 +284,24 @@ def cmd_verify(args: argparse.Namespace, root: Path) -> int:
         return die("verify 步骤必须指定 --unit <ID>")
 
     review_script = HERE / "atlas_review.py"
+    tasks_root = _read_tasks_root(root)
     if not args.dry_run and not _has_staged_changes(root):
-        return die("暂存区为空：请先实现并 `git add`，再运行 verify", code=2)
+        # 前置态不扣预算（RFC-20261122-07 双轨），但入记账留观测痕
+        record_attempt(tasks_root, args.unit, cmd="verify", cause="staged_empty")
+        return _verify_paused(args, args.unit, "staged_empty",
+                              "暂存区为空：请先实现并 `git add`，再运行 verify")
+    # 尝试预算门（RFC-20261122-07 §3.1.1；gates.md §2.1 同名行）：charged ≥ 上限
+    # ⇒ 拒绝继续该单元（退出码 3 + budget_exceeded 留痕行），停下要求人工——不是放行。
+    if not args.dry_run:
+        charged = charged_count(tasks_root, args.unit)
+        limit = max_verify_attempts(root)
+        if charged >= limit:
+            record_attempt(tasks_root, args.unit, cmd="verify", cause="budget_exceeded")
+            return _verify_paused(
+                args, args.unit, "budget_exceeded",
+                f"任务 {args.unit} verify 尝试预算超限（charged {charged}/{limit}）：停下人工判断"
+                "——修复实现后重试；确需放宽改 .atlas/config.yaml 的 "
+                "workflow.max_verify_attempts；直跑 `atlas review --staged` 属绕行面（人工责任）")
     round_no = getattr(args, "round", None) or _next_review_round(root, args.unit)
     cmd = [
         sys.executable, str(review_script),
@@ -308,8 +333,26 @@ def cmd_verify(args: argparse.Namespace, root: Path) -> int:
         # 措辞锁「查看该机制篇是否跟改」，不改退出码。
         for finding in mechanism_doc_findings(root, _staged_files(root)):
             print(f"WARN（机制文档）: {finding}", file=sys.stderr)
-    # 本命令的退出码契约 = 0/1/2；子步的原生码（如 7）归一到 1。
-    return pr.returncode if pr.returncode in (0, 1, 2) else 1
+    # 失败入记账（RFC-20261122-07 双轨）：rc==1 = 报告（含 --check-cmd 并轨段）未过
+    # ⇒ 扣预算；rc==2 = 会话待审 PENDING（审查未执行）⇒ 不扣；其余原生码归一为 1。
+    if pr.returncode != 0 and not args.dry_run:
+        cause = "no_review_report" if pr.returncode == 2 else "blocking_critical"
+        record_attempt(tasks_root, args.unit, cmd="verify", cause=cause)
+        rc = pr.returncode if pr.returncode in (0, 1, 2) else 1
+        if args.json:
+            print(json.dumps({"unit": args.unit, "status": "paused",
+                              "paused_reason": cause}, ensure_ascii=False, indent=2))
+        return rc
+    # 本命令的退出码契约 = 0/1/2/3；子步的原生码（如 7）归一到 1。
+    return pr.returncode if pr.returncode in (0, 1, 2, 3) else 1
+
+
+def _verify_paused(args: argparse.Namespace, unit: str, cause: str, msg: str) -> int:
+    """verify 前置/预算暂停出口：人读文案不变；--json 追加机器可读 paused_reason。"""
+    if args.json:
+        print(json.dumps({"unit": unit, "status": "paused", "paused_reason": cause},
+                         ensure_ascii=False, indent=2))
+    return die(msg, code=exit_code_for(cause))
 
 
 def cmd_finish(args: argparse.Namespace, root: Path) -> int:
@@ -329,7 +372,15 @@ def cmd_finish(args: argparse.Namespace, root: Path) -> int:
     try:
         res = finish_task(root, target_task, force=args.force)
     except FinishError as exc:
-        return die(str(exc), code=1)
+        # 失败按 cause 双轨记账 + 分流退出码（RFC-20261122-07 §3.1.2：同一位点
+        # 不同 cause 不同码——门红/扣预算 ⇒ 1；前置/顺序/环境 ⇒ 2）。
+        cause = getattr(exc, "cause", None) or FALLBACK_CAUSE
+        record_attempt(tasks_dir, args.unit, cmd="finish", cause=cause)
+        rc = exit_code_for(cause)
+        if args.json:
+            print(json.dumps({"unit": args.unit, "status": "paused",
+                              "paused_reason": cause}, ensure_ascii=False, indent=2))
+        return die(str(exc), code=rc)
 
     if args.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))
@@ -377,7 +428,8 @@ def cmd_archive(args: argparse.Namespace, root: Path) -> int:
               "（dry-run 不移动）")
         return 0
     if args.unit and pending and pending[0].get("status") != "completed":
-        return die(f"任务 {args.unit} 尚未 completed，不能归档", code=1)
+        # 顺序错归「前置不满足」（RFC-20261122-07 退出码语义修正：非门红）
+        return die(f"任务 {args.unit} 尚未 completed，不能归档", code=2)
     if not pending:
         print("无待归档项（目标任务已归档或无可归档任务）")
         return 0
@@ -389,7 +441,9 @@ def cmd_archive(args: argparse.Namespace, root: Path) -> int:
         try:
             info = archive_task(root, tasks_dir, Path(t["_dir"]), t["id"])
         except FinishError as exc:
-            return die(str(exc), code=1)
+            # 归档类异常全为不扣预算类（state_transition/environment/no_task_card）⇒ 2
+            return die(str(exc),
+                       code=exit_code_for(getattr(exc, "cause", None) or FALLBACK_CAUSE))
         moved.append({"id": t["id"], **info})
     if args.json:
         print(json.dumps({"archived": moved}, ensure_ascii=False, indent=2))
@@ -411,10 +465,19 @@ def cmd_status(args: argparse.Namespace, root: Path) -> int:
         return 0
 
     if args.json:
+        # 尝试记账与 deferred 聚合（RFC-20261122-07 §3.1.1/§3.1.3）：逐卡附加，不改既有键
+        limit = max_verify_attempts(root)
+        for t in all_tasks:
+            rows, bad = load_attempts(tasks_dir, t["id"])
+            charged = sum(1 for r in rows if r.get("charged") is True)
+            t["attempts"] = {"charged": charged, "uncharged": max(len(rows) - charged, 0),
+                             "limit": limit, "bad_lines": bad}
+            t["deferred_open"] = deferred_open_count(Path(t["_dir"]))
         print(json.dumps({"tasks": all_tasks}, ensure_ascii=False, indent=2))
         return 0
 
     print(f"atlas workflow 任务台账（共 {len(all_tasks)} 项）：")
+    limit = max_verify_attempts(root)
     for t in all_tasks:
         stat = t.get("status", "unknown")
         icon = "✓" if stat == "completed" else ("▶" if stat == "in_progress" else "○")
@@ -422,6 +485,19 @@ def cmd_status(args: argparse.Namespace, root: Path) -> int:
         print(f"  {icon} [{t['id']}] {t.get('title')} ({stat}){suffix}")
         if t.get("acs"):
             print(f"      ACs: {', '.join(t['acs'])}")
+        # 尝试记账 + deferred 聚合（含归档卡：归档路径已知可读）
+        rows, bad = load_attempts(tasks_dir, t["id"])
+        charged = sum(1 for r in rows if r.get("charged") is True)
+        notes: list[str] = []
+        if rows or bad:
+            notes.append(f"attempts: charged {charged}/{limit}，"
+                         f"uncharged {max(len(rows) - charged, 0)}"
+                         + (f"，坏行 {bad}" if bad else ""))
+        open_def = deferred_open_count(Path(t["_dir"]))
+        if open_def:
+            notes.append(f"deferred 开放 {open_def}")
+        if notes:
+            print(f"      {'；'.join(notes)}")
     return 0
 
 
