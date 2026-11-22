@@ -4,7 +4,7 @@
 
 ---
 
-## [Unreleased]
+## [v0.4.0-beta.6] - 2026-11-22
 
 - feat(review): 行级锚定测量面第一期（`RFC-20261122-08`，双评审修后通过 + 复核五处方全落）——实例⑤评审产物行号的确定性测量面：派工包骨架加 `existing_code` 逐字锚字段 + 产物段两指令（含 heart→consequences→glue 排序学说 rider）；算法单源 `_support/line_anchor.py`（OCR resolver.go 同款移植：L1 diff hunk 新侧〔hunk 头计数器推算〕→ L2 全工作树回退；anchored 谓词 = 区间相交含子集；diff 基准三模式 staged=`git diff --cached`/range/delta，一律 `-U0 --no-renames`）；`cli_review_convert.py` 写盘链尾落 `anchoring-stats.json` 六态统计（anchored/mismatch/unresolved/unanchored(legacy|no_field)/unresolvable）+ stderr WARN——**WARN 不置红**：不改写行号、不进指纹、v4 判收链零变化、永不 die（写失败降级 WARN）；gates.md 观察面登记行（升档 = 连续 ≥2 判据窗 `mismatch/(anchored+mismatch+unresolved) > 10%`；摘除 = 连续 ≥3 窗全零；聚合探针建时点 = 第 3 判据窗或任一窗漂移信号先到为准）；`tests/test_line_anchor.py` 10 用例 + **M203/M204** 变异四段验证；棘轮 tests 88/内核 29/门册 192 行/转换器 483 行/变异上限 M204；**首窗实测**（ANCHOR-W1 playground 真实四阶段链）：anchored 2/2、R-2 相交谓词实战验证、独立审查抓到注入违例判收 FAIL 正确（留档 `BENCHMARK-20261122-08-first-anchor-window`）
 - docs(runbook): `RFC-20261122-06` OpenWiki/WikiBench 情报吸收——层3任务构造协议 §2a（期望事实清单=AC 投影细化挂盲评消费位）+ 锚定核验观察 §4.5 + 拍板竞争假设旁注 + QUEUE 观察行（OKF 6 个月出室）
