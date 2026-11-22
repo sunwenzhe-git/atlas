@@ -1,7 +1,7 @@
 {
   "installer": [
     "bash",
-    "/private/tmp/atlas-golden-rec/install.sh"
+    "/private/tmp/atlas-golden-rec2/install.sh"
   ],
   "runs": [
     {
