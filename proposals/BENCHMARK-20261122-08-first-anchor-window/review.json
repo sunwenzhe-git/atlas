@@ -1,0 +1,106 @@
+{
+ "schema_version": 4,
+ "ok": false,
+ "status": "FAIL",
+ "root": "/private/tmp/atlas-anchor-window",
+ "scope": "impl-review ANCHOR-W1",
+ "unit": "ANCHOR-W1",
+ "round": 1,
+ "expected": 6,
+ "reviewed": 6,
+ "budget_exceeded": false,
+ "cli_status": "completed",
+ "cli_warnings": [],
+ "checks": [
+  {
+   "id": "D1",
+   "level": "Critical",
+   "check": "bug",
+   "target": "site/index.html:4-4",
+   "detail": "点击「开始」后标题被设置为「欢迎来到靶场」，与本单元唯一验收基准 AC-HOME-001 直接冲突：AC-HOME-001 要求 Then 标题文案为「验收靶场」（product/prd/home-prd.md:43），业务规则 HOME-R-002 同（product/prd/home-prd.md:37），E2E-HOME-001 断言为 text home-title 验收靶场（product/e2e/cases/home.md:16），任务需求卡亦写明「必须精确显示『验收靶场』」（.atlas/tasks/ANCHOR-W1/prd.md:15）。「欢迎来到靶场」≠「验收靶场」，E2E-HOME-001 的 text 断言将失败，AC-HOME-001 不满足。证据链：site/index.html:4（暂存 diff 新行）↔ product/prd/home-prd.md:43 / :37 ↔ product/e2e/cases/home.md:16 ↔ .atlas/tasks/ANCHOR-W1/prd.md:15。另：HEAD 中该处原值即 '验收靶场'（diff 删除行），本次暂存改动是对正确行为的回归。｜建议：<button data-testid=\"home-cta-btn\" onclick=\"document.querySelector('[data-testid=home-title]').textContent='验收靶场';document.querySelector('[data-testid=home-panel]').hidden=false\">开始</button>",
+   "fingerprint": "64a0a2f2a3ba4ecc",
+   "pre_existing": false,
+   "disposition": "open",
+   "rollback": "implement"
+  },
+  {
+   "id": "D2",
+   "level": "Minor",
+   "check": "style",
+   "target": ".atlas/tasks/ANCHOR-W1/dispatch.md:30-34",
+   "detail": "dispatch.md 二级标题序号重复：第 26 行已是「## 3. 变更范围与完成定义」，第 31、34 行再次出现「## 2. 权威验收标准 (AC Scope)」「## 3. 受影响域架构透镜 (Domain Focus)」，序号 2、3 各出现两次（系任务 PRD 内嵌段落与派发单自身章节拼接所致），目录导航与锚点引用易错位。证据链：.atlas/tasks/ANCHOR-W1/dispatch.md:26、:31、:34（暂存 diff 全文）。",
+   "fingerprint": "449302f6c80ee366",
+   "pre_existing": false,
+   "disposition": "open",
+   "rollback": "implement"
+  }
+ ],
+ "other": [],
+ "review_scope": {
+  "manifest": "scope-manifest.json",
+  "sha256": "703e703cf64d6f7c5de8b09df9a48849cf509cb277df71e9f1832814411a0670",
+  "files": [
+   {
+    "path": ".atlas/tasks/ANCHOR-W1/coverage-matrix.md",
+    "status": "A",
+    "sha256": "d1622822d1298f2f1c6cbbee42fe7f742a269b5ddfeca4af62da90254ef537a8",
+    "size": 656,
+    "hash_mode": "sha256"
+   },
+   {
+    "path": ".atlas/tasks/ANCHOR-W1/dispatch.md",
+    "status": "A",
+    "sha256": "4ed03d8b74c75b4530882d4123ed51b225b94d6bd63216d697bddf9ba926ad9f",
+    "size": 2272,
+    "hash_mode": "sha256"
+   },
+   {
+    "path": ".atlas/tasks/ANCHOR-W1/prd.md",
+    "status": "A",
+    "sha256": "e72286cf172b8517ab18d1c989a14201374996a1e23c73284677f9a82e014768",
+    "size": 1025,
+    "hash_mode": "sha256"
+   },
+   {
+    "path": ".atlas/tasks/ANCHOR-W1/requirement-items.md",
+    "status": "A",
+    "sha256": "4aa219d89279a59e5f957ce2ac12caaa831f01e0b75593d58b45bcef1616820f",
+    "size": 954,
+    "hash_mode": "sha256"
+   },
+   {
+    "path": ".atlas/tasks/ANCHOR-W1/task.json",
+    "status": "A",
+    "sha256": "9cc73f7f564824af042c960569ace2dfae1f1740c69ce8c17d87169c4a414d6a",
+    "size": 392,
+    "hash_mode": "sha256"
+   },
+   {
+    "path": "site/index.html",
+    "status": "M",
+    "sha256": "54dc1bdbb49ba9c6245eab9215b8b4e2de241b40fd5609a6993a4c3beb017b72",
+    "size": 432,
+    "hash_mode": "sha256"
+   }
+  ]
+ },
+ "completed_files": [
+  ".atlas/tasks/ANCHOR-W1/coverage-matrix.md",
+  ".atlas/tasks/ANCHOR-W1/dispatch.md",
+  ".atlas/tasks/ANCHOR-W1/prd.md",
+  ".atlas/tasks/ANCHOR-W1/requirement-items.md",
+  ".atlas/tasks/ANCHOR-W1/task.json",
+  "site/index.html"
+ ],
+ "selected_files": [
+  ".atlas/tasks/ANCHOR-W1/coverage-matrix.md",
+  ".atlas/tasks/ANCHOR-W1/dispatch.md",
+  ".atlas/tasks/ANCHOR-W1/prd.md",
+  ".atlas/tasks/ANCHOR-W1/requirement-items.md",
+  ".atlas/tasks/ANCHOR-W1/task.json",
+  "site/index.html"
+ ],
+ "failed_files": [],
+ "waived_files": [],
+ "reused_files": []
+}

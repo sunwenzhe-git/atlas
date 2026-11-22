@@ -1,0 +1,38 @@
+{
+ "executor": "session-subagent",
+ "diff_mode": "staged",
+ "grounding_ok": true,
+ "total": 2,
+ "anchored": 2,
+ "mismatch": 0,
+ "unresolved": 0,
+ "unanchored_legacy": 0,
+ "unanchored_no_field": 0,
+ "unresolvable": 0,
+ "comments": [
+  {
+   "path": "site/index.html",
+   "reported": [
+    4,
+    4
+   ],
+   "resolved": [
+    4,
+    4
+   ],
+   "state": "anchored"
+  },
+  {
+   "path": ".atlas/tasks/ANCHOR-W1/dispatch.md",
+   "reported": [
+    30,
+    34
+   ],
+   "resolved": [
+    31,
+    34
+   ],
+   "state": "anchored"
+  }
+ ]
+}
