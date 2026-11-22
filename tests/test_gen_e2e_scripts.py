@@ -4419,3 +4419,108 @@ def test_js_var_cjk_names_do_not_collide() -> None:
     gn = load_generator()
     assert gn.js_var("已知按钮") != gn.js_var("变量甲")
     assert gn.js_var("plain") == "atlasVar_plain"
+
+
+# ── RFC-20261122-01（2026-11-22）：壳前缀统一（`e2e.route_style: hash`）─────────
+
+def _load_url_merge():
+    spec = importlib.util.spec_from_file_location(
+        "url_merge_under_test", PKG_ROOT / "_support" / "url_merge.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_merge_base_prefix_pinned_discriminant() -> None:
+    """判别式钉子（评审 B2/M3）：①外部原样 ②含 # 全形态（仅 query union）③业务段重组；
+    幂等 f(f(x))=f(x)、双跳、style=None **字面委托** merge_base_query（电池逐字节等价）。"""
+    um = _load_url_merge()
+    base = "http://localhost:3000/shell/?tenant=9"
+    f = lambda t: um.merge_base_prefix(t, base, "hash")  # noqa: E731
+    assert f("/app") == "/shell/?tenant=9#/app"
+    assert f("/app/wf/1") == "/shell/?tenant=9#/app/wf/1"
+    assert f("/app?t=1") == "/shell/?tenant=9&t=1#/app"          # query 留 query 侧（D109）
+    assert f("/app?t=1#/h") == "/app?tenant=9&t=1#/h"            # ②含 # = 全形态，不重组
+    assert f("/shell/#/app/x") == "/shell/?tenant=9#/app/x"      # ②存量全形态逐字节原样
+    assert f("/shell/#/app/x") == f(f("/shell/#/app/x"))         # ②幂等
+    assert f("http://other.example/x") == "http://other.example/x"  # ①外部原样
+    assert f(f("/app")) == f("/app")                              # ③幂等（重组结果含 # ⇒ 二次走②）
+    assert f(f("/app")) == f("/app") == um.merge_base_prefix("/shell/?tenant=9#/app", base, "hash")
+    assert f("/app") == f(f("/app"))                              # 双跳（页面级 url 再过守卫面）
+    assert um.merge_base_prefix("/x", "http://h", "hash") == "/#/x"       # base 无路径 ⇒ 壳 = /
+    assert um.merge_base_prefix("/app", base, None) == um.merge_base_query("/app", base)
+    # 委托等价电池（M3 钉：未声明键逐字节零变化）
+    for t in ("/app", "/app?t=1#/h", "/shell/#/app", "http://other.example/x", "/a/b?k=v", "/"):
+        assert um.merge_base_prefix(t, base, None) == um.merge_base_query(t, base), t
+    with pytest.raises(ValueError):
+        um.merge_base_prefix("/app", base, "path")               # 闭集外 fail-loud（path 未预留）
+
+
+PROFILE_SHELL = PROFILE.replace(
+    "app_base_url: http://127.0.0.1:8000",
+    "app_base_url: http://127.0.0.1:3000/shell/?tenant=9") + "  route_style: hash\n"
+SHELL_CASE = CASE.replace(
+    "  - click home-cta-btn          # 点击主操作按钮",
+    "  - goto /home                  # 业务段路由（统一前缀后 = /shell/?tenant=9#/home）\n"
+    "  - click home-cta-btn          # 点击主操作按钮").replace("step:", "守卫: /home/42\nstep:", 1)
+
+
+def test_route_style_hash_unifies_navigation_faces() -> None:
+    """壳前缀统一（RFC-20261122-01）：style=hash 时 goto / 守卫 / 零步基线三面
+    统一为 `/shell/?tenant=9#/…` 形态——业务段路由（评审 B2 判别式③）+ 守卫值重组（M1）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=PROFILE_SHELL, case=SHELL_CASE)
+        assert run(root, "--apply").returncode == 0
+        text = spec_of(root)
+        assert "await atlasGoto(page, '/shell/?tenant=9#/home');" in text, text[:600]
+        assert "await atlasGoto(page, '/shell/?tenant=9#/home/42');" in text, \
+            [ln for ln in text.splitlines() if "shell" in ln][:8]
+        data_obj = text.split("const ATLAS_ZS_home = ", 1)[1].split("\n", 1)[0]
+        assert '"url":"/shell/?tenant=9#/home"' in data_obj, data_obj
+
+
+def test_route_style_named_targets_same_shell_and_hetero() -> None:
+    """具名靶场 × route_style（评审 M4）：同壳业务段重组；异壳全形态（含 #）原样 + query union。"""
+    profile = PROFILE_SHELL + "  targets:\n    admin: /home\n    legacy: /other/#/x\n"
+    admin_case = CASE.replace("pages:\n  - home", "pages:\n  - home\n靶场: admin", 1)
+    legacy_case = CASE.replace("pages:\n  - home", "pages:\n  - home\n靶场: legacy", 1)
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=profile, case=admin_case)
+        assert run(root, "--apply").returncode == 0
+        assert "await atlasGoto(page, '/shell/?tenant=9#/home');" in spec_of(root), spec_of(root)[:600]
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=profile, case=legacy_case)
+        assert run(root, "--apply").returncode == 0
+        # 异壳全形态：路径与 hash 段逐字节原样，仅 base query 并进 # 之前（B2 判别式②）
+        assert "await atlasGoto(page, '/other/?tenant=9#/x');" in spec_of(root), spec_of(root)[:600]
+
+
+def test_route_style_bad_value_aborts() -> None:
+    """词表外（含 `path`——真实消费者出现前不预留）⇒ 生成器 exit 2，fail-loud（不猜）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=PROFILE_SHELL.replace("route_style: hash", "route_style: path"))
+        proc = run(root, "--apply")
+        assert proc.returncode == 2, proc
+        assert "route_style" in proc.stderr, proc.stderr[:400]
+
+
+def test_route_style_undeclared_goto_byte_identical() -> None:
+    """未声明 route_style：base 带壳路径也不并进导航（D104 既定口径延伸）——
+    goto / 守卫 / 基线三面与旧口径逐字节一致（壳前缀丢失是现状，本提案不悄悄改行为）。"""
+    profile_undecided = PROFILE.replace(
+        "app_base_url: http://127.0.0.1:8000",
+        "app_base_url: http://127.0.0.1:3000/shell/?tenant=9")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make(root, profile=profile_undecided, case=SHELL_CASE)
+        assert run(root, "--apply").returncode == 0
+        text = spec_of(root)
+        assert "await atlasGoto(page, '/home?tenant=9');" in text, text[:600]
+        # 导航目标面不出现壳前缀（base 字面量/origin 行含 /shell/ 属合法——只看 goto 目标）
+        gotos = (re.findall(r"atlasGoto\(page, '([^']*)'\)", text)
+                 + re.findall(r"page\.goto\('([^']*)'\)", text))
+        assert gotos and all("/shell" not in g for g in gotos), gotos

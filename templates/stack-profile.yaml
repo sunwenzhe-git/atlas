@@ -50,6 +50,8 @@ e2e:
   index: {{ASSETS_ROOT}}/e2e/e2e-index.md
   scripts_dir: {{ASSETS_ROOT}}/e2e/scripts
   app_base_url: null          # 真实应用地址（单段唯一靶场）；为 null ⇒ 生成器报错向用户索取，不猜默认
+  # route_style: hash          # 可选：HashRouter + 子路径壳前缀靶场——壳前缀与 hash 形态由
+  #                            # app_base_url 一处承载，用例只写业务段路由（缺失 = 未声明；RFC-20261122-01）
   reset: null                 # 真跑前靶场重置 shell 命令串（cwd = 项目根；null = 不重置）。种子态假设见 rings/e2e §7
   node_modules: null          # node 运行器的依赖目录（相对项目根；runner=node-playwright 时必填）
   # 应用靶场登录形态与取证值（可选段；**段缺失 = 未声明 ⇒ 未就绪**，2026-10-16 语义改判

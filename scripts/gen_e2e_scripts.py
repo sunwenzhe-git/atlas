@@ -1007,7 +1007,8 @@ def ts_send_helpers() -> str:
     )
 
 
-def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
+def ts_case(case: dict, url: str, base: str = "", esm: bool = False,
+            route_style: str | None = None) -> str:
     cid = case["id"]
     # 契约 §5.5 `守卫:`（2026-10-16，issue #23）：**元素齐全守卫导航用的具体路径**。
     # 页面表 `路由` 列按 §3.1 只承载**业务段**（带参页面形如 `/x` 而真实路由为 `/x/:id`）⇒
@@ -1018,6 +1019,11 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
     # （值内联在首个带参 `goto` 里）——守卫导航取**同一来源**（`_inject_query`），否则守卫读的
     # 是**无前提的 DOM**：参数决定「哪些元素在场」的页面上，守卫会在 goto 后即红。
     _guard_target = (case.get("守卫") or "").strip() or url
+    # 壳前缀统一（RFC-20261122-01 / 评审 M1 顺序重排）：**先**重组——style=hash 时业务段
+    # 守卫目标由此获得 hash 段；**再** append `参数:` / `hash参数:` 注入（两 append 本就按
+    # 「对已合并 url 幂等」设计，`url_merge.append_query` 注释自述），最后 `merge_base_query`
+    # 幂等收口。反过来先注入会在 `hash参数:` 处即 ValueError 中止（目标重组前没有 hash 段）。
+    _guard_target = url_merge.merge_base_prefix(_guard_target, base, route_style)
     _inject_q = case.get("_inject_query") or ""
     if _inject_q:
         # `url` 在调用侧已并入 base query（幂等）；`守卫:` 是未合并的具体路径 —— 两者都按
@@ -1150,7 +1156,8 @@ def ts_case(case: dict, url: str, base: str = "", esm: bool = False) -> str:
         elif verb == "goto":
             # 宿主注入型 base query（issue #27 / D104）：step 的 goto 是**第二处**发射面。
             # 导航层 query 保真（RFC-20261112-01 §5）：base 带 query 时经 atlasGoto 校验后导航。
-            _goto_target = url_merge.merge_base_query(value, base)
+            # 壳前缀统一（RFC-20261122-01）：style=hash 时业务段路由重组进 hash（评审 B2 判别式）。
+            _goto_target = url_merge.merge_base_prefix(value, base, route_style)
             _goto_call = "atlasGoto" if url_merge.base_query_keys(base or "") else "page.goto"
             actions.append(f"await {_goto_call}({'page, ' if _goto_call == 'atlasGoto' else ''}'{_goto_target}');")
         elif verb == "click":
@@ -2199,6 +2206,15 @@ def main() -> int:
             return 2
         color_line = f"    colorScheme: '{cs}',\n"
     extra_use = viewport_line + color_line
+    # 壳前缀统一（RFC-20261122-01）：`e2e.route_style` 闭集词表（{hash}），坏值 fail-loud
+    # 中止（与 viewport / color_scheme 同款执法点）。未声明 = None ⇒ 导航发射面逐字节旧口径。
+    route_style = None
+    if e2e.get("route_style") is not None:
+        try:
+            route_style = _sp.normalize_route_style(e2e.get("route_style"))
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
     # 导航层 URL query 保真（RFC-20261112-01 §5 / 契约 §5.5）：`e2e.app_base_url` 的 query 是
     # 宿主注入型租户前提，用例里写死的同源导航一旦丢键 ⇒ 落错租户。生成物在**导航层**校验
     # （不是控制台配置自检——那恒真且看不到用例正文）。跨域（SSO / 外部登录）不校验。
@@ -2667,7 +2683,8 @@ def main() -> int:
     for page, items in cases.items():
         # 宿主注入型 base query（issue #27 / D104）：页面级 URL 先合并 ⇒ 零步基线 `data.url`
         # （**第三处**发射面：`atlasZeroStepBaseline` 内 `page.goto(data.url)`）与 `守卫:` 缺省值同享。
-        url = url_merge.merge_base_query(urls[page], base or "")
+        # 壳前缀统一（RFC-20261122-01）：style=hash 时页面表路由（业务段）重组进 hash。
+        url = url_merge.merge_base_prefix(urls[page], base or "", route_style)
 
         # 契约 §5.4/§5.5（多靶场，beta.16）：用例级 `靶场:` ⇒ URL = `e2e.targets[<名>]`（闭集已验）；
         # 缺省 = 页面表路由。零步基线按「解析后的靶场 URL」分组：default 组保持现名
@@ -2680,7 +2697,9 @@ def main() -> int:
             t_name = _case_target_name(c)
             if not t_name:
                 return url
-            return url_merge.merge_base_query(targets[t_name], base or "")
+            # 壳前缀统一（RFC-20261122-01）：具名靶场同壳业务段重组；异壳/全形态走原样分支
+            # （评审 B2/M4：异壳靶场须写全形态，不猜壳）。
+            return url_merge.merge_base_prefix(targets[t_name], base or "", route_style)
 
         for c in items:
             st = case_states.get(c.get("id", ""), ("", ""))
@@ -2964,7 +2983,7 @@ def main() -> int:
         body = (
             header
             + baseline_text
-            + "\n".join(ts_case(c, _case_url(c), base or "", esm_project) for c in normal_cases)
+            + "\n".join(ts_case(c, _case_url(c), base or "", esm_project, route_style) for c in normal_cases)
         )
         write(scripts_dir / f"{page}{ext}", body, args.apply, results)
         request_path = scripts_dir / f"{page}.request{ext}"
@@ -2972,7 +2991,7 @@ def main() -> int:
             request_body = (
                 header
                 + "test.use({ trace: process.env.ATLAS_REQUEST_TRACE === '1' ? 'retain-on-failure' : 'off' });\n\n"
-                + "\n".join(ts_case(c, _case_url(c), base or "", esm_project) for c in request_cases)
+                + "\n".join(ts_case(c, _case_url(c), base or "", esm_project, route_style) for c in request_cases)
             )
             write(request_path, request_body, args.apply, results)
         elif request_path.is_file():

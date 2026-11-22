@@ -419,6 +419,63 @@ def test_snapshot_splits_multi_value_ac_for_display() -> None:
         assert case["acs"] == ["AC-U-001", "AC-U-002"], case
 
 
+def _case_row(need: str) -> str:
+    """一行带 `需求` 列值的索引行（其余列与夹具口径一致）。"""
+    v = load("validate_e2e_index", "validators/validate_e2e_index.py")
+    cols = list(v.MAIN_COLUMNS)
+    return ("# E2E 索引\n\n| " + " | ".join(cols) + " |\n| "
+            + " | ".join(["---"] * len(cols)) + " |\n"
+            f"| E2E-USERS-001 | users | 空态缺省页 | acceptance | AC-U-001 | {need} | red | | "
+            "[cases/users.md#e2e-users-001](cases/users.md#e2e-users-001) |\n")
+
+
+def _single_case_project(root: Path, need: str) -> None:
+    (root / "product" / "e2e" / "e2e-index.md").write_text(_case_row(need), encoding="utf-8")
+    (root / "product" / "e2e" / "cases").mkdir(parents=True, exist_ok=True)
+    (root / "product" / "e2e" / "cases" / "users.md").write_text(
+        "# users 页面用例\n\n## E2E-USERS-001 空态缺省页\n\n```atlas-case\n"
+        "id: E2E-USERS-001\nintent: 列表为空时渲染缺省占位\npages:\n  - users\n"
+        "step:\n  - goto /users\nexpected:\n  - visible users-empty-placeholder\n"
+        "testid:\n  - users-empty-placeholder\n```\n", encoding="utf-8")
+
+
+def test_snapshot_resolves_need_title_from_task_prd() -> None:
+    """需求名主行（2026-11-22 用户指认）：索引 `需求` 列 = 日期前缀 slug，需求名从
+    `.atlas/tasks/<剥日期前缀>/prd.md` 的 H1 解析——控制台「需求」主行展示人读名，
+    搜索面（app.js haystack）必须能被需求名/ slug 命中。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_project(Path(tmp))
+        _single_case_project(root, "11-16-kb-personal")
+        task = root / ".atlas" / "tasks" / "kb-personal"
+        task.mkdir(parents=True)
+        (task / "prd.md").write_text(
+            "# 企业知识库个人空间检索\n\natlas-acceptance: none(reason=demo)\n\n## Goal\n\n目标正文。\n",
+            encoding="utf-8")
+        snap = cons.snapshot(root)
+        case = next(c for c in snap["cases"] if c["id"] == "E2E-USERS-001")
+        assert case["need"] == "11-16-kb-personal", case
+        assert case["need_title"] == "企业知识库个人空间检索", case
+
+
+def test_need_title_reads_archive_layout_and_falls_back_to_none() -> None:
+    """需求名解析三候选（原样 → 剥日期前缀 → 归档）+ fail-soft：任务卡缺失 = None，
+    快照不得因此响（需求名是展示增强，不是判据）。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_project(Path(tmp))
+        _single_case_project(root, "11-16-kb-personal")
+        snap = cons.snapshot(root)  # 无任务卡：None，快照照常出
+        case = next(c for c in snap["cases"] if c["id"] == "E2E-USERS-001")
+        assert case["need_title"] is None, case
+        arch = root / ".atlas" / "tasks" / "archive" / "2026-11" / "kb-personal"
+        arch.mkdir(parents=True)
+        (arch / "prd.md").write_text("# 归档需求标题\n", encoding="utf-8")
+        snap = cons.snapshot(root)
+        case = next(c for c in snap["cases"] if c["id"] == "E2E-USERS-001")
+        assert case["need_title"] == "归档需求标题", case
+
+
 def test_node_ids_extracts_ts_lines_and_skips_blocked() -> None:
     """契约 §10.1（2026-10-12 迁移批）：node_ids() 解析 .spec.ts 中的行号，
     作为 Playwright 原生单用例过滤标记（file:line）；且 test.skip（blocked 用例）
@@ -1542,3 +1599,30 @@ def test_read_sources_member_missing_base_url_still_asks() -> None:
         src = con.read_sources(root)["app"]
         assert src["applicable"] is True and src["configured"] is False
         assert "向用户索取" in src["why"] and "不猜默认" in src["why"]
+
+
+def test_manual_open_url_unifies_shell_prefix_under_hash_style() -> None:
+    """RFC-20261122-01：style=hash 时手工项「打开」= origin + 壳路径 + query + hash 一次成型；
+    未声明键字面委托 merge_base_query，逐字节旧口径（第四发射面，评审 B3 面）。"""
+    cons = load("e2e_console", "scripts/e2e_console.py")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_project(Path(tmp))
+        # 未声明：旧口径（origin + query 合并，无壳路径）
+        url = cons.manual_open_url(root, "/users")
+        assert url == "http://127.0.0.1:9000/users", url
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_project(Path(tmp))
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: demo\napps: []\ne2e:\n"
+            "  app_base_url: http://127.0.0.1:3000/shell/?tenant=9\n"
+            "  route_style: hash\n", encoding="utf-8")
+        url = cons.manual_open_url(root, "/users")
+        assert url == "http://127.0.0.1:3000/shell/?tenant=9#/users", url
+        # 词表坏值 fail-soft 回落旧口径（= 未声明语义；壳丢失是现状行为，
+        # 词表执法点在生成器 fail-loud 中止——控制台不为配置错误陪葬）
+        (root / "product" / "stack-profile.yaml").write_text(
+            "product: demo\napps: []\ne2e:\n"
+            "  app_base_url: http://127.0.0.1:3000/shell/?tenant=9\n"
+            "  route_style: path\n", encoding="utf-8")
+        url = cons.manual_open_url(root, "/users")
+        assert url == "http://127.0.0.1:3000/users?tenant=9", url

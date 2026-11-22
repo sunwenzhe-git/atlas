@@ -130,8 +130,12 @@ function visible(c) {
   if (f.page !== 'all' && c.page !== f.page) return false;
   if (f.unreviewed && isReviewed(c.id)) return false;   // 按**人工 review** 状态筛（与顶栏「待评审」同口径）
   if (f.q) {
-    const hay = `${c.id} ${c.title} ${c.intent} ${c.page} ${(c.testid || []).join(' ')}`.toLowerCase();
-    if (!hay.includes(f.q.toLowerCase())) return false;
+    // 搜索面（2026-11-22 用户指认）：需求名（人读标题）与需求 slug 必须可搜——
+    // 「需求」是行上主行之一，搜不到等于这一行白给。
+    // 模糊口径 = 空格分词、逐词子串命中、词序无关、全词 AND（单词行为与整串子串一致）。
+    const hay = `${c.id} ${c.title} ${c.intent} ${c.page} ${c.need || ''} ${c.need_title || ''} ${(c.testid || []).join(' ')}`.toLowerCase();
+    const toks = f.q.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!toks.every((t) => hay.includes(t))) return false;
   }
   return true;
 }
@@ -302,6 +306,7 @@ function rowHTML(c) {
     <td class="pagecell">${esc(c.page)}</td>
     <td>
       <span class="cid">${esc(c.id)}</span><span class="ctitle">${esc(c.title)}</span>
+      ${c.need ? `<div class="cneed" title="需求 ${esc(c.need)}">需求 · ${esc(c.need_title || c.need)}</div>` : ''}
       <div class="cline">${esc(c.intent)}</div>
       <div class="cmeta">
         ${isManual ? '' : `<span class="tag">${esc(c.type)}</span>`}

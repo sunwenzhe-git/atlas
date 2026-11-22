@@ -216,3 +216,28 @@ def path_matches_prefix(path: str, prefixes) -> bool:
     items = prefixes if isinstance(prefixes, (list, tuple)) else [prefixes]
     return any(path.startswith(str(p)) for p in items if p)
 
+
+ROUTE_STYLES = ("hash",)
+
+
+def normalize_route_style(raw) -> str | None:
+    """`e2e.route_style` 归一化（RFC-20261122-01，2026-11-22）：闭集词表单源，
+    校验器与生成器共用（同 `normalize_mock_prefixes` 先例）。
+
+    * 未声明 / 空串 / `null` / `none` ⇒ `None`（全链逐字节零变化——
+      `url_merge.merge_base_prefix` style=None **字面委托** `merge_base_query`）；
+    * `hash` ⇒ `hash`（HashRouter + 子路径壳前缀靶场：业务路由重组进 hash）；
+    * 词表外（含 `path`——真实消费者出现前不预留，评审同意 YAGNI）⇒ ValueError
+      （生成器 fail-loud 中止；错误文案带 path 指向，防拿 hash 硬套 path-router 项目）。
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s or s.lower() in ("null", "none"):
+        return None
+    if s not in ROUTE_STYLES:
+        raise ValueError(
+            f"e2e.route_style 非法: {s!r}（允许 {list(ROUTE_STYLES)}；path 形态未支持，"
+            "等真实消费者出现再进词表——RFC-20261122-01）")
+    return s
+

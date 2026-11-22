@@ -724,9 +724,12 @@ def manual_open_url(root: Path, route: str) -> str:
     旧实现是 `base.rstrip("/") + route` 字符串拼接 —— base 一旦带 query（宿主注入型前提，
     如 `?switchAgent=7202`）必产畸形 URL（`…?switchAgent=7202/console/#/…`）；路径形态路由
     （`/console/#/…`）也会被拼成 `<base>/console/#/…` 的双前缀。改为 origin + 合并后的路径。
+    壳前缀统一（RFC-20261122-01）：style=hash 时业务段路由经 `merge_base_prefix` 重组
+    （壳路径 + query + hash 一次成型），未声明键字面委托 `merge_base_query` 逐字节旧口径。
     """
-    base = (read_sources(root).get("app", {}) or {}).get("base_url") or ""
-    return url_merge.origin_of(base) + url_merge.merge_base_query(route, base)
+    src = read_sources(root)
+    base = (src.get("app", {}) or {}).get("base_url") or ""
+    return url_merge.origin_of(base) + url_merge.merge_base_prefix(route, base, src.get("route_style"))
 
 
 def page_routes(root: Path) -> dict:
@@ -764,22 +767,63 @@ def read_sources(root: Path) -> dict:
 
     `applicable=False` = 本源**无实体页面**（solution 根 / 父仓）：不展示「缺 app_base_url
     索取」提示，也不参与真实应用执行判定。成员仓缺 `app_base_url` 时仍如实提示、不猜默认。
+    `route_style`（RFC-20261122-01）随源带出：手工项「打开」的壳前缀重组取值单源；
+    词表坏值在此回落 None（fail-soft）——词表执法点在生成器（fail-loud 中止），控制台
+    打开面不为配置错误陪葬。
     """
     profile = load_layout(root).stack_profile
     prof = load_profile_parser(root).parse_profile(profile.read_text(encoding="utf-8"))
     app = _e2e_section(prof).get("app_base_url")
+    try:
+        style = load_profile_parser(root).normalize_route_style(_e2e_section(prof).get("route_style"))
+    except ValueError:
+        style = None
     if _is_solution_root(root):
         return {
             "app": {"label": "真实应用", "base_url": app, "configured": True,
                     "applicable": False,
                     "why": "本源无实体页面（solution 根 / 父仓），不参与真实应用执行"},
+            "route_style": style,
         }
     return {
         "app": {"label": "真实应用", "base_url": app, "configured": bool(app),
                 "applicable": True,
                 "why": "真实应用（e2e.app_base_url）为 null ⇒ 契约要求向用户索取，不猜默认" if not app
                        else "真实应用（e2e.app_base_url）"},
+        "route_style": style,
     }
+
+
+def need_titles(root: Path, needs: list[str]) -> dict:
+    """需求名（人读标题）解析：索引 `需求` 列 slug → 需求卡 PRD 的首个 H1 标题。
+
+    需求登记口径（采纳仓 `.atlas/tasks/`，2026-11-22 用户当面指认）：索引列 = 日期前缀 slug
+    （`11-16-<id>`），任务目录 = 无日期 `<id>`；任务归档后搬 `.atlas/tasks/archive/<YYYY-MM>/<id>/`。
+    候选顺序 = 原样 → 剥日期前缀 → 归档；取首个带 H1 的 PRD；读不到 = None —— **fail-soft**：
+    需求名是展示/搜索增强（控制台「需求」主行 + 搜索命中），不是判据，缺登记不得影响快照可用性。
+    """
+    out: dict[str, str | None] = {}
+    tasks = root / ".atlas" / "tasks"
+    for need in sorted({n for n in needs if n}):
+        cands = [need, re.sub(r"^\d{1,2}-\d{1,2}-", "", need)]
+        title: str | None = None
+        for cid in dict.fromkeys(cands):  # 原样与剥前缀同值时只查一次
+            for p in (tasks / cid / "prd.md", *sorted(tasks.glob(f"archive/*/{cid}/prd.md"))):
+                if not p.is_file():
+                    continue
+                try:
+                    lines = p.read_text(encoding="utf-8").splitlines()
+                except OSError:
+                    continue
+                hit = next((m.group(1) for ln in lines
+                            if (m := re.match(r"^#\s+(.+?)\s*$", ln))), None)
+                if hit:
+                    title = hit
+                    break
+            if title:
+                break
+        out[need] = title
+    return out
 
 
 def snapshot(root: Path) -> dict:
@@ -844,6 +888,10 @@ def snapshot(root: Path) -> dict:
             # 契约 §5.5（2026-10-21，D130）：前端覆盖维度（C01-C14）
             "dimensions": blk.get("覆盖维度", []),
         })
+    # 需求名（fail-soft 增强）：随用例带给前端「需求」主行与搜索 haystack（2026-11-22）。
+    titles = need_titles(root, [c.get("need") or "" for c in cases])
+    for c in cases:
+        c["need_title"] = titles.get(c.get("need") or "")
     return {"cases": cases, "nodeids": node_ids(e2e / "scripts")}
 
 

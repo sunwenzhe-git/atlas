@@ -74,6 +74,52 @@ def union_query(base_q: str, own_q: str) -> str:
     return "&".join(base + own)
 
 
+def path_of(base: str) -> str:
+    """`base` 的路径段（空 / 非法 ⇒ 空串）——壳前缀取值单源（RFC-20261122-01）。"""
+    if not base:
+        return ""
+    try:
+        return urlsplit(base.strip()).path
+    except ValueError:
+        return ""
+
+
+def merge_base_prefix(target: str, base: str, style: str | None = None) -> str:
+    """壳前缀单源（RFC-20261122-01，2026-11-22）：`e2e.route_style: hash` 时把 base 的
+    **路径段**（壳前缀）统一并进导航目标，业务路由重组进 hash——壳前缀 / hash 形态 /
+    宿主 query 由 `app_base_url` 一处声明，用例侧只写业务路由。
+
+    判别式按序钉死（评审 B2，无歧义态）：
+      * `style=None` ⇒ **字面委托** `merge_base_query`（评审 M3 钉：未声明键 = 逐字节旧口径；
+        两函数漂移即破零变化承诺，禁止平行实现）；
+      * style 非 `hash` ⇒ ValueError（闭集双保险；归一化入口 `stack_profile.normalize_route_style`）；
+      * ① target 不以 `/` 开头（外部绝对 URL 等）⇒ 原样（`merge_base_query` 对其本就零变化）；
+      * ② target 含 `#`（存量全形态 / 异壳具名靶场）⇒ 路径与 hash 段逐字节原样，仅 query union；
+      * ③ target 无 `#` 且以 `/` 开头（业务段，唯一合法书写形态）⇒ 重组：
+        `<base 路径>?<base ∪ target query>#<target 路径>`（query 留 query 侧，D109 并集口径）；
+      * hash-only 形态（`#/app`）**不收**：解析层写不出来（评审 B1——`#` 前有空白 = 行内注释
+        起点，`守卫: #/app` 解析为空串）；守卫与 goto 同口径写业务段。
+
+    幂等：f(f(x)) = f(x)——业务段重组结果含 `#` ⇒ 二次进入②原样返回；union 同键去重。
+    """
+    if style is None:
+        return merge_base_query(target, base)
+    if style != "hash":
+        raise ValueError(
+            f"route_style {style!r} 不在闭集 {{'hash'}} 内（path 形态未支持，等真实消费者出现再进词表；"
+            "RFC-20261122-01）")
+    if not target.startswith("/") or "#" in target:
+        return merge_base_query(target, base)
+    head, qsep, own = target.partition("?")
+    q = base_query(base)
+    if qsep and own:
+        merged = union_query(q, own) if q else own
+    else:
+        merged = q
+    prefix = path_of(base) or "/"
+    return f"{prefix}{'?' + merged if merged else ''}#{head}"
+
+
 def query_of(target: str) -> str:
     """`target` 的查询串（`/a?k=v#/h` ⇒ `k=v`；无 ⇒ 空串）。**不含** hash 段内的内容。"""
     if not target.startswith("/"):

@@ -82,6 +82,8 @@ tr.row.busy td{background:var(--run-bg)}
 .pagecell{font-family:var(--mono);color:var(--faint);font-size:11px}
 .cid{font-family:var(--mono);font-weight:600;font-size:12px}
 .ctitle{margin-left:var(--sp2)}
+/* 「需求」主行（2026-11-22 用户指认）：需求名是行上的主标识之一，比 intent 行更重一级 */
+.cneed{font-weight:600;color:var(--text);margin-top:2px}
 .cline{color:var(--muted);margin-top:2px}
 .cmeta{margin-top:4px;display:flex;gap:var(--sp2);align-items:center;flex-wrap:wrap}
 .tag.dirty{color:var(--warn);border-color:#e8dcbb;background:var(--warn-bg);font-weight:600}

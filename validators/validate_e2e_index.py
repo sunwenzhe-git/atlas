@@ -618,14 +618,21 @@ def gather_shards(cases: Path) -> tuple[dict[str, dict], dict[str, str]]:
     return blocks, pages
 
 
-def _route_hit(p: str, page_routes) -> bool:
+def _route_hit(p: str, page_routes, base: str = "", style: str | None = None) -> bool:
     """路径 `p` 是否命中页面表 `路由` 列（契约 §8.2）：精确命中，或**非根路由**的子路径前缀命中
     （`/projects/x` 匹配 `/projects`；根路由 `/` 仅精确）。
 
     两侧都先 `strip_queries`：页面表 `路由` 列是路径形态，但可能携带宿主注入 query
     （`?switchAgent=…`）或 hash 查询；用例侧也可能带 `参数:` / `hash参数:` 的内联查询。
     单源：`goto` 路径与 `守卫` 路径两处判定共用本函数（二者是同一套「不得私藏路径」口径）。
+
+    壳前缀归一（RFC-20261122-01 / 评审 B3 选①）：style=hash 时两侧各过
+    `merge_base_prefix` 归一后再比对——业务段与存量全形态（含 `#`，走②原样分支）
+    因此在迁移期可共存命中；未声明键 = 原口径逐字节不变。
     """
+    if style:
+        p = url_merge.merge_base_prefix(p, base, style)
+        page_routes = [url_merge.merge_base_prefix(r, base, style) for r in page_routes]
     p = url_merge.strip_queries(p)
     routes = [url_merge.strip_queries(r) for r in page_routes]
     if p in routes:
@@ -748,6 +755,19 @@ def validate(root: Path) -> Result:
     e2e = lay.e2e_dir
     index = e2e / "e2e-index.md"
     cases = e2e / "cases"
+    # 壳前缀统一（RFC-20261122-01）：`e2e.route_style` + `e2e.app_base_url`——`_route_hit`
+    # 归一比对（评审 B3①）与页面表迁移 WARN 取值单源。词表坏值在此按未声明口径匹配
+    # （不中断校验、不新增门行）：词表执法点在生成器（fail-loud 中止），门册计数链不动。
+    _route_style = None
+    _route_base = ""
+    _prof_file = lay.stack_profile
+    if _prof_file.is_file():
+        try:
+            _cfg = stack_profile.parse_profile(_prof_file.read_text(encoding="utf-8")).get("e2e") or {}
+            _route_base = str(_cfg.get("app_base_url") or "")
+            _route_style = stack_profile.normalize_route_style(_cfg.get("route_style"))
+        except Exception:
+            _route_style = None
     shard_files = sorted(cases.glob("*.md")) if cases.is_dir() else []
     parent = _solution_root(root)
     if not index.is_file() and not shard_files:
@@ -990,8 +1010,14 @@ def validate(root: Path) -> Result:
             cells = [c.strip() for c in ln.strip().strip("|").split("|")]
             if len(cells) >= 2 and cells[0] not in ("页面", "---"):
                 page_routes_map[cells[0]] = cells[1]
-        res.add("页面表合法", "PASS" if not page_bad2 else "FAIL",
-                f"路由非/开头或重复 / 覆盖就绪取值非法={page_bad2[:8]}" if page_bad2 else "")
+        # RFC-20261122-01：style=hash 下页面表路由仍含 `#`（存量全形态）⇒ 迁移 WARN——
+        # 折入本行（评审 B3 / Minor：不加新门行，门册计数链不动），不阻断（②原样分支保证可跑）。
+        _full_form_routes = sorted({r for r in routes if "#" in r}) if _route_style == "hash" else []
+        res.add("页面表合法",
+                "FAIL" if page_bad2 else ("WARN" if _full_form_routes else "PASS"),
+                f"路由非/开头或重复 / 覆盖就绪取值非法={page_bad2[:8]}" if page_bad2
+                else (f"style=hash 下以下路由仍是全形态（含 #），应迁移为业务段：{_full_form_routes[:8]}"
+                      if _full_form_routes else ""))
     if known is None:
         known = {md.stem for md in lay.e2e_cases_dir.glob("*.md")}
         res.add("页面表合法", "WARN", "索引无页面表（E1 起应有；暂按分片文件名推导页清单）")
@@ -1624,7 +1650,7 @@ def validate(root: Path) -> Result:
             # 契约 §5.5（2026-10-18，D109 / 2026-10-22 hash 查询）：`goto` 可带常规查询与
             # hash 查询 ⇒ 路径门按**去双查询后的路径形态**匹配（`_route_hit` 内部同口径）。
             # 契约 §5.4/§5.5（多靶场，beta.16）：已登记靶场路由同属「登记地址」，同门放行。
-            if _route_hit(p, page_routes) or _route_hit(p, _target_routes):
+            if _route_hit(p, page_routes, _route_base, _route_style) or _route_hit(p, _target_routes, _route_base, _route_style):
                 continue
             goto_path.append(f"{g['用例ID']}:{p}")
         # 契约 §5.7（2026-09-30 补）：`auth` 取值白名单（preset | none）——文本期挡住，
@@ -1671,7 +1697,7 @@ def validate(root: Path) -> Result:
             # 本门也不把注释当路径。与 `goto` 门 / `会话` 门共用同一 `strip_inline_comment`。
             _guard_path = strip_inline_comment(_guard).strip()
             # 契约 §5.4/§5.5（多靶场，beta.16）：已登记靶场路由同属「登记地址」，同门放行。
-            if page_routes and not _route_hit(_guard_path, page_routes) and not _route_hit(_guard_path, _target_routes):
+            if page_routes and not _route_hit(_guard_path, page_routes, _route_base, _route_style) and not _route_hit(_guard_path, _target_routes, _route_base, _route_style):
                 guard_bad.append(f"{g['用例ID']}:{_guard_path}")
 
         # 契约 §5.6 R7（2026-09-23 补；**2026-09-25 修正为真矛盾对**）：同一条用例内，对同一

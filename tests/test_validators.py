@@ -5712,3 +5712,57 @@ def test_copy_coverage_substring_hit_counts() -> None:
     spec = "\n\n**文案规范**\n\n| 场景 | 文案 |\n|---|---|\n| 操作成功 | 首页 |\n| 空状态 | 页 |\n"
     level, _ = _copy_level(spec)
     assert level == "PASS"
+
+
+# ── RFC-20261122-01（2026-11-22）：壳前缀统一——_route_hit 归一比对 + 页面表迁移 WARN ──
+
+def test_route_hit_hash_style_full_form_and_business_coexist() -> None:
+    """评审 B3①：style=hash 时两侧各过 merge_base_prefix 归一——存量全形态 goto
+    （含 #，走②原样分支）与业务段页面表在迁移期共存命中；未声明键 = 旧口径不命中。"""
+    ve2 = ve
+    base = "http://127.0.0.1:3000/shell/?tenant=9"
+    # 业务段 goto × 业务段页面表（style=hash 的唯一合法书写形态）
+    assert ve2._route_hit("/home", ["/home"], base, "hash") is True
+    assert ve2._route_hit("/home/42", ["/home"], base, "hash") is True   # 子路径前缀照常
+    # 存量全形态 goto（含 #）× 业务段页面表：归一后命中（迁移窗口不卡死）
+    assert ve2._route_hit("/shell/#/home", ["/home"], base, "hash") is True
+    assert ve2._route_hit("/shell/?tenant=9#/home", ["/home"], base, "hash") is True
+    # 未声明键（style=None）：旧口径逐字节不变——全形态 goto 不命中
+    assert ve2._route_hit("/shell/#/home", ["/home"]) is False
+    assert ve2._route_hit("/home", ["/home"]) is True
+
+
+def test_route_hit_hash_style_business_goto_with_hash_fails_loud() -> None:
+    """评审 B2 判别式③边界：业务段 + hash 段（`/home#/x`）在 style=hash 下不是合法书写形态
+    ——归一后不命中 ⇒ goto 路径门红（fail-loud，不猜语义；hash 前提走全形态或 hash参数: 通道）。"""
+    base = "http://127.0.0.1:3000/shell/?tenant=9"
+    assert ve._route_hit("/home#/x", ["/home"], base, "hash") is False
+
+
+def test_page_table_full_form_route_warns_under_hash_style() -> None:
+    """评审 B3/Minor：style=hash 且页面表路由仍含 #（存量全形态）⇒ 「页面表合法」WARN
+    （折入现有行，不阻断；未声明键 = PASS 逐字节不变）。"""
+    idx = INDEX_GOOD.replace(
+        "## 页面 ↔ 用例",
+        "## 页面表（页 ↔ 路由）\n\n| 页面 | 路由 | 域 | 实现状态 |\n|---|---|---|---|\n"
+        "| home | /shell/#/home | demo | 已实现 |\n\n## 页面 ↔ 用例")
+    prof_extra = ("e2e:\n  app_base_url: http://127.0.0.1:3000/shell/?tenant=9\n"
+                  "  route_style: hash\n")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root, idx)
+        (root / "product" / "stack-profile.yaml").write_text(
+            (root / "product" / "stack-profile.yaml").read_text(encoding="utf-8") + prof_extra,
+            encoding="utf-8")
+        rows = {c["check"]: c for c in ve.validate(root).checks}
+        assert rows["页面表合法"]["level"] == "WARN", rows["页面表合法"]
+        assert "全形态" in rows["页面表合法"]["detail"], rows["页面表合法"]
+    with tempfile.TemporaryDirectory() as td:  # 未声明键：同索引 PASS（零变化）
+        root = Path(td)
+        mk_prototype(root)
+        mk_cases(root, CASE_GOOD)
+        mk_index(root, idx)
+        rows = {c["check"]: c for c in ve.validate(root).checks}
+        assert rows["页面表合法"]["level"] == "PASS", rows["页面表合法"]
