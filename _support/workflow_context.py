@@ -249,7 +249,7 @@ def _scope_path(root: Path, raw: str) -> str:
     return s
 
 
-def _hit(path: str, glob: str) -> bool:
+def hit_path(path: str, glob: str) -> bool:
     if not path:
         return False
     if _is_wildcard(glob):
@@ -271,7 +271,7 @@ def _specificity(spec: dict, scopes: list[str] | None = None) -> int:
     """
     concrete = [len(_norm_glob(g)) for g in spec["paths"]
                 if not _is_wildcard(g)
-                and (scopes is None or any(_hit(p, g) for p in scopes))]
+                and (scopes is None or any(hit_path(p, g) for p in scopes))]
     return max(concrete, default=0)
 
 
@@ -283,7 +283,7 @@ def _is_conventions(spec: dict) -> bool:
     return spec["rel"].split("/")[2:3] == ["conventions"]
 
 
-def _domain_hit(spec: dict, domains: list[str]) -> bool:
+def _domainhit_path(spec: dict, domains: list[str]) -> bool:
     if not domains:
         return False
     stem = spec["name"].lower()
@@ -315,7 +315,7 @@ def select_specs(root: Path, paths: list[str] | None = None,
             return []  # 显式范围为空 ⇒ 不回落兜底
         hits = [s for s in specs
                 if not _is_wildcard_only(s)
-                and any(_hit(p, g) for p in scopes for g in s["paths"])]
+                and any(hit_path(p, g) for p in scopes for g in s["paths"])]
         hits.sort(key=lambda s: (-_specificity(s, scopes), s["rel"]))
         structure = [s for s in hits if not _is_conventions(s)]
         conventions = [s for s in hits if _is_conventions(s)]
@@ -328,7 +328,7 @@ def select_specs(root: Path, paths: list[str] | None = None,
 
     if doms:
         picked = [s for s in specs
-                  if not _is_wildcard_only(s) and _domain_hit(s, doms)]
+                  if not _is_wildcard_only(s) and _domainhit_path(s, doms)]
         picked.sort(key=lambda s: (-_specificity(s), s["rel"]))
         if picked:
             return picked[:MAX_SPECS]

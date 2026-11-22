@@ -105,11 +105,11 @@
 |---|---|---|
 | 校验器 | 〔数:校验器=13〕(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py:52` |
 | 编排门行 | 〔数:编排门行=10〕 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 / 消融残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:92`) |
-| 出厂测试文件 | 〔数:出厂测试文件=86〕 | `tests/` |
+| 出厂测试文件 | 〔数:出厂测试文件=87〕 | `tests/` |
 | skills | 〔数:skills=9〕(含 frontend-design) | `skills/` |
 | 环 | 〔数:环=3〕(structure / prd / e2e;原型环 E1 已退役) | `rings/` |
 | 共享契约 | 〔数:共享契约=9〕 份 | `shared/` |
-| 共享内核 | 〔数:共享内核=26〕 件 | `_support/` |
+| 共享内核 | 〔数:共享内核=27〕 件 | `_support/` |
 | install.py 自检声明 | 〔数:自检声明=71〕 条 | `install.py` |
 | 最大单件 | `〔数:最大单件文件=scripts/gen_e2e_scripts.py〕` 〔数:最大单件行数=3425〕 行 | — |
 

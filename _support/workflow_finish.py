@@ -31,8 +31,52 @@ class FinishError(ValueError):
 REVIEW_DIR_PREFIX_RE = r"^\d{4}-\d{2}-\d{2}-impl-review-"
 ARCHIVE_MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")  # `archive/<YYYY-MM>/<ID>/`
 
+# 审查证据命名契约单源（RFC-20261122-02）：目录 `<date>-impl-review-<unit>/findings/<unit>.r<N>.json`。
+# 取号（当日）与跨日扫描（进度探针）双方 import 同一构造，命名契约改名时全部消费点自动跟随。
+_REVIEW_DIR_NAME_RE = re.compile(REVIEW_DIR_PREFIX_RE + r"(.+)$")
+_FINDINGS_FILE_TMPL = "{unit}.r{round}.json"
 
-def _staged_files(root: Path) -> list[str] | None:
+
+def review_findings_dir(root: Path, day: str, unit: str) -> Path:
+    """某日某任务的审查 findings 目录构造（`_next_review_round` 取号用）。"""
+    return root / "product" / "reviews" / f"{day}-impl-review-{unit}" / "findings"
+
+
+def scan_review_rounds(root: Path, unit: str, *,
+                       day: str | None = None) -> list[tuple[str, int, Path]]:
+    """跨日扫描某任务的审查轮次文件，按（目录日期, 轮号）升序。
+
+    轮号按日重置（每日目录独立取号），跨日轮次不连续——消费方不得直接对轮号求和。
+    `day` 限定单日（当日取号用）；缺省扫全部日期（进度探针用）。
+    返回 `(date_str, round, findings_file_path)` 三元组列表。
+    """
+    base = root / "product" / "reviews"
+    if not base.is_dir():
+        return []
+    rounds: list[tuple[str, int, Path]] = []
+    for d in sorted(base.iterdir()):
+        m = _REVIEW_DIR_NAME_RE.fullmatch(d.name)
+        if not m or m.group(1) != unit or not d.is_dir():
+            continue
+        date_str = d.name[:10]
+        if day is not None and date_str != day:
+            continue
+        fdir = d / "findings"
+        if not fdir.is_dir():
+            continue
+        pat = re.compile(rf"{re.escape(unit)}\.r(\d+)\.json")
+        for p in fdir.iterdir():
+            fm = pat.fullmatch(p.name)
+            if fm:
+                rounds.append((date_str, int(fm.group(1)), p))
+    return sorted(rounds, key=lambda t: (t[0], t[1]))
+
+
+def staged_files(root: Path) -> list[str] | None:
+    """暂存区文件清单；`None` = git 不可用/非 git 仓库（与「暂存为空」`[]` 区分）。
+
+    RFC-20261122-02：提升为公共入口，workflow_progress 探针复用同一读面（吞错口径单源）。
+    """
     try:
         pr = subprocess.run(
             ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
@@ -56,7 +100,7 @@ def _scope_matches(root: Path, data: dict) -> tuple[bool, str]:
     scope = data.get("review_scope")
     if not isinstance(scope, dict) or not scope.get("sha256"):
         return True, ""  # 旧报告兼容：无内容锚，无法比对
-    staged = _staged_files(root)
+    staged = staged_files(root)
     if staged is None:
         return False, "无法读取暂存区，不能确认审查内容未被替换（请在 git 仓库内重跑 verify）"
     try:

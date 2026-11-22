@@ -28,7 +28,7 @@ NO_REQUIREMENT_MARKER = "无外部需求原件"
 _FENCE_RE = re.compile(r"^(```|~~~)")
 
 
-def _strip_fences(text: str) -> str:
+def strip_fences(text: str) -> str:
     """去围栏代码块（含条目原文中贴代码示例的情形），保留行结构。"""
     out: list[str] = []
     in_fence = False
@@ -41,9 +41,9 @@ def _strip_fences(text: str) -> str:
     return "\n".join(out)
 
 
-def _first_table(text: str, header_needles: tuple[str, ...]) -> list[list[str]] | None:
+def first_table(text: str, header_needles: tuple[str, ...]) -> list[list[str]] | None:
     """第一张表头含任一 needle 的 markdown 表（header 在首行）；无 ⇒ None。"""
-    lines = _strip_fences(text).splitlines()
+    lines = strip_fences(text).splitlines()
     for start, line in enumerate(lines):
         if not line.lstrip().startswith("|") or not any(n in line for n in header_needles):
             continue
@@ -70,8 +70,8 @@ def coverage_matrix_findings(task_dir: Path) -> list[str]:
         return []  # plan 未带 --requirement 的卡：不判，不制造假阳性
 
     findings: list[str] = []
-    items_text = _strip_fences(items_path.read_text(encoding="utf-8", errors="replace"))
-    items_rows = _first_table(items_text, ("原文",))
+    items_text = strip_fences(items_path.read_text(encoding="utf-8", errors="replace"))
+    items_rows = first_table(items_text, ("原文",))
     item_ids = [r[0].strip() for r in items_rows[1:] if r and r[0].strip()] \
         if items_rows else []
     if not item_ids and NO_REQUIREMENT_MARKER not in items_text:
@@ -86,7 +86,7 @@ def coverage_matrix_findings(task_dir: Path) -> list[str]:
             "（每格 覆盖（位置）/ 不涉及（理由）/ UNRESOLVED 三选一）")
         return findings
 
-    matrix_rows = _first_table(
+    matrix_rows = first_table(
         matrix_path.read_text(encoding="utf-8", errors="replace"), MATRIX_COLUMNS)
     if matrix_rows is None:
         findings.append(

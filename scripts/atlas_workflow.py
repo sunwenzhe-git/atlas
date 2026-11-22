@@ -10,6 +10,7 @@
   atlas workflow verify --unit <ID> [--staged] [--check-cmd <CMD>]
   atlas workflow finish --unit <ID>
   atlas workflow status [--unit <ID>] [--all]
+  atlas workflow progress --unit <ID>   # 只读进度探针（RFC-20261122-02，不写盘不改状态）
   atlas workflow archive [--unit <ID>]
   atlas workflow run --unit <ID> [--requirement <TEXT_OR_FILE>] [--check-cmd <CMD>]
 
@@ -39,9 +40,11 @@ from _support.workflow_dispatch import (  # noqa: E402
     get_next_runnable_task, dispatch_task, DispatchError
 )
 from _support.workflow_finish import (  # noqa: E402
-    finish_task, check_task_review_passed, FinishError, archive_task, archive_month
+    finish_task, check_task_review_passed, FinishError, archive_task, archive_month,
+    scan_review_rounds
 )
 from _support.workflow_context import select_specs, render_specs  # noqa: E402
+from _support.workflow_progress import progress_snapshot, render_progress  # noqa: E402
 
 
 def die(msg: str, code: int = 2) -> int:
@@ -222,16 +225,13 @@ def cmd_context(args: argparse.Namespace, root: Path) -> int:
 
 
 def _next_review_round(root: Path, unit: str) -> int:
-    """同 (unit, round) 的 findings 不得覆盖（骨架 §4）：按已有轮次自动递增。"""
-    findings = (root / "product" / "reviews"
-                / f"{date.today().isoformat()}-impl-review-{unit}" / "findings")
-    rounds: list[int] = []
-    if findings.is_dir():
-        pat = re.compile(rf"{re.escape(unit)}\.r(\d+)\.json")
-        for p in findings.iterdir():
-            m = pat.fullmatch(p.name)
-            if m:
-                rounds.append(int(m.group(1)))
+    """同 (unit, round) 的 findings 不得覆盖（骨架 §4）：按已有轮次自动递增。
+
+    轮号按日重置（只扫当日目录）；RFC-20261122-02 起走 `_support` 公共构造
+    `scan_review_rounds`，命名契约单源（探针跨日扫描共用同一构造）。
+    """
+    rounds = [r for (_d, r, _p) in
+              scan_review_rounds(root, unit, day=date.today().isoformat())]
     return max(rounds) + 1 if rounds else 1
 
 
@@ -375,6 +375,21 @@ def cmd_status(args: argparse.Namespace, root: Path) -> int:
     return 0
 
 
+def cmd_progress(args: argparse.Namespace, root: Path) -> int:
+    """只读进度探针（RFC-20261122-02）：聚合四格既有证据，不写盘、不改状态、不做 AC 级判定。"""
+    if not args.unit:
+        return die("progress 步骤必须指定 --unit <ID>")
+    if getattr(args, "dry_run", False):
+        print(f"$ # progress dry-run：只读探针，不写盘、不改状态（探针本身即只读）")
+        return 0
+    snap = progress_snapshot(root, args.unit)
+    if args.json:
+        print(json.dumps(snap, ensure_ascii=False, indent=2))
+        return 0
+    print(render_progress(snap))
+    return 0
+
+
 def _has_staged_changes(root: Path) -> bool:
     try:
         pr = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=str(root),
@@ -483,6 +498,12 @@ def main() -> int:
     p_stat.add_argument("--all", action="store_true",
                         help="包含 .atlas/tasks/archive/<YYYY-MM>/ 中已归档的任务")
 
+    # progress（RFC-20261122-02 只读探针）
+    p_prog = sub.add_parser("progress", parents=[common],
+                            help="只读进度探针：聚合派工/暂存/审查轮次/覆盖矩阵四格"
+                                 "（不写盘、不改状态、不做 AC 级判定）")
+    p_prog.add_argument("--unit", required=True, help="进度查询的任务标识（须精确 ID，组标识会列成员）")
+
     # archive
     p_arc = sub.add_parser("archive", parents=[common],
                            help="把已 completed 的活跃任务迁入 .atlas/tasks/archive/<YYYY-MM>/"
@@ -510,6 +531,7 @@ def main() -> int:
         "verify": cmd_verify,
         "finish": cmd_finish,
         "status": cmd_status,
+        "progress": cmd_progress,
         "archive": cmd_archive,
         "run": cmd_run,
     }

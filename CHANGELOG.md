@@ -4,6 +4,10 @@
 
 ---
 
+## [Unreleased]
+
+- feat(workflow): in_progress 任务进度只读探针（`RFC-20261122-02`）——新增 `atlas workflow progress --unit`（纯派生：不写盘、不改状态、零新字段、零新门），聚合四路既有证据回答「做到哪」：派工（dispatch.md + AC/paths）/ 实现（暂存区 diff ∩ paths，**中性计数**「paths 内 N / paths 外 M」，明示范围外含其他在途任务正常暂存）/ 审查（`product/reviews` 轮次跨日扫描，「跨 N 日共 M 轮」分段 + 最近轮 status，轮号按日重置不连续）/ 对账（coverage-matrix 逐列已填/总行/UNRESOLVED）；`--json` 机读；git 不可用与暂存为空分开呈现（复用 `staged_files` 的 `None`/`[]` 语义）；组 ID 列成员卡不猜落点；**盲区注记：命中 = 路径级存在性非内容级证据，AC 结论只认 verify**。配套：reviews 命名契约单源下沉（`scan_review_rounds` 公共构造，`_next_review_round` 取号与探针跨日扫描共用，命名契约改名全消费点自动跟随）；`workflow_verify` 的 `strip_fences`/`first_table` 与 `workflow_context` 的 `hit_path` 提公共入口；探针死代码零容（坏卡拦截复用 `load_tasks` 指名 PlanError，评审 Minor-8 假设的静默跳过路径不存在）；+14 测试（`tests/test_workflow_progress.py`，四格正钉 + 归因变异钉 + 跨日排序钉 + 反面包 + 取号回归）
+
 ## [v0.4.0-beta.5] - 2026-11-21
 
 - feat(e2e): 文案齐套判据（`#74`）——`validate_e2e_index` 新增「文案齐套」检查：域级 PRD `**文案规范**` 表「场景 | 文案」列 ⇄ 分片 step/expected 的 text/contains/waitFor 期望值差集（`$变量` 运行时取数不比对、`#` 注释先剥、占位 `[必填]`/「不适用（…）」/待定不收）；漏断言 ⇒ **WARN 纪律面**（升格 FAIL 另案）；全占位/无表 ⇒ `N/A` 门控态；v3 真实仓实测 57 条声明文案 37 条漏断言出声；门册行与 docs/map 同步、用例数锚 205→210（+5 测试）
