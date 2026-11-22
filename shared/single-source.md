@@ -19,6 +19,7 @@
 | 接口技术契约（D 类的机器可读部分） | 项目自带的机器可读接口描述（OpenAPI / Swagger / …） | `.atlas/spec/structure/*/<domain>/apis.md` 只记真相源入口，不复制端点 |
 | testid / selector 约定 | `rings/e2e/reference.md` §4（E2E 环契约；**不在 structure 环**） | 实现期薄桩 `.atlas/spec/conventions/testid.md`（派生视图，由 `scripts/gen_testid_stub.py` 生成）；**实际落点见下一行**；E2E 分片引用它 |
 | **产品事实**（全局 + 域级；原称「项目 PRD」，2026-11-22 正名 `RFC-20261122-03`） | `product/prd/prd.md`（全局产品事实）+ `product/prd/<domain>-prd.md`（域级产品事实）——目录 / 文件名中的 `prd` 为历史遗留落点名，语义 = 产品事实（应然登记）；「PRD」一词现唯一指需求类文档 | `product/prd/README.md` 追溯总表；需求收口时按域沉淀回此（FN/R/AC/文案规范表 + 变更记录） |
+| **机制叙事文档**（「这个机制怎么转」的单主题指南，一篇一机制；与 ADR 分界 =「怎么转」归此、「为什么这么定」归 ADR） | 仓库自定落点（惯例 `docs/architecture/<机制>.md`）；发现面 = frontmatter `mechanism-paths:` key 全仓扫描（**永不入 `.atlas/spec/`**——会撞注入截断并打破结构环「仅三类文件带 paths:」规范句，`RFC-20261122-04`） | `atlas workflow verify` WARN（触及提示「查看该机制篇是否跟改」**提示语措辞** + 疑似死 paths + 单星 glob 拒收；`pending` 冷启动豁免；`RFC-20261122-04`）；写法纪律（骨架不内联 / 两档 glob）落采纳仓手写区 |
 | testid **实然**集合（现状） | 前端源码的 `data-testid` | `validate_testids.py` 按 `stack-profile.yaml` 的 `apps[].kind ∈ {frontend, fullstack}` 路径扫描（E1 统一，不再按 `origin` 分流）；与**应然**（下一行）的按页差集 = 待实现面 / 漂移面 |
 | E2E 用例 | `product/e2e/e2e-index.md`（唯一入口）+ `product/e2e/cases/<page>.md`（分片） | 脚本由分片生成 |
 | 页面标识（slug）与「页 ↔ 真实路由」映射 | `product/e2e/e2e-index.md` 页面表（e2e 环，E1 迁入） | slug = 分片文件名；页面表是 E2E 生成器 URL 的唯一来源（`rings/e2e/reference.md` §3.1） |
@@ -53,3 +54,4 @@
   - **落点模式（`--requirement` 指向需求落点）**：条目正文唯一住址 = 落点 `items.md`（`ID | 页码 | 章节 | 原文（逐字）`，限定语保留，表行数 = 总数自检）；卡侧 `requirement-items.md` = **领取引用表**（`ID = 落点条目 ID`，`来源 = <落点路径>#<落点ID>`，**不复制正文**），卡 `prd.md` §1 正文指针化；条目↔卡 = **at-least-once 共担合法**，`verify` 跨卡按 ID 覆盖性对账（漏领 / 幽灵引用 / 状态机不一致 ⇒ WARN）。
   - **直填模式（`--requirement` 指向普通文本 / 无落点）**：旧路径保留——开工前置产物两件落任务卡目录（plan 自动生成骨架，重跑不覆盖已填）：`requirement-items.md`（条目表：`ID | 页码 | 章节 | 原文`，原文逐字、限定语保留，文末声明总数，表行数 = 总数自检）+ `coverage-matrix.md`（**需求条目覆盖矩阵**：行 = 条目 ID，列 = PRD / 设计文档 / 实现 / E2E，格值 = 覆盖（位置）/ 不涉及（理由）/ `UNRESOLVED`；与产品事实环 §8 追溯覆盖矩阵、`RFC-20261111-04` 派生覆盖矩阵三者互不替代）。矩阵留空格 / 含 `UNRESOLVED` ⇒ `atlas workflow verify` **WARN**（判据 = `_support/workflow_verify.py`，纪律面起步；升格 FAIL 条件 = 出现第一个 WARN 被放行后的实际漏单，另案）。
   - 两模式判据兼容：verify 表头词表 = 原文 / 来源 双词表，旧格式卡按直填判据处理（存量豁免见 §3）。
+- **机制叙事文档机器面只有 verify 提示族**（2026-11-22 登记，`RFC-20261122-04`）：WARN = 触及提示（各篇 `mechanism-paths:` × 暂存区 diff `--no-renames` 交集，命中数 + 前 3 预览）+ 疑似死 paths（globs 对 `git ls-files` 零命中——治 paths 自身静默死）+ 单星 glob 词表拒收；`pending` 冷启动豁免；单次点名上限 5、超出汇总一行。**措辞锁提示语**（「查看该机制篇是否跟改」，永不使用缺陷措辞——与缺口族 #71–#74 分族防误升格）；升格条件 = 上线首周留样张的误报率数据 + 实际漏单，另案。

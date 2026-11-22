@@ -37,7 +37,8 @@ from _support.workflow_plan import (  # noqa: E402
     requirement_pointer_text
 )
 from _support.workflow_verify import (  # noqa: E402
-    coverage_matrix_findings, requirement_root_findings, read_requirement_status
+    coverage_matrix_findings, requirement_root_findings, read_requirement_status,
+    mechanism_doc_findings
 )
 from _support.workflow_dispatch import (  # noqa: E402
     get_next_runnable_task, dispatch_task, DispatchError
@@ -302,6 +303,11 @@ def cmd_verify(args: argparse.Namespace, root: Path) -> int:
             print(f"WARN（需求条目覆盖）: {finding}", file=sys.stderr)
         for finding in requirement_root_findings(root):
             print(f"WARN（需求落点）: {finding}", file=sys.stderr)
+        # 机制文档机器面（RFC-20261122-04，提示语族 WARN）：暂存区 diff ×
+        # 各篇 frontmatter `mechanism-paths:` 交集出声 + 疑似死 paths，
+        # 措辞锁「查看该机制篇是否跟改」，不改退出码。
+        for finding in mechanism_doc_findings(root, _staged_files(root)):
+            print(f"WARN（机制文档）: {finding}", file=sys.stderr)
     # 本命令的退出码契约 = 0/1/2；子步的原生码（如 7）归一到 1。
     return pr.returncode if pr.returncode in (0, 1, 2) else 1
 
@@ -439,6 +445,19 @@ def _has_staged_changes(root: Path) -> bool:
     except (OSError, subprocess.SubprocessError):
         return False
     return pr.returncode == 0 and bool(pr.stdout.strip())
+
+
+def _staged_files(root: Path) -> list[str]:
+    """暂存区改动清单（--no-renames：改名两侧都算改动，防丢旧路径的机制篇命中）。"""
+    try:
+        pr = subprocess.run(
+            ["git", "diff", "--cached", "--name-only", "--no-renames"], cwd=str(root),
+            capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if pr.returncode != 0:
+        return []
+    return [ln.strip() for ln in pr.stdout.splitlines() if ln.strip()]
 
 
 def _with_unit(args: argparse.Namespace, unit: str) -> argparse.Namespace:

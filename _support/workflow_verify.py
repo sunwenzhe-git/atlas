@@ -6,6 +6,10 @@
 把条目覆盖缺口以 WARN 行打到 stderr，不改退出码。
 契约落点：`shared/single-source.md` §4「需求原文优先序与条目覆盖」。
 
+机制文档机器面（RFC-20261122-04）：`mechanism_doc_findings`（触及提示 + 疑似死
+paths，**提示语措辞**——与缺口族 #71–#74 分族，防误升格；契约落点
+`shared/single-source.md` §1「机制叙事文档」行）。
+
 判据：
 - 卡目录无 `requirement-items.md` ⇒ 非需求驱动卡，沉默（不制造假阳性）；
 - 直填模式（表头含「原文」）：既有判据不变——矩阵缺席 / 零数据行未声明豁免 /
@@ -23,7 +27,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
 from pathlib import Path
 
 ITEMS_FILE = "requirement-items.md"
@@ -291,4 +297,219 @@ def requirement_root_findings(root: Path) -> list[str]:
             findings.append(
                 f"需求落点 {req_root_rel} 关联卡已全部收口但状态 = {status or '缺失'}："
                 "推进为「已收口」并按域沉淀回产品事实（RFC-20261122-03 B5）")
+    return findings
+
+
+# ------------------------------------------------- 机制文档机器面（RFC-20261122-04）
+
+MECHANISM_PATHS_KEY = "mechanism-paths"
+MECHANISM_PENDING = "pending"  # 冷启动豁免标记（评审 s1）：新篇首跑不判
+MECHANISM_WARN_CAP = 5  # 单次 verify 点名上限（评审 M3）：超出汇总一行计数
+
+_MECH_FM_RE = re.compile(r"\A\ufeff?---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n?", re.DOTALL)
+_MECH_KEY_RE = re.compile(r"^mechanism-paths[：:]\s*(.*)$")
+_MECH_ITEM_RE = re.compile(r"^-\s+(.+)$")
+_MECH_SINGLE_STAR_RE = re.compile(r"(?<!\*)\*(?!\*)")
+_MECH_PRUNE_DIRS = {".git", "node_modules", "__pycache__", ".atlas", ".atlas-run",
+                    ".adapter-out", "dist", "build"}
+
+
+def _mech_glob_regex(glob: str) -> re.Pattern[str]:
+    """机制篇 glob → 正则；语义对齐 `_support/workflow_context._glob_regex`
+    （`**` 跨目录、`a/**` 允许零段；单星由词表判据先行拒绝，此处仅为引擎一致性测试保留解析）。"""
+    g = str(glob).strip().replace("\\", "/")
+    while g.startswith("./"):
+        g = g[2:]
+    if g.endswith("/"):
+        g += "**"
+    out: list[str] = []
+    i, n = 0, len(g)
+    while i < n:
+        ch = g[i]
+        if ch == "*":
+            if i + 1 < n and g[i + 1] == "*":
+                if i + 2 < n and g[i + 2] == "/":
+                    out.append("(?:.*/)?")
+                    i += 3
+                elif out and out[-1] == "/":
+                    out.pop()
+                    out.append("(?:/.*)?")
+                    i += 2
+                else:
+                    out.append(".*")
+                    i += 2
+            else:
+                out.append("[^/]*")
+                i += 1
+        else:
+            out.append(re.escape(ch))
+            i += 1
+    return re.compile("".join(out))
+
+
+def _mech_hit(path: str, glob: str) -> bool:
+    """改动文件是否命中机制篇 glob；无通配符的字面目录按前缀命中（同 hit_path 语义）。"""
+    if not path:
+        return False
+    if _mech_glob_regex(glob).fullmatch(path):
+        return True
+    if "*" not in glob and "?" not in glob:
+        g = glob.rstrip("/")
+        return path == g or path.startswith(g + "/")
+    return False
+
+
+def _split_mechanism_frontmatter(text: str) -> tuple[list[str], list[str]]:
+    """解析文件头 frontmatter 的 `mechanism-paths:` 值，返回 (合法 globs, 非法 globs)。
+
+    只认文件首部 `---` 围栏块（块列表 `- item` / 行内标量 / 行内 `[a, b]`）；
+    含单星（`*` 非 `**`）的条目判非法——防宽 glob 误报（评审 M3：
+    机制篇词表只认字面段与 `dir/**`）。"""
+    m = _MECH_FM_RE.match(text)
+    if not m:
+        return [], []
+    raw: list[str] = []
+    in_block = False
+    for line in m.group(1).splitlines():
+        km = _MECH_KEY_RE.match(line.strip())
+        if km:
+            rest = km.group(1).strip()
+            if rest.startswith("["):
+                inner = rest[1:rest.index("]")] if "]" in rest else rest[1:]
+                for item in inner.split(","):
+                    item = item.strip().strip("'\"")
+                    if item:
+                        raw.append(item)
+                in_block = False
+            elif rest:
+                raw.append(rest.strip("'\""))
+                in_block = False
+            else:
+                in_block = True
+            continue
+        if in_block:
+            im = _MECH_ITEM_RE.match(line.strip())
+            if im:
+                raw.append(im.group(1).strip().strip("'\""))
+            elif line.strip():
+                in_block = False
+    good: list[str] = []
+    bad: list[str] = []
+    for g in raw:
+        (bad if _MECH_SINGLE_STAR_RE.search(g) else good).append(g)
+    return good, bad
+
+
+def _iter_repo_files(root: Path):
+    """全仓文件相对路径（剪枝点目录 / node_modules / 构建产物；机制文档永不入 .atlas）。"""
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames
+                             if d not in _MECH_PRUNE_DIRS and not d.startswith("."))
+        for fn in sorted(filenames):
+            yield (Path(dirpath) / fn).relative_to(root).as_posix()
+
+
+def _tracked_files(root: Path) -> list[str]:
+    """死 paths 判据的仓内文件全集：`git ls-files`；git 不可用 / 非仓 ⇒ 回落遍历。"""
+    try:
+        pr = subprocess.run(["git", "ls-files"], cwd=str(root),
+                            capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        pr = None
+    if pr is not None and pr.returncode == 0:
+        return [ln.strip() for ln in pr.stdout.splitlines() if ln.strip()]
+    return list(_iter_repo_files(root))
+
+
+def discover_mechanism_docs(
+        root: Path) -> list[tuple[str, list[str], list[str], bool]]:
+    """全仓按 frontmatter `mechanism-paths:` key 发现机制文档（RFC-20261122-04）。
+
+    返回 `(相对路径, 合法 globs, 非法 globs, pending)`；`pending` 篇的合法 globs
+    置空（冷启动豁免不判，非法条目仍点名）。"""
+    root = Path(root)
+    docs: list[tuple[str, list[str], list[str], bool]] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames
+                             if d not in _MECH_PRUNE_DIRS and not d.startswith("."))
+        for fn in sorted(filenames):
+            if not fn.endswith(".md"):
+                continue
+            p = Path(dirpath) / fn
+            try:
+                if p.stat().st_size > 1_000_000:
+                    continue
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            good, bad = _split_mechanism_frontmatter(text)
+            if not good and not bad:
+                continue
+            pending = good == [MECHANISM_PENDING]
+            docs.append((p.relative_to(root).as_posix(),
+                         [] if pending else good, bad, pending))
+    return docs
+
+
+def _globs_alive(universe: list[str], globs: list[str]) -> bool:
+    """任一 glob 对文件全集命中即活（早退；死篇才付全量扫描成本）。"""
+    rxs = [(_mech_glob_regex(g), g) for g in globs]
+    for f in universe:
+        for rx, g in rxs:
+            if rx.fullmatch(f):
+                return True
+            if "*" not in g and "?" not in g:
+                gg = g.rstrip("/")
+                if f == gg or f.startswith(gg + "/"):
+                    return True
+    return False
+
+
+def mechanism_doc_findings(root: Path, changed_files: list[str]) -> list[str]:
+    """机制文档机器面（RFC-20261122-04，WARN 纪律面；调用方以 WARN 呈现）。
+
+    - 触及提示（**提示语措辞**，非缺陷措辞）：改动文件 × 各篇 `mechanism-paths`
+      交集 ⇒ WARN 点名（命中数 + 前 3 预览，3 秒可判误报）；
+    - 死 paths：某篇全部 globs 对仓内文件全集零命中 ⇒ WARN「疑似死 paths」
+      （治 paths 自身裸奔——代码整目录搬空后永不命中的静默死，评审 M2）；
+    - `pending` 冷启动豁免；单星 glob 逐条点名（词表拒收）；
+    - 点名上限 `MECHANISM_WARN_CAP`，超出汇总一行；仓内无机制文档 ⇒ 沉默。"""
+    root = Path(root)
+    docs = discover_mechanism_docs(root)
+    if not docs:
+        return []
+    universe = _tracked_files(root)
+    norm_changed = [
+        (c[2:] if c.startswith("./") else c).strip().replace("\\", "/")
+        for c in changed_files if str(c).strip()]
+    findings: list[str] = []
+    named = 0
+    overflow = 0
+    for rel, globs, bad, pending in docs:
+        for g in bad:
+            findings.append(
+                f"{rel} 的 {MECHANISM_PATHS_KEY} 含单星 glob {g!r}："
+                "词表只认字面路径与 dir/**（防宽 glob 误报，RFC-20261122-04）")
+        if pending:
+            continue
+        if globs and universe and not _globs_alive(universe, globs):
+            findings.append(
+                f"{rel} 的 {MECHANISM_PATHS_KEY} 指向零个仓内文件（疑似死 paths）："
+                "核对代码是否已搬迁或删除（RFC-20261122-04）")
+        if not globs:
+            continue
+        hits = [c for c in norm_changed if any(_mech_hit(c, g) for g in globs)]
+        if hits:
+            named += 1
+            if named <= MECHANISM_WARN_CAP:
+                preview = "、".join(hits[:3]) + ("…" if len(hits) > 3 else "")
+                findings.append(
+                    f"{rel} 可能被本次改动触及（命中 {len(hits)} 文件：{preview}）"
+                    "——查看该机制篇是否跟改")
+            else:
+                overflow += 1
+    if overflow:
+        findings.append(
+            f"另有 {overflow} 篇机制文档命中本次改动"
+            f"（超出单次点名上限 {MECHANISM_WARN_CAP}，略）")
     return findings

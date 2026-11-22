@@ -904,3 +904,111 @@ def test_requirement_pointer_text_mentions_authority_order() -> None:
     text = requirement_pointer_text("product/requirements/x")
     assert "唯一住址" in text
     assert "需求原文 > 需求 PRD > 任务 PRD" in text
+
+
+# ── 机制文档机器面（RFC-20261122-04，提示语族 WARN）────────────────────────
+
+from _support.workflow_verify import (  # noqa: E402
+    MECHANISM_WARN_CAP, _mech_glob_regex, mechanism_doc_findings
+)
+
+
+def _git_repo(tmp_path: Path) -> Path:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path,
+                   check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path,
+                   check=True, capture_output=True)
+    return tmp_path
+
+
+def _mech_doc(root: Path, rel: str, globs: list[str]) -> None:
+    p = root / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fm = "mechanism-paths:\n" + "".join(f"  - '{g}'\n" for g in globs)
+    p.write_text(f"---\n{fm}---\n\n# 机制篇\n正文\n", encoding="utf-8")
+
+
+def test_mechanism_doc_touch_warn_lists_files(tmp_path: Path) -> None:
+    root = _git_repo(tmp_path)
+    _mech_doc(root, "docs/architecture/trace.md", ["backend/**"])
+    (root / "backend" / "svc.py").parent.mkdir(parents=True)
+    (root / "backend" / "svc.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+
+    findings = mechanism_doc_findings(root, ["backend/svc.py", "other.py"])
+    assert len(findings) == 1, findings
+    assert "docs/architecture/trace.md" in findings[0]
+    assert "命中 1 文件" in findings[0] and "backend/svc.py" in findings[0]
+    assert "查看该机制篇是否跟改" in findings[0]  # 提示语措辞锁（评审 s3）
+    # 未触及 ⇒ 沉默（无机制文档缺席假阳性）
+    assert mechanism_doc_findings(root, ["other.py"]) == []
+
+
+def test_mechanism_doc_dead_paths_warn_and_alive_silent(tmp_path: Path) -> None:
+    root = _git_repo(tmp_path)
+    _mech_doc(root, "docs/architecture/old.md", ["gone/**"])
+    _mech_doc(root, "docs/architecture/live.md", ["backend/**"])
+    (root / "backend" / "a.py").parent.mkdir(parents=True)
+    (root / "backend" / "a.py").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+
+    findings = mechanism_doc_findings(root, [])
+    dead = [f for f in findings if "疑似死 paths" in f]
+    assert len(dead) == 1 and "docs/architecture/old.md" in dead[0]
+    assert not any("live.md" in f and "疑似死" in f for f in findings)
+
+
+def test_mechanism_doc_pending_skips_all(tmp_path: Path) -> None:
+    root = _git_repo(tmp_path)
+    _mech_doc(root, "docs/architecture/new.md", ["pending"])
+    findings = mechanism_doc_findings(root, ["anything.py"])
+    assert findings == []  # 冷启动豁免（评审 s1）：零命中判据不红、触及不判
+
+
+def test_mechanism_doc_single_star_glob_named_not_matched(tmp_path: Path) -> None:
+    root = _git_repo(tmp_path)
+    _mech_doc(root, "docs/architecture/wide.md", ["src/*.py", "backend/**"])
+    (root / "src" / "a.py").parent.mkdir(parents=True)
+    (root / "src" / "a.py").write_text("x\n", encoding="utf-8")
+    (root / "backend" / "b.py").parent.mkdir(parents=True)
+    (root / "backend" / "b.py").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+
+    findings = mechanism_doc_findings(root, ["src/a.py"])
+    assert any("单星 glob" in f and "'src/*.py'" in f for f in findings)
+    assert not any("可能被本次改动触及" in f for f in findings)  # 非法 glob 不参与命中
+    assert not any("疑似死 paths" in f for f in findings)  # backend/** 仍活
+
+
+def test_mechanism_doc_cap_and_overflow_summary(tmp_path: Path) -> None:
+    root = _git_repo(tmp_path)
+    changed = []
+    for n in range(MECHANISM_WARN_CAP + 1):
+        _mech_doc(root, f"docs/architecture/m{n}.md", [f"svc{n}/**"])
+        (root / f"svc{n}" / "x.py").parent.mkdir(parents=True)
+        (root / f"svc{n}" / "x.py").write_text("x\n", encoding="utf-8")
+        changed.append(f"svc{n}/x.py")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+
+    findings = mechanism_doc_findings(root, changed)
+    touches = [f for f in findings if "可能被本次改动触及" in f]
+    summary = [f for f in findings if "另有" in f and "略）" in f]
+    assert len(touches) == MECHANISM_WARN_CAP
+    assert len(summary) == 1 and "1 篇" in summary[0]
+    assert not any("疑似死 paths" in f for f in findings)
+
+
+def test_mechanism_glob_engine_agrees_with_context() -> None:
+    from _support.workflow_context import _glob_regex
+    cases = [
+        ("a/**", "a"), ("a/**", "a/b/c.py"), ("a/**", "ab.py"),
+        ("backend/**", "backend/svc/deep/x.py"), ("docs/x.md", "docs/x.md"),
+        ("docs/x.md", "docs/y.md"), ("**/*.md", "a/b.md"), ("dir/", "dir/f.py"),
+    ]
+    for glob, path in cases:
+        mine = _mech_glob_regex(glob).fullmatch(path) is not None
+        theirs = _glob_regex(glob).fullmatch(path) is not None
+        assert mine == theirs, (glob, path, mine, theirs)
+    assert _mech_glob_regex("a/**").fullmatch("a/b/c.py") is not None
+    assert _mech_glob_regex("a/**").fullmatch("ab.py") is None
