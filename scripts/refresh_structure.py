@@ -18,11 +18,14 @@
 - **基线自进（F26，只跟随 `--chain` 路径）**：`--chain` 完成 refresh 后，四前置
   全满足才把 `_meta.json` 的 `baseline.commit` 推进到当前 HEAD——
   ① 推进判定读**本轮刚算出的漂移结果**（drift 标记写盘之后），不读上轮遗留标记；
-  ② 无键级漂移；③ 至少一份适配器产物且事实结果非空（空转态不背书）；
-  ④ 产品侧工作树干净（`.atlas/` `.atlas/` `product/` 之外无脏路径——给未审定
-  代码背书违背诚实 ratchet）。任一不满足 ⇒ SKIP 并说明理由；冻结时可用
-  `--advance-baseline` 显式越过（人工终审后通道；默认显式 `--apply` **永不**推进，
-  零变化承诺保持）。SHA 比较归一化（存量存 7 位短 SHA，前缀匹配即同值）。
+  ② 无键级漂移；③ 至少一份适配器产物且事实结果非空（空转态不背书；2026-11-22
+  `RFC-20261122-05` 起显式通道亦可越过——facts 由 agent 维持、无适配器的仓这是
+  唯一可达重锚出路，finish「结构事实新鲜度」前置依赖它）；④ 产品侧工作树干净
+  （`.atlas/` `.atlas/` `product/` 之外无脏路径——给未审定代码背书违背诚实
+  ratchet）。任一不满足 ⇒ SKIP 并说明理由；冻结时可用 `--advance-baseline`
+  显式越过（人工终审后通道，兼越 ②③；默认显式 `--apply` **永不**推进，零变化
+  承诺保持）。SHA 比较归一化（存量存 7 位短 SHA，前缀匹配即同值，
+  `sha_matches_prefix` 单源）。
 
 用法：
     python3 refresh_structure.py --root <项目根> [--max-chars N] [--apply] [--chain] [--advance-baseline]
@@ -616,19 +619,29 @@ def _git(root: Path, *argv: str) -> tuple[bool, str]:
     return True, r.stdout.strip()
 
 
+def sha_matches_prefix(cur: str, old: str) -> bool:
+    """SHA 双向前缀归一比较（存量存 7 位短 SHA，前缀匹配即同值；F26 语义单源）。"""
+    return bool(old) and (cur == old or cur.startswith(old) or old.startswith(cur))
+
+
 def maybe_advance_baseline(root: Path, meta: dict, fact_results: list[dict],
                            drifts: list[dict], override: bool) -> None:
     """F26 基线自进（只由 --chain / 显式 --advance-baseline 通道调用）。
 
     四前置（docstring 与方案 §1.2）：本轮 drift 已写盘（调用时序由 main 保证）/ 零漂移
-    （override 显式越过）/ 事实结果非空 / 产品侧干净。SHA 前缀归一比较。
+    （override 显式越过）/ 事实结果非空（override 亦可显式越过，2026-11-22 `RFC-20261122-05`
+    —— facts 由 agent 维持、无适配器的空转态仓原本 baseline 永不可达 HEAD，是 finish
+    「结构事实新鲜度」前置下唯一可达的重锚出路）/ 产品侧干净。SHA 前缀归一比较。
     """
     if drifts and not override:
         log("  baseline: 存在未终审键级漂移 ⇒ 冻结待终审（诚实 ratchet；--advance-baseline 可显式越过）")
         return
     if not fact_results:
-        log("  baseline: 无适配器产物参与渲染（空转态）⇒ 不推进（不给半装配态背书）")
-        return
+        if not override:
+            log("  baseline: 无适配器产物参与渲染（空转态）⇒ 不推进（不给半装配态背书；"
+                "facts 由 agent 维持的仓可 --advance-baseline 显式背书，RFC-20261122-05）")
+            return
+        log("  baseline: 空转态（无适配器产物）经 --advance-baseline 显式人工背书 ⇒ 推进")
     ok, cur = _git(root, "rev-parse", "HEAD")
     if not ok:
         log("  baseline: git HEAD 不可得 ⇒ SKIP 推进")
@@ -654,7 +667,7 @@ def maybe_advance_baseline(root: Path, meta: dict, fact_results: list[dict],
             return
     cur = cur.splitlines()[0] if cur else ""
     old = (meta.get("baseline") or {}).get("commit") or ""
-    if old and (cur == old or cur.startswith(old) or old.startswith(cur)):
+    if sha_matches_prefix(cur, old):
         log(f"  baseline: 已与当前 HEAD 对齐（{old}）⇒ 不重复推进")
         return
     branch = (meta.get("baseline") or {}).get("branch") or ""

@@ -76,7 +76,7 @@ python3 atlas/patches/project-wiring/apply-wiring.py --target <项目根> --appl
 
 **收口按 `.atlas/shared/closeout.md` 逐步跑**（门自检 → 装配面核对 → 回灌登记 → 提交）；**门总账** = `.atlas/shared/gates.md`（一门一行、含显式盲区与取证等级；**不在表 = 不存在**）。
 
-实现后：真实应用跑 E2E（**E1 单段**：`stack-profile.yaml` 的 `e2e.app_base_url`）→ 全 `green`（或 `blocked` 带原因）→ 显式刷结构事实（`python3 .atlas/scripts/refresh_structure.py --root . --chain`）→ `atlas workflow finish --unit <需求ID>`。
+实现后：真实应用跑 E2E（**E1 单段**：`stack-profile.yaml` 的 `e2e.app_base_url`）→ 全 `green`（或 `blocked` 带原因）→ 显式刷结构事实（`python3 .atlas/scripts/refresh_structure.py --root . --chain`；facts 由 agent 维持、无适配器的仓追加 `--advance-baseline` 显式背书）→ `atlas workflow finish --unit <需求ID>`。finish **硬校验结构事实新鲜度**（baseline ≡ HEAD 且无非豁免未暂存/未跟踪改动；跳过刷新 ⇒ FAIL 带修复命令，`RFC-20261122-05`）。
 
 - `e2e.app_base_url` 为空 ⇒ E2E 跑不起来：`atlas_check` 记 **`SKIP`**（显式可见跳过），**不得**当作已验收。真栈跑通前，E1 口径下的实现类工作无法验收。
 - 首跑前先读 `rings/e2e/reference.md` §5.4 的**首跑分类协议**（mock 语义残留 / 命名漂移 / 真缺陷三分类，不分类不得批量回写状态）。

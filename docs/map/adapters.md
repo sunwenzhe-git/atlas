@@ -20,7 +20,7 @@
 | `adapters/_jpa.py` | 313 | JPA 跨文件类图:`@MappedSuperclass` 继承合并 + `@Embeddable` 内嵌字段展开(不猜命名策略) |
 | `adapters/_lib.py` | 278 | 适配器共享件:文件遍历 / apps 解析 / `write_json`(`adapters/_lib.py:230`)落盘约定 |
 | `adapters/_scaffold.py` | 80 | 新适配器脚手架:`CATEGORY`(`adapters/_scaffold.py:25`)占位待改 |
-| `scripts/refresh_structure.py` | 818 | 事实渲染器:适配器产物 → `atlas:facts` 标记区 |
+| `scripts/refresh_structure.py` | 831 | 事实渲染器:适配器产物 → `atlas:facts` 标记区 |
 
 ### Adopt 专用静态解析器（不属四类结构事实）
 
@@ -40,7 +40,7 @@
 
 ### 2. 事实渲染:标记区内键级重写(`scripts/refresh_structure.py`)
 
-`BEGIN` / `END`(`scripts/refresh_structure.py:45`)框出 `atlas:facts` 标记区:区内键级单元格按适配器产物重写,区外语义内容原样保留;旧行按行键对齐(`old_rows_by_key`,`scripts/refresh_structure.py:226`),三张表头(`ROUTES_HEADER`,`scripts/refresh_structure.py:217`)对 routes / api / models 各定义列序。默认 dry-run,`--apply` 写盘;预算按每域 L1+L2 ≤ `DEFAULT_MAX_TOTAL`(`scripts/refresh_structure.py:43`,9500 字符)校验。单遍化(F27):事实区先行落盘、指针层后拼装,首遍 `--apply` 即完整。
+`BEGIN` / `END`(`scripts/refresh_structure.py:45`)框出 `atlas:facts` 标记区:区内键级单元格按适配器产物重写,区外语义内容原样保留;旧行按行键对齐(`old_rows_by_key`,`scripts/refresh_structure.py:226`),三张表头(`ROUTES_HEADER`,`scripts/refresh_structure.py:217`)对 routes / api / models 各定义列序。默认 dry-run,`--apply` 写盘;预算按每域 L1+L2 ≤ `DEFAULT_MAX_TOTAL`(`scripts/refresh_structure.py:48`,9500 字符)校验。单遍化(F27):事实区先行落盘、指针层后拼装,首遍 `--apply` 即完整。
 
 ### 3. 键级漂移检测
 

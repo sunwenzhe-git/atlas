@@ -323,7 +323,7 @@ def cmd_finish(args: argparse.Namespace, root: Path) -> int:
         return die(f"未找到任务卡 {args.unit}（不能对账本外任务收口）", code=2)
 
     if args.dry_run:
-        print(f"$ # 校验 {args.unit} 的 review.json + E2E 前置，流转 completed 并归档 (dry-run)")
+        print(f"$ # 校验 {args.unit} 的 review.json + E2E 前置 + 结构事实新鲜度，流转 completed 并归档 (dry-run)")
         return 0
 
     try:
@@ -337,6 +337,8 @@ def cmd_finish(args: argparse.Namespace, root: Path) -> int:
         print(f"atlas workflow finish @ {args.unit}   status: completed")
         e2e = res.get("e2e_precondition") or {}
         print(f"  E2E 前置：{e2e.get('status', '?')} —— {e2e.get('reason', '')}")
+        st = res.get("structure_freshness") or {}
+        print(f"  结构事实：{st.get('status', '?')} —— {st.get('reason', '')}")
         acceptance = e2e.get("acceptance") or {}
         if acceptance:
             print(f"  验收走查：{acceptance.get('status', '?')} —— {acceptance.get('reason', '')}")

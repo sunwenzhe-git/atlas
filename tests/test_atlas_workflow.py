@@ -1012,3 +1012,211 @@ def test_mechanism_glob_engine_agrees_with_context() -> None:
         assert mine == theirs, (glob, path, mine, theirs)
     assert _mech_glob_regex("a/**").fullmatch("a/b/c.py") is not None
     assert _mech_glob_regex("a/**").fullmatch("ab.py") is None
+
+
+# ---------------------------------------------------------------------------
+# finish 结构事实新鲜度前置（RFC-20261122-05）
+# ---------------------------------------------------------------------------
+
+def _commit_all(root: Path, msg: str = "c") -> str:
+    subprocess.run(["git", "add", "-A"], cwd=str(root), check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", msg], cwd=str(root), check=True, capture_output=True)
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(root), check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def _write_meta(root: Path, commit: str) -> None:
+    p = root / ".atlas" / "spec" / "structure" / "_meta.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"baseline": {"branch": "main", "commit": commit},
+                             "domains": []}, ensure_ascii=False), encoding="utf-8")
+
+
+def _plan_and_dispatch(root: Path, unit: str) -> None:
+    run(root, "plan", "--unit", unit, "--requirement", "落实 AC-HOME-001")
+    run(root, "dispatch", "--unit", unit)
+
+
+def test_finish_structure_skip_without_meta(tmp_path: Path) -> None:
+    """RFC-20261122-05：结构环未开户（无 _meta.json）⇒ SKIP，不拦收口。"""
+    root = make_clean_project(tmp_path)
+    _plan_and_dispatch(root, "T-S1")
+    p = run(root, "finish", "--unit", "T-S1", "--force")
+    assert p.returncode == 0, p.stdout + p.stderr
+    meta = json.loads((root / ".atlas/tasks/archive" / _month() / "T-S1/task.json")
+                      .read_text(encoding="utf-8"))
+    assert meta["structure_freshness"]["status"] == "SKIP"
+
+
+def test_finish_structure_skip_non_git_with_meta(tmp_path: Path) -> None:
+    """RFC-20261122-05：有 _meta.json 但非 git 仓 ⇒ SKIP（存量手工仓不追杀）。"""
+    root = make_clean_project(tmp_path)
+    _write_meta(root, "abc1234")
+    _plan_and_dispatch(root, "T-S2")
+    p = run(root, "finish", "--unit", "T-S2", "--force")
+    assert p.returncode == 0, p.stdout + p.stderr
+    meta = json.loads((root / ".atlas/tasks/archive" / _month() / "T-S2/task.json")
+                      .read_text(encoding="utf-8"))
+    assert meta["structure_freshness"]["status"] == "SKIP"
+
+
+def test_finish_structure_blocks_bad_meta_json(tmp_path: Path) -> None:
+    """RFC-20261122-05：_meta.json 坏 JSON ⇒ FAIL（响亮可修），不得静默放行。"""
+    root = make_clean_project(_git_repo(tmp_path))
+    _commit_all(root, "init")
+    p_meta = root / ".atlas" / "spec" / "structure" / "_meta.json"
+    p_meta.parent.mkdir(parents=True, exist_ok=True)
+    p_meta.write_text("{oops", encoding="utf-8")
+    _plan_and_dispatch(root, "T-S3")
+    p = run(root, "finish", "--unit", "T-S3", "--force")
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "无法解析" in p.stderr
+    meta = json.loads((root / ".atlas/tasks/T-S3/task.json").read_text(encoding="utf-8"))
+    assert meta["status"] != "completed"
+
+
+def test_finish_structure_blocks_placeholder_baseline(tmp_path: Path) -> None:
+    """RFC-20261122-05：baseline 占位（模板兜底 `[必填` 与 `—` 两种）⇒ FAIL。"""
+    root = make_clean_project(_git_repo(tmp_path))
+    _commit_all(root, "init")
+    for unit, ph in (("T-S4", "[必填：commit]"), ("T-S5", "—")):
+        _write_meta(root, ph)
+        _plan_and_dispatch(root, unit)
+        p = run(root, "finish", "--unit", unit, "--force")
+        assert p.returncode == 1, (unit, p.stdout + p.stderr)
+        assert "baseline 未登记" in p.stderr
+
+
+def test_finish_structure_blocks_stale_baseline(tmp_path: Path) -> None:
+    """M196：摘 finish_task 的结构新鲜度门调用 ⇒ 本钉变绿（FAIL 不再发生）。
+
+    RFC-20261122-05 主钉：提交后未重刷结构事实（baseline 落后 HEAD）必须拒收，
+    文案带 --chain 与 --advance-baseline 双通道；--force 不绕本门（评审 M4）。
+    """
+    root = make_clean_project(_git_repo(tmp_path))
+    sha1 = _commit_all(root, "init")
+    _write_meta(root, sha1)
+    (root / "src").mkdir()
+    (root / "src" / "a.py").write_text("x\n", encoding="utf-8")
+    _commit_all(root, "feat")
+    _plan_and_dispatch(root, "T-S6")
+    p = run(root, "finish", "--unit", "T-S6", "--force")
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "refresh_structure.py" in p.stderr and "--advance-baseline" in p.stderr
+    meta = json.loads((root / ".atlas/tasks/T-S6/task.json").read_text(encoding="utf-8"))
+    assert meta["status"] != "completed"
+
+
+def test_finish_structure_blocks_unstaged_dirty(tmp_path: Path) -> None:
+    """RFC-20261122-05：未跟踪 / 未暂存修改 ⇒ FAIL；文案不指引提交（评审 C1）。"""
+    root = make_clean_project(_git_repo(tmp_path))
+    sha1 = _commit_all(root, "init")
+    _write_meta(root, sha1)
+    _plan_and_dispatch(root, "T-S7")
+    # 未跟踪（非豁免路径）
+    (root / "src").mkdir()
+    (root / "src" / "a.py").write_text("x\n", encoding="utf-8")
+    p = run(root, "finish", "--unit", "T-S7", "--force")
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "未暂存/未跟踪" in p.stderr
+    # 未暂存修改（已跟踪文件再改；先提交并重锚 baseline，隔离出脏路径单因素）
+    subprocess.run(["git", "add", "-A"], cwd=str(root), check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "src"], cwd=str(root), check=True, capture_output=True)
+    sha2 = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(root), check=True,
+                          capture_output=True, text=True).stdout.strip()
+    _write_meta(root, sha2)
+    (root / "src" / "a.py").write_text("x2\n", encoding="utf-8")
+    p = run(root, "finish", "--unit", "T-S7", "--force")
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "未暂存/未跟踪" in p.stderr
+    # 暂存面不入判据（评审 C1）：同文件 git add 后放行
+    subprocess.run(["git", "add", "src/a.py"], cwd=str(root), check=True, capture_output=True)
+    p = run(root, "finish", "--unit", "T-S7", "--force")
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+def test_finish_structure_blocks_broken_git(tmp_path: Path) -> None:
+    """评审 M1：`.git` 在而 git 探测失败 ⇒ FAIL，不得混叠成「非 git」SKIP。"""
+    root = make_clean_project(tmp_path)
+    (root / ".git").write_text("gitdir: /nonexistent\n", encoding="utf-8")
+    _write_meta(root, "abc1234")
+    _plan_and_dispatch(root, "T-S8")
+    p = run(root, "finish", "--unit", "T-S8", "--force")
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "git 探测失败" in p.stderr
+
+
+def test_finish_structure_passes_anchored_clean(tmp_path: Path) -> None:
+    """RFC-20261122-05：baseline ≡ HEAD 且无非豁免未暂存/未跟踪改动 ⇒ PASS 留痕。"""
+    root = make_clean_project(_git_repo(tmp_path))
+    sha = _commit_all(root, "init")
+    _write_meta(root, sha)
+    _plan_and_dispatch(root, "T-S9")
+    p = run(root, "finish", "--unit", "T-S9", "--force")
+    assert p.returncode == 0, p.stdout + p.stderr
+    meta = json.loads((root / ".atlas/tasks/archive" / _month() / "T-S9/task.json")
+                      .read_text(encoding="utf-8"))
+    assert meta["structure_freshness"]["status"] == "PASS"
+
+
+def test_finish_c1_staged_impl_with_scope_seal_passes(tmp_path: Path) -> None:
+    """RFC-20261122-05 评审 C1 e2e：暂存实现 + v4 scope 封口一致 ⇒ 两门共存放行。
+
+    收口契约 = finish 时实现恰在暂存区（review 封口门对暂存面整体摘要）；
+    结构门只判未暂存/未跟踪侧 + baseline ≡ HEAD，不得把暂存面算脏。
+    """
+    from _support import review_scope_core as scope_core
+    root = make_clean_project(_git_repo(tmp_path))
+    sha = _commit_all(root, "init")
+    _write_meta(root, sha)
+    (root / "src").mkdir()
+    (root / "src" / "impl.py").write_text("impl v2\n", encoding="utf-8")
+    subprocess.run(["git", "add", "src/impl.py"], cwd=str(root), check=True, capture_output=True)
+    manifest = scope_core.build_manifest(root, ["src/impl.py"])
+    r_dir = root / "product" / "reviews" / "2026-11-22-impl-review-T-S10"
+    r_dir.mkdir(parents=True)
+    (r_dir / "review.json").write_text(json.dumps({
+        "schema_version": 4, "ok": True, "status": "PASS",
+        "review_scope": {"sha256": manifest["scope_sha256"], "files": manifest["files"]},
+    }), encoding="utf-8")
+    _plan_and_dispatch(root, "T-S10")
+    p = run(root, "finish", "--unit", "T-S10")
+    assert p.returncode == 0, p.stdout + p.stderr
+    meta = json.loads((root / ".atlas/tasks/archive" / _month() / "T-S10/task.json")
+                      .read_text(encoding="utf-8"))
+    assert meta["structure_freshness"]["status"] == "PASS"
+
+
+def test_finish_structure_import_failure_fails_loud(tmp_path: Path, monkeypatch) -> None:
+    """评审 M2：判据单源导入失败 ⇒ FAIL（响亮指名重装配），不走 WARN 降级。"""
+    from _support import workflow_finish
+    root = make_clean_project(_git_repo(tmp_path))
+    _write_meta(root, "abc1234")
+    monkeypatch.setattr(workflow_finish, "_load_refresh_helpers", lambda: None)
+    res = workflow_finish.check_structure_freshness(root)
+    assert res["status"] == "FAIL" and "install.sh" in res["reason"]
+
+
+def test_finish_adapterless_reanchor_channel_reachable(tmp_path: Path) -> None:
+    """RFC-20261122-05 评审 C2 e2e：空转态仓（无适配器）经 --chain --advance-baseline
+    显式人工背书重锚后，finish 可达 PASS（修复路径不可达 = 门锁死仓，方案错）。
+    """
+    root = make_clean_project(_git_repo(tmp_path))
+    sha1 = _commit_all(root, "init")
+    _write_meta(root, sha1)
+    (root / "src").mkdir()
+    (root / "src" / "a.py").write_text("x\n", encoding="utf-8")
+    sha2 = _commit_all(root, "feat")
+    _plan_and_dispatch(root, "T-S11")
+    p = run(root, "finish", "--unit", "T-S11", "--force")
+    assert p.returncode == 1, p.stdout + p.stderr
+    r = subprocess.run(
+        [sys.executable, str(PKG_ROOT / "scripts" / "refresh_structure.py"),
+         "--root", str(root), "--chain", "--advance-baseline"],
+        capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+    meta_now = json.loads((root / ".atlas" / "spec" / "structure" / "_meta.json")
+                          .read_text(encoding="utf-8"))
+    assert meta_now["baseline"]["commit"] == sha2
+    p = run(root, "finish", "--unit", "T-S11", "--force")
+    assert p.returncode == 0, p.stdout + p.stderr

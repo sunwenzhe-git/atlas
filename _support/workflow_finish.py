@@ -15,6 +15,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from collections import Counter
 from datetime import date
 from pathlib import Path
@@ -278,6 +279,111 @@ def check_e2e_precondition(root: Path, task: dict) -> dict:
     return out
 
 
+def _git_out(root: Path, *args: str) -> tuple[bool, str]:
+    """本地 git 只读探测；(False, "") = 调用失败/非零退出（与 staged_files 同吞错口径）。"""
+    try:
+        pr = subprocess.run(["git", *args], cwd=str(root),
+                            capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return False, ""
+    if pr.returncode != 0:
+        return False, ""
+    return True, pr.stdout.strip()
+
+
+def _load_refresh_helpers() -> tuple | None:
+    """惰性加载 `refresh_structure` 的新鲜度判据单源（RFC-20261122-05）。
+
+    源仓布局（scripts/ 与 _support/ 同根）与采纳仓布局（.atlas/scripts/ 与
+    .atlas/_support/ 同根）都按「父目录的 scripts/」解析；两处都没有 = 装配残缺
+    ⇒ 返回 None。硬前置不走 atlas_check 的 WARN 降级模式——降级成放行恰好复制
+    本门要治的「静默通过」病（评审 M2），由调用方 FAIL 响亮指名重装配。
+    """
+    here = Path(__file__).resolve().parent
+    for cand in (here.parent / "scripts", here.parent):
+        if (cand / "refresh_structure.py").is_file():
+            if str(cand) not in sys.path:
+                sys.path.insert(0, str(cand))
+            break
+    try:
+        from refresh_structure import clean_exempt_prefixes, sha_matches_prefix  # noqa: E402
+    except Exception:  # noqa: BLE001 —— ImportError 与旧装配同名模块损坏同吃
+        return None
+    return clean_exempt_prefixes, sha_matches_prefix
+
+
+def _worktree_dirty_paths(root: Path,
+                          prefixes: tuple[str, ...]) -> list[str] | None:
+    """非豁免的**未暂存（工作树≠索引）∪ 未跟踪**路径（门脏面，RFC-20261122-05）。
+
+    暂存面（索引侧）不入判据——收口契约下实现恰在暂存区，由 review 封口门
+    （`_scope_matches`）背书（评审 C1）。git 探测失败 ⇒ None（硬门 fail-closed，
+    不与「干净」混叠，评审 M1）。`core.quotePath=false` 保中文/特殊路径不被转义。
+    """
+    ok, diff = _git_out(root, "-c", "core.quotePath=false", "diff", "--name-only")
+    if not ok:
+        return None
+    ok2, others = _git_out(root, "-c", "core.quotePath=false",
+                           "ls-files", "--others", "--exclude-standard")
+    if not ok2:
+        return None
+    paths = [ln.strip() for ln in (diff + "\n" + others).splitlines() if ln.strip()]
+    return sorted(p for p in paths if not p.startswith(prefixes))
+
+
+def check_structure_freshness(root: Path) -> dict:
+    """结构事实新鲜度前置（RFC-20261122-05）：baseline ≡ HEAD ∧ 无未暂存脏路径。
+
+    三态复刻 `check_e2e_precondition`。SKIP 仅两种：无 `_meta.json`（未开户，
+    与 atlas_check `validate_structure` 前置同口径）/ 无 `.git`（非 git 仓）；
+    其余一律 FAIL 或 PASS（响亮原则）。判据盲区（gates.md §2.1 同步声明）：
+    暂存面内容一致性（review 封口门辖区）、键级漂移登记语义（未终审漂移经
+    F26 baseline 冻结在有已提交改动时间接阻断，终审通道 `--advance-baseline`）、
+    适配器产物与源码实时一致、内容级漂移、`baseline.branch` 方向。
+    """
+    root = root.resolve()
+    meta_path = root / ".atlas" / "spec" / "structure" / "_meta.json"
+    if not meta_path.is_file():
+        return {"status": "SKIP", "reason": "结构环未开户（无 .atlas/spec/structure/_meta.json）"}
+    if not (root / ".git").exists():
+        return {"status": "SKIP", "reason": "非 git 仓，结构事实新鲜度机器不可证"}
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {"status": "FAIL", "reason": f"无法解析 {meta_path.relative_to(root)}：{exc}"}
+    baseline = meta.get("baseline") if isinstance(meta, dict) else None
+    old = str((baseline or {}).get("commit") or "").strip()
+    if not old or old.startswith("[必填") or old == "—":
+        return {"status": "FAIL", "reason": "结构事实 baseline 未登记（占位）——重跑 refresh_structure.py 重锚"}
+    helpers = _load_refresh_helpers()
+    if helpers is None:
+        return {"status": "FAIL",
+                "reason": "装配缺 scripts/refresh_structure.py（新鲜度判据单源）——重跑 install.sh --update 后重试"}
+    clean_exempt_prefixes, sha_matches_prefix = helpers
+    ok, head = _git_out(root, "rev-parse", "HEAD")
+    if not ok:
+        return {"status": "FAIL", "reason": "git 探测失败（rev-parse HEAD 不可得）——结构事实新鲜度不可证"}
+    try:
+        prefixes = clean_exempt_prefixes(root)
+    except LayoutError as exc:
+        return {"status": "FAIL", "reason": f"布局配置不可读，豁免面无法判定：{exc}"}
+    cur = head.splitlines()[0] if head else ""
+    if not sha_matches_prefix(cur, old):
+        return {"status": "FAIL", "reason": (
+            f"结构事实 baseline（{old[:12]}）落后当前 HEAD（{cur[:12]}）——先重刷结构事实："
+            "python3 .atlas/scripts/refresh_structure.py --root . --chain"
+            "（facts 由 agent 维持、无适配器时追加 --advance-baseline 显式背书）")}
+    dirty = _worktree_dirty_paths(root, prefixes)
+    if dirty is None:
+        return {"status": "FAIL", "reason": "git 探测失败（工作树状态不可读）——结构事实新鲜度不可证"}
+    if dirty:
+        shown = " ".join(dirty[:3]) + ("…" if len(dirty) > 3 else "")
+        return {"status": "FAIL", "reason": (
+            f"产品侧存在未暂存/未跟踪改动（{shown}）：先暂存并入审查"
+            "（暂存面由审查封口门背书）或清理后重试")}
+    return {"status": "PASS", "reason": f"baseline ≡ HEAD（{cur[:12]}）且无非豁免未暂存/未跟踪改动"}
+
+
 def archive_month(t_dir: Path, tasks_root: Path) -> str | None:
     """任务目录若已在 `archive/<YYYY-MM>/<ID>/` 下，返回月份名；否则 None。
 
@@ -344,6 +450,12 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
     if e2e["status"] == "FAIL":
         raise FinishError(f"任务 {t_id} 无法收口：{e2e['reason']}")
 
+    # 结构事实新鲜度前置（RFC-20261122-05）：没刷 spec 拒收。--force 不绕本门
+    # （force 语义 = 跳过人工审查，非跳过事实锚，评审 M4）。
+    structure = check_structure_freshness(root)
+    if structure["status"] == "FAIL":
+        raise FinishError(f"任务 {t_id} 无法收口：{structure['reason']}")
+
     # 更新 task.json 状态为 completed（E2E 前置结论一并落盘，issue #69）
     task_json_file = t_dir / "task.json"
     if task_json_file.is_file():
@@ -356,6 +468,7 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
 
     meta["status"] = "completed"
     meta["e2e_precondition"] = e2e
+    meta["structure_freshness"] = structure
     atomic_write_json(task_json_file, meta)
 
     # 归档（issue #70）：completed 任务移出活跃区；幂等，失败显式报错
@@ -373,5 +486,6 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
         "completed_tasks": completed_count,
         "all_done": (total > 0 and completed_count == total),
         "e2e_precondition": e2e,
+        "structure_freshness": structure,
         "archived": archived,
     }

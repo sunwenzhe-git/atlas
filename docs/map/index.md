@@ -67,7 +67,7 @@
 
 - 适配器四件:`routes.py` / `api.py` / `models.py` / `tests.py`,由 `product/stack-profile.yaml` 的 `adapters` 段声明启用。统一契约:只读、幂等、失败非零且零部分产物、输出 JSON 形如 `{category, items, source_files, adapter_version}`,落 `.adapter-out/`(项目根,运行态不入库)。
 - `_lib.py` / `_scaffold.py` 是共享件;`_graph.py` 不是适配器(归子系统 4)。
-- `scripts/refresh_structure.py`(818 行)把适配器产物渲染进 `.atlas/spec/structure/` 的 `atlas:facts` 标记区:键级单元格重写、语义列保留、键级增删落漂移标记 `.adapter-out/_drift.json`(由「结构漂移」门消费)。
+- `scripts/refresh_structure.py`(831 行)把适配器产物渲染进 `.atlas/spec/structure/` 的 `atlas:facts` 标记区:键级单元格重写、语义列保留、键级增删落漂移标记 `.adapter-out/_drift.json`(由「结构漂移」门消费)。
 
 ### 4. 代码图谱 → [graph.md](graph.md)
 
