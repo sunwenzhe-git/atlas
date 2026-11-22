@@ -224,6 +224,7 @@ def write_review_request(unit: str, args: argparse.Namespace, background: Path,
             "severity": "critical|high|medium|low",
             "category": "bug|security|performance|maintainability|test|style|documentation",
             "path": "src/a.ts", "start_line": 1, "end_line": 2,
+            "existing_code": "<finding 指向代码的逐字摘录，1-5 行>",
             "content": "<问题描述 + 证据链（file:line）>", "suggestion_code": "",
         }],
         "warnings": [],
@@ -253,6 +254,11 @@ def write_review_request(unit: str, args: argparse.Namespace, background: Path,
         "- 应审文件：在产物 `manifest.coverage.selected[]` 中逐项列出本次实审范围"
         "（缺该项 ⇒ 应审 N 不可得，转换器拒绝产出）", "",
         "## 产物", f"- 写到：`{cli_json}`",
+        "- 每条 finding 必须带 `existing_code`：finding 指向代码的**逐字摘录**"
+        "（1-5 行，从 diff 或相关文件原样复制，禁止改写/重排/缩进调整）——行号锚定复算输入，"
+        "缺失按 unanchored 统计（不判错，RFC-20261122-08）。",
+        "- 审查顺序：先审变更核心（heart），再审其后果（consequences），"
+        "最后审胶水（glue：配置/注册/样板）。",
         "- 形态（CLI 同构 JSON，供 `cli_review_convert.py` 转换）：", "",
         "```json", json.dumps(skeleton, ensure_ascii=False, indent=2), "```", "",
         "## 完成后",
@@ -517,6 +523,13 @@ def main() -> int:
         conv += ["--accept-reason", args.accept_reason]
     if args.user_confirmed:
         conv += ["--user-confirmed"]
+    # 行级锚定复算基准（RFC-20261122-08；模式推导先例 = :483-486 scope base/head）
+    if args.staged:
+        conv += ["--diff-staged"]
+    elif args.base_sha and args.head_sha:
+        conv += ["--diff-base", args.base_sha, "--diff-head", args.head_sha]
+    elif args.ref_from and args.ref_to:
+        conv += ["--diff-base", args.ref_from, "--diff-head", args.ref_to]
     if args.dry_run:
         print("$ " + " ".join(str(x) for x in conv))
     else:

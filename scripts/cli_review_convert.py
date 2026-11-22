@@ -37,6 +37,7 @@ from _support.siblings import load_module  # noqa: E402
 
 review_policy = load_module("review_policy")
 from _support import review_scope_core as scope_core  # noqa: E402
+from _support import line_anchor  # noqa: E402
 
 # 严重度四档 → 三档，写死（骨架 §3 映射锁死；未知档位 = 输入侧契约违约，显式失败不猜）
 SEVERITY_MAP = {"critical": "Critical", "high": "Major", "medium": "Major", "low": "Minor"}
@@ -216,6 +217,10 @@ def main() -> int:
     ap.add_argument("--accept-by", help="确认人（--accept-scope-drift 时必填）")
     ap.add_argument("--accept-reason", help="确认理由（--accept-scope-drift 时必填）")
     ap.add_argument("--user-confirmed", action="store_true", help="确认内容漂移由用户显式作出")
+    ap.add_argument("--diff-staged", action="store_true",
+                    help="行级锚定复算基准 = 暂存区（git diff --cached；RFC-20261122-08）")
+    ap.add_argument("--diff-base", help="行级锚定复算 diff 基准（与 --diff-head 同用；与 --diff-staged 互斥）")
+    ap.add_argument("--diff-head", help="行级锚定复算 diff 止点（与 --diff-base 同用）")
     args = ap.parse_args()
     root = Path(args.root).resolve()
     schema_version = args.schema_version if args.schema_version is not None else (
@@ -448,6 +453,26 @@ def main() -> int:
     lines += ["", f"- triage 提示：AC / 断言本身的缺陷应把回退环改判 `prd` / `e2e` 并登记 backfill"
                   f"（`apply/reference.md` §5.2）；本转换器默认全部 `implement`。", ""]
     (outdir / "README.md").write_text("\n".join(lines), encoding="utf-8")
+
+    # 行级锚定测量面（RFC-20261122-08）：WARN 不置红、不改判收链、不进指纹。
+    # 约束② = 写盘链尾最后一步（review.json / README 之后）；任何失败只出
+    # WARN 行（约束①），退出码契约 0/1/2 全程不变。
+    try:
+        anchoring = line_anchor.compute_stats(
+            root, payload.get("comments") or [],
+            staged=bool(args.diff_staged),
+            base=(args.diff_base or "").strip() or None,
+            head=(args.diff_head or "").strip() or None,
+            executor=str(payload.get("executor") or "unknown"))
+        stats_path = outdir / "anchoring-stats.json"
+        stats_path.write_text(json.dumps(anchoring, ensure_ascii=False, indent=1) + "\n",
+                              encoding="utf-8")
+        print(f"WARN（行级锚定）: anchored {anchoring['anchored']} / mismatch "
+              f"{anchoring['mismatch']} / unresolved {anchoring['unresolved']} / "
+              f"unanchored {anchoring['unanchored_legacy'] + anchoring['unanchored_no_field']} / "
+              f"unresolvable {anchoring['unresolvable']} —— 明细 {stats_path}", file=sys.stderr)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"WARN（行级锚定）: 统计未产出（{exc}）—— 不影响本报告判收", file=sys.stderr)
 
     print(f"cli_review_convert @ {outdir}   {status}   应审 {expected} / 实审 {reviewed}"
           f"   CLI {cli_status} failed {len(failed_files)}   checks {len(checks)} + other {len(other)}")

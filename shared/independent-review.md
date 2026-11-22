@@ -197,11 +197,11 @@ atlas-grill（提炼刺痛代价与致命冲突） → 用户拍板关键抉择
 
 - 执行器 = `product/stack-profile.yaml` 的 `impl_review.executor` 声明（issue #68）：
   - **`cli`** = **CLI 式独立审查进程**（读 git diff 出结构化 findings）：fresh context 由**进程边界**保证；**无落盘修复能力** ⇒ 骨架第 1 条「只审不改」天然成立。
-  - **`session`** = 当前会话派 **fresh-context 子代理**：`atlas review` 产 `review-request.md` 派工包（指针清单 + 产物骨架）并以「待审」退出；子代理只读派工包里的指针、**只写 `cli.json`**，不改业务代码 / 暂存区 ⇒ 骨架第 1 条同样成立；fresh context 由「不继承生成上下文」保证。
+  - **`session`** = 当前会话派 **fresh-context 子代理**：`atlas review` 产 `review-request.md` 派工包（指针清单 + 产物骨架，骨架含 `existing_code` 逐字锚义务，`RFC-20261122-08`）并以「待审」退出；子代理只读派工包里的指针、**只写 `cli.json`**，不改业务代码 / 暂存区 ⇒ 骨架第 1 条同样成立；fresh context 由「不继承生成上下文」保证。
   - **未声明 executor**：`cli` + `llm` 齐备才走 CLI，否则回落 `session`（不再用 `SKIP` 空洞把「未配置」伪装成已走完）。
   具体工具与模型归 `product/stack-profile.yaml` 的 `impl_review` 声明（CLI 执行器与审查模型解耦，null = 使用默认值；契约不写死特定模型）。
 - 业务上下文（「这次该干什么」）由**调用方组装后注入**（CLI 的 background 类参数）：内容 = 需求卡摘要 + 受影响域的 AC + 相关用例断言——这是 §6 第 4 条上下文最小化的落点，**不喂整仓**。
-- 输出经 `scripts/cli_review_convert.py` 转**本契约 §3 的 `review.json`**（CLI 原始 JSON 作为输入侧证据留报告目录）：CLI 的 JSON 是给通用 CI 用的形态，门禁读它 = 在门口信任模型结论。严重度四档→三档**写死**（critical→`Critical`；high / medium→`Major`；low→`Minor`；**未知档位 ⇒ 转换器显式失败**，不猜）；category 闭集（bug / security / performance / maintainability / test / style / documentation）外的归 `other`（骨架 §2.7，不计门禁）。
+- 输出经 `scripts/cli_review_convert.py` 转**本契约 §3 的 `review.json`**（CLI 原始 JSON 作为输入侧证据留报告目录）：CLI 的 JSON 是给通用 CI 用的形态，门禁读它 = 在门口信任模型结论。严重度四档→三档**写死**（critical→`Critical`；high / medium→`Major`；low→`Minor`；**未知档位 ⇒ 转换器显式失败**，不猜）；category 闭集（bug / security / performance / maintainability / test / style / documentation）外的归 `other`（骨架 §2.7，不计门禁）。comments[] **宜带 `existing_code`**（finding 指向代码的逐字摘录，1-5 行）——行级锚定复算输入（`_support/line_anchor.py`，测量面 WARN 不置红，`RFC-20261122-08`；缺失按 `unanchored` 统计，**不判错**）。
 
 ### 10.2 应审 N / 实审 M（硬；§6 第 8 条在此实例的落地）
 
