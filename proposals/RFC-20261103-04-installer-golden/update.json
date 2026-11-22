@@ -1,7 +1,7 @@
 {
   "installer": [
-    "python3.12",
-    "<PKG>/install.py"
+    "bash",
+    "<PKG>/install.sh"
   ],
   "runs": [
     {
@@ -142,7 +142,7 @@
         "  [OK]   skill atlas-structure",
         "  [OK]   skill frontend-design",
         "",
-        "  [ok] .atlas/VERSION 装配版本戳（d989cae9f4726ffb）",
+        "  [ok] .atlas/VERSION 装配版本戳（80d7f5be979afd47）",
         "  [ok] .atlas/MANIFEST.json 装配基线（逐文件摘要）",
         "装配完成。",
         "",
@@ -289,7 +289,7 @@
         "  [OK]   skill atlas-structure",
         "  [OK]   skill frontend-design",
         "",
-        "  [ok] .atlas/VERSION 装配版本戳（d989cae9f4726ffb）",
+        "  [ok] .atlas/VERSION 装配版本戳（80d7f5be979afd47）",
         "  [ok] .atlas/MANIFEST.json 装配基线（逐文件摘要）",
         "刷新完成。",
         "",
@@ -415,9 +415,9 @@
       ".agents/skills/frontend-design/references/typo-readable-line-length.md": "9c41f56733a7b2a50ec3f9d5d52f7bc7a9042136552eef7403e5340f5a61bc64",
       ".agents/skills/frontend-design/references/typo-system-font-stack.md": "449063da26c10640678ab7ef6bb4195d82c9ba60bcc4786fe727e570887632cb",
       ".atlas/LICENSE": "353e9e421cad616af1484b0966a2bb9e87441cd5b285ec50f36a024e5e32586c",
-      ".atlas/MANIFEST.json": "435a4d85d7cec834e9dbef5a9afc1b266cb589ef285669409edf35847b87ac48",
+      ".atlas/MANIFEST.json": "48f1d3cf21da2d9305031a8b3887419d6ea165e20408f2e7f20431fd201fa146",
       ".atlas/NOTICE": "fc64770183e62f3664bfde70662ceeaa525155208f775c517e4ba5ca6a67eccf",
-      ".atlas/VERSION": "2b4993ec84fecb6ca26b715fbcc6d8df59315494b36c36369a15a261f550976b",
+      ".atlas/VERSION": "598c4f6810013e40f47536afe5edf882963baae9826d78904b4895944b7d601e",
       ".atlas/_support/ac_coverage.py": "dbf5af97961a1ac2adec12cda1ae1b8f839de38c3031df3e53c25f72bc373800",
       ".atlas/_support/ac_crosswalk.py": "27b02fffb8934dfc56a0c32b0ac7f37df35b71ea5ac90fd2134b630a7bc9f23a",
       ".atlas/_support/auth_state.py": "c68eec4fbdc71adaf7d65312a08429589b4b45c4786191327bdb9d6aab5521bf",
@@ -444,7 +444,7 @@
       ".atlas/_support/workflow_finish.py": "d9359c29f5be95d1b34bac19f2bffa9e920016c4cee70d95d162a4702360eb74",
       ".atlas/_support/workflow_plan.py": "905944c26e22a68d8cde64aba002d46a79e7af1ef08d643e5b3a93da0984a418",
       ".atlas/_support/workflow_progress.py": "564269f2870f228d760ed575eb48c6480f5c43736bd87e3a1b48ac70e7c3d70f",
-      ".atlas/_support/workflow_verify.py": "5724f56988ab70e68d1620854cdf85f2d41e67a90d450581f1a9b2c6b84aceec",
+      ".atlas/_support/workflow_verify.py": "af400efe3d182f7a310a805a832824e6485150322c2e09c9a52ffbdbea437945",
       ".atlas/adapters/README.md": "346f143951305ea5388629f1dc0ce4c6c38b38b402a65c110fb009dc793aa09c",
       ".atlas/adapters/_graph.py": "2f1f2830737899322a968a854698ff53586fe31657cb3362f79e2e783b8b03b8",
       ".atlas/adapters/_jpa.py": "5cf4b414edd1bf7d439fd57775db90c0661047124913ca2c80848fb21c72b380",
@@ -481,7 +481,7 @@
       ".atlas/scripts/atlas_review.py": "cf835012bc7a6cf09193979373d0e21f0be5f23cf32ab27e572d05ff7a50000a",
       ".atlas/scripts/atlas_solution.py": "e585c87f290f7d52785d99a08a61f3d0a54bde7977af2618d548d3172d3e034c",
       ".atlas/scripts/atlas_verify.py": "769dbb022b6d2158d65dcfda61687a0365e7051d8683cc057a552e5c8e735483",
-      ".atlas/scripts/atlas_workflow.py": "cbc1d94f681170a5e9805026c59286d95959965f54e8b748e26be63b8e2b2563",
+      ".atlas/scripts/atlas_workflow.py": "12bf3b5e5c86f2005fb066ac007b0e4f0e981f42961b37854ee892b110daa6df",
       ".atlas/scripts/backflow.py": "a0b1452db09c9d1136693ad2895bbf033d05f5aa29fc09c74b89e37b538c669a",
       ".atlas/scripts/changelog_guard.py": "44798f47f4ecd82448f7856d5388b7779a732d43f599774b0d7185ef7edd96b7",
       ".atlas/scripts/cli_review_convert.py": "3ce10dc7faac707245aa1791b756fdf798046a0ffd2d57393efc132e9e556daa",
@@ -513,7 +513,7 @@
       ".atlas/shared/global-rules.md": "72c1ed913df08bf84fa7e50d63a178273d34e543b2d9800c0ef9d35486cf3bb5",
       ".atlas/shared/independent-review.md": "b70de9c9091ec68c0e550410dee3e637043d9977172bc0829666f79ed4b2c334",
       ".atlas/shared/layout.md": "f39f70701e21c11588e125b68a7d72d7906d8cdbd8e4326c9950af152523118f",
-      ".atlas/shared/single-source.md": "2eef8e8eb50022f70fa930bb4cca1fece24026c9185244f6ee20593a49f99600",
+      ".atlas/shared/single-source.md": "063239f7144c871d915534a6e462d158fe522eccb5700b296b8c86533b289042",
       ".atlas/shared/solution.md": "d597ebece268608c34b07376bb92c71caaa1ec03183e89373a08bd6ac46cfba7",
       ".atlas/shared/stack-profile.md": "b53592e34e6bd0bf76281910daf9f21098989396e8475e7b831303cae019ee12",
       ".atlas/spec/conventions/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
