@@ -675,3 +675,232 @@ def test_matrix_row_diff_reported_both_directions(tmp_path: Path) -> None:
     findings = coverage_matrix_findings(tmp_path)
     assert any("漏覆盖" in f and "R-002" in f for f in findings)
     assert any("幽灵行" in f and "R-999" in f for f in findings)
+
+
+# ── 需求落点模式（RFC-20261122-03，2026-11-22）────────────────────────────────
+
+from _support.workflow_plan import (  # noqa: E402
+    CLAIM_NONE_MARKER, REQUIREMENT_DOC_FILE, detect_requirement_root,
+    requirement_pointer_text,
+)
+from _support.workflow_verify import (  # noqa: E402
+    read_requirement_status, requirement_root_findings,
+)
+
+
+def make_requirement_root(root: Path, slug: str = "demo-req", *,
+                          status: str | None = "已确认",
+                          item_ids: tuple[str, ...] = ("R-01", "R-02")) -> Path:
+    """需求落点夹具：<assets_root>/requirements/<slug>/（确认稿 + 条目表 + 转换稿）。"""
+    req_dir = root / "product" / "requirements" / slug
+    (req_dir / "work").mkdir(parents=True, exist_ok=True)
+    doc = f"# 演示需求\n\n## Scope\n\n- 事项甲\n- 事项乙\n"
+    if status is not None:
+        doc = f"# 演示需求\n\n**状态**：{status}\n\n## Scope\n\n- 事项甲\n- 事项乙\n"
+    (req_dir / REQUIREMENT_DOC_FILE).write_text(doc, encoding="utf-8")
+    lines = ["# 落点条目表", "", "| ID | 页码 | 章节 | 原文 |", "|---|---|---|---|"]
+    lines += [f"| {i} | p1 | §2 | 条目原文 {i} |" for i in item_ids]
+    (req_dir / "items.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (req_dir / "work" / "需求PDF-全文.md").write_text(
+        "<!-- page 1 -->\n条目原文 R-01\n", encoding="utf-8")
+    return req_dir
+
+
+def _write_claims(task_dir: Path, ids: list[str], *,
+                  root_rel: str = "product/requirements/demo-req",
+                  source_cell: str | None = None,
+                  none_marker: bool = False) -> None:
+    """领取引用表夹具：source_cell 非空时覆盖所有行的来源列（非法形态测试用）。"""
+    lines = ["# 需求条目领取表", "", "| ID | 来源 |", "|---|---|"]
+    for i in ids:
+        cell = source_cell if source_cell is not None else f"{root_rel}#{i}"
+        lines.append(f"| {i} | {cell} |")
+    if none_marker:
+        lines += ["", f"领取条目数：0（{CLAIM_NONE_MARKER}）"]
+    (task_dir / "requirement-items.md").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_detect_requirement_root_modes(tmp_path: Path) -> None:
+    req_dir = make_requirement_root(tmp_path)
+    assert detect_requirement_root(req_dir) == req_dir
+    assert detect_requirement_root(req_dir / REQUIREMENT_DOC_FILE) == req_dir
+    plain = tmp_path / "plain.txt"
+    plain.write_text("普通直填文本", encoding="utf-8")
+    assert detect_requirement_root(plain) is None
+    assert detect_requirement_root(tmp_path / "no-such-dir") is None
+
+
+def test_plan_requirement_root_mode_points_not_copies(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    req_dir = make_requirement_root(root)
+    p = run(root, "plan", "--unit", "T-10", "--requirement",
+            "product/requirements/demo-req")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "落点模式" in p.stdout
+
+    task_dir = root / ".atlas" / "tasks" / "T-10"
+    prd_text = (task_dir / "prd.md").read_text(encoding="utf-8")
+    # 单源：卡 §1 是指针，不复制确认稿/条目正文
+    assert "唯一住址" in prd_text
+    assert "事项甲" not in prd_text and "条目原文" not in prd_text
+    items_text = (task_dir / "requirement-items.md").read_text(encoding="utf-8")
+    assert "| ID | 来源 |" in items_text
+    assert "条目原文" not in items_text  # 领取表不复制正文
+    meta = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
+    assert meta["requirement_root"] == "product/requirements/demo-req"
+    matrix_text = (task_dir / "coverage-matrix.md").read_text(encoding="utf-8")
+    assert "| ID | PRD | 设计文档 | 实现 | E2E |" in matrix_text
+
+
+def test_plan_requirement_root_unconfirmed_warns_not_blocks(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, status="候选")
+    p = run(root, "plan", "--unit", "T-11", "--requirement",
+            "product/requirements/demo-req")
+    assert p.returncode == 0, p.stdout + p.stderr  # 软校验：WARN 不拦停
+    assert "候选" in p.stderr and "确认门" in p.stderr
+
+    root2 = make_clean_project(tmp_path / "s2")
+    make_requirement_root(root2, status=None)
+    p2 = run(root2, "plan", "--unit", "T-11", "--requirement",
+             "product/requirements/demo-req")
+    assert p2.returncode == 0, p2.stdout + p2.stderr
+    assert "状态行" in p2.stderr
+
+    root3 = make_clean_project(tmp_path / "s3")
+    make_requirement_root(root3, status="已确认")
+    p3 = run(root3, "plan", "--unit", "T-11", "--requirement",
+             "product/requirements/demo-req")
+    assert p3.returncode == 0 and "WARN（需求落点）" not in p3.stderr
+
+
+def test_plan_requirement_root_skeleton_idempotent(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root)
+    run(root, "plan", "--unit", "T-12", "--requirement", "product/requirements/demo-req")
+    task_dir = root / ".atlas" / "tasks" / "T-12"
+    _write_claims(task_dir, ["R-01"])
+    run(root, "plan", "--unit", "T-12", "--requirement", "product/requirements/demo-req")
+    text = (task_dir / "requirement-items.md").read_text(encoding="utf-8")
+    assert "| R-01 | product/requirements/demo-req#R-01 |" in text  # 重跑不覆盖已填
+
+
+def test_claim_mode_per_card_findings(tmp_path: Path) -> None:
+    # a) 来源列非法（正文复制进卡 = 单源击穿）
+    _write_claims(tmp_path, ["R-01"], source_cell="条目原文 R-01 被复制进卡")
+    findings = coverage_matrix_findings(tmp_path)
+    assert any("「来源」列非法" in f for f in findings)
+    # b) 引用 ID 与本行 ID 不一致
+    _write_claims(tmp_path, ["R-01"], source_cell="product/requirements/demo-req#R-02")
+    findings = coverage_matrix_findings(tmp_path)
+    assert any("引用 ID 不一致" in f for f in findings)
+    # c) 零领取且未声明豁免
+    _write_claims(tmp_path, [])
+    findings = coverage_matrix_findings(tmp_path)
+    assert any("零领取行" in f for f in findings)
+    # d) 零领取但显式豁免 ⇒ 只剩矩阵缺席
+    _write_claims(tmp_path, [], none_marker=True)
+    findings = coverage_matrix_findings(tmp_path)
+    assert len(findings) == 1 and "coverage-matrix.md 不存在" in findings[0]
+    # e) 干净：合法引用 + 矩阵覆盖
+    _write_claims(tmp_path, ["R-01"])
+    _write_matrix(tmp_path, [("R-01", "覆盖（prd.md）", "覆盖（design.md）",
+                              "覆盖（impl.ts）", "覆盖（e2e.md）")])
+    assert coverage_matrix_findings(tmp_path) == []
+
+
+def _make_claim_card(root: Path, unit: str, req_root_rel: str,
+                     claim_ids: list[str], *, status: str = "in_progress") -> None:
+    """跨卡对账夹具：手工落一张带 requirement_root 的卡（不经 plan 全流程）。"""
+    t_dir = root / ".atlas" / "tasks" / unit
+    t_dir.mkdir(parents=True, exist_ok=True)
+    meta = {"id": unit, "title": unit, "status": status, "depends_on": [],
+            "affected_domains": [], "acs": [],
+            "created_at": "2026-11-22", "requirement_root": req_root_rel}
+    (t_dir / "task.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    if claim_ids:
+        _write_claims(t_dir, claim_ids, root_rel=req_root_rel)
+
+
+def test_requirement_root_coverage_scenarios(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root)  # items: R-01, R-02
+    rel = "product/requirements/demo-req"
+    _make_claim_card(root, "T-A", rel, ["R-01"])
+    findings = requirement_root_findings(root)
+    assert any("漏领条目" in f and "R-02" in f for f in findings)
+
+    root = make_clean_project(tmp_path / "ghost")
+    make_requirement_root(root)
+    _make_claim_card(root, "T-A", rel, ["R-01", "R-09"])
+    findings = requirement_root_findings(root)
+    assert any("幽灵引用" in f and "R-09" in f for f in findings)
+
+    root = make_clean_project(tmp_path / "noclaim")
+    make_requirement_root(root)
+    _make_claim_card(root, "T-A", rel, [])
+    findings = requirement_root_findings(root)
+    assert any("无任何卡领取" in f for f in findings)
+
+    root = make_clean_project(tmp_path / "unconfirmed")
+    make_requirement_root(root, status="候选")
+    _make_claim_card(root, "T-A", rel, ["R-01"])
+    findings = requirement_root_findings(root)
+    assert any("状态 = 候选" in f and "确认门" in f for f in findings)
+
+    root = make_clean_project(tmp_path / "stuckclosed")
+    make_requirement_root(root, status="已拆")
+    _make_claim_card(root, "T-A", rel, ["R-01", "R-02"], status="completed")
+    findings = requirement_root_findings(root)
+    assert any("已全部收口" in f and "已收口" in f for f in findings)
+
+    root = make_clean_project(tmp_path / "noitems")
+    make_requirement_root(root)
+    (root / "product" / "requirements" / "demo-req" / "items.md").unlink()
+    _make_claim_card(root, "T-A", rel, ["R-01"])
+    findings = requirement_root_findings(root)
+    assert any("缺 items.md" in f for f in findings)
+
+    root = make_clean_project(tmp_path / "clean")
+    make_requirement_root(root, status="已拆")
+    _make_claim_card(root, "T-A", rel, ["R-01", "R-02"])
+    assert requirement_root_findings(root) == []
+
+
+def test_requirement_root_escape_and_empty_root(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    _make_claim_card(root, "T-A", "../outside/req", ["R-01"])
+    findings = requirement_root_findings(root)
+    assert any("路径越界" in f for f in findings)
+    assert requirement_root_findings(tmp_path / "no-tasks-dir") == []
+
+
+def test_read_requirement_status(tmp_path: Path) -> None:
+    req_dir = make_requirement_root(tmp_path, status="已确认")
+    assert read_requirement_status(req_dir) == "已确认"
+    make_requirement_root(tmp_path / "s2", status=None)
+    assert read_requirement_status(tmp_path / "s2" / "demo-req") is None
+    assert read_requirement_status(tmp_path / "nope") is None
+
+
+def test_finish_requirement_root_writeback_reminder(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root)
+    run(root, "plan", "--unit", "T-13", "--requirement", "product/requirements/demo-req")
+    run(root, "dispatch", "--unit", "T-13")
+    r_dir = root / "product" / "reviews" / "2026-11-22-impl-review-T-13"
+    r_dir.mkdir(parents=True, exist_ok=True)
+    (r_dir / "review.json").write_text(json.dumps({
+        "schema_version": 4, "ok": True, "status": "PASS", "checks": [], "other": []
+    }), encoding="utf-8")
+    p = run(root, "finish", "--unit", "T-13")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "回写提醒" in p.stdout and "已收口" in p.stdout and "demo-req" in p.stdout
+
+
+def test_requirement_pointer_text_mentions_authority_order() -> None:
+    text = requirement_pointer_text("product/requirements/x")
+    assert "唯一住址" in text
+    assert "需求原文 > 需求 PRD > 任务 PRD" in text

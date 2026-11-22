@@ -2,7 +2,8 @@
 """Atlas Workflow Plan —— 大任务拆解与任务卡结构化生成引擎 (Phase Plan)。
 
 职责：
-1. 读取业务需求输入（文本/Markdown），结合项目单源事实表（PRD、AC、架构透镜 FRAS）；
+1. 读取业务需求输入（文本/Markdown，或需求落点 `<assets_root>/requirements/<slug>/`，
+   RFC-20261122-03），结合项目单源事实表（PRD、AC、架构透镜 FRAS）；
 2. 自动拆分为平级有序的工作单元清单（Task DAG，严禁无限深度的子任务树）；
 3. 生成符合 Atlas 契约规范的任务卡（`prd.md`，带 `atlas-acceptance:` 与四列 Confirmed 表）
    及元数据描述（`task.json`）。
@@ -175,6 +176,60 @@ def atomic_write_json(path: Path, data: dict) -> None:
 
 REQUIREMENT_ITEMS_FILE = "requirement-items.md"
 COVERAGE_MATRIX_FILE = "coverage-matrix.md"
+# 需求落点（RFC-20261122-03）：`<assets_root>/requirements/<slug>/`
+REQUIREMENT_DOC_FILE = "requirement.md"
+CLAIM_NONE_MARKER = "不承接需求条目"
+
+
+def detect_requirement_root(ref: Path) -> Path | None:
+    """`--requirement` 落点模式判定：指向含 `requirement.md` 的目录，或就是该文件本身。
+
+    返回落点目录（requirement.md 所在目录）；非落点 ⇒ None（直填模式，旧行为不变）。
+    """
+    ref = Path(ref)
+    if ref.is_dir() and (ref / REQUIREMENT_DOC_FILE).is_file():
+        return ref
+    if ref.is_file() and ref.name == REQUIREMENT_DOC_FILE:
+        return ref.parent
+    return None
+
+
+def requirement_pointer_text(requirement_root_rel: str) -> str:
+    """落点模式卡的 §1 正文指针：需求正文唯一住址在落点，本卡不复制正文。"""
+    return (
+        f"> 需求正文唯一住址：`{requirement_root_rel}`"
+        "（requirement.md 确认稿 + work/需求PDF-全文.md 转换稿；RFC-20261122-03，本卡不复制正文）。\n"
+        f"> 本卡领取条目见本卡 `requirement-items.md` 领取引用表"
+        "（来源 = `<落点路径>#<落点ID>`）；按权威源排序"
+        "（需求原文 > 需求 PRD > 任务 PRD > 设计文档 > 代码惯例）回查落点。")
+
+
+def write_claim_items(task_dir: Path, task: dict,
+                      requirement_root_rel: str) -> Path:
+    """落点模式卡条目领取表骨架（RFC-20261122-03）：只写引用行，不复制条目正文。
+
+    条目正文唯一住址 = 落点 `items.md`；卡侧 `ID` = 落点条目 ID、
+    `来源` = `<落点路径>#<落点ID>`。已存在则跳过——重跑 plan 不覆盖已填内容。
+    """
+    path = task_dir / REQUIREMENT_ITEMS_FILE
+    if path.exists():
+        return path
+    path.write_text("\n".join([
+        f"# 需求条目领取表 — {task['title']}",
+        "",
+        f"> 落点模式（RFC-20261122-03）：条目正文唯一住址在需求落点 `{requirement_root_rel}/items.md`；"
+        "本卡**不复制正文**，只写领取引用行。",
+        "> `ID` = 落点条目 ID（如 `R-01`）；`来源` = `<落点路径>#<落点ID>`（项目根相对 POSIX 路径）。",
+        "> 条目↔卡允许共担（同一条目跨卡实现合法），覆盖性由 `atlas workflow verify` 跨卡对账。",
+        "> 本卡确不承接需求条目时写：`领取条目数：0（本卡不承接需求条目）`。",
+        "",
+        "| ID | 来源 |",
+        "|---|---|",
+        "",
+        "领取条目数：待填",
+        "",
+    ]), encoding="utf-8")
+    return path
 
 
 def write_requirement_items(task_dir: Path, task: dict) -> Path:
@@ -231,13 +286,16 @@ def write_coverage_matrix(task_dir: Path, task: dict) -> Path:
 
 
 def write_task_card(task_dir: Path, task: dict, *,
-                    with_requirement_items: bool = False) -> Path:
+                    with_requirement_items: bool = False,
+                    requirement_root_rel: str | None = None) -> Path:
     """写入单个任务卡目录（包含 prd.md 与 task.json）。
 
     重跑 plan 不得把已推进的状态打回 `todo`（状态机单调：todo < in_progress < completed）；
     已有 task.json 时沿用其 status 与 created_at。
     `with_requirement_items=True`（plan 显式给了 `--requirement`）时同步写需求条目表与
-    条目覆盖矩阵骨架（#71/#72/#73：需求原文入库 → 条目枚举 → 覆盖对账）。
+    条目覆盖矩阵骨架（#71/#72/#73：需求原文入库 → 条目枚举 → 覆盖对账）；
+    `requirement_root_rel` 非空 ⇒ 落点模式（RFC-20261122-03）：卡条目表写**领取引用表**
+    （正文唯一住址在落点），并把落点路径记入 task.json。
     """
     if task.get("id") == ARCHIVE_DIR:
         raise PlanError(f"任务标识 {ARCHIVE_DIR!r} 与归档目录保留名冲突")
@@ -266,6 +324,8 @@ def write_task_card(task_dir: Path, task: dict, *,
     }
     if task.get("paths"):
         meta["paths"] = list(task["paths"])
+    if requirement_root_rel:
+        meta["requirement_root"] = requirement_root_rel
     if isinstance(prev, dict):
         if prev.get("status") in ("todo", "in_progress", "completed"):
             meta["status"] = prev["status"]
@@ -275,9 +335,16 @@ def write_task_card(task_dir: Path, task: dict, *,
         # 否则派工单的最小注入会退回 tour 兜底（状态机可重放的前提）。
         if "paths" not in meta and isinstance(prev.get("paths"), list):
             meta["paths"] = prev["paths"]
+        # 同理：重跑未显式给落点时沿用已存落点（落点模式卡重跑不得退化成直填）。
+        if "requirement_root" not in meta and isinstance(
+                prev.get("requirement_root"), str) and prev["requirement_root"]:
+            meta["requirement_root"] = prev["requirement_root"]
     atomic_write_json(task_json_path, meta)
     if with_requirement_items:
-        write_requirement_items(task_dir, task)
+        if requirement_root_rel:
+            write_claim_items(task_dir, task, requirement_root_rel)
+        else:
+            write_requirement_items(task_dir, task)
         write_coverage_matrix(task_dir, task)
     return task_dir
 

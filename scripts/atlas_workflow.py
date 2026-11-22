@@ -5,14 +5,14 @@
   Plan（大任务自动拆解）→ Dispatch（最小上下文分发）→ Verify（暂存区自动审查与测试并轨）→ Finish（收口归档）
 
 用法：
-  atlas workflow plan --unit <ID> [--requirement <TEXT_OR_FILE>]
+  atlas workflow plan --unit <ID> [--requirement <TEXT_OR_FILE|需求落点>]
   atlas workflow dispatch [--unit <ID>]
   atlas workflow verify --unit <ID> [--staged] [--check-cmd <CMD>]
   atlas workflow finish --unit <ID>
   atlas workflow status [--unit <ID>] [--all]
   atlas workflow progress --unit <ID>   # 只读进度探针（RFC-20261122-02，不写盘不改状态）
   atlas workflow archive [--unit <ID>]
-  atlas workflow run --unit <ID> [--requirement <TEXT_OR_FILE>] [--check-cmd <CMD>]
+  atlas workflow run --unit <ID> [--requirement <TEXT_OR_FILE|需求落点>] [--check-cmd <CMD>]
 
 退出码：0 成功；1 门禁未通过/失败；2 参数错误/输入缺失。纯标准库。
 """
@@ -33,9 +33,12 @@ if str(HERE.parent) not in sys.path:
 
 from _support.workflow_plan import (  # noqa: E402
     decompose_requirement, write_task_card, load_tasks, PlanError,
-    REQUIREMENT_ITEMS_FILE
+    REQUIREMENT_ITEMS_FILE, REQUIREMENT_DOC_FILE, detect_requirement_root,
+    requirement_pointer_text
 )
-from _support.workflow_verify import coverage_matrix_findings  # noqa: E402
+from _support.workflow_verify import (  # noqa: E402
+    coverage_matrix_findings, requirement_root_findings, read_requirement_status
+)
 from _support.workflow_dispatch import (  # noqa: E402
     get_next_runnable_task, dispatch_task, DispatchError
 )
@@ -86,11 +89,25 @@ def _prune_orphan_cards(tasks_dir: Path, unit: str, keep: set[str]) -> None:
 
 def cmd_plan(args: argparse.Namespace, root: Path) -> int:
     req_text = ""
+    req_root: Path | None = None
     if args.requirement:
         p = Path(args.requirement)
         if not p.is_absolute():
             p = root / p
-        if p.is_file():
+        # 需求落点模式判定（RFC-20261122-03）：指向含 requirement.md 的目录或该文件本身；
+        # 否则直填模式（旧行为逐字节不变）。
+        req_root = detect_requirement_root(p)
+        if req_root is not None:
+            req_text = (req_root / REQUIREMENT_DOC_FILE).read_text(encoding="utf-8")
+            # 确认门软校验（纪律面 WARN，不拦停；状态机：候选→已确认→已拆→已收口）
+            status = read_requirement_status(req_root)
+            if status is None:
+                print("WARN（需求落点）: requirement.md 缺「**状态**：」状态行——确认门未留痕"
+                      "（RFC-20261122-03）", file=sys.stderr)
+            elif status == "候选":
+                print("WARN（需求落点）: 落点状态 = 候选（未确认先拆）——先过确认门再拆卡",
+                      file=sys.stderr)
+        elif p.is_file():
             req_text = p.read_text(encoding="utf-8")
         else:
             req_text = args.requirement
@@ -108,11 +125,20 @@ def cmd_plan(args: argparse.Namespace, root: Path) -> int:
         paths = [str(p) for p in (getattr(args, "paths", None) or []) if str(p).strip()]
         if paths:
             t["paths"] = paths
+        req_rel: str | None = None
+        if req_root is not None:
+            try:
+                req_rel = str(req_root.resolve().relative_to(root.resolve())).replace("\\", "/")
+            except ValueError:
+                req_rel = str(req_root.resolve())  # 仓外落点：绝对路径兜底（对账仍可读）
+            # 落点模式：卡 §1 正文指针化——需求正文唯一住址在落点，卡不复制正文
+            t["details"] = requirement_pointer_text(req_rel)
         t_dir = tasks_dir / t["id"]
         if not args.dry_run:
             # plan 显式给过 --requirement ⇒ 需求驱动卡：同步写条目表 + 覆盖矩阵骨架
-            # （#72/#73 开工前置产物；重跑不覆盖已填内容）。
-            write_task_card(t_dir, t, with_requirement_items=bool(args.requirement))
+            # （#72/#73 开工前置产物；重跑不覆盖已填内容；落点模式写领取引用表）。
+            write_task_card(t_dir, t, with_requirement_items=bool(args.requirement),
+                            requirement_root_rel=req_rel)
         created.append({"id": t["id"], "title": t["title"], "dir": str(t_dir.relative_to(root))})
 
     if not args.dry_run:
@@ -125,6 +151,9 @@ def cmd_plan(args: argparse.Namespace, root: Path) -> int:
         print(f"atlas workflow plan @ {args.unit}   生成 {len(created)} 个工作单元：")
         for item in created:
             print(f"  - [{item['id']}] {item['title']} -> {item['dir']}")
+        if req_root is not None:
+            print(f"  落点模式：条目正文唯一住址 = {req_rel}/items.md；"
+                  "开工前在卡 requirement-items.md 写领取引用行（RFC-20261122-03）")
     return 0
 
 
@@ -185,8 +214,13 @@ def cmd_dispatch(args: argparse.Namespace, root: Path) -> int:
         print(f"  派工单就绪：{disp_file.relative_to(root)}")
         print(f"  请依据派工单实现代码，完成后暂存并运行 `atlas workflow verify --unit {target_task['id']}`")
         if (Path(disp_file).parent / REQUIREMENT_ITEMS_FILE).is_file():
-            print("  开工前：填 requirement-items.md（条目表逐条枚举，#72）；"
-                  "verify 前补全 coverage-matrix.md 四列覆盖（#73，空格/UNRESOLVED ⇒ WARN）")
+            if target_task.get("requirement_root"):
+                print(f"  开工前：在卡 requirement-items.md 写领取引用行"
+                      f"（来源 = {target_task['requirement_root']}#<ID>，RFC-20261122-03）；"
+                      "verify 前补全 coverage-matrix.md 四列覆盖（#73，空格/UNRESOLVED ⇒ WARN）")
+            else:
+                print("  开工前：填 requirement-items.md（条目表逐条枚举，#72）；"
+                      "verify 前补全 coverage-matrix.md 四列覆盖（#73，空格/UNRESOLVED ⇒ WARN）")
     return 0
 
 
@@ -262,9 +296,12 @@ def cmd_verify(args: argparse.Namespace, root: Path) -> int:
     pr = subprocess.run(cmd, text=True)
     # 需求条目覆盖对账（#71/#72/#73，纪律面 WARN 起步）：独立审查通过后对账，
     # 缺口打到 stderr、不改退出码（升格 FAIL 另案）。
+    # 落点模式（RFC-20261122-03）：逐卡对账之外再跑跨卡落点覆盖性与状态机对账。
     if pr.returncode == 0 and not args.dry_run:
         for finding in coverage_matrix_findings(_read_tasks_root(root) / args.unit):
             print(f"WARN（需求条目覆盖）: {finding}", file=sys.stderr)
+        for finding in requirement_root_findings(root):
+            print(f"WARN（需求落点）: {finding}", file=sys.stderr)
     # 本命令的退出码契约 = 0/1/2；子步的原生码（如 7）归一到 1。
     return pr.returncode if pr.returncode in (0, 1, 2) else 1
 
@@ -300,6 +337,11 @@ def cmd_finish(args: argparse.Namespace, root: Path) -> int:
         arch = res.get("archived") or {}
         if arch:
             print(f"  归档：{arch.get('status')} -> {arch.get('path')}")
+        req_root = target_task.get("requirement_root")
+        if req_root:
+            # 收口双回写提醒（RFC-20261122-03 B5，纪律面不设门）
+            print(f"  回写提醒：① 需求落点 {req_root} 的条目按域沉淀回域级产品事实"
+                  "（FN/R/AC/文案规范表 + 变更记录）；② 落点状态行推进为「已收口」。")
         print(f"  进度：{res['completed_tasks']}/{res['total_tasks']} 已完成")
         if res.get("all_done"):
             print("  ★ 全部工作单元已顺利完成收口！")

@@ -35,6 +35,7 @@ layout:
 - **模板**：`templates/stack-profile.yaml` 的 e2e 三路径用 `{{ASSETS_ROOT}}` 占位，由 `install.sh` 首装渲染，避免自定义根回落 `product/`。
 
 - `.atlas/` 是包在本项目的唯一副本；平台 skill 目录里只放瘦桩 `SKILL.md`，指回 `.atlas/`。
+- **`<assets_root>/requirements/`（需求落点，2026-11-22 登记 `RFC-20261122-03`）**：需求层唯一住址——每需求一目录 `<slug>/`：`requirement.md`（确认稿 = 需求 PRD + 状态行）+ `items.md`（落点条目表，条目正文唯一住址）+ `work/需求PDF-全文.md`（原文转换稿）；状态机 候选→已确认→已拆→已收口，收口后移 `requirements/archive/<YYYY-MM>/`；登记 = `requirements/_index.md`（不进 prd 追溯总表——行形态门二值判不了需求登记行，且 `prd/` 下除 `reviews/` 外无子目录）。执行层 `plan --requirement` 落点模式从这里领取（卡持引用、正文不复制）；域级/全局产品事实（原称域级/项目 PRD）是长期应然登记，与需求增量分层。细则见 `rings/prd/reference.md` §12。
 - **`product/adr/`（架构决策记录，2026-10-13 登记）**：项目级长效架构裁决，默认落点为 `product/adr/NNNN-<slug>.md`；可由 `layout.adr` 覆盖。按需落笔，永不覆盖。跨需求长效架构决策归此；需求内微观取舍归域级 PRD。
 - **`product/design.md`（视觉设计档案，2026-10-08 登记 `#182`）**：写者 = frontend-design skill（design read / 旋钮 / 设计系统 / 强调色 / detect 豁免），atlas 不生产不覆盖；只读触点两个——走查单确认门前对照视觉方向（`rings/prd/reference.md` §4·八）+ detect 豁免 ⇔ `.impeccable/config.json` `detector.ignoreRules` 双向对账（`validators/validate_design_exemptions.py`）。
 - **结构事实落 `.atlas/spec/structure/`**：既是项目级事实，又能被 执行层 任务**原生注入**消费。仅 `tour.md`（`paths: ['**']`）与 `domains/<domain>.md`（域 globs）带 `paths:`；其余事实文档无 `paths`、按需 Read。
@@ -69,6 +70,7 @@ layout:
 ├── .impeccable/                    # impeccable detect 配置（可选外部工具；config.json 的 detector.ignoreRules 须与 product/design.md 的 detect 豁免双向一致）
 └── product/                        # atlas 项目级文档
     ├── adr/                        # NNNN-<slug>.md（项目级长效架构决策记录，按需落笔，永不覆盖）
+    ├── requirements/               # 需求落点（RFC-20261122-03）：<slug>/（requirement.md + items.md + work/）+ archive/<YYYY-MM>/
     ├── stack-profile.yaml          # 技术栈画像（字段契约见 stack-profile.md）
     ├── design.md                   # 视觉设计档案（frontend-design skill 写；atlas 只读——走查对照 + 豁免对账）
     ├── reviews/                    # <日期>-<主题>/（人工缺口清单 + plans/）+ calibration.jsonl（审查校准账本，append-only）

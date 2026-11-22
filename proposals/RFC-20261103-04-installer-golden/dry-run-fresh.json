@@ -1,7 +1,7 @@
 {
   "installer": [
-    "bash",
-    "<PKG>/install.sh"
+    "python3.12",
+    "<PKG>/install.py"
   ],
   "runs": [
     {
@@ -59,6 +59,7 @@
         "  [dry-run] rm -rf <dest>/.atlas/tests（历史装配残留清理，RFC-20261114-01）",
         "  [dry-run] rm -rf <dest>/.atlas/tests（历史装配残留清理，RFC-20261114-01）",
         "  [dry-run] cp <PKG>/LICENSE <ROOT>/.atlas/LICENSE",
+        "  [dry-run] cp <PKG>/NOTICE <ROOT>/.atlas/NOTICE",
         "  [dry-run] cp <PKG>/package.json <ROOT>/.atlas/package.json",
         "      -> .atlas/package.json（工具版本来源）",
         "[2/4] 装配 skill 瘦桩",
@@ -119,6 +120,7 @@
         "",
         "自检",
         "  [dry-run] check 共享契约",
+        "  [dry-run] check 许可声明",
         "  [dry-run] check stack-profile 契约",
         "  [dry-run] check 单一真相源契约",
         "  [dry-run] check 布局契约",
