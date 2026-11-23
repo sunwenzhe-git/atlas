@@ -1,7 +1,7 @@
 {
   "installer": [
-    "bash",
-    "/private/tmp/atlas-golden-rfc08b/install.sh"
+    "python3.12",
+    "/private/tmp/atlas-golden-wt/install.py"
   ],
   "runs": [
     {
