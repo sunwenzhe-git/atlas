@@ -75,7 +75,7 @@ Atlas 的核心结构是**两层正交**（也常被称作**双线束模型**：
    ↓   报告 → .atlas/tasks/<需求ID>/atlas-apply.md
    ↓   任一环失败 / 影响面定不下来 ⇒ 停在 planning，不得进入实现
    ↓
-② 执行层实现（按 `atlas workflow dispatch` 派工单；业务代码归实现者，Atlas 不写业务代码，只设实现期纪律与收口核对）
+② 执行层实现（按 `atlas workflow dispatch` 派工单；写码动作由宿主 agent 执行，Atlas 不产需要创造判断的业务实现；实现期机器面三分见 `global-rules.md` §18〔D210〕：内容面契约 + check 行为者 / 过程门 / lint 归项目）
    ↓
 ③ 收口：实例 ⑤ 实现代码审查 → E2E red → green → 验收走查门
    → 运行态报错现场留底与结构化证据链快照
