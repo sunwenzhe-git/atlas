@@ -42,7 +42,7 @@
 
 ### 2. 影响面识别(§4,`apply/reference.md:109`)
 
-agent 语义判断为主 + 结构证据约束;产出结构化清单(`affected_domains / affected_pages / page_change_kind / affected_acs / evidence`),每条证据可定位。声明了 `graph` 段的项目先跑 impact 报告(见 [graph.md](graph.md))。**禁止 regex 判语义**(D61:Autonoma 反例,680 次重试 / $11 / 零用例)。兜底:映射不到域 / 二义 / 性质判不准 ⇒ 一次性汇总问用户(≤3 问),不得自行拍板。
+agent 语义判断为主 + 结构证据约束;产出结构化清单(`affected_domains / affected_pages / page_change_kind / affected_acs / evidence`),每条证据可定位。维护了语义透镜(cognition.fras)的项目先跑 impact 报告(见 [graph.md](graph.md));无透镜 ⇒ exit 3 `not_ready`,影响面基准退化需求卡声明集。**禁止 regex 判语义**(D61:Autonoma 反例,680 次重试 / $11 / 零用例)。兜底:映射不到域 / 二义 / 性质判不准 ⇒ 一次性汇总问用户(≤3 问),不得自行拍板。
 
 ### 3. 增量边界与确认门(§5)
 

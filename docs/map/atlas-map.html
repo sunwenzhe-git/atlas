@@ -50,6 +50,8 @@
   .zone text{fill:var(--muted-foreground);font-size:11.5px;font-weight:600;letter-spacing:1.5px}
   .edge{fill:none;stroke:var(--muted-foreground);stroke-width:1.7;opacity:.8}
   .edge.dash{stroke-dasharray:4 5;stroke-width:1.2;opacity:.45}
+  .edgehit{fill:none;stroke:rgba(0,0,0,0);stroke-width:14;pointer-events:stroke}
+  .edgechip.hastip{cursor:help}
   .edgeLabel{fill:var(--muted-foreground);font-size:12px;font-weight:500;
     paint-order:stroke;stroke:var(--card);stroke-width:4px;stroke-linejoin:round}
   .node{cursor:pointer}
@@ -155,7 +157,7 @@
   <div class="brand"><span class="logo"></span><span class="bt">Atlas 实现地图<small>锚定 v0.4.0-beta.6 · 图是导航面,细节以 docs/map/ 与代码为准</small></span></div>
   <div class="actions">
     <button id="finderBtn" title="搜索节点(⌘K / Ctrl+K)">⌘K 搜索</button>
-    <button id="tourBtn" title="十步主数据流动线:←/→/空格步进,Esc 退出,可点高亮节点下钻">▶ 讲述模式</button>
+    <button id="tourBtn" title="十一步主数据流动线:←/→/空格步进,Esc 退出,可点高亮节点下钻">▶ 讲述模式</button>
     <button id="helpBtn" title="操作小抄(?)">?</button>
   </div>
 </header>
@@ -204,7 +206,7 @@ const KIND = {
 /* ================= 拓扑图数据(与 docs/map/ 同源,发版时随活文档刷新) ================= */
 const VIEWS = {
 overview: {
-  title:'Atlas 全景 · 11 子系统与主数据流', vb:[-4,36,1024,414], zoneLabIn:true,
+  title:'Atlas 全景 · 12 子系统与主数据流', vb:[-4,36,1024,414], zoneLabIn:true,
   zones:[
     {x:12,y:52,w:222,h:262,label:'输入 · 实然'},
     {x:262,y:52,w:222,h:262,label:'编排与抽取'},
@@ -214,10 +216,11 @@ overview: {
   ],
   nodes:[
     {id:'code',  x:38,  y:92, kind:'external', title:'业务代码', sub:'只读 · 不回写'},
-    {id:'req',   x:38,  y:174, kind:'external', title:'执行层任务卡', sub:'task 的 prd.md'},
-    {id:'graph', x:38,  y:256, kind:'tool', title:'代码图谱', sub:'adapters/_graph.py'},
+    {id:'req',   x:38,  y:174, kind:'external', title:'需求落点 · 任务卡', sub:'requirements/ → prd.md'},
+    {id:'graph', x:38,  y:256, kind:'tool', title:'语义透镜', sub:'adapters/_graph.py'},
     {id:'apply', x:288, y:92, kind:'orch', title:'apply 跨环编排', sub:'apply/reference.md'},
-    {id:'adapt', x:288, y:174, kind:'tool', title:'结构抽取适配器', sub:'adapters/ 四件'},
+    {id:'flow',  x:288, y:174, kind:'orch', title:'执行层 workflow', sub:'plan · verify · finish'},
+    {id:'adapt', x:288, y:256, kind:'tool', title:'结构抽取适配器', sub:'adapters/ 四件'},
     {id:'rings', x:538, y:92, kind:'asset', title:'三环资产引擎', sub:'rings/*/reference.md'},
     {id:'e2egen',x:538, y:174, kind:'tool', title:'E2E 生成与控制台', sub:'gen_e2e_scripts.py'},
     {id:'gates', x:788, y:92, kind:'gate', title:'门禁与校验', sub:'scripts/atlas_check.py'},
@@ -228,16 +231,20 @@ overview: {
     {id:'ops',   x:788, y:362, kind:'proc', title:'运营面', sub:'duty-review/ · report'},
   ],
   edges:[
-    {from:'req',to:'apply',label:'需求进入'},
-    {from:'apply',to:'rings',label:'增量落笔'},
-    {from:'rings',to:'e2egen',label:'分片 → 脚本'},
-    {from:'e2egen',to:'gates',label:'受门禁校验'},
-    {from:'code',to:'adapt',label:'只读抽取',route:'hv',mx:224,tx:320},
-    {from:'adapt',to:'rings',label:'结构事实',mx:498,ty:132},
-    {from:'graph',to:'apply',label:'影响面证据',mx:276,ty:132},
-    {from:'code',to:'graph',route:'leftU'},
-    {from:'gates',to:'review',label:'全绿才收口'},
-    {from:'kernel',to:'adapt',route:'hv',dash:1},
+    {from:'req',to:'apply',label:'需求进入',tip:'需求从落点/任务卡进入 apply,先过三问门(改既有能力?要人确认 UI?要可重复验收?)决定拉起哪些环'},
+    {from:'apply',to:'rings',label:'增量落笔',tip:'apply 把需求增量写进应然资产——PRD 六件套与 AC→E2E 分片;应然先行,先动资产后写代码;只动受影响集合,从不整文件覆盖'},
+    {from:'rings',to:'e2egen',label:'分片 → 脚本',tip:'E2E 用例分片(中文 DSL)编译成 Playwright 脚本;动词值域封闭,陌生动词中止生成'},
+    {from:'e2egen',to:'gates',label:'受门禁校验',tip:'生成的脚本与资产产物过门禁与校验器,全绿才算通过'},
+    {from:'code',to:'adapt',label:'只读抽取',route:'hv',mx:224,tx:320,tip:'适配器从业务代码只读抽取路由/API/模型/测试事实,绝不回写业务代码'},
+    {from:'adapt',to:'rings',label:'结构事实',mx:498,ty:132,tip:'抽取的事实渲染进结构事实区,是三环资产与影响面推导的地基'},
+    {from:'graph',to:'apply',label:'影响面证据',mx:276,ty:132,sy:263,tip:'语义透镜反向一跳反查,给影响面推导供候选证据(advisory 基准,不是门)'},
+    {from:'adapt',to:'graph',route:'vUp',tip:'结构事实区的两级语义行(cognition.fras)喂给语义透镜做反向一跳'},
+    {from:'gates',to:'review',label:'全绿才收口',tip:'全部机器门绿了才允许进入评审与收口'},
+    {from:'apply',to:'flow',route:'v',label:'写卡派工',tip:'apply 的产出经 plan 写进执行层任务卡,再由 dispatch 派工执行'},
+    {from:'flow',to:'review',route:'hv',sy:232,mx:730,tx:857,label:'回写',tip:'finish 收口回写任务卡与登记,并触发收口对账'},
+    {from:'flow',to:'e2egen',tip:'执行层接卡实现后按用例跑验收:Playwright 真跑与控制台慢动作回放都在这一面(回放供人审)'},
+    {from:'flow',to:'gates',route:'hv',sy:245,mx:744,tx:857,tip:'verify 与 finish 触发全链门禁(atlas_check,含 E2E 真跑门),门红 ⇒ 收口阻断'},
+    {from:'kernel',to:'adapt',route:'hvb',mx:373,dash:1},
   ],
 },
 apply: {
@@ -252,7 +259,7 @@ apply: {
     {id:'a-req',  x:40,  y:100, kind:'external', title:'执行层任务卡',
       tip:{sum:'apply <需求ID> 的输入;需求卡是唯一需求上游(需求 ID = task id)。',files:[]}},
     {id:'a-fact', x:40,  y:250, kind:'asset', title:'结构事实 + 图谱',
-      tip:{sum:'影响面推导的结构证据:routes/页面表 + impact 报告(声明 graph 段时先跑)。',files:[]}},
+      tip:{sum:'影响面推导的结构证据:routes/页面表 + impact 报告(维护了透镜行才跑,否则 not_ready)。',files:[]}},
     {id:'a-m1',   x:268, y:76,  kind:'orch', title:'apply <ID> 增量',
       tip:{sum:'需求式跨环增量:prd → e2e 顺序,只动受影响集合,每条需求的常规路径。',files:[]}},
     {id:'a-m2',   x:268, y:154, kind:'orch', title:'adopt 开户',
@@ -294,9 +301,9 @@ gates: {
   nodes:[
     {id:'g-chk', x:40,  y:170, kind:'orch', title:'atlas_check 编排器',
       tip:{sum:'一门一行 ok|FAIL|WARN|SKIP|N/A;任一 FAIL ⇒ exit 1;只聚合不改判据。',files:[['scripts/atlas_check.py:1125','main() 编排入口:一门一行调度全部校验']]}},
-    {id:'g-val', x:280, y:76,  kind:'gate', title:'12 校验器',
-      tip:{sum:'判据本体:testids 双向集合 / PRD 链路 / e2e 索引 / AC 对账 / stack-profile / structure / ADR / 走查 / mock / 设计豁免。',files:[['validators/','判据本体目录:12 个 validate_*.py']]}},
-    {id:'g-rows',x:280, y:170, kind:'gate', title:'9 编排门行',
+    {id:'g-val', x:280, y:76,  kind:'gate', title:'13 校验器',
+      tip:{sum:'判据本体 13 器:stack-profile / 结构 / E2E 索引 / testids / mock / AC 对账 / PRD / 设计豁免 / ADR / 走查 / 任务卡 / 执行记录 / 开户事实。',files:[['validators/','判据本体目录:13 个 validate_*.py']]}},
+    {id:'g-rows',x:280, y:170, kind:'gate', title:'10 编排门行',
       tip:{sum:'对齐测试 / 生成物最新 / 审查报告形态 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 / E2E 真跑;三态:未就绪≠过期≠失败;含消融残留(WARN 出生)。',files:[]}},
     {id:'g-book',x:280, y:264, kind:'asset', title:'门册总账',
       tip:{sum:'不在 gates.md = 不存在。六列登记,含显式盲区列;取证五档,真跑级逐格、无咬合不预填。',files:[['shared/gates.md:3','元规则三律起笔:注册义务/假绿测试/响亮原则']]}},
@@ -312,47 +319,43 @@ gates: {
   edges:[
     /* 共源/共宿边显式拆道:出口锚 sy、入点 ty、竖道 mx */
     {from:'g-chk',to:'g-val',sy:183,mx:225},{from:'g-chk',to:'g-rows',sy:211},
-    {from:'g-book',to:'g-val',dash:1,label:'注册义务',route:'hv'},
+    {from:'g-book',to:'g-val',dash:1,label:'注册义务',route:'hv',tip:'任何新门先在门册登记才存在——不在 gates.md = 不存在'},
     {from:'g-val',to:'g-ok',sy:90,mx:531},
     {from:'g-val',to:'g-fail',sy:116,mx:501,ty:244},
     {from:'g-rows',to:'g-fail',sy:211,mx:487,ty:270},
     {from:'g-test',to:'g-mut',route:'v'},
-    {from:'g-mut',to:'g-rows',dash:1,label:'M 钉钉住'},
+    {from:'g-mut',to:'g-rows',dash:1,label:'M 钉钉住',tip:'每道门配变异钉(喂坏输入必红),钉子反向钉住编排门行'},
   ],
 },
 graph: {
-  title:'代码图谱 · 内部结构', vb:[0,23,1000,387],
+  title:'语义透镜 · 内部结构', vb:[0,23,1000,387],
   zones:[
-    {x:18,y:60,w:210,h:332,label:'声明与后端'},
-    {x:248,y:60,w:230,h:332,label:'隔离层(全线唯一)'},
-    {x:506,y:60,w:240,h:332,label:'查询纪律'},
-    {x:768,y:60,w:214,h:332,label:'消费者'},
+    {x:18,y:60,w:210,h:330,label:'输入与声明'},
+    {x:248,y:60,w:240,h:330,label:'透镜辅助层'},
+    {x:508,y:60,w:474,h:330,label:'消费 · 对账 · 已退役'},
   ],
   nodes:[
-    {id:'r-code',x:40,  y:100, kind:'external', title:'业务代码',
-      tip:{sum:'图谱索引对象:代码态指纹 = HEAD + 脏文件集(排 .adapter-out 自身,防自激振荡)。',files:[]}},
-    {id:'r-cfg', x:40,  y:250, kind:'asset', title:'graph 段声明',
-      tip:{sum:'stack-profile 可选段:backend: cgc + pinned 版本;段缺失/null ⇒ 整个子系统不启用(不阻断)。',files:[['shared/stack-profile.md §2','graph 段声明契约:backend/pinned 键白名单']]}},
-    {id:'r-cgc', x:40,  y:330, kind:'external', title:'cgc 后端',
-      tip:{sum:'CodeGraphContext(pin 0.6.13);不可用 ⇒ 调用方响亮降级,本层绝不静默。',files:[]}},
-    {id:'r-acl', x:272, y:170, kind:'tool', title:'_graph.py ACL',
-      tip:{sum:'全线唯一接触图谱的模块:薄后端厚自有,只走 CLI 不走 import;换后端只改这一个文件。',files:[['adapters/_graph.py','ACL 本体:全线唯一图谱接触面']]}},
-    {id:'r-fresh',x:508,y:170, kind:'proc', title:'用前现刷',
-      tip:{sum:'新鲜度键一致 ⇒ 微秒级返回;不一致 ⇒ cgc index --force 全量(update 增量只加不减,实测弃用)。',files:[['adapters/_graph.py:186','freshness_key:代码态指纹(HEAD+脏文件集)']]}},
-    {id:'r-q',   x:508, y:76,  kind:'gate', title:'确定性查询',
-      tip:{sum:'file_paths / symbols_in_files / callers 一跳;全带 ORDER BY + Python 再排序;根外路径丢弃。',files:[['adapters/_graph.py:213','query 查询族:确定性纪律(ORDER BY+再排序)']]}},
-    {id:'r-rep', x:790, y:76,  kind:'tool', title:'影响面预测',
-      tip:{sum:'种子符号沿 CALLS 边 BFS 分层,落 impact.json|md;未声明 ⇒ exit 3 not_ready。',files:[['scripts/impact_report.py','影响面预测器:BFS 分层出 impact.json']]}},
-    {id:'r-rec', x:790, y:230, kind:'gate', title:'收口对账',
-      tip:{sum:'预测集 ⇔ 实际 diff 双向差集:漏报/多报/基准漂移 ⇒ WARN 指名;台账观察 miss 升 FAIL 窗。',files:[['scripts/impact_reconcile.py','收口对账器:预测 vs 实际 diff 双向差集']]}},
+    {id:'r-prof',x:40, y:100, kind:'asset', title:'graph 段声明(遗留)',
+      tip:{sum:'可选段;声明即退役 WARN(校验器显式提示移除),存量合法不阻断。',files:[['validators/validate_stack_profile.py:220','graph 段退役提示:声明即 WARN(D202)']]}},
+    {id:'r-fras',x:40, y:250, kind:'asset', title:'两级透镜行 .fras',
+      tip:{sum:'global/ 与 current/<域>/ 两级 cognition.fras(另兼容 aoci.code.txt);F/R/A/S 紧凑行;AOCI 管线/人工增量维护,atlas 只读。',files:[['shared/stack-profile.md §2','graph 段退役横幅与两级透镜落点']]}},
+    {id:'r-shim',x:278,y:76,  kind:'tool', title:'cgc 兼容 shim',
+      tip:{sum:'PATH 上有 cgc 才走旧 CALLS 查询;词表常量保留防外部加载断裂。',files:[['adapters/_graph.py:240','callers 双轨:有 cgc 走查询,无则 FRAS 反查'],['adapters/_graph.py:29','GRAPH_BACKENDS 遗留词表(常量保留)']]}},
+    {id:'r-lens',x:278,y:190, kind:'tool', title:'_graph.py 透镜层',
+      tip:{sum:'全线唯一接触面:FRAS 紧凑行解析 + 反向 1-hop R 边反查,一跳就停。',files:[['adapters/_graph.py:267','read_cognition_fras:F/R/A/S 行解析'],['adapters/_graph.py:302','reverse_1hop_callers:反向单跳 R 边']]}},
+    {id:'r-impact',x:530,y:100, kind:'tool', title:'impact_report 候选面',
+      tip:{sum:'反查集入 aoci_candidates 独立字段,不进 predicted 对账集;无透镜 ⇒ exit 3 not_ready,预测集退化需求卡声明集。',files:[['scripts/impact_report.py:187','aoci_candidates:反向一跳候选'],['scripts/impact_report.py:190','无透镜 ⇒ not_ready 诚实三态']]}},
+    {id:'r-rec',x:530,y:230, kind:'gate', title:'impact_reconcile 对账',
+      tip:{sum:'预测集 ⇔ 实际 diff 双向差集 WARN 指名,基准漂移点名;miss 升 FAIL 观察窗(D79④)。',files:[['scripts/impact_reconcile.py','收口对账器 149 行:双向差集/基准漂移/台账'],['shared/gates.md:57','impact 对账门行:WARN 语义与升档判据']]}},
+    {id:'r-retired',x:790,y:250, kind:'external', title:'cgc/FalkorDB 引擎',
+      tip:{sum:'已退役(D202):容器依赖与死代码清除;不安装即零外部依赖,现存 shim 仅兼容探测。',files:[]}},
   ],
   edges:[
-    {from:'r-code',to:'r-acl',label:'索引'},
-    {from:'r-cfg',to:'r-acl',dash:1,route:'hv',mx:300,tx:347},
-    {from:'r-cgc',to:'r-acl',route:'hvb',mx:326},
-    {from:'r-acl',to:'r-fresh'},{from:'r-acl',to:'r-q',route:'vUp'},
-    {from:'r-q',to:'r-rep'},
-    {from:'r-rep',to:'r-rec',route:'v',label:'收口'},
+    {from:'r-prof',to:'r-shim',dash:1},
+    {from:'r-fras',to:'r-lens',label:'读取',tip:'透镜层解析两级 cognition.fras 的 F/R/A/S 紧凑行,atlas 只读不产'},
+    {from:'r-lens',to:'r-shim',route:'vUp'},
+    {from:'r-lens',to:'r-impact'},
+    {from:'r-impact',to:'r-rec',route:'v',label:'收口',tip:'impact 对账门收口时跑:预测集与实际 diff 双向差集,漏报/多报 WARN 逐文件指名'},
   ],
 },
 adapt: {
@@ -386,12 +389,12 @@ adapt: {
       tip:{sum:'键级增删落 _drift.json;atlas_check 结构漂移门读出 WARN——适配器发现,门可见。',files:[]}},
   ],
   edges:[
-    {from:'ad-code',to:'ad-routes',label:'只读抽取'},
-    {from:'ad-prof',to:'ad-routes',dash:1,route:'hv',mx:253,label:'声明启用'},
+    {from:'ad-code',to:'ad-routes',label:'只读抽取',tip:'适配器只读源码抽取事实;失败非零且零部分产物'},
+    {from:'ad-prof',to:'ad-routes',dash:1,route:'hv',mx:253,label:'声明启用',tip:'适配器由 stack-profile 的 adapters 段声明;未声明 = 不启用(不是失败)'},
     {from:'ad-routes',to:'ad-out'},
-    {from:'ad-out',to:'ad-refresh',route:'v',label:'消费产物'},
+    {from:'ad-out',to:'ad-refresh',route:'v',label:'消费产物',tip:'.adapter-out/ 的统一 JSON 产物喂 refresh_structure 渲染进事实区'},
     {from:'ad-refresh',to:'ad-facts',sy:264,mx:775},
-    {from:'ad-refresh',to:'ad-drift',sy:290,mx:789,label:'键级漂移'},
+    {from:'ad-refresh',to:'ad-drift',sy:290,mx:789,label:'键级漂移',tip:'键级增删落 _drift.json,结构漂移门读出 WARN——适配器发现,门可见'},
   ],
 },
 e2egen: {
@@ -427,13 +430,13 @@ e2egen: {
       tip:{sum:'评审指纹 head_sha+scripts_hash 防旧账本挂新执行;证据三点归档(起跑前/失败/跑后 teardown)到根 .atlas-evidence/,只复制不判定。',files:[['.atlas-evidence/','运行证据归档(manifest + trace/png/webm),不进 scripts_hash'],['<e2e>/scripts/atlas-evidence-teardown.ts','生成物:globalTeardown 调证据归档 CLI']]}},
   ],
   edges:[
-    {from:'e2-cases',to:'e2-parse',label:'用例块',sy:113,ty:90},
+    {from:'e2-cases',to:'e2-parse',label:'用例块',sy:113,ty:90,tip:'atlas-case 围栏块逐行解析成结构化用例'},
     {from:'e2-index',to:'e2-parse',dash:1,sy:291,mx:262},
     {from:'e2-parse',to:'e2-verbs',route:'v'},
     {from:'e2-verbs',to:'e2-spec',mx:487,ty:244},
     {from:'e2-login',to:'e2-spec',mx:507},
     {from:'e2-mock',to:'e2-spec',mx:527,ty:270},
-    {from:'e2-review',to:'e2-spec',route:'v',label:'Critical 拒写盘'},
+    {from:'e2-review',to:'e2-spec',route:'v',label:'Critical 拒写盘',tip:'最新独立审查有 Critical ⇒ 生成器拒绝写盘'},
     {from:'e2-spec',to:'e2-runner'},
     {from:'e2-runner',to:'e2-console',route:'v'},
     {from:'e2-console',to:'e2-evid',route:'v'},
@@ -466,13 +469,13 @@ cli: {
       tip:{sum:'锚点式版本化补丁(块指纹 sha256 前 8 位):plan-apply / project-wiring(五触点)/ root-cause / skill-routing。',files:[['patches/project-wiring/','项目接线补丁:五触点幂等写入用户仓库']]}},
   ],
   edges:[
-    {from:'c-cli',to:'c-install',label:'装配',sy:183},
+    {from:'c-cli',to:'c-install',label:'装配',sy:183,tip:'atlas init 调装配器,把线束整包白名单拷入目标仓 .atlas/'},
     {from:'c-install',to:'c-ver',sy:114},
     {from:'c-install',to:'c-man',sy:140,mx:504},
     {from:'c-man',to:'c-ver',dash:1,route:'vUp'},
-    {from:'c-digest',to:'c-man',dash:1,route:'vUp',label:'单源摘要'},
+    {from:'c-digest',to:'c-man',dash:1,route:'vUp',label:'单源摘要',tip:'摘要算法全仓唯一——双端各算各的会同错恒等 ⇒ 门恒绿'},
     {from:'c-cli',to:'c-patch',sy:211},
-    {from:'c-man',to:'c-back',label:'副本⇄源包'},
+    {from:'c-man',to:'c-back',label:'副本⇄源包',tip:'backflow 三态对账:NEW/DIFF/SOURCE_ONLY,方向搞反直接拒绝'},
   ],
 },
 review: {
@@ -507,10 +510,51 @@ review: {
     {from:'rv-irc',to:'rv-input'},
     {from:'rv-input',to:'rv-agent',route:'v'},
     {from:'rv-agent',to:'rv-conv',route:'v'},
-    {from:'rv-conv',to:'rv-val',label:'N/M 对账'},
+    {from:'rv-conv',to:'rv-val',label:'N/M 对账',tip:'应审文件数 N 与实际评审数 M 对账,M<N 至少 WARN(防大模型跳文件少审)'},
     {from:'rv-pol',to:'rv-val',dash:1,route:'vUp'},
     {from:'rv-close',to:'rv-derive',route:'ring'},
     {from:'rv-derive',to:'rv-steps',route:'v'},
+  ],
+},
+workflow: {
+  title:'执行层 atlas workflow · 内部结构', vb:[0,23,1000,400],
+  zones:[
+    {x:18,y:60,w:210,h:330,label:'输入与落点'},
+    {x:248,y:60,w:240,h:330,label:'执行调度'},
+    {x:508,y:60,w:240,h:330,label:'验收与判据'},
+    {x:768,y:60,w:214,h:330,label:'收口回写'},
+  ],
+  nodes:[
+    {id:'w-req',x:40,y:100,kind:'asset', title:'需求落点 <slug>/',
+      tip:{sum:'requirement.md 确认稿 + items.md 条目唯一住址 + work/ 原文转换稿;状态机 候选→已确认→已拆→已收口,收口移 archive/<YYYY-MM>/。',files:[['rings/prd/reference.md §12','需求落点细则:目录形态与状态机']]}},
+    {id:'w-mech',x:40,y:250,kind:'asset', title:'机制文档 <机制>.md',
+      tip:{sum:'惯例 docs/architecture/<机制>.md 单主题指南;frontmatter mechanism-paths 全仓发现(剪枝;永不入 .atlas/spec/)。',files:[['shared/single-source.md §1','机制叙事文档登记行']]}},
+    {id:'w-plan',x:278,y:76, kind:'orch', title:'plan 写卡',
+      tip:{sum:'apply 步骤 1.6 写入任务卡;--requirement 领取模式:卡条目表=领取引用表(路径#ID)不复制正文;确认门软校验候选/缺失 WARN;直填旧路径逐字节不变。',files:[['_support/workflow_plan.py','plan 395 行:卡条目表/领取引用/软校验']]}},
+    {id:'w-dispatch',x:278,y:170, kind:'orch', title:'dispatch 派工',
+      tip:{sum:'最小上下文派工单;执行串行门对账。',files:[['_support/workflow_dispatch.py','dispatch 164 行:派工单生成']]}},
+    {id:'w-ctx',x:278,y:264, kind:'tool', title:'context 最小注入',
+      tip:{sum:'workflow_context 单源:最小注入 glob/继承/围栏口径。',files:[['_support/workflow_context.py','context 397 行:最小注入单源']]}},
+    {id:'w-verify',x:530,y:76, kind:'gate', title:'verify 判据族',
+      tip:{sum:'coverage_matrix 逐卡 + requirement_root 跨卡(漏领/幽灵引用/状态机) + mechanism_doc 提示族(触及/死paths/单星拒收);--staged 暂存区审查。',files:[['_support/workflow_verify.py:130','coverage_matrix_findings:逐卡 AC 对账'],['_support/workflow_verify.py:209','requirement_root_findings:跨卡落点对账'],['_support/workflow_verify.py:480','mechanism_doc_findings:提示族三判据']]}},
+    {id:'w-budget',x:530,y:190, kind:'gate', title:'预算门 + 记账',
+      tip:{sum:'charged≥上限 ⇒ rc3 budget_exceeded 留痕不计数;失败记账 rc1 扣 / rc2 PENDING 不扣;causes 12 值域封闭。',files:[['scripts/atlas_workflow.py','编排入口:命令族调度/预算门/记账/status 聚合'],['_support/workflow_causes.py','causes 164 行:12 值域+退出码分配']]}},
+    {id:'w-anchor',x:530,y:304, kind:'tool', title:'line_anchor 锚定',
+      tip:{sum:'existing_code 逐字锚 + 滑窗复算六态统计 WARN(RFC-20261122-08);死测试锚 WARN 并入提示族。',files:[['_support/line_anchor.py','锚定测量 230 行:逐字锚+滑窗复算']]}},
+    {id:'w-finish',x:800,y:76, kind:'proc', title:'finish 收口',
+      tip:{sum:'结构事实新鲜度门 baseline≡HEAD ∧ 无未暂存脏;deferred 台账门判定前提取;cause 分流退出码;双回写提醒。',files:[['_support/workflow_finish.py','finish 631 行:新鲜度门/deferred/分流']]}},
+    {id:'w-status',x:800,y:190, kind:'tool', title:'status / archive',
+      tip:{sum:'status 聚合 attempts/坏行/deferred(含归档卡);archive 收口清退。',files:[['_support/workflow_progress.py','progress/status 182 行:聚合']]}},
+  ],
+  edges:[
+    {from:'w-req',to:'w-plan',label:'领取',tip:'plan --requirement 从落点领取需求;卡持路径#ID 引用,正文不复制'},
+    {from:'w-mech',to:'w-verify',route:'ring',rx:714,ty:103},
+    {from:'w-plan',to:'w-dispatch',route:'v'},
+    {from:'w-dispatch',to:'w-ctx',route:'v',dash:1},
+    {from:'w-dispatch',to:'w-verify'},
+    {from:'w-verify',to:'w-budget',route:'v'},
+    {from:'w-budget',to:'w-finish'},
+    {from:'w-finish',to:'w-status',route:'v'},
   ],
 },
 };
@@ -519,16 +563,26 @@ review: {
 const DETAIL = {
 code: {sum:'目标仓库的产品代码,Atlas 一切「实然」事实的唯一来源。',
   points:['Atlas 对业务代码只做只读抽取(适配器/图谱),从不回写业务代码','实现由 执行层 Execute 承担;实现后实然事实经 after_finish hook 回写结构事实区(D38)','所有机器门对账的「实然侧」最终都指向这里的代码'],files:[],blind:null},
-req: {sum:'需求 ID = 任务卡 id;需求卡即 task 的 prd.md,是 apply 的唯一需求上游。',
-  points:['不另建 inbox:一条需求 = 一张卡,跨环增量从这张卡出发','第 4 种形态(应然资产自身修订、无需求卡)不经 apply,直接逐环跑受影响集合,防「把资产修订塑造成需求」的任务树滥用','需求卡由 apply 只读;apply 的痕迹只落 atlas-apply.md'],
-  files:[['.atlas/tasks/<ID>/prd.md','需求卡本体:需求描述与验收要点的唯一上游,apply 只读它']],blind:null},
-graph: {sum:'外部图谱后端(cgc)的全线唯一隔离层:薄后端、厚自有;影响面预测与收口对账两个消费者。',
-  points:['换后端只改一个文件:_graph.py 是唯一接触面,接触只走 CLI 不走 Python import','用前现刷:代码态指纹(HEAD+脏文件集)一致才复用索引,不一致 cgc index --force 全量重建','增量 update 实测只加不减(幽灵符号会让 callers 静默答错),维持全量,切换条件写死在 docstring','查询全带 ORDER BY + Python 侧再排序;根外路径丢弃,防全局库跨仓污染','消费者① impact_report:种子符号沿 CALLS 边 BFS 分层,落 impact.json;未声明 graph 段 ⇒ exit 3 not_ready,不阻断 apply','消费者② impact_reconcile:收口时预测集 ⇔ 实际 diff 双向差集,漏报/多报/基准漂移 ⇒ WARN 指名,不得静默对账'],
-  files:[['adapters/_graph.py','图谱隔离层(ACL)本体 332 行:声明解析 / 后端探测 / 新鲜度 / 查询四段'],
-         ['scripts/impact_report.py','影响面预测器:种子符号沿 CALLS 边 BFS 分层,出 impact.json|md'],
-         ['scripts/impact_reconcile.py','收口对账器:预测集 vs 实际 diff 双向差集,漏报/多报逐文件指名'],
-         ['shared/stack-profile.md §2','graph 段的声明契约:键白名单 / backend 枚举 / pinned 语义']],
-  blind:'JSX/前端引用边为零(实测两轮):routes 通道恒等、impact 通道组件叶失义;name 级匹配同名并入 ⇒ 影响面偏宽,收口以实际 diff 为准',doc:'graph.md',sub:'graph'},
+req: {sum:'需求落点 requirements/<slug>/ 是需求层唯一住址;执行层任务卡(.atlas/tasks/<ID>/prd.md)从落点领取,apply 只读不产。',
+  points:['需求落点每需求一目录:requirement.md 确认稿(需求 PRD+状态行)+items.md 条目正文唯一住址+work/ 原文转换稿;状态机 候选→已确认→已拆→已收口,收口移 archive/<YYYY-MM>/(RFC-20261122-03)','plan --requirement 领取模式:卡条目表=领取引用表(来源=路径#ID,不复制正文);确认门软校验(候选/缺失 WARN 不拦停)','权威源五层:需求原文(转换稿)>需求 PRD(确认稿)>任务 PRD>设计文档>代码惯例;正式名与用户可见文案必须引用来源章节,矛盾登记上报不许就地二选一(single-source.md §4)','第 4 种形态(应然资产自身修订、无需求卡)不经 apply,直接逐环跑受影响集合,防「把资产修订塑造成需求」的任务树滥用','需求卡由 apply 只读;apply 的痕迹只落 atlas-apply.md'],
+  files:[['.atlas/tasks/<ID>/prd.md','任务卡本体:plan 从落点领取生成,apply 只读它'],
+         ['shared/layout.md','需求落点登记:<assets_root>/requirements/ 目录形态与状态机'],
+         ['shared/single-source.md §4','权威源五层排序与条目覆盖纪律']],blind:null},
+flow: {sum:'自建执行层(atlas workflow):把 apply 的编排产出落成任务卡、派工执行、判据验收、收口回写;需求落点与机制文档两个机器面挂在这里(D205 移除 Trellis 宿主依赖)。',
+  points:['四命令族:plan 写卡(--requirement 领取模式)/ dispatch 最小上下文派工 / context 最小注入单源 / verify+finish 收口;bin/atlas.js workflow 八命令(plan/dispatch/context/verify/finish/status/archive/run)','需求落点 requirements/<slug>/ 唯一住址:确认稿+条目表+原文转换稿;状态机 候选→已确认→已拆→已收口(RFC-20261122-03)','机制文档机器面(RFC-20261122-04):docs/architecture/<机制>.md 单主题指南+frontmatter mechanism-paths 全仓发现;verify 提示族三判据:触及提示/疑似死 paths/单星 glob 拒收;永不入 .atlas/spec/(防注入截断)','verify 判据族分两族:缺口族 coverage_matrix 逐卡 AC 对账+requirement_root_findings 跨卡(漏领/幽灵引用/状态机不一致 WARN);提示族 mechanism_doc(与缺口族分族防误升格)','回收面硬化(D209):verify 预算门(charged≥上限 ⇒ rc3 留痕不计数)+失败记账(rc1 扣/rc2 PENDING 不扣)+workflow_causes 12 值域封闭+deferred 台账门判定前提取','finish 结构事实新鲜度门(RFC-20261122-05):baseline≡HEAD ∧ 无未暂存脏 ⇒ PASS,没刷 spec 拒收;行级锚定(RFC-20261122-08):existing_code 逐字锚+滑窗复算六态 WARN'],
+  files:[['scripts/atlas_workflow.py','编排入口:命令族调度/预算门/记账/status 聚合'],
+         ['_support/workflow_plan.py','plan 395 行:卡条目表=领取引用表/--requirement 落点模式'],
+         ['_support/workflow_verify.py','verify 654 行:缺口族+提示族判据(coverage/requirement_root/mechanism_doc)'],
+         ['_support/workflow_finish.py','finish 631 行:新鲜度门/deferred 台账/cause 分流退出码'],
+         ['_support/line_anchor.py','行级锚定 230 行:existing_code 逐字锚+滑窗复算']],
+  blind:'git 钩子触发面未接(现为 verify --staged 单命令手动,触发面 A 待拍);提示族 WARN 纪律面不拦停(升格=留样误报率+实际漏单,另案);需求落点对账按覆盖性不按计数(at-least-once 共担)',doc:null,sub:'workflow'},
+graph: {sum:'轻量语义透镜(FRAS)辅助层:外部 AST 图谱已退役(D202),收敛为两级 cognition.fras 语义行的反向一跳反查,给影响面推导供候选;收口对账不变。',
+  points:['cgc/FalkorDB 外部引擎退役(D202 supersedes D77/D78):AST 调用边前后端双场实测全线失效,容器依赖清零;graph 段声明即退役 WARN(存量合法)','两级轻量语义行:global/ 与 current/<域>/ 的 cognition.fras(另兼容 aoci.code.txt),F/R/A/S 紧凑行;AOCI 管线/人工增量维护,atlas 只读不产','反向 1-hop:reverse_1hop_callers 只提 R 边单跳 → impact_report 的 aoci_candidates 独立字段(不入 predicted 对账集);无透镜 ⇒ exit 3 not_ready,预测集退化需求卡声明集','cgc 兼容 shim:PATH 上有 cgc 才走旧 CALLS 查询(callers 双轨);GRAPH_BACKENDS 词表常量保留防外部加载断裂','消费者② impact_reconcile 不变:预测集 ⇔ 实际 diff 双向差集 WARN 指名,基准漂移点名,miss 升 FAIL 观察窗(D79④)'],
+  files:[['adapters/_graph.py','透镜辅助层本体 332 行:FRAS 行解析 / 反向一跳 / cgc 兼容 shim'],
+         ['scripts/impact_report.py','影响面候选面 222 行:aoci_candidates + not_ready 三态'],
+         ['scripts/impact_reconcile.py','收口对账器 149 行:双向差集 / 基准漂移 / 台账落盘'],
+         ['shared/stack-profile.md §2','graph 段退役横幅:声明即 WARN,两级透镜落点契约']],
+  blind:'透镜行的 R 边语义机器不判(漏写 ⇒ 反查漏报,靠 reconcile WARN 兜底);cgc shim 双轨口径不同(CALLS 边 vs R 边)不可混对账;透镜行生产在 atlas 环外,暂无自动生产线',doc:'graph.md',sub:'graph'},
 apply: {sum:'全仓唯一编排件:把「一条需求」灌进项目级应然资产;只做编排与顺序,环内逻辑一律引用各环契约,不产任何正文。',
   points:['四模式:apply <ID> 需求增量(常规路径)/ adopt 一次性开户(只登记基线+开户最小集,不做全量重述)/ all 按序全量 / backfill 回流攒批(≤10 条/批)','三问门定拉起哪些环:①改既有能力?②需人确认应然 UI?③需可重复验收?三问全否 = 合法的「纯加法」路径;判定与依据必须写进报告','影响面推导 = agent 语义判断 + 结构证据约束;禁 regex 判语义;二义或判不准 ⇒ 一次汇总问用户(≤3 问)','增量边界:只对受影响集合落笔,从不整文件覆盖;破坏性动作(删页/全量重生成/改 stack-profile)过用户确认门','并发写面仲裁:共享文件 claim 单写者(O_CREAT|O_EXCL 原子),残留由 atlas_check 写面残留门 WARN 点名','挂接 = atlas workflow plan 写入任务卡 + dispatch 写入派工单;不向宿主模板打补丁;失败停 planning 不进实现','执行记录 atlas-apply.md 固定七小节,幂等覆写'],
   files:[['apply/reference.md','执行契约本体 340 行:四模式 / 三问门 / 影响面 / 增量边界的全部正文'],
@@ -557,10 +611,10 @@ e2egen: {sum:'用例分片(中文 DSL)编译为 Playwright 脚本 + 纯标准库
          ['scripts/gen_testid_stub.py','testid 实然盘点薄桩生成器:adopt 开户交尾件,缺失由 validate_testids 自愈'],
          ['_support/pw_runner.py','运行器单源内核:可解析性判据 / 全局兜底修复 / 浏览器就绪探针']],
   blind:'登录态本身不可覆盖(D103);生成器不判「用例是否值得测」;控制台单机单用户假设',doc:'e2egen.md',sub:'e2egen'},
-gates: {sum:'「每道机器门都要真的会咬」的执行体系:编排器只聚合不改判;判据在 12 个校验器;门册总账 + 变异证明保证可信。',
-  points:['门册三律:不在 gates.md 登记 = 不存在;每门必配「喂坏输入必红」证明;静默继续 = 门失效','四态纪律:ok / FAIL(硬阻断 exit 1)/ WARN(不置红)/ SKIP(未就绪,必须带原因,永不当绿灯放行)','12 校验器各有对账平面:testids 应然⇔实然双向集合、PRD 链路、e2e 索引、AC 对账、走查确认行、stack-profile 形态等','编排门行 9 类:对齐测试/生成物最新/审查报告形态/执行串行/结构漂移/装配版本(MANIFEST 逐文件基线)/写面残留/消融残留/E2E 真跑(TCP 探活+reset+浏览器就绪)','变异证明四段:注入坏输入⇒必红⇒还原逐字节一致⇒复绿;报告须含注入 diff(M 编号已至 M187)','每轮门事件追加 check-events.jsonl,观测面,不参与判定'],
-  files:[['scripts/atlas_check.py','统一检查入口 1223 行:编排 12 器 + 9 门行,一门一行,只聚合不改判据'],
-         ['validators/','判据本体目录:12 个 validate_*.py,每器守一个对账平面'],
+gates: {sum:'「每道机器门都要真的会咬」的执行体系:编排器只聚合不改判;判据在 13 个校验器;门册总账 + 变异证明保证可信。',
+  points:['门册三律:不在 gates.md 登记 = 不存在;每门必配「喂坏输入必红」证明;静默继续 = 门失效','四态纪律:ok / FAIL(硬阻断 exit 1)/ WARN(不置红)/ SKIP(未就绪,必须带原因,永不当绿灯放行)','13 校验器各有对账平面:testids 应然⇔实然双向集合、PRD 链路、e2e 索引、AC 对账、走查确认行、stack-profile 形态等','编排门行 10 类:校验器聚合/对齐测试/生成物最新/审查报告形态/执行串行/结构漂移/装配版本(MANIFEST 逐文件基线)/写面残留/消融残留/E2E 真跑(TCP 探活+reset+浏览器就绪)','变异证明四段:注入坏输入⇒必红⇒还原逐字节一致⇒复绿;报告须含注入 diff(M 编号已至 M200 以上,以门册为准)','每轮门事件追加 check-events.jsonl,观测面,不参与判定'],
+  files:[['scripts/atlas_check.py','统一检查入口 1223 行:编排 13 器 + 10 门行,一门一行,只聚合不改判据'],
+         ['validators/','判据本体目录:13 个 validate_*.py,每器守一个对账平面'],
          ['shared/gates.md','门册总账 193 行:六列登记 + 取证五档;不在表 = 不存在'],
          ['scripts/mutation_proof.py','变异证明工具:注入 → 必红 → 逐字节还原 → 复绿,报告含注入 diff']],
   blind:'判据语义对错归独立审查与人;契约正文的语义自洽机器判不了(代码与契约陈述级分叉只有人看得到)',doc:'gates.md',sub:'gates'},
@@ -672,7 +726,14 @@ function renderMap(container, viewId, interactive){
     el('rect',{x:z.x,y:z.y,width:z.w,height:z.h,rx:10},g);
     el('text',{x:z.x+10,y:v.zoneLabIn?z.y+20:z.y-9},g).textContent=z.label;});
   v.edges.forEach(e=>{
-    el('path',{class:'edge'+(e.dash?' dash':''),d:edgePath(v,e),'marker-end':`url(#${mkId})`,'data-e':JSON.stringify([e.from,e.to])},gE);
+    const d=edgePath(v,e);
+    el('path',{class:'edge'+(e.dash?' dash':''),d:d,'marker-end':`url(#${mkId})`,'data-e':JSON.stringify([e.from,e.to])},gE);
+    if(e.tip){ /* 边动作说明:宽透明命中带,悬浮看「这步做什么」 */
+      const hit=el('path',{d:d,class:'edgehit'},gE);
+      hit.addEventListener('mouseenter',ev=>showEdgeTip(v,e,ev));
+      hit.addEventListener('mousemove',moveTip);
+      hit.addEventListener('mouseleave',hideTip);
+    }
   });
   const gL=el('g',{},gE);
   v.edges.forEach(e=>{
@@ -683,8 +744,14 @@ function renderMap(container, viewId, interactive){
     if(e.route==='v'){ lx=a.x+a.w/2+4; ly=a.y+a.h+12; }
     else if(!e.route && Math.abs(b2.x-a.x)<20){ const mx2=(a.x+b2.x+b2.w)/2, my=(a.y+b2.y+NH)/2; lx=mx2-tw/2; ly=my+2; }
     else { lx=a.x+a.w+4; ly=a.y+a.h/2-9; if(lx+tw>v.vb[0]+v.vb[2]-4) lx=a.x-tw-6; }
-    el('rect',{x:lx,y:ly-11,width:tw,height:17,rx:5,fill:'var(--card)',stroke:'var(--zone)','stroke-width':1},gL);
-    const t=el('text',{class:'edgeLabel',x:lx+6,y:ly+1},gL);t.textContent=e.label;
+    const chip=el('g',{class:'edgechip'+(e.tip?' hastip':'')},gL);
+    el('rect',{x:lx,y:ly-11,width:tw,height:17,rx:5,fill:'var(--card)',stroke:'var(--zone)','stroke-width':1},chip);
+    const t=el('text',{class:'edgeLabel',x:lx+6,y:ly+1},chip);t.textContent=e.label;
+    if(e.tip){
+      chip.addEventListener('mouseenter',ev=>showEdgeTip(v,e,ev));
+      chip.addEventListener('mousemove',moveTip);
+      chip.addEventListener('mouseleave',hideTip);
+    }
   });
   const pinned=interactive?null:(()=>{const d=document.createElement('div');
     d.className='pinned';container.prepend(d);return d;})();
@@ -800,6 +867,12 @@ function moveTip(ev){const r=tip.getBoundingClientRect();
   if(y+r.height>innerHeight-8)y=ev.clientY-r.height-12;
   tip.style.left=x+'px';tip.style.top=y+'px';}
 function hideTip(){tip.style.display='none';}
+/* 边动作说明:from → to + 这一步做什么(数据 = VIEWS 各边的 tip 字段) */
+function showEdgeTip(v,e,ev){
+  const ft=v.nodes.find(n=>n.id===e.from),tt=v.nodes.find(n=>n.id===e.to);
+  tip.innerHTML=`<h4>${esc(ft.title)} → ${esc(tt.title)}<span class="badge" style="--nc:var(--primary)">${esc(e.label||'边')}</span></h4><p>${esc(e.tip)}</p>`;
+  tip.style.display='block';moveTip(ev);
+}
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;');}
 /* legend */
 (function(){const lg=document.getElementById('legend');if(!lg)return;
@@ -841,17 +914,18 @@ function badge(){
 }
 const _fitSvgOld=fitSvg;
 fitSvg=function(){_fitSvgOld();badge();};
-/* ================= 讲述模式(2026-10-25:十步主数据流动线,文案与 index.md「一页看懂」同源) ================= */
+/* ================= 讲述模式(2026-10-25:主数据流动线,2026-11-23 扩执行层为十一步;文案与 index.md「一页看懂」同源) ================= */
 const TOUR=[
- {focus:['code','req'],edges:[],text:'Atlas 管两条输入:你已有的业务代码,和你要做的需求'},
+ {focus:['code','req'],edges:[],text:'Atlas 管两条输入:你已有的业务代码,和需求落点 requirements/ 里的需求'},
  {focus:['code','adapt'],edges:[['code','adapt']],text:'适配器只读抽取路由、API、模型、测试事实——实然先入库'},
  {focus:['adapt','rings'],edges:[['adapt','rings']],text:'结构事实是三环资产的地基,机器渲染、键级对账'},
- {focus:['code','graph','apply'],edges:[['code','graph'],['graph','apply']],text:'代码图谱只当哑索引,给影响面推导供静态调用面证据'},
+ {focus:['adapt','graph','apply'],edges:[['adapt','graph'],['graph','apply']],text:'结构事实区的语义行喂语义透镜,反向一跳出影响面候选;没有透镜行就诚实 not_ready'},
  {focus:['req','apply'],edges:[['req','apply']],text:'需求过三问门,决定拉起哪些环;apply 只编排不越界'},
  {focus:['apply','rings'],edges:[['apply','rings']],text:'需求落成 PRD 六件套,AC 分解为 E2E 用例分片'},
  {focus:['rings','e2egen'],edges:[['rings','e2egen']],text:'中文分片编译成 Playwright 脚本,动词值域封闭、陌生即中止'},
- {focus:['e2egen','gates'],edges:[['e2egen','gates']],text:'十校验器加八类编排门,全绿是收口的硬前置'},
- {focus:['gates','review'],edges:[['gates','review']],text:'独立审查 N/M 对账,影响面预测也要被 reconcile 审计'},
+ {focus:['apply','flow','e2egen'],edges:[['apply','flow'],['flow','e2egen']],text:'apply 的产出写卡派工:执行层接卡实现,按用例跑验收(真跑+控制台回放),verify 判据族把关'},
+ {focus:['e2egen','gates','flow'],edges:[['e2egen','gates'],['flow','gates']],text:'十三校验器加十类编排门:收口跑全链门禁(含 E2E 真跑),全绿是收口的硬前置'},
+ {focus:['gates','review','flow'],edges:[['gates','review'],['flow','review']],text:'执行层 finish 回写触发收口:独立审查 N/M 对账,影响面预测也要被 reconcile 审计'},
  {focus:['shared','kernel','cli'],edges:[],text:'契约真相源、单源内核、装配对账——服务全链'},
 ];
 let tourOn=false, tourIdx=0, tourTimer=null;

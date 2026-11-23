@@ -27,8 +27,8 @@ features:
     title: E2E 用例评审控制台
     details: 纯标准库本地服务，带 500ms 慢动作弹窗回放。执行绿灯才解锁人工 Review，单写者原子提交账本。
   - icon: 🕸️
-    title: 代码图谱 (Code Graph) 逆向
-    details: 基于 FalkorDB / cgc 全仓拓扑，跨文件 callers/callees 深度感知，精准推导需求影响面与架构漂移。
+    title: 语义透镜 (FRAS) 影响面反查
+    details: 仓内两级语义行（cognition.fras）反向一跳反查，影响面候选有据可查；无透镜诚实 not_ready，收口对账兜底。
   - icon: 🔨
     title: 变异证明 (Mutation Proving)
     details: 拒绝形同虚设的假门禁。每条机器规则都配一组注入脏数据的变异钉子（M 系列，编号已到 M93）：正常数据 PASS + 脏数据必红，双向核对通过才准入网。

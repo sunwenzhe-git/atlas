@@ -223,6 +223,8 @@
 
 ### 3.6 图谱接触面（`adapters/_graph.py`；2026-10-05 图谱批 1 定形）
 
+> **【已退役 2026-11-19，RFC-20261119-01 / D202】**：外部 AST 图谱引擎（cgc / FalkorDB）已退役，主管线改为两级 cognition.fras 语义行的反向 1-hop 反查（`scripts/impact_report.py` 的 `aoci_candidates`；无透镜 ⇒ `not_ready`）。本节以下「用前现刷 / 查询接口 / CALLS 口径」保留为 **cgc 兼容 shim 的现行为文档**（PATH 上恰有 cgc 时才走）；新消费面以 §2 `graph` 段退役横幅与本横幅为准。
+
 **全线只有 `_graph.py` 允许接触图谱后端**（防腐层）：后端可换、确定性契约单点实现、
 降级语义统一定义。任何脚本不得自行拼后端 CLI 或读图数据库。
 

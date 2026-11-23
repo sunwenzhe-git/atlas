@@ -11,7 +11,6 @@ Atlas 采用现代化的一键全局 CLI 机制，你可以像使用 执行层 �
 * **Node.js 18+**（CLI 运行环境）
 * **Python 3.10+**（核心校验器与生成引擎）
 * **Playwright**（E2E 测试运行器：Node 版，由项目 `node_modules` 提供）
-* *(可选)* **CodeGraphContext (cgc)**：若需开启图谱级跨文件逆向分析，安装 `uv tool install codegraphcontext`（或 `pip install codegraphcontext`）
 
 ---
 
@@ -102,8 +101,6 @@ e2e:
   app_base_url: http://127.0.0.1:8000
   review: null              # null = 默认使用会话模型；可配置备用模型做交叉审查
 
-graph:                      # 可选：声明后 routes 走图谱枚举、apply 先跑影响面推导
-  backend: cgc
 ```
 
 > `apps[]` 的 `name` / `path` / `kind` / `role` 四项为**必填**（缺一即被 `validate_stack_profile` 判 FAIL），`origin` 只有 `greenfield` / `adopt` 两个取值。

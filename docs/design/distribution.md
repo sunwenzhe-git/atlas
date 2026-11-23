@@ -52,8 +52,8 @@ atlas/
 
 - `product`：产品名（项目级资产的归属维度）。
 - `apps[]`：`name` / `path` / `kind`（frontend | backend | fullstack | mobile）/ **`role`**（`landing` → `structure/current/`；`legacy` → `structure/legacy/`）/ `stack`（自由文本，仅展示）。
-- `graph`：代码图谱后端隔离配置（`backend: cgc pinned "0.6.13"`），**仅 `adapters/_graph.py` 允许直接调用**。
-- `adapters`：`routes` / `api` / `models` / `tests`，`null` = 未提供，该类别降级为 Agent 撰写；声明 `graph` 时 `routes` 自动走图谱通道。
+- `graph`：**已退役**（外部 AST 图谱引擎下线，D202）——存量声明会收到退役 WARN 提示移除；现行为语义透镜：两级 `cognition.fras` 语义行反向一跳反查，仅 `adapters/_graph.py` 允许接触。
+- `adapters`：`routes` / `api` / `models` / `tests`，`null` = 未提供，该类别降级为 Agent 撰写。
 - `e2e`：`runner: node-playwright`（现役单轨，python-playwright 已退役）；`cases_dir` / `index` / `scripts_dir`；`app_base_url`（未就绪 = 生成器报 `not_ready`）；`app_login` 子段；`seed` 子段（含 `mode: enforce | declare` 声明 / 发射解耦开关）。
 - `impl_review`：实现代码独立审查配置。
 

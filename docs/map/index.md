@@ -14,7 +14,7 @@
         │                                      │
         ▼                                      ▼
    apply 跨环编排(apply/reference.md)──────────┘
-        │  影响面推导(可调代码图谱 impact_report)
+        │  影响面推导(语义透镜反查 impact_report)
         ▼
    PRD 资产(product/prd/)──AC──► E2E 用例分片(product/e2e/cases/)
         │
@@ -38,13 +38,14 @@
 | 1 | CLI 与装配 | 把 atlas 装进目标仓库并保持副本与源包对账 | `bin/atlas.js`、`install.py` | [cli.md](cli.md) |
 | 2 | 共享契约层 | 规则与执行期程序契约的单一落点(frontend-reuse 非门、非真相源) | `shared/`(9 份)、`templates/` | — |
 | 3 | 结构抽取适配器 | 从业务代码确定性抽取路由/API/模型/测试事实 | `adapters/`、`scripts/refresh_structure.py` | [adapters.md](adapters.md) |
-| 4 | 代码图谱 | 外部图谱后端的唯一隔离层 + 影响面报告与对账 | `adapters/_graph.py` | [graph.md](graph.md) |
+| 4 | 语义透镜 | 轻量语义行反查辅助层(FRAS) + 影响面候选与对账 | `adapters/_graph.py` | [graph.md](graph.md) |
 | 5 | 三环资产引擎 | structure / prd / e2e 三环的环内规程契约 | `rings/*/reference.md`、`skills/atlas-*` | — |
 | 6 | apply 跨环编排 | 唯一编排件:需求 → 资产增量的四模式 | `apply/reference.md` | [apply.md](apply.md) |
 | 7 | E2E 生成与控制台 | 用例分片 → Playwright 脚本 + 慢动作评审台 | `scripts/gen_e2e_scripts.py`、`scripts/e2e_console.py` | [e2egen.md](e2egen.md) |
 | 8 | 门禁与校验 | 〔数:校验器=13〕 校验器 + 编排器 + 门册 + 变异证明 | `scripts/atlas_check.py`、`validators/` | [gates.md](gates.md) |
 | 9 | 评审与收口 | 独立审查产物链 + 收口触发派生 | `shared/independent-review.md`、`scripts/closeout_derive.py` | [review.md](review.md) |
 | 10 | 运营面 | 每日巡检 / 自感知上报 / 发版 | `duty-review/`、`scripts/atlas_report.py` | — |
+| 11 | 执行层 | atlas workflow 全流程调度:plan/dispatch/verify/finish + 需求落点与机制文档机器面 | `bin/atlas.js workflow`、`scripts/atlas_workflow.py` | — |
 
 ## 各子系统速览
 
@@ -69,7 +70,7 @@
 - `_lib.py` / `_scaffold.py` 是共享件;`_graph.py` 不是适配器(归子系统 4)。
 - `scripts/refresh_structure.py`(831 行)把适配器产物渲染进 `.atlas/spec/structure/` 的 `atlas:facts` 标记区:键级单元格重写、语义列保留、键级增删落漂移标记 `.adapter-out/_drift.json`(由「结构漂移」门消费)。
 
-### 4. 代码图谱 → [graph.md](graph.md)
+### 4. 语义透镜 → [graph.md](graph.md)
 
 ### 5. 三环资产引擎 `rings/`
 
@@ -99,6 +100,10 @@
 - `scripts/atlas_report.py`:§15 自感知上报(四段式零业务上下文,`--trigger user` 不冒充自动感知)。
 - `scripts/release.py`:发版流程(版本串多处落点 + npm prerelease tag 纪律 + GitHub Release 跟随 tag);发版 skill 为用户级安装,不随源包分发。
 
+### 11. 执行层 `atlas workflow`
+
+自建全流程执行层(D205 收敛,移除 Trellis 宿主依赖):`plan`(写卡;`--requirement` 领取模式从需求落点 `requirements/<slug>/` 领取——requirement.md 确认稿 + items.md 条目唯一住址 + work/ 原文,状态机 候选→已确认→已拆→已收口,卡条目表=领取引用表不复制正文,RFC-20261122-03)/ `dispatch`(最小上下文派工)/ `context`(最小注入单源)/ `verify`(判据族:coverage_matrix 逐卡 AC 对账、requirement_root 跨卡落点对账、机制文档提示族;`--staged` 暂存区审查)/ `finish`(结构事实新鲜度门 + deferred 台账 + cause 分流退出码)/ `status · archive`。机制文档(`docs/architecture/<机制>.md` + frontmatter `mechanism-paths`)机器面:触及提示 / 疑似死 paths / 单星 glob 拒收(RFC-20261122-04);回收面硬化:预算门 + 失败记账 + causes 12 值域封闭 + 行级锚定六态 WARN(D209 / RFC-20261122-08)。
+
 ## 数字快照
 
 | 量 | 值 | 出处 |
@@ -117,9 +122,10 @@
 
 | 子系统 | 状态 |
 |---|---|
-| 代码图谱 / apply / 门禁与校验 | ✅ [graph.md](graph.md) / [apply.md](apply.md) / [gates.md](gates.md) |
+| 语义透镜 / apply / 门禁与校验 | ✅ [graph.md](graph.md) / [apply.md](apply.md) / [gates.md](gates.md) |
 | 结构抽取适配器 | ✅ [adapters.md](adapters.md) |
 | E2E 生成与控制台 | ✅ [e2egen.md](e2egen.md) |
 | CLI 与装配 | ✅ [cli.md](cli.md) |
 | 评审与收口 | ✅ 薄章 [review.md](review.md) |
 | 三环资产引擎 / 共享契约层 / 共享内核 / 运营面 | **不写 L1**(2026-10-25 拍板):正文即各环契约与 `shared/` 契约本体,写章必复制正文违反单一真相源;L0 速览 + 交互图详情页承担导航 |
+| 执行层 | **待稳定后评估写章**(一周五 RFC 在飞;L0 速览行 + 交互图详情页即导航,循运营面先例) |
