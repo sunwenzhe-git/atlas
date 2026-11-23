@@ -909,10 +909,12 @@ def test_requirement_pointer_text_mentions_authority_order() -> None:
     assert "需求原文 > 需求 PRD > 任务 PRD" in text
 
 
-# ── 机制文档机器面（RFC-20261122-04，提示语族 WARN）────────────────────────
+# ── 机制文档机器面（RFC-20261122-04 提示族残部 + RFC-20261123-01 申报判决门）──
 
 from _support.workflow_verify import (  # noqa: E402
-    MECHANISM_WARN_CAP, _mech_glob_regex, mechanism_doc_findings
+    MECHANISM_WARN_CAP, _mech_glob_regex, _mech_glob_wellformed,
+    discover_mechanism_docs, mechanism_dead_declare_findings,
+    mechanism_declaration_verdict, mechanism_doc_findings, parse_mech_declares
 )
 
 
@@ -932,20 +934,35 @@ def _mech_doc(root: Path, rel: str, globs: list[str]) -> None:
     p.write_text(f"---\n{fm}---\n\n# 机制篇\n正文\n", encoding="utf-8")
 
 
-def test_mechanism_doc_touch_warn_lists_files(tmp_path: Path) -> None:
+def test_mechanism_verdict_undeclared_template_and_pass_paths(tmp_path: Path) -> None:
     root = _git_repo(tmp_path)
     _mech_doc(root, "docs/architecture/trace.md", ["backend/**"])
     (root / "backend" / "svc.py").parent.mkdir(parents=True)
     (root / "backend" / "svc.py").write_text("x = 1\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+    tasks_root = root / ".atlas" / "tasks"
 
-    findings = mechanism_doc_findings(root, ["backend/svc.py", "other.py"])
-    assert len(findings) == 1, findings
-    assert "docs/architecture/trace.md" in findings[0]
-    assert "命中 1 文件" in findings[0] and "backend/svc.py" in findings[0]
-    assert "查看该机制篇是否跟改" in findings[0]  # 提示语措辞锁（评审 s3）
-    # 未触及 ⇒ 沉默（无机制文档缺席假阳性）
-    assert mechanism_doc_findings(root, ["other.py"]) == []
+    v = mechanism_declaration_verdict(root, ["backend/svc.py", "other.py"],
+                                      tasks_root, "T-1")
+    assert len(v) == 1 and v[0]["kind"] == "undeclared", v
+    assert v[0]["doc"] == "docs/architecture/trace.md"
+    assert v[0]["hits"] == ["backend/svc.py"]
+    assert v[0]["template"] == "- docs/architecture/trace.md: not-involved: <理由>"
+    assert "T-1" in v[0]["declare_path"] and "mech-declares.md" in v[0]["declare_path"]
+    # D4 隐式 updated：篇 ∈ 暂存 ⇒ PASS（触及提示「文档跟改了照样出声」的病根在此修掉）
+    assert mechanism_declaration_verdict(
+        root, ["backend/svc.py", "docs/architecture/trace.md"],
+        tasks_root, "T-1") == []
+    # 已申报（理由非空）⇒ PASS
+    d = tasks_root / "T-1"
+    d.mkdir(parents=True)
+    (d / "mech-declares.md").write_text(
+        "- docs/architecture/trace.md: not-involved: 部署态服务不在本仓\n",
+        encoding="utf-8")
+    assert mechanism_declaration_verdict(
+        root, ["backend/svc.py"], tasks_root, "T-1") == []
+    # 无触及 ⇒ 沉默
+    assert mechanism_declaration_verdict(root, ["other.py"], tasks_root, "T-1") == []
 
 
 def test_mechanism_doc_dead_paths_warn_and_alive_silent(tmp_path: Path) -> None:
@@ -956,7 +973,7 @@ def test_mechanism_doc_dead_paths_warn_and_alive_silent(tmp_path: Path) -> None:
     (root / "backend" / "a.py").write_text("x\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
 
-    findings = mechanism_doc_findings(root, [])
+    findings = mechanism_doc_findings(root)
     dead = [f for f in findings if "疑似死 paths" in f]
     assert len(dead) == 1 and "docs/architecture/old.md" in dead[0]
     assert not any("live.md" in f and "疑似死" in f for f in findings)
@@ -965,11 +982,11 @@ def test_mechanism_doc_dead_paths_warn_and_alive_silent(tmp_path: Path) -> None:
 def test_mechanism_doc_pending_skips_all(tmp_path: Path) -> None:
     root = _git_repo(tmp_path)
     _mech_doc(root, "docs/architecture/new.md", ["pending"])
-    findings = mechanism_doc_findings(root, ["anything.py"])
+    findings = mechanism_doc_findings(root)
     assert findings == []  # 冷启动豁免（评审 s1）：零命中判据不红、触及不判
 
 
-def test_mechanism_doc_single_star_glob_named_not_matched(tmp_path: Path) -> None:
+def test_mechanism_doc_invalid_glob_named_not_matched(tmp_path: Path) -> None:
     root = _git_repo(tmp_path)
     _mech_doc(root, "docs/architecture/wide.md", ["src/*.py", "backend/**"])
     (root / "src" / "a.py").parent.mkdir(parents=True)
@@ -978,28 +995,125 @@ def test_mechanism_doc_single_star_glob_named_not_matched(tmp_path: Path) -> Non
     (root / "backend" / "b.py").write_text("x\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
 
-    findings = mechanism_doc_findings(root, ["src/a.py"])
-    assert any("单星 glob" in f and "'src/*.py'" in f for f in findings)
-    assert not any("可能被本次改动触及" in f for f in findings)  # 非法 glob 不参与命中
+    findings = mechanism_doc_findings(root)
+    assert any("非法 glob" in f and "'src/*.py'" in f for f in findings)
     assert not any("疑似死 paths" in f for f in findings)  # backend/** 仍活
 
 
-def test_mechanism_doc_cap_and_overflow_summary(tmp_path: Path) -> None:
+def test_mechanism_verdict_no_cap_lists_all(tmp_path: Path) -> None:
     root = _git_repo(tmp_path)
     changed = []
-    for n in range(MECHANISM_WARN_CAP + 1):
+    for n in range(MECHANISM_WARN_CAP + 2):
         _mech_doc(root, f"docs/architecture/m{n}.md", [f"svc{n}/**"])
         (root / f"svc{n}" / "x.py").parent.mkdir(parents=True)
         (root / f"svc{n}" / "x.py").write_text("x\n", encoding="utf-8")
         changed.append(f"svc{n}/x.py")
     subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
 
-    findings = mechanism_doc_findings(root, changed)
-    touches = [f for f in findings if "可能被本次改动触及" in f]
-    summary = [f for f in findings if "另有" in f and "略）" in f]
-    assert len(touches) == MECHANISM_WARN_CAP
-    assert len(summary) == 1 and "1 篇" in summary[0]
-    assert not any("疑似死 paths" in f for f in findings)
+    v = mechanism_declaration_verdict(root, changed, root / ".atlas" / "tasks", "T-1")
+    undeclared = [x for x in v if x["kind"] == "undeclared"]
+    assert len(undeclared) == MECHANISM_WARN_CAP + 2  # 判决 FAIL 面无 CAP（评审 Minor-1）
+
+
+def test_mechanism_wordlist_two_tiers() -> None:
+    good = ["docs/x.md", "backend/**", "dir/", "a/b/c.py"]
+    bad = ["**", "**/x", "a/**/b", "src/*.py", "a/*/b", "a?.py", "a*/**"]
+    for g in good:
+        assert _mech_glob_wellformed(g), g
+    for g in bad:
+        assert not _mech_glob_wellformed(g), g
+
+
+def test_mechanism_declares_grammar(tmp_path: Path) -> None:
+    root = tmp_path
+    tasks_root = root / ".atlas" / "tasks"
+    # 缺文件 ⇒ 空且可解析
+    assert parse_mech_declares(root, tasks_root, "T-1") == ({}, None)
+    d = tasks_root / "T-1"
+    d.mkdir(parents=True)
+    p = d / "mech-declares.md"
+    p.write_text(
+        "# 注释行\n\n- docs/a.md: not-involved: 不涉及\n"
+        "- ./docs/b.md: not-involved:   前缀与尾空白归一化  \n", encoding="utf-8")
+    declares, bad = parse_mech_declares(root, tasks_root, "T-1")
+    assert bad is None
+    assert declares == {"docs/a.md": "不涉及", "docs/b.md": "前缀与尾空白归一化"}
+    # 垃圾行 ⇒ fail-closed 带行号原文（RFC-20261123-01 §2.2）
+    p.write_text("- docs/a.md: not-involved: x\ngarbage line\n", encoding="utf-8")
+    declares, bad = parse_mech_declares(root, tasks_root, "T-1")
+    assert declares == {} and bad is not None and "第 2 行" in bad and "garbage" in bad
+    # 缺理由 ⇒ fail-closed 点名
+    p.write_text("- docs/a.md: not-involved:\n", encoding="utf-8")
+    _declares, bad = parse_mech_declares(root, tasks_root, "T-1")
+    assert bad is not None and "缺理由" in bad
+
+
+def test_mechanism_verdict_unparsable_short_circuits(tmp_path: Path) -> None:
+    root = _git_repo(tmp_path)
+    _mech_doc(root, "docs/architecture/a.md", ["backend/**"])
+    (root / "backend" / "x.py").parent.mkdir(parents=True)
+    (root / "backend" / "x.py").write_text("x\n", encoding="utf-8")
+    d = root / ".atlas" / "tasks" / "T-1"
+    d.mkdir(parents=True)
+    (d / "mech-declares.md").write_text("garbage\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+
+    v = mechanism_declaration_verdict(root, ["backend/x.py"],
+                                      root / ".atlas" / "tasks", "T-1")
+    assert len(v) == 1 and v[0]["kind"] == "unparsable_declares", v
+    assert "garbage" in v[0]["hits"][0]
+
+
+def test_mechanism_verdict_excludes_atlas_staging(tmp_path: Path) -> None:
+    """**M206**：摘判决面 `.atlas/` 前缀过滤 ⇒ 本测试红（负断言，门册 C-15）。
+
+    卡产物自身（含 mech-declares.md）入暂存不得触发触及——无过滤时 `.atlas/**`
+    类 glob 永久命中申报文件 ⇒ 每轮必红的卡死循环（首轮评审 Blocker-1 场景）。"""
+    root = _git_repo(tmp_path)
+    _mech_doc(root, "docs/architecture/ledger.md", [".atlas/**"])
+    d = root / ".atlas" / "tasks" / "T-1"
+    d.mkdir(parents=True)
+    (d / "mech-declares.md").write_text("", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+
+    # 卡产物自身入暂存不得触发触及（首轮 Blocker-1①）：
+    # 无 .atlas 过滤时 .atlas/** 会永久命中申报文件自身 ⇒ 卡死循环
+    v = mechanism_declaration_verdict(root, [".atlas/tasks/T-1/mech-declares.md"],
+                                      root / ".atlas" / "tasks", "T-1")
+    assert v == []
+
+
+def test_mechanism_verdict_pending_exempt_but_bad_glob_not(tmp_path: Path) -> None:
+    root = _git_repo(tmp_path)
+    _mech_doc(root, "docs/architecture/new.md", ["pending"])
+    _mech_doc(root, "docs/architecture/wide.md", ["src/**", "src/*.py"])
+    (root / "src" / "a.py").parent.mkdir(parents=True)
+    (root / "src" / "a.py").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+
+    v = mechanism_declaration_verdict(root, ["src/a.py"], root / ".atlas" / "tasks", "T-1")
+    assert any(x["kind"] == "invalid_paths" and x["doc"] == "docs/architecture/wide.md"
+               for x in v)  # 词表非法不豁免（pending 豁免的是覆盖判定非词形，Major-3）
+    assert not any(x["kind"] == "undeclared" and x["doc"] == "docs/architecture/new.md"
+                   for x in v)  # pending 覆盖判定豁免不变
+    assert any(x["kind"] == "undeclared" and x["doc"] == "docs/architecture/wide.md"
+               for x in v)
+
+
+def test_mechanism_dead_declare_warn(tmp_path: Path) -> None:
+    root = _git_repo(tmp_path)
+    _mech_doc(root, "docs/architecture/a.md", ["backend/**"])
+    d = root / ".atlas" / "tasks" / "T-1"
+    d.mkdir(parents=True)
+    (d / "mech-declares.md").write_text(
+        "- docs/architecture/a.md: not-involved: ok\n"
+        "- docs/architecture/gone.md: not-involved: 篇已改名\n", encoding="utf-8")
+
+    w = mechanism_dead_declare_findings(root, root / ".atlas" / "tasks", "T-1")
+    assert len(w) == 1 and "gone.md" in w[0] and "申报死行" in w[0]
+    # 不可解析 ⇒ 沉默（判决位已 fail-closed 出红，不重复出声）
+    (d / "mech-declares.md").write_text("garbage\n", encoding="utf-8")
+    assert mechanism_dead_declare_findings(root, root / ".atlas" / "tasks", "T-1") == []
 
 
 def test_mechanism_glob_engine_agrees_with_context() -> None:
@@ -1015,6 +1129,49 @@ def test_mechanism_glob_engine_agrees_with_context() -> None:
         assert mine == theirs, (glob, path, mine, theirs)
     assert _mech_glob_regex("a/**").fullmatch("a/b/c.py") is not None
     assert _mech_glob_regex("a/**").fullmatch("ab.py") is None
+
+
+def _mech_gate_project(tmp_path: Path) -> Path:
+    root = _git_repo(tmp_path)
+    _mech_doc(root, "docs/architecture/trace.md", ["backend/**"])
+    (root / "backend" / "svc.py").parent.mkdir(parents=True)
+    (root / "backend" / "svc.py").write_text("x = 1\n", encoding="utf-8")
+    # 只暂存代码文件：机制篇自身不入暂存（入了就是 D4 隐式 updated，判 PASS）
+    subprocess.run(["git", "add", "backend/svc.py"], cwd=root,
+                   check=True, capture_output=True)
+    return root
+
+
+def test_verify_mechanism_gate_blocks_before_review(tmp_path: Path) -> None:
+    """**M205**：摘 `cmd_verify` 前置带的 `mechanism_declaration_verdict` 调用 ⇒ 本测试红
+    （负断言，门册 C-15）。门拦截 rc1 + stderr 申报模板/落点 + attempts 记账 charged。"""
+    root = _mech_gate_project(tmp_path)
+    p = run(root, "verify", "--unit", "T-1")
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "FAIL（机制文档）" in p.stderr
+    assert "not-involved" in p.stderr and "mech-declares.md" in p.stderr  # 申报模板 + 落点（Major-2）
+    rows, _bad = load_attempts(root / ".atlas" / "tasks", "T-1")
+    assert rows and rows[-1]["cause"] == "mechanism_undeclared"
+    assert rows[-1]["charged"] is True  # D2：扣预算（词表定义 = 需实现侧动作）
+
+
+def test_verify_mechanism_gate_json_shape(tmp_path: Path) -> None:
+    root = _mech_gate_project(tmp_path)
+    p = run(root, "verify", "--unit", "T-1", "--json")
+    assert p.returncode == 1, p.stdout + p.stderr
+    payload = json.loads(p.stdout)
+    assert payload["status"] == "gate_fail"
+    assert payload["cause"] == "mechanism_undeclared"
+    assert payload["violations"][0]["doc"] == "docs/architecture/trace.md"
+    assert payload["violations"][0]["kind"] == "undeclared"
+
+
+def test_verify_dry_run_skips_mechanism_verdict(tmp_path: Path) -> None:
+    root = _mech_gate_project(tmp_path)
+    p = run(root, "verify", "--unit", "T-1", "--dry-run")
+    assert "FAIL（机制文档）" not in p.stderr
+    rows, _bad = load_attempts(root / ".atlas" / "tasks", "T-1")
+    assert rows == []  # dry-run 不判决不记账（与前置带同契）
 
 
 # ---------------------------------------------------------------------------
@@ -1504,7 +1661,7 @@ def test_mechanism_doc_dead_test_anchor_warns(tmp_path) -> None:
         "scripts/foo.py",                  # 形态非法：非 tests/ 前缀
     ])
     subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
-    findings = mechanism_doc_findings(root, [])
+    findings = mechanism_doc_findings(root)
     assert any("死锚" in f and "tests/test_gone.py" in f for f in findings)
     assert not any("test_local.py" in f and "死锚" in f for f in findings)
     assert any("形态非法" in f and "scripts/foo.py" in f for f in findings)
@@ -1515,7 +1672,7 @@ def test_mechanism_doc_pending_still_checks_anchor(tmp_path) -> None:
     root = _git_repo(tmp_path)
     _mech_doc_with_anchors(root, "docs/architecture/new.md", ["pending"],
                            ["tests/test_missing.py"])
-    findings = mechanism_doc_findings(root, ["anything.py"])
+    findings = mechanism_doc_findings(root)
     assert any("死锚" in f and "tests/test_missing.py" in f for f in findings)
     assert not any("触及" in f or "疑似死 paths" in f for f in findings)  # paths 面豁免不变
 
@@ -1527,4 +1684,4 @@ def test_mechanism_doc_anchor_free_lines_stay_silent(tmp_path) -> None:
     (root / "backend" / "a.py").write_text("x\n", encoding="utf-8")
     _mech_doc(root, "docs/architecture/plain.md", ["backend/**"])
     subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
-    assert mechanism_doc_findings(root, []) == []
+    assert mechanism_doc_findings(root) == []

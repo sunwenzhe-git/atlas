@@ -4,6 +4,10 @@
 
 ---
 
+## [Unreleased]
+
+- feat(workflow): 机制文档触及申报判决门（`RFC-20261123-01`，tech-proposal-reviewer 评审「修后通过」2 Blocker + 4 Major + 5 Minor 全采纳）——机制篇触及面由 WARN 提示升格为**申报制 FAIL 门**（verify 前置判定带，审查启动前）：暂存 diff `--no-renames`（剔除 `.atlas/` 前缀）× 篇 `mechanism-paths:` 交集 ∧ 篇未跟改 ∧ 卡内无 `not-involved: <理由>` 申报 ⇒ FAIL rc1 + 扣预算 `mechanism_undeclared`（cause 词表 +2 双成员，模块 docstring 定义同步改为「需实现侧动作才能过」）；词表两档机器化逆紧（字面 / `dir/**`，裸 `**`/中段 `**`/单星/`?` 拒）⇒ FAIL `mechanism_paths_invalid`（`pending` 豁免覆盖判定不豁免词形）；申报面 = 卡目录 `mech-declares.md`（文法 fail-closed，零新 CLI 参数，随卡归档可审计）；FAIL 文案带可复制申报行 + 解析后精确落点；触及提示 WARN 同日退役（playground 装配态实测 B1 实证「篇 ∈ 暂存照样出声」——提示不判同步，直接翻转即 100% 误拦；升格兑现 = 设计变更非留样张数据，如实登记）；提示族残部保留审查后 WARN（死 paths / 词表点名 / 死测试锚 + 新增申报死行）；`--dry-run` 不判决不记账、`--json` 输出 `gate_fail` 形态；gates.md 门册 C-15 + 双变异钉 M205/M206；`tests/test_atlas_workflow.py` 判决族 +14；single-source §1/§4 升格兑现记与纪律④改写；RFC-20261122-04 §6 手写区文本升级注记（update 推不到须人工贴）
+
 ## [v0.4.0-beta.6] - 2026-11-22
 
 - feat(review): 行级锚定测量面第一期（`RFC-20261122-08`，双评审修后通过 + 复核五处方全落）——实例⑤评审产物行号的确定性测量面：派工包骨架加 `existing_code` 逐字锚字段 + 产物段两指令（含 heart→consequences→glue 排序学说 rider）；算法单源 `_support/line_anchor.py`（OCR resolver.go 同款移植：L1 diff hunk 新侧〔hunk 头计数器推算〕→ L2 全工作树回退；anchored 谓词 = 区间相交含子集；diff 基准三模式 staged=`git diff --cached`/range/delta，一律 `-U0 --no-renames`）；`cli_review_convert.py` 写盘链尾落 `anchoring-stats.json` 六态统计（anchored/mismatch/unresolved/unanchored(legacy|no_field)/unresolvable）+ stderr WARN——**WARN 不置红**：不改写行号、不进指纹、v4 判收链零变化、永不 die（写失败降级 WARN）；gates.md 观察面登记行（升档 = 连续 ≥2 判据窗 `mismatch/(anchored+mismatch+unresolved) > 10%`；摘除 = 连续 ≥3 窗全零；聚合探针建时点 = 第 3 判据窗或任一窗漂移信号先到为准）；`tests/test_line_anchor.py` 10 用例 + **M203/M204** 变异四段验证；棘轮 tests 88/内核 29/门册 192 行/转换器 483 行/变异上限 M204；**首窗实测**（ANCHOR-W1 playground 真实四阶段链）：anchored 2/2、R-2 相交谓词实战验证、独立审查抓到注入违例判收 FAIL 正确（留档 `BENCHMARK-20261122-08-first-anchor-window`）

@@ -43,7 +43,8 @@ from _support.workflow_plan import (  # noqa: E402
 )
 from _support.workflow_verify import (  # noqa: E402
     coverage_matrix_findings, requirement_root_findings, read_requirement_status,
-    mechanism_doc_findings
+    mechanism_doc_findings, mechanism_dead_declare_findings,
+    mechanism_declaration_verdict, discover_mechanism_docs
 )
 from _support.workflow_dispatch import (  # noqa: E402
     get_next_runnable_task, dispatch_task, DispatchError
@@ -279,6 +280,30 @@ def _next_review_round(root: Path, unit: str) -> int:
     return max(rounds) + 1 if rounds else 1
 
 
+def _mech_verdict_lines(violations: list[dict]) -> list[str]:
+    """判决 FAIL 人读行（RFC-20261123-01 §2.2）：每条带出路 + 可复制申报行/落点
+    （治手打路径口径分歧与 run 子卡解析后「申报放错目录」）。"""
+    lines: list[str] = []
+    for v in violations:
+        if v["kind"] == "undeclared":
+            preview = "、".join(v["hits"][:3]) + ("…" if len(v["hits"]) > 3 else "")
+            lines.append(
+                f"{v['doc']} 可能被本次改动触及（命中 {len(v['hits'])} 文件：{preview}）"
+                f"但未跟改且未申报——查看该机制篇是否跟改：跟改后一并暂存，或在 "
+                f"{v['declare_path']} 加行：{v['template']}")
+        elif v["kind"] == "invalid_paths":
+            bad = ", ".join(repr(g) for g in v["hits"])
+            lines.append(
+                f"{v['doc']} 的 mechanism-paths 含非法 glob {bad}："
+                "词表只认字面路径与 dir/**（两档，RFC-20261123-01）——修正后重跑")
+        else:
+            lines.append(
+                f"申报文件不可解析（fail-closed）：{v['hits'][0]}——修正 "
+                f"{v['declare_path']}（合法行 = `- <篇路径>: not-involved: <理由>`，"
+                "RFC-20261123-01）")
+    return lines
+
+
 def cmd_verify(args: argparse.Namespace, root: Path) -> int:
     if not args.unit:
         return die("verify 步骤必须指定 --unit <ID>")
@@ -303,6 +328,29 @@ def cmd_verify(args: argparse.Namespace, root: Path) -> int:
                 "——修复实现后重试；确需放宽改 .atlas/config.yaml 的 "
                 "workflow.max_verify_attempts；直跑 `atlas review --staged` 属绕行面（人工责任）")
     round_no = getattr(args, "round", None) or _next_review_round(root, args.unit)
+    # 机制文档触及申报判决（RFC-20261123-01，前置判定带）：触及未跟改未申报 /
+    # mechanism-paths 词表非法 ⇒ FAIL rc1 + 扣预算，拦在审查启动前（忘申报不烧
+    # 一轮审查 token）。dry-run 不判决不记账不出红（与 staged_empty/预算门同契）。
+    mech_docs = None
+    if not args.dry_run:
+        mech_docs = discover_mechanism_docs(root)
+        violations = mechanism_declaration_verdict(
+            root, _staged_files(root), tasks_root, args.unit, docs=mech_docs)
+        if violations:
+            cause = ("mechanism_paths_invalid"
+                     if any(v["kind"] == "invalid_paths" for v in violations)
+                     else "mechanism_undeclared")
+            record_attempt(tasks_root, args.unit, cmd="verify", cause=cause)
+            for line in _mech_verdict_lines(violations):
+                print(f"FAIL（机制文档）: {line}", file=sys.stderr)
+            if args.json:
+                print(json.dumps({"unit": args.unit, "status": "gate_fail",
+                                  "cause": cause,
+                                  "violations": [{"doc": v["doc"], "kind": v["kind"],
+                                                  "hits": v["hits"]}
+                                                 for v in violations]},
+                                 ensure_ascii=False, indent=2))
+            return 1
     cmd = [
         sys.executable, str(review_script),
         "--root", str(root),
@@ -328,10 +376,13 @@ def cmd_verify(args: argparse.Namespace, root: Path) -> int:
             print(f"WARN（需求条目覆盖）: {finding}", file=sys.stderr)
         for finding in requirement_root_findings(root):
             print(f"WARN（需求落点）: {finding}", file=sys.stderr)
-        # 机制文档机器面（RFC-20261122-04，提示语族 WARN）：暂存区 diff ×
-        # 各篇 frontmatter `mechanism-paths:` 交集出声 + 疑似死 paths，
-        # 措辞锁「查看该机制篇是否跟改」，不改退出码。
-        for finding in mechanism_doc_findings(root, _staged_files(root)):
+        # 机制文档提示族残部（RFC-20261122-04 + RFC-20261123-01）：触及已升格
+        # 申报判决门（前置判定带）；此处只剩死 paths / 词表点名 / 死测试锚 /
+        # 申报死行 WARN，不改退出码。
+        for finding in mechanism_doc_findings(root, docs=mech_docs):
+            print(f"WARN（机制文档）: {finding}", file=sys.stderr)
+        for finding in mechanism_dead_declare_findings(root, tasks_root, args.unit,
+                                                       docs=mech_docs):
             print(f"WARN（机制文档）: {finding}", file=sys.stderr)
     # 失败入记账（RFC-20261122-07 双轨）：rc==1 = 报告（含 --check-cmd 并轨段）未过
     # ⇒ 扣预算；rc==2 = 会话待审 PENDING（审查未执行）⇒ 不扣；其余原生码归一为 1。

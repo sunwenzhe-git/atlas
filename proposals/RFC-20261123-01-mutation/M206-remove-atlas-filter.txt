@@ -1,0 +1,48 @@
+# 变异：M206-remove-atlas-filter
+对象：/Users/sunwenzhe/Desktop/atlas/_support/workflow_verify.py
+
+## 还原校验
+原 sha256 = b29400b9cf08d7d636d82bd89f3859f59583cbfa3cc26b5c8dfe782b82428e84
+
+## 基线（期望 GREEN）
+退出码 0
+```
+.                                                                        [100%]
+1 passed, 93 deselected in 0.10s
+```
+
+## 注入 diff（证据必需项：没有它，本证据止于作者自述）
+```diff
+--- workflow_verify.py（原）
++++ workflow_verify.py（注入后）
+@@ -576,7 +576,7 @@
+     norm_changed = [
+         (c[2:] if c.startswith("./") else c).strip().replace("\\", "/")
+         for c in staged_files if str(c).strip()]
+-    norm_changed = [c for c in norm_changed if not c.startswith(".atlas/")]
++    norm_changed = [c for c in norm_changed]  # M206: atlas filter removed
+     for rel, _globs, bad, _pending in docs:
+         if bad:
+             violations.append({
+
+```
+
+## 注入后（期望 RED）
+退出码 1
+```
+tests/test_atlas_workflow.py:1079: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_atlas_workflow.py::test_mechanism_verdict_excludes_atlas_staging
+1 failed, 93 deselected in 0.14s
+```
+
+## 还原校验（续）
+后 sha256 = b29400b9cf08d7d636d82bd89f3859f59583cbfa3cc26b5c8dfe782b82428e84
+一致 = True
+
+## 还原后（期望 GREEN）
+退出码 0
+```
+.                                                                        [100%]
+1 passed, 93 deselected in 0.11s
+```

@@ -2,9 +2,9 @@
 """workflow 失败原因封闭词表 + 尝试预算 + 退出码分配（RFC-20261122-07，单源模块）。
 
 三件事：
-1. **cause 封闭词表（双轨）**——`charged`（扣预算）=「实现侧需改代码才能过」的失败；
-   `uncharged`（不扣）= 前置态 / 流程顺序 / 环境 / 留痕。词表外一律 `unclassified`
-   保守扣（宁可误拦不可误放，评审 E 轮 fallback 规则）。
+1. **cause 封闭词表（双轨）**——`charged`（扣预算）=「需实现侧动作（改码 / 改文档 /
+   履行申报义务）才能过」的失败；`uncharged`（不扣）= 前置态 / 流程顺序 / 环境 / 留痕。
+   词表外一律 `unclassified` 保守扣（宁可误拦不可误放，评审 E 轮 fallback 规则）。
 2. **退出码封闭分配**——0=OK / 1=判定失败·门红 / 2=用法或前置不满足 / 3=预算超限暂停 /
    130=中断（SIGINT 信号死亡天然产生，无 die() 路径发出；SIGTERM=143 落不分配区）。
    4–129 与 131+ 不分配。**同一位点（如 finish 的 FinishError）不同 cause 不同码**：
@@ -47,6 +47,8 @@ CAUSES: dict[str, bool] = {
     "scope_stale": True,             # finish：v4 内容封口红（实审内容已变 / 产物误入暂存面）
     "freshness_fail": True,          # finish：结构事实新鲜度门红（RFC-20261122-05）
     "e2e_red": True,                 # finish：E2E 关联用例 red（agent-pointer 口径）
+    "mechanism_undeclared": True,    # verify：机制篇触及未跟改未申报（RFC-20261123-01）
+    "mechanism_paths_invalid": True,  # verify：机制篇 mechanism-paths 词表非法（RFC-20261123-01）
     # 不扣预算：前置态 / 顺序 / 环境 / 留痕
     "staged_empty": False,           # verify：实现未暂存（前置态）
     "no_task_card": False,           # 对账本外 / 非法 / 越界任务收口或派发

@@ -6,9 +6,12 @@
 把条目覆盖缺口以 WARN 行打到 stderr，不改退出码。
 契约落点：`shared/single-source.md` §4「需求原文优先序与条目覆盖」。
 
-机制文档机器面（RFC-20261122-04）：`mechanism_doc_findings`（触及提示 + 疑似死
-paths，**提示语措辞**——与缺口族 #71–#74 分族，防误升格；契约落点
-`shared/single-source.md` §1「机制叙事文档」行）。
+机制文档机器面（RFC-20261122-04 + RFC-20261123-01 升格）：触及面已升格为
+**申报判决门**（`mechanism_declaration_verdict`，verify 前置判定带 FAIL rc1+扣预算，
+触及未跟改未申报 / 词表非法 glob；申报面 = 卡目录 `mech-declares.md`）；
+`mechanism_doc_findings` 只剩审查后 WARN 提示族残部（疑似死 paths / 词表点名 /
+死测试锚——与缺口族 #71–#74 分族；契约落点 `shared/single-source.md` §1
+「机制叙事文档」行与 §4 提示族条款）。
 
 判据：
 - 卡目录无 `requirement-items.md` ⇒ 非需求驱动卡，沉默（不制造假阳性）；
@@ -304,12 +307,21 @@ def requirement_root_findings(root: Path) -> list[str]:
 
 MECHANISM_PATHS_KEY = "mechanism-paths"
 MECHANISM_PENDING = "pending"  # 冷启动豁免标记（评审 s1）：新篇首跑不判
-MECHANISM_WARN_CAP = 5  # 单次 verify 点名上限（评审 M3）：超出汇总一行计数
+MECHANISM_WARN_CAP = 5  # 提示族点名上限（评审 M3）：触及提示退役后由死 paths/死锚族沿用语义
 
 _MECH_FM_RE = re.compile(r"\A\ufeff?---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n?", re.DOTALL)
 _MECH_KEY_RE = re.compile(r"^mechanism-paths[：:]\s*(.*)$")
 _MECH_ITEM_RE = re.compile(r"^-\s+(.+)$")
-_MECH_SINGLE_STAR_RE = re.compile(r"(?<!\*)\*(?!\*)")
+_MECH_DECLARE_RE = re.compile(r"^-\s+(\S+):\s*not-involved:\s*(.*)$")
+
+
+def _mech_glob_wellformed(glob: str) -> bool:
+    """两档词表（RFC-20261123-01 §2.3）：字面路径（无 `*`/`?`）或 `dir/**`
+    （`**` 恰在末尾且前缀字面）。裸 `**`、`**/x`、中段 `**`、单星、`?` 均非法。"""
+    if "*" not in glob and "?" not in glob:
+        return True
+    return (glob.endswith("/**") and len(glob) > 3
+            and "*" not in glob[:-3] and "?" not in glob[:-3])
 _MECH_PRUNE_DIRS = {".git", "node_modules", "__pycache__", ".atlas", ".atlas-run",
                     ".adapter-out", "dist", "build"}
 
@@ -363,8 +375,8 @@ def _split_mechanism_frontmatter(text: str) -> tuple[list[str], list[str]]:
     """解析文件头 frontmatter 的 `mechanism-paths:` 值，返回 (合法 globs, 非法 globs)。
 
     只认文件首部 `---` 围栏块（块列表 `- item` / 行内标量 / 行内 `[a, b]`）；
-    含单星（`*` 非 `**`）的条目判非法——防宽 glob 误报（评审 M3：
-    机制篇词表只认字面段与 `dir/**`）。"""
+    词表两档（RFC-20261123-01 §2.3，逆紧：中段 `**` 自此拒收）——字面路径或
+    `dir/**`，其余（单星/裸 `**`/中段 `**`/`?`）判非法。"""
     m = _MECH_FM_RE.match(text)
     if not m:
         return [], []
@@ -396,7 +408,7 @@ def _split_mechanism_frontmatter(text: str) -> tuple[list[str], list[str]]:
     good: list[str] = []
     bad: list[str] = []
     for g in raw:
-        (bad if _MECH_SINGLE_STAR_RE.search(g) else good).append(g)
+        (bad if not _mech_glob_wellformed(g) else good).append(g)
     return good, bad
 
 
@@ -465,58 +477,143 @@ def _globs_alive(universe: list[str], globs: list[str]) -> bool:
     return False
 
 
-def mechanism_doc_findings(root: Path, changed_files: list[str]) -> list[str]:
-    """机制文档机器面（RFC-20261122-04，WARN 纪律面；调用方以 WARN 呈现）。
+def mechanism_doc_findings(
+        root: Path,
+        docs: list[tuple[str, list[str], list[str], bool]] | None = None,
+) -> list[str]:
+    """机制文档提示族残部（RFC-20261122-04，WARN 纪律面；调用方以 WARN 呈现）。
 
-    - 触及提示（**提示语措辞**，非缺陷措辞）：改动文件 × 各篇 `mechanism-paths`
-      交集 ⇒ WARN 点名（命中数 + 前 3 预览，3 秒可判误报）；
+    触及提示已退役升格为申报判决门（RFC-20261123-01，前置判定带 FAIL）；
+    本函数只剩审查后 WARN 残部（红轮不可见 = 既有语义不变）：
+
     - 死 paths：某篇全部 globs 对仓内文件全集零命中 ⇒ WARN「疑似死 paths」
       （治 paths 自身裸奔——代码整目录搬空后永不命中的静默死，评审 M2）；
+    - 词表非法 glob 逐条点名（两档拒收，RFC-20261123-01 §2.3）；
     - 死测试锚（RFC-20261122-07 §3.2.2 提示族扩展）：判据行 `〔测:…〕` 锚指向的
       测试文件不存在 ⇒ WARN（可选但存活，只在已写锚的行上出声）；
-    - `pending` 冷启动豁免（paths 不判；测试锚仍判——锚存活与 paths 无关）；
-      单星 glob 逐条点名（词表拒收）；
-    - 点名上限 `MECHANISM_WARN_CAP`，超出汇总一行；仓内无机制文档 ⇒ 沉默。"""
+    - `pending` 冷启动豁免（paths 覆盖不判；测试锚仍判——锚存活与 paths 无关；
+      词表非法照点名）；
+    - 仓内无机制文档 ⇒ 沉默。"""
     root = Path(root)
-    docs = discover_mechanism_docs(root)
+    docs = docs if docs is not None else discover_mechanism_docs(root)
     if not docs:
         return []
     universe = _tracked_files(root)
-    norm_changed = [
-        (c[2:] if c.startswith("./") else c).strip().replace("\\", "/")
-        for c in changed_files if str(c).strip()]
     findings: list[str] = []
-    named = 0
-    overflow = 0
     for rel, globs, bad, pending in docs:
         for g in bad:
             findings.append(
-                f"{rel} 的 {MECHANISM_PATHS_KEY} 含单星 glob {g!r}："
-                "词表只认字面路径与 dir/**（防宽 glob 误报，RFC-20261122-04）")
+                f"{rel} 的 {MECHANISM_PATHS_KEY} 含非法 glob {g!r}："
+                "词表只认字面路径与 dir/**（两档，RFC-20261123-01）")
         if pending:
             continue
         if globs and universe and not _globs_alive(universe, globs):
             findings.append(
                 f"{rel} 的 {MECHANISM_PATHS_KEY} 指向零个仓内文件（疑似死 paths）："
                 "核对代码是否已搬迁或删除（RFC-20261122-04）")
-        if not globs:
-            continue
-        hits = [c for c in norm_changed if any(_mech_hit(c, g) for g in globs)]
-        if hits:
-            named += 1
-            if named <= MECHANISM_WARN_CAP:
-                preview = "、".join(hits[:3]) + ("…" if len(hits) > 3 else "")
-                findings.append(
-                    f"{rel} 可能被本次改动触及（命中 {len(hits)} 文件：{preview}）"
-                    "——查看该机制篇是否跟改")
-            else:
-                overflow += 1
-    if overflow:
-        findings.append(
-            f"另有 {overflow} 篇机制文档命中本次改动"
-            f"（超出单次点名上限 {MECHANISM_WARN_CAP}，略）")
     findings.extend(_dead_anchor_findings(root, docs))
     return findings
+
+
+def parse_mech_declares(
+        root: Path, tasks_root: Path, unit: str,
+) -> tuple[dict[str, str], str | None]:
+    """解析卡目录 `mech-declares.md` 申报面（RFC-20261123-01 §2.2 文法）。
+
+    合法行恰三类：空行 / `#` 注释 / `- <篇相对路径>: not-involved: <非空白理由>`；
+    存在任何其余非空行 ⇒ fail-closed（返回不可解析描述，含行号与原文）。
+    路径归一化 = strip 前导 `./`、`\\`→`/`（与暂存集同款）。缺文件 ⇒ ({}, None)。"""
+    path = Path(tasks_root) / unit / "mech-declares.md"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}, None
+    declares: dict[str, str] = {}
+    for no, line in enumerate(text.splitlines(), 1):
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        m = _MECH_DECLARE_RE.match(s)
+        if not m:
+            return {}, f"第 {no} 行不合法：{s}"
+        reason = m.group(2).strip()
+        if not reason:
+            return {}, f"第 {no} 行申报缺理由：{s}"
+        doc = m.group(1).replace("\\", "/")
+        if doc.startswith("./"):
+            doc = doc[2:]
+        declares[doc] = reason
+    return declares, None
+
+
+def mechanism_declaration_verdict(
+        root: Path,
+        staged_files: list[str],
+        tasks_root: Path,
+        unit: str,
+        docs: list[tuple[str, list[str], list[str], bool]] | None = None,
+) -> list[dict]:
+    """机制文档触及申报判决（RFC-20261123-01，FAIL 面；前置判定带调用）。
+
+    - 词表非法 glob ⇒ kind=invalid_paths（`pending` 篇不豁免——词形缺陷非覆盖判定）；
+    - 申报文件不可解析 ⇒ kind=unparsable_declares（fail-closed，其余判全部短路）；
+    - 触及未跟改未申报 ⇒ kind=undeclared（`D` 判据 = 篇 ∈ 暂存；`A` = 申报映射）。
+
+    判决面剔除 `.atlas/` 前缀暂存路径（卡产物自身入暂存不得触发触及）。
+    返回 violation dict 列表（kind/doc/hits/declare_path/template），空 = PASS。"""
+    root = Path(root)
+    docs = docs if docs is not None else discover_mechanism_docs(root)
+    if not docs:
+        return []
+    declare_path = Path(tasks_root) / unit / "mech-declares.md"
+    declares, unparsable = parse_mech_declares(root, tasks_root, unit)
+    violations: list[dict] = []
+    if unparsable:
+        violations.append({
+            "kind": "unparsable_declares", "doc": "", "hits": [unparsable],
+            "declare_path": str(declare_path), "template": ""})
+        return violations
+    norm_changed = [
+        (c[2:] if c.startswith("./") else c).strip().replace("\\", "/")
+        for c in staged_files if str(c).strip()]
+    norm_changed = [c for c in norm_changed if not c.startswith(".atlas/")]
+    for rel, _globs, bad, _pending in docs:
+        if bad:
+            violations.append({
+                "kind": "invalid_paths", "doc": rel, "hits": list(bad),
+                "declare_path": str(declare_path), "template": ""})
+    for rel, globs, _bad, pending in docs:
+        if pending or not globs:
+            continue
+        hits = [c for c in norm_changed if any(_mech_hit(c, g) for g in globs)]
+        if hits and rel not in norm_changed and rel not in declares:
+            violations.append({
+                "kind": "undeclared", "doc": rel, "hits": hits,
+                "declare_path": str(declare_path),
+                "template": f"- {rel}: not-involved: <理由>"})
+    return violations
+
+
+def mechanism_dead_declare_findings(
+        root: Path,
+        tasks_root: Path,
+        unit: str,
+        docs: list[tuple[str, list[str], list[str], bool]] | None = None,
+) -> list[str]:
+    """申报死行提示（RFC-20261123-01 §2.2，WARN 提示族；审查通过后出声）。
+
+    申报行指向零发现篇（不存在/已改名）⇒ WARN；缺文件/不可解析 ⇒ 沉默
+    （不可解析已由判决位 fail-closed 出红，此处不重复）。"""
+    root = Path(root)
+    docs = docs if docs is not None else discover_mechanism_docs(root)
+    known = {rel for rel, _g, _b, _p in docs}
+    declares, unparsable = parse_mech_declares(root, tasks_root, unit)
+    if unparsable:
+        return []
+    return [
+        f"{path} 的申报行无对应机制篇（疑似申报死行）：核对篇是否已改名或删除"
+        "（RFC-20261123-01）"
+        for path in declares if path not in known]
 
 
 # ───────────── 判据行测试锚（RFC-20261122-07 §3.2.2，可选但存活）─────────────
