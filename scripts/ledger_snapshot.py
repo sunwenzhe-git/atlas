@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """账本单一源：派生数字生成器（2026-11-17 账本设计案 方案乙 · 步 1）。
 
-问题定义（`2026-11-17/design-defect-audit` F1）：同一条计数事实在 `shared/gates.md` /
+问题定义（`archive/2026-11-17/design-defect-audit` F1）：同一条计数事实在 `shared/gates.md` /
 `docs/map/index.md` / `atlas-map.html` / 章节散文里有多份手抄副本，而门只锁其中一部分句式。
 实测「门全绿但账本自相矛盾」三例：版本串 7 处停在旧版、`docs/map/gates.md` 的「77 个测试文件」
 与实况 80 不符、同文件 M162/M164 与实际最大 M176b 不符。
