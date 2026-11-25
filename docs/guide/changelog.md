@@ -4,6 +4,10 @@
 
 ---
 
+## [v0.4.0-beta.10] - 2026-11-26
+
+- fix(package): npm 分发面显式排除 `__pycache__` 与 Python 字节码，新增打包干跑回归，避免发布本机解释器缓存。
+
 ## [v0.4.0-beta.9] - 2026-11-26
 
 - fix(workflow): 缺陷修复回推与 canonical 落点封印（issues #75/#76，`RFC-20261125-03`）——新增 `atlas bug` 的 bootstrap/影响面/签字回推/反向查询，`record.json` 存审计元数据与 append-only 历史；finish 强制 staged 实现指纹、index/worktree 一致、产物暂存与 `review.json.bug_backflow` 独立锚，`--force` 不绕；新增 `validate_bug_ledger` 拒绝 `.atlas/bugs/`、资产根缺陷 bugs 与 `requirements/<slug>/bugs/`；staged review scope 改哈希 index blob，write_claim 创建后写失败自动清理。

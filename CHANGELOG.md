@@ -4,7 +4,7 @@
 
 ---
 
-## [Unreleased]
+## [v0.4.0-beta.10] - 2026-11-26
 
 - fix(package): npm 分发面显式排除 `__pycache__` 与 Python 字节码，新增打包干跑回归，避免发布本机解释器缓存。
 
