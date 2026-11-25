@@ -74,6 +74,30 @@ def first_table(text: str, header_needles: tuple[str, ...]) -> list[list[str]] |
     return None
 
 
+def claim_items_table(text: str) -> list[list[str]] | None:
+    """只认表头含精确 ID 与「来源」或「原文」的条目表，避免正文子串误命中。"""
+    lines = strip_fences(text).splitlines()
+    for start, line in enumerate(lines):
+        if not line.lstrip().startswith("|"):
+            continue
+        header = [c.strip() for c in line.strip().strip("|").split("|")]
+        if not header or header[0] != "ID" or not ({"来源", "原文"} & set(header)):
+            continue
+        rows: list[list[str]] = []
+        for raw in lines[start:]:
+            s = raw.strip()
+            if not s.startswith("|"):
+                if rows:
+                    break
+                continue
+            cells = [c.strip() for c in s.strip("|").split("|")]
+            if all(set(c) <= set("-: ") for c in cells):
+                continue
+            rows.append(cells)
+        return rows or None
+    return None
+
+
 def read_requirement_status(req_root: Path) -> str | None:
     """读需求落点首部状态字段；围栏示例不参与。"""
     return read_requirement_fields(req_root).get("状态")
@@ -237,33 +261,48 @@ def requirement_root_findings(root: Path) -> list[str]:
             continue
         entry = per_root.setdefault(
             req_root, {"claimed": set(), "cards": [], "any_claim": False,
-                       "findings": []})
+                       "claim_invalid": [], "findings": []})
         t_dir = p.parent
         items_path = t_dir / ITEMS_FILE
         if items_path.is_file():
-            rows = first_table(
-                strip_fences(items_path.read_text(encoding="utf-8", errors="replace")),
-                ("来源",))
-            if rows and any("来源" in c for c in rows[0]):
-                src_idx = next(i for i, c in enumerate(rows[0]) if "来源" in c)
+            rows = claim_items_table(items_path.read_text(encoding="utf-8", errors="replace"))
+            if rows and "来源" in rows[0]:
+                src_idx = next(i for i, c in enumerate(rows[0]) if c == "来源")
                 for r in rows[1:]:
                     if not (r and r[0].strip()):
                         continue
                     entry["any_claim"] = True
                     m = SOURCE_REF_RE.match(r[src_idx].strip() if len(r) > src_idx else "")
                     if m:
-                        source_root = normalize_requirement_ref(root, m.group("path"))
+                        if r[0].strip() != m.group("id"):
+                            entry["claim_invalid"].append(
+                                f"任务 {meta.get('id', '?')} 领取 ID {r[0].strip()!r} "
+                                f"与来源 {m.group('id')!r} 不一致")
+                        source_path = re.sub(r"/(?:items|requirement)\.md$", "", m.group("path"))
+                        source_root = normalize_requirement_ref(root, source_path)
                         if source_root == req_root:
                             entry["claimed"].add(m.group("id"))
                         else:
                             entry["findings"].append(
                                 f"任务 {meta.get('id', '?')} 领取来源路径 {source_root!r} "
                                 f"与 requirement_root {req_root!r} 不一致：拒绝跨落点冒领")
+                    else:
+                        entry["claim_invalid"].append(
+                            f"任务 {meta.get('id', '?')} 领取来源不可解析："
+                            f"{r[src_idx] if len(r) > src_idx else ''}")
+            elif meta.get("intake_version") == 1:
+                entry["claim_invalid"].append(f"任务 {meta.get('id', '?')} 缺合法领取引用表")
+            elif rows and "原文" in rows[0]:
+                entry["claimed"].update(
+                    row[0].strip() for row in rows[1:] if row and row[0].strip())
+            else:
+                entry["claim_invalid"].append(f"任务 {meta.get('id', '?')} 缺合法领取引用表")
         archived = (is_archived_task_dir(tasks_root, p.parent)
                     and p.parent.name == meta.get("id"))
         entry["cards"].append(
             {"id": meta.get("id", "?"), "archived": archived,
-             "status": meta.get("status", "")})
+             "status": meta.get("status", ""), "dir": str(p.parent),
+             "intake_version": meta.get("intake_version")})
 
     findings: list[str] = ledger_findings
     for req_root_rel, entry in per_root.items():
@@ -297,12 +336,12 @@ def requirement_root_findings(root: Path) -> list[str]:
         if not items_file.is_file():
             findings.append(
                 f"需求落点 {req_root_rel} 缺 {REQUIREMENT_ROOT_ITEMS_FILE}："
-                "条目正文唯一住址未建（RFC-20261122-03）")
+                "稳定条款索引未建（活文档正文在 requirement.md）")
             continue
         try:
             rows = first_table(
                 strip_fences(items_file.read_text(encoding="utf-8", errors="replace")),
-                ("原文",))
+                ("原文", "锚"))
         except OSError as exc:
             findings.append(f"需求落点 {req_root_rel} 条目表不可读：{exc}")
             continue
@@ -310,9 +349,10 @@ def requirement_root_findings(root: Path) -> list[str]:
         if not root_ids:
             findings.append(
                 f"需求落点 {req_root_rel} 的 {REQUIREMENT_ROOT_ITEMS_FILE} 零条目："
-                "先在落点逐条枚举（items.md 是条目正文唯一住址）")
+                "先在落点逐条枚举稳定条款索引")
             continue
         claimed = entry["claimed"]
+        ghost: list[str] = []
         if not claimed:
             findings.append(
                 f"需求落点 {req_root_rel} 无任何卡领取条目（共 {len(root_ids)} 条）："
@@ -340,9 +380,15 @@ def requirement_root_findings(root: Path) -> list[str]:
                 f"需求落点 {req_root_rel} 状态 = {status or '缺失'} 但已有卡领取："
                 "先过确认门（候选 → 已确认）")
         cards = entry["cards"]
+        for card in cards:
+            if not (Path(card["dir"]) / ITEMS_FILE).is_file():
+                entry["claim_invalid"].append(f"任务 {card['id']} 缺 requirement-items.md")
+        findings.extend(entry["claim_invalid"])
+        coverage_complete = (bool(claimed) and set(root_ids) <= claimed and not ghost
+                             and not entry["claim_invalid"])
         all_done = (valid_type and not ledger_invalid and not entry["findings"]
                     and not relation_findings and req_root_rel not in duplicate_roots
-                    and bool(cards) and all(
+                    and coverage_complete and bool(cards) and all(
                         c["archived"] and c["status"] == "completed" for c in cards))
         if all_done and status != "已收口":
             if kind == "缺陷":

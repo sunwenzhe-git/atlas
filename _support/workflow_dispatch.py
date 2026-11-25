@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from _support.workflow_intake import intake_task_findings
 from _support.workflow_plan import load_tasks, PlanError, atomic_write_json
 from _support.workflow_context import render_specs, select_specs
 
@@ -138,6 +139,9 @@ def dispatch_task(root: Path, task: dict, scope_paths: list[str] | None = None) 
     root = root.resolve()
     t_id = task["id"]
     t_dir = Path(task.get("_dir") or (root / ".atlas" / "tasks" / t_id))
+    findings = intake_task_findings(root, task)
+    if findings:
+        raise DispatchError("任务未完成需求归类与落点前置：" + "；".join(findings))
     t_dir.mkdir(parents=True, exist_ok=True)
 
     # 写入上下文派单包

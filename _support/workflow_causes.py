@@ -54,6 +54,10 @@ CAUSES: dict[str, bool] = {
     "no_task_card": False,           # 对账本外 / 非法 / 越界任务收口或派发
     "state_transition": False,       # 流程顺序错（未 completed 先归档、归档目标已存在等）
     "no_review_report": False,       # 审查报告缺失 / 会话待审 PENDING（流程顺序）
+    "intake_missing": False,         # 新任务未完成需求归类、关联或落点（实现前置）
+    "backflow_missing": False,       # 请求未执行 bug/change 回推
+    "backflow_conflict": False,      # 回推存在待拍板冲突
+    "backflow_stale": True,          # 回推后代码或文档指纹已变化
     "environment": False,            # 底层异常（git 不可用 / OSError / 报告损坏不可读）
     "budget_exceeded": False,        # 预算超限拒绝事件本身（不计数、只留痕；cmd 写死 'verify'）
 }

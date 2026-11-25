@@ -469,7 +469,7 @@ def test_plan_prunes_orphan_subcards(tmp_path: Path) -> None:
     req2 = "### 步骤一：A AC-HOME-001\n### 步骤二：B"
     run(root, "plan", "--unit", "T-15", "--requirement", req2)
     assert (root / ".atlas/tasks/T-15-02").is_dir()
-    run(root, "plan", "--unit", "T-15", "--requirement", "落实 AC-HOME-001")
+    run(root, "plan", "--unit", "T-15", "--requirement", "落实 AC-HOME-001", "--replan")
     assert not (root / ".atlas/tasks/T-15-02").exists()
 
 
@@ -575,25 +575,28 @@ def test_context_requires_paths_or_unit(tmp_path: Path) -> None:
 from _support.workflow_verify import coverage_matrix_findings  # noqa: E402
 
 
-def test_plan_with_requirement_writes_items_and_matrix(tmp_path: Path) -> None:
+def test_plan_with_requirement_writes_landing_items_and_matrix(tmp_path: Path) -> None:
     root = make_clean_project(tmp_path)
     p = run(root, "plan", "--unit", "T-01", "--requirement", "请落实 AC-HOME-001")
     assert p.returncode == 0, p.stdout + p.stderr
     task_dir = root / ".atlas" / "tasks" / "T-01"
-    items_text = (task_dir / "requirement-items.md").read_text(encoding="utf-8")
-    assert "| ID | 页码 | 章节 | 原文 |" in items_text
-    assert "条目总数" in items_text
+    meta = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
+    items_text = (root / meta["requirement_root"] / "items.md").read_text(encoding="utf-8")
+    assert "| ID | 锚 | 状态 | 最近请求 |" in items_text
+    assert "请落实 AC-HOME-001" in (root / meta["request_path"]).read_text(encoding="utf-8")
+    claims = (task_dir / "requirement-items.md").read_text(encoding="utf-8")
+    assert "| ID | 来源 |" in claims and "领取条目数：1" in claims
     matrix_text = (task_dir / "coverage-matrix.md").read_text(encoding="utf-8")
     assert "| ID | PRD | 设计文档 | 实现 | E2E |" in matrix_text
 
 
-def test_plan_without_requirement_skips_skeletons(tmp_path: Path) -> None:
+def test_plan_without_requirement_blocks_unclassified_task(tmp_path: Path) -> None:
     root = make_clean_project(tmp_path)
     p = run(root, "plan", "--unit", "T-03")
-    assert p.returncode == 0, p.stdout + p.stderr
+    assert p.returncode == 2
+    assert "归类" in p.stderr
     task_dir = root / ".atlas" / "tasks" / "T-03"
-    assert not (task_dir / "requirement-items.md").exists()
-    assert not (task_dir / "coverage-matrix.md").exists()
+    assert not task_dir.exists()
 
 
 def test_coverage_matrix_skips_cards_without_items(tmp_path: Path) -> None:
@@ -711,7 +714,8 @@ def make_requirement_root(root: Path, slug: str = "demo-req", *,
     table = ["# 落点条目表", "", "| ID | 页码 | 章节 | 原文 |", "|---|---|---|---|"]
     table += [f"| {i} | p1 | §2 | 条目原文 {i} |" for i in item_ids]
     (req_dir / "items.md").write_text("\n".join(table) + "\n", encoding="utf-8")
-    source_name = "缺陷报告.md" if kind == "缺陷" else "需求PDF-全文.md"
+    source_name = {"缺陷": "缺陷报告.md", "需求变更": "变更请求.md"}.get(
+        kind, "需求PDF-全文.md")
     (req_dir / "work" / source_name).write_text(
         "<!-- page 1 -->\n条目原文 R-01\n", encoding="utf-8")
     return req_dir
@@ -905,6 +909,7 @@ def test_finish_requirement_root_writeback_reminder(tmp_path: Path) -> None:
     make_requirement_root(root)
     run(root, "plan", "--unit", "T-13", "--requirement", "product/requirements/demo-req")
     run(root, "dispatch", "--unit", "T-13")
+    _write_claims(root / ".atlas" / "tasks" / "T-13", ["R-01", "R-02"])
     r_dir = root / "product" / "reviews" / "2026-11-22-impl-review-T-13"
     r_dir.mkdir(parents=True, exist_ok=True)
     (r_dir / "review.json").write_text(json.dumps({
@@ -1051,7 +1056,7 @@ def test_replan_without_requirement_preserves_pointer(tmp_path: Path) -> None:
     make_requirement_root(root)
     run(root, "plan", "--unit", "T-19", "--requirement",
         "product/requirements/demo-req")
-    p = run(root, "plan", "--unit", "T-19", "--requirement", "重新拆解")
+    p = run(root, "plan", "--unit", "T-19")
     assert p.returncode == 0, p.stdout + p.stderr
     prd = (root / ".atlas" / "tasks" / "T-19" / "prd.md").read_text(encoding="utf-8")
     assert "需求正文唯一住址" in prd
@@ -1073,6 +1078,8 @@ def test_finish_json_returns_type_aware_requirement_closeout(
     run(root, "plan", "--unit", "T-20", "--requirement",
         "product/requirements/typed")
     run(root, "dispatch", "--unit", "T-20")
+    _write_claims(root / ".atlas" / "tasks" / "T-20", ["R-01", "R-02"],
+                  root_rel="product/requirements/typed")
     r_dir = root / "product" / "reviews" / "2026-11-22-impl-review-T-20"
     r_dir.mkdir(parents=True, exist_ok=True)
     (r_dir / "review.json").write_text(json.dumps({
@@ -1403,6 +1410,10 @@ def test_finish_text_reports_closeout_findings(tmp_path: Path) -> None:
     make_requirement_root(root, kind="未知类型")
     run(root, "plan", "--unit", "T-28", "--requirement",
         "product/requirements/demo-req")
+    meta_path = root / ".atlas" / "tasks" / "T-28" / "task.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta.pop("intake_version", None)
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
     run(root, "dispatch", "--unit", "T-28")
     r_dir = root / "product" / "reviews" / "2026-11-22-impl-review-T-28"
     r_dir.mkdir(parents=True, exist_ok=True)

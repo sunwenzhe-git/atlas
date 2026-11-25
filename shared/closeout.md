@@ -84,6 +84,8 @@ rm -rf /tmp/probe && mkdir -p /tmp/probe && bash atlas/install.sh --target /tmp/
 
 ### 步骤 4 — 实现类与缺陷修复的收口验证（A/B 档，2026-10-21 D131 / 2026-11-07 D186）
 
+**实现前置**：文本请求先由 `workflow plan/run --requirement` 归类；初始需求建立功能活文档与首版快照，变更/缺陷在 `changes/` 或 `bugs/` 新增请求。`intake_version: 2` 卡在 dispatch/verify/finish 缺功能根、请求、条款或状态时退出 2。变更/缺陷实现后必须运行 `atlas change` / `atlas bug` 回推并校验；finish 缺回执、冲突或指纹过期分别阻断。普通文本文件直填、旧卡与 v1 独立 slug 保持兼容。
+
 **A 档 — 缺陷修复（7 检查点，原 7 条逐字不动）**
 
 > 针对缺陷修复类任务（bug fix），禁止直接改业务代码和声称「已修复」，必须在收口前逐条确认 7 个检查点：

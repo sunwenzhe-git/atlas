@@ -503,37 +503,42 @@ product/prd/
 
 需求（增量）与产品事实（存量）分层后，需求层有独立落点与确认纪律；本环 skill 手法（证据优先、只问意图 / 范围 / 风险 / 验收行为、查证后仍模糊才问人）是其确认阶段的**手法源**，但产物面不同——确认稿住需求落点，不进本环产物。
 
-### 12.1 落点与四件套
+### 12.1 一个功能点一份活文档
 
-`<assets_root>/requirements/<需求slug>/`（路径按 `layout.assets_root` 解析）：
+`<assets_root>/requirements/<feature>/`（路径按 `layout.assets_root` 解析）：
 
 | 件 | 内容 | 语义 |
 |---|---|---|
-| `requirement.md` | 确认稿 = **需求 PRD**；首部 `**类型**：初始需求/需求变更/缺陷`（缺省 = 初始需求）+ `**状态**：候选/已确认/已拆/已收口` | 确认门产物：聊清楚的范围 / 口径 / 边界 / AC 草案 |
-| `items.md` | **落点条目表** `ID \| 页码 \| 章节 \| 原文（逐字）` | **条目正文唯一住址**（#71 口径：逐字不改写、限定语保留、表行数 = 声明总数） |
-| `work/` | 初始需求 `需求PDF-全文.md`；需求变更 `变更请求.md`；缺陷 `缺陷报告.md` | 来源材料唯一住址；缺陷报告存现象、期望、实际、复现与环境证据，不复制进 `items.md` |
-| `archive/<YYYY-MM>/` | 收口后目录移入 | 镜像 `.atlas/tasks/archive` 语义 |
+| `requirement.md` | 唯一当前需求正文；首部类型 = 初始需求、版本、状态；`### R-NN` 为稳定行为条款；尾部为变更记录 | 活文档，后续变更/缺陷只更新此文件，不新建功能 slug |
+| `items.md` | `ID \| 锚 \| 状态 \| 最近请求` | 稳定条款索引，不复制条款正文 |
+| `changes/CHG-000-initial/` | `requirement.md` 首版只读快照 + `request.md` 初始原文 | 初始基线，用于历史对比 |
+| `changes/CHG-YYYYMMDD-NNN/` | `request.md` 变更原文 + `diff.md` 变更前后与回推记录 | 需求变更证据，不复制整份当前需求 |
+| `bugs/BUG-YYYYMMDD-NNN.md` | 缺陷元数据、用户原话、现象/期望/实际/复现/环境与回推回执 | 缺陷证据，默认恢复既有条款 |
+| `archive/<YYYY-MM>/` | 收口后功能目录整体移入 | 镜像 `.atlas/tasks/archive` 语义 |
 
-登记 = `requirements/_index.md`（需求 slug / 类型 / 状态 / 关联需求 / 关联卡），**派生导航视图，非真相源、不作判据输入**；不进 `product/prd/README.md` 追溯总表——追溯总表行形态受参数 4⑥ 行形态硬约束（已覆盖 / 未覆盖二值），需求登记行两态都不像。
+登记 = `requirements/_index.md`（功能 slug / 类型 / 关联导航），仅为派生视图；条款最近请求由 `items.md` 与 `requirement.md` 变更记录反向可查。
 
 ### 12.2 类型、关联与证据
 
-1. **初始需求**：类型字段可省略，存量零迁移；显式非法类型不得按初始需求放行。
-2. **需求变更**：必须写 `**关联需求**：<slug>#R-NN`，指向既有需求落点；基线状态须为已确认/已拆/已收口。新建落点，不改写旧需求。`work/变更请求.md` 保存变更前后口径与来源。
-3. **缺陷**：必须关联既有需求落点中的行为条款；`work/缺陷报告.md` 是证据面，`items.md` 引用权威行为条款。没有既有行为依据的对象先登记初始需求落点或归类为需求变更，不冒充 bug。
-4. **稳定 slug 与路径**：slug 不复用；活跃与归档重名（含损坏归档）按复用告警。关联解析先找活跃 `requirements/<slug>/`，再唯一匹配 `requirements/archive/<YYYY-MM>/<slug>/`；路径须留在配置资产根与项目根内，symlink 逃逸、非法月份、多命中或条目 ID 不存在 ⇒ WARN，不静默解析。元数据与条目只取围栏外正文；旧归档实体路径与逻辑 slug 归一为同一身份，`plan --requirement` 可传逻辑 slug 并回落唯一归档实体；路径型落点引用解析失败必须报错，不得退成直填（普通文本文件直填保留）；卡正文指针只指 `work/` 来源材料。
-5. **单源领取**：任务卡 `requirement_root` 保存规范化逻辑路径；卡内 `来源` 必须与 `requirement_root` 指向同一落点，跨落点同 ID 不得冒领。任务卡归档只认 `archive/<合法 YYYY-MM>/<任务ID>`，目录名须等于 ID，重复 ID 拒绝且已归档 ID 禁止重建。
+1. **初始需求**：创建功能根、`R-01` 与 `CHG-000-initial` 首版快照；功能根类型始终为初始需求。
+2. **需求变更**：必须关联既有 `<feature>#R-NN`；只新增 `changes/CHG-*` 请求并更新活文档变更记录，条款正文在回推时按 `diff.md` 的明确“变更后”更新。
+3. **缺陷**：必须关联既有行为条款；只新增 `bugs/BUG-*` 证据，默认不改需求预期。代码修复与契约冲突时只记冲突，需 `--decision` 才改写业务语义。
+4. **稳定 ID**：功能 slug 与 R-NN 不复用；请求 ID 按 `CHG/BUG-YYYYMMDD-NNN` 递增，重复原文按 `source_sha256` 复用同一请求。
+5. **路径与归档**：功能与请求必须留在配置资产根/项目根内，拒 symlink 逃逸；已收口或已归档功能不能新增请求。旧独立 slug/`work/` 数据按 v1 兼容，不自动迁移。
+6. **单源领取**：任务卡 `requirement_root` 指向功能根，`request_path` 指向本次请求；领取引用仍为 `<功能根>#R-NN`，跨落点同 ID 拒绝冒领。
 
-### 12.3 确认纪律（执行层 plan 前置）
+### 12.3 确认、实现与回推纪律
 
-1. **先聊后拆**：大需求先在落点聊（复用本环确认门手法）并落确认稿，状态 ≥ 已确认才 `atlas workflow plan --requirement <落点>`；plan 对状态行缺失 / 仍为候选 ⇒ **WARN**（未确认先拆，软校验不拦停）。
-2. **权威源排序五层**：需求原文（转换稿）> 需求 PRD（确认稿）> 任务 PRD > 设计文档 > 代码惯例；确认稿是原文的协商派生承接，与原文冲突时**原文优先**，登记冲突并上报，不许就地二选一。
-3. **领取引用**：落点模式卡条目表 = 领取引用表（`ID = 落点条目 ID`、`来源 = <落点路径>#<ID>`），卡不复制条目正文；卡 `prd.md` §1 正文指针化。条目↔卡 = at-least-once 共担合法，覆盖性由 verify 跨卡对账（`_support/workflow_verify.py` `requirement_root_findings`，WARN 纪律面）。
-4. **重跑保指针**：未显式传 `--requirement` 重跑 plan 时，沿用 `task.json.requirement_root`，卡正文继续指针化，不得退化成直填模式。
+1. **自然语言先归类落盘**：`plan/run --requirement <文本|->` 自动判定初始需求/需求变更/缺陷；初始需求创建功能根与首版快照，变更/缺陷只在既有功能根新增请求。用户原话经 stdin 传入；显式 `--type` 优先，变更与缺陷词同时出现时按变更。父需求只接受显式引用、`--related` 或完整标题命中；歧义/无基线退出 2 且零任务卡。重复原文按摘要复用请求。普通文本文件直填保持兼容。
+2. **实现前置**：新卡带 `intake_version: 2`、`request_id`、`request_path`、`base_commit`；dispatch/verify/finish 要求功能根、请求元数据、R 条款与状态完整。缺项 ⇒ 2 + `intake_missing`。旧卡/v1 独立 slug 不回溯。
+3. **修复后回推**：`atlas bug` 与 `atlas change` 共用 `atlas_bug.py`，以请求 `base_commit` 以来代码 diff 反查 spec paths 与 testid/API/错误码/字段标识符，更新活文档、产品事实、E2E/spec，并运行 `validate_prd`、`validate_e2e_index`、`validate_testids`（命中 spec 时加 `validate_structure`）。机械引用可自动替换；条款改写要求 `diff.md` 的明确变更后且基线未变，语义冲突必须 `--decision` + `--decision-by`。
+4. **回执与幂等**：请求内 `atlas:backflow` JSON 回执记录代码指纹、文档哈希、影响面、冲突与校验结果；同代码/文档快照重跑零写入。`items.md` 行须四列非空、ID 唯一，「最近请求」按 `requirement.md` 变更记录顺序指向该条款最新请求；活文档结构损坏时回推写 fail 回执并返 1，finish 以 `backflow_stale` 阻断，`--force` 不绕。`--dry-run` 只分析不写盘。
+5. **权威源与领取**：需求原文 > 活需求文档 > 任务 PRD > 设计文档 > 代码惯例；卡只保存功能根/请求指针与领取引用，不复制正文。
+6. **重跑**：未传 `--requirement` 沿用 prior；同 unit 不同原文默认拒绝，显式 `--replan` 才重建请求绑定。
 
 ### 12.4 收口与分诊关闭
 
-1. **有卡收口**：`finish` 只在同一落点的关联卡全部**归档且 completed** 后提示产品事实回写与落点状态推进；JSON 输出同步返回 `requirement_closeout`。非法类型、落点解析失败、需求文件或任务账本 IO 错误只返回 pending/unknown。
+1. **有卡收口**：`finish` 只在同一落点的关联卡全部**归档且 completed** 后提示产品事实回写与落点状态推进；JSON 输出同步返回 `requirement_closeout`。变更/缺陷还必须通过回推门：缺回执 ⇒ 2 + `backflow_missing`；冲突 ⇒ 2 + `backflow_conflict`；代码或文档指纹变化 ⇒ 1 + `backflow_stale`，`--force` 不绕。非法类型、落点解析失败、需求文件或任务账本 IO 错误只返回 pending/unknown。
 2. **按类型回写**：初始需求/需求变更沉淀回产品事实；缺陷默认只恢复既有行为，仅当产品事实缺失或错误时回写。verify 的关闭提示使用同一类型分流。
 3. **无卡分诊关闭**：重复、非缺陷、不修项不造任务卡；在 `requirement.md` 写 `**结论**：重复/非缺陷/不修` 与非空 `**证据**：<路径#锚或 commit>`，状态直接置「已收口」并归档。此类关闭不跑覆盖矩阵与 bug-fix 七检查点，也不得用「已修复」冒充分诊结论。
 4. **索引非权威**：`_index.md` 只导航；状态以 `requirement.md` 为准，关联卡以 `task.json` 为准。verify 先校验全局任务账本；损坏卡、非法 UTF-8 或无落点重复 ID 均拒绝收口提示，finish 对跨落点冒领同样拒绝推进。归档命名空间内同 ID 一律保留（含缺 task.json 的目录），`requirements/archive` 根拒 symlink 改道。

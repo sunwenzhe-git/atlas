@@ -29,8 +29,12 @@ from _support.workflow_plan import (
     atomic_write_json, normalize_requirement_ref, requirement_relation_findings,
     requirement_type, resolve_requirement_root, strip_fences, UNIT_RE,
 )
+from _support.workflow_backflow import backflow_findings
+from _support.workflow_intake import intake_task_findings
 from _support.workflow_causes import FALLBACK_CAUSE
-from _support.workflow_verify import SOURCE_REF_RE, first_table
+from _support.workflow_verify import (
+    SOURCE_REF_RE, first_table, claim_items_table, REQUIREMENT_ROOT_ITEMS_FILE,
+)
 
 
 class FinishError(ValueError):
@@ -562,7 +566,7 @@ def archive_task(root: Path, tasks_root: Path, t_dir: Path, t_id: str) -> dict:
     return {"status": "moved", "path": str(dest.relative_to(root))}
 
 
-def requirement_closeout(root: Path, req_root_rel: str) -> dict:
+def requirement_closeout(root: Path, req_root_rel: str, task: dict | None = None) -> dict:
     """按需求类型生成收口待办；只有关联卡全部归档才推进落点状态。"""
     root = Path(root).resolve()
     req_root_rel = normalize_requirement_ref(root, req_root_rel)
@@ -574,6 +578,8 @@ def requirement_closeout(root: Path, req_root_rel: str) -> dict:
         declared_type = None
     valid_type = declared_type in REQUIREMENT_TYPES
     kind = declared_type if valid_type else "未知"
+    if task and task.get("intake_version") == 2 and task.get("intake_type") in REQUIREMENT_TYPES:
+        kind = task["intake_type"]
     findings: list[str] = []
     try:
         relation_findings = (requirement_relation_findings(root, req_dir)
@@ -594,30 +600,65 @@ def requirement_closeout(root: Path, req_root_rel: str) -> dict:
         load_error = str(exc)
         findings.append(f"任务账本不可读或存在重复 ID：{load_error}")
     claim_findings: list[str] = []
+    root_ids: list[str] = []
+    if req_dir is not None:
+        root_items = req_dir / REQUIREMENT_ROOT_ITEMS_FILE
+        try:
+            root_rows = first_table(
+                strip_fences(root_items.read_text(encoding="utf-8", errors="replace")),
+                ("原文",))
+            root_ids = [r[0].strip() for r in root_rows[1:] if r and r[0].strip()] if root_rows else []
+        except (OSError, UnicodeError) as exc:
+            findings.append(f"需求条目表不可读：{exc}")
+    claimed: set[str] = set()
     for task in related:
+        intake_card = task.get("intake_version") == 1
         items_path = Path(task["_dir"]) / REQUIREMENT_ITEMS_FILE
         if not items_path.is_file():
+            claim_findings.append(f"任务 {task.get('id')} 缺 {REQUIREMENT_ITEMS_FILE}")
             continue
         try:
-            rows = first_table(
-                strip_fences(items_path.read_text(encoding="utf-8", errors="replace")),
-                ("来源",))
+            rows = claim_items_table(items_path.read_text(encoding="utf-8", errors="replace"))
         except (OSError, UnicodeError) as exc:
             claim_findings.append(f"任务 {task.get('id')} 领取表不可读：{exc}")
             continue
-        if not rows or not any("来源" in cell for cell in rows[0]):
+        if not rows or "来源" not in rows[0]:
+            if rows and "原文" in rows[0] and not intake_card:
+                claimed.update(row[0].strip() for row in rows[1:] if row and row[0].strip())
+            else:
+                claim_findings.append(f"任务 {task.get('id')} 缺合法来源列")
             continue
-        src_idx = next(i for i, cell in enumerate(rows[0]) if "来源" in cell)
+        src_idx = rows[0].index("来源")
         for row in rows[1:]:
+            if not row or not row[0].strip():
+                continue
             source = row[src_idx].strip() if len(row) > src_idx else ""
             match = SOURCE_REF_RE.match(source)
-            if match and normalize_requirement_ref(root, match.group("path")) != req_root_rel:
+            if not match:
+                if intake_card:
+                    claim_findings.append(f"任务 {task.get('id')} 领取来源不可解析：{source}")
+                continue
+            source_path = re.sub(r"/(?:items|requirement)\.md$", "", match.group("path"))
+            if row[0].strip() != match.group("id"):
+                claim_findings.append(
+                    f"任务 {task.get('id')} 领取 ID {row[0].strip()!r} 与来源 {match.group('id')!r} 不一致")
+            if normalize_requirement_ref(root, source_path) != req_root_rel:
                 claim_findings.append(
                     f"任务 {task.get('id')} 领取来源 {match.group('path')!r} "
                     f"与 {req_root_rel!r} 不一致：拒绝跨落点冒领")
+            else:
+                claimed.add(match.group("id"))
+    missing = [item for item in root_ids if item not in claimed]
+    ghost = sorted(claimed - set(root_ids))
+    if missing:
+        claim_findings.append(f"需求条目漏领：{'、'.join(missing)}")
+    if ghost:
+        claim_findings.append(f"需求条目幽灵引用：{'、'.join(ghost)}")
+    coverage_complete = (
+        bool(root_ids) and bool(claimed) and set(root_ids) <= claimed and not (claimed - set(root_ids)))
     findings.extend(claim_findings)
     all_closed = (bool(req_dir) and valid_type and not load_error and not relation_findings
-                  and not claim_findings and bool(related) and all(
+                  and not claim_findings and coverage_complete and bool(related) and all(
                       t.get("_archived") and t.get("status") == "completed" for t in related))
     if not all_closed:
         writeback = "pending"
@@ -653,6 +694,17 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
 
     if not t_dir.is_dir():
         raise FinishError(f"任务目录不存在：{t_dir}", cause="no_task_card")
+    intake_findings = intake_task_findings(root, task)
+    if intake_findings:
+        raise FinishError("任务未完成需求归类与落点前置：" + "；".join(intake_findings),
+                          cause="intake_missing")
+    backflow_errors = backflow_findings(root, task)  # M246: 摘除本行 ⇒ 缺回执收口钉红
+    if backflow_errors:
+        first = backflow_errors[0]
+        cause = ("backflow_missing" if first.startswith("请求未执行")
+                 else "backflow_conflict" if first.startswith("回推记录未通过")
+                 else "backflow_stale")
+        raise FinishError("修复回推门未通过：" + "；".join(backflow_errors), cause=cause)
     if archive_month(t_dir, tasks_root, t_id) is None:
         archive_dest = tasks_root / ARCHIVE_DIR / date.today().strftime("%Y-%m") / t_id
         if archive_dest.exists():
@@ -717,7 +769,7 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
         "all_done": (task_load_error is None and total > 0 and completed_count == total),
         "task_load_error": task_load_error,
         "requirement_closeout": (
-            requirement_closeout(root, task["requirement_root"])
+            requirement_closeout(root, task["requirement_root"], task)
             if task.get("requirement_root") else None),
         "e2e_precondition": e2e,
         "structure_freshness": structure,

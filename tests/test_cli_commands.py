@@ -256,6 +256,20 @@ def test_cli_unknown_command_exits_2():
     assert "未知命令" in res.stderr
 
 
+def test_cli_bug_and_change_help():
+    for command in ("bug", "change"):
+        res = run_cmd(["node", str(ATLAS_BIN), command, "--help"])
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "--unit" in res.stdout and "--from" in res.stdout
+
+
+def test_cli_workflow_plan_help_exposes_intake_flags():
+    res = run_cmd(["node", str(ATLAS_BIN), "workflow", "plan", "--help"])
+    assert res.returncode == 0, res.stdout + res.stderr
+    for flag in ("--requirement", "--type", "--related", "--slug"):
+        assert flag in res.stdout
+
+
 # ---------------------------------------------------------------- 平台探测（bin/platform.js）
 # 随后 `bash` 落到 C:\Windows\System32\bash.exe（WSL 中继壳）⇒ execvpe(/bin/bash) 报错，
 # install.sh 一步没跑；而 spawn 失败（status=null）还会被 `|| 0` 洗成成功。

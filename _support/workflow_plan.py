@@ -18,7 +18,20 @@ import re
 from datetime import date
 from pathlib import Path
 
-from _support.layout import LayoutError, load_layout
+try:
+    from _support.layout import LayoutError, load_layout
+except ModuleNotFoundError:
+    import importlib.util
+    import sys
+    spec = importlib.util.spec_from_file_location(
+        "_atlas_workflow_layout", Path(__file__).with_name("layout.py"))
+    if spec is None or spec.loader is None:
+        raise
+    layout_module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = layout_module
+    spec.loader.exec_module(layout_module)
+    LayoutError = layout_module.LayoutError
+    load_layout = layout_module.load_layout
 
 AC_RE = re.compile(r"AC-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2,3}")
 UNIT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -270,7 +283,7 @@ def _valid_requirement_dir(path: Path, base: Path, slug: str,
                            month: str | None = None) -> bool:
     if path.is_symlink():
         return False
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", slug):
+    if slug in ("archive", "_index") or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", slug):
         return False
     if month is not None:
         if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
@@ -319,7 +332,7 @@ def _archived_slug_collisions(base: Path, slug: str) -> list[Path]:
 
 def resolve_requirement_root_by_slug(root: Path, slug: str) -> Path | None:
     """按稳定 slug 解析唯一合法落点；任何同名归档碰撞都阻止活跃复用。"""
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", slug):
+    if slug in ("archive", "_index") or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", slug):
         return None
     base = _requirements_base(root)
     active = base / slug
@@ -394,6 +407,8 @@ def logical_requirement_root_ref(root: Path, req_root: Path) -> str:
         raise LayoutError(f"非法需求落点：{req_root}")
     base = _requirements_base(root)
     logical = resolved.relative_to(base)
+    if logical.parts in (("archive",), ("_index",)):
+        raise LayoutError(f"非法需求落点：{req_root}")
     slug = logical.parts[2] if logical.parts[0] == "archive" else logical.parts[0]
     return (base / slug).relative_to(root).as_posix()
 
@@ -464,8 +479,16 @@ def requirement_relation_findings(root: Path, req_root: Path) -> list[str]:
     return findings
 
 
-def requirement_pointer_text(requirement_root_rel: str) -> str:
-    """落点模式卡的 §1 正文指针：需求正文唯一住址在落点，本卡不复制正文。"""
+def requirement_pointer_text(requirement_root_rel: str, request_rel: str | None = None) -> str:
+    """任务卡只保存需求落点与请求指针，不复制正文。"""
+    if request_rel:
+        return (
+            f"> 当前需求正文唯一住址：`{requirement_root_rel}/requirement.md`；"
+            "`items.md` 为稳定条款索引。\n"
+            f"> 本次请求原文：`{request_rel}`。\n"
+            f"> 本卡领取条目见本卡 `requirement-items.md` 领取引用表"
+            "（来源 = `<落点路径>#<落点ID>`）；按权威源排序"
+            "（需求原文 > 需求 PRD > 任务 PRD > 设计文档 > 代码惯例）回查落点。")
     return (
         f"> 需求正文唯一住址：`{requirement_root_rel}`"
         "（requirement.md 确认稿 + work/ 来源材料；RFC-20261122-03，本卡不复制正文）。\n"
@@ -475,28 +498,37 @@ def requirement_pointer_text(requirement_root_rel: str) -> str:
 
 
 def write_claim_items(task_dir: Path, task: dict,
-                      requirement_root_rel: str) -> Path:
+                      requirement_root_rel: str, item_ids: list[str] | None = None) -> Path:
     """落点模式卡条目领取表骨架（RFC-20261122-03）：只写引用行，不复制条目正文。
 
-    条目正文唯一住址 = 落点 `items.md`；卡侧 `ID` = 落点条目 ID、
-    `来源` = `<落点路径>#<落点ID>`。已存在则跳过——重跑 plan 不覆盖已填内容。
+    v2 活文档的正文住 requirement.md，items.md 只是稳定索引；v1 落点仍按原条目表兼容。
+    已存在则跳过——重跑 plan 不覆盖已填内容。
     """
     path = task_dir / REQUIREMENT_ITEMS_FILE
     if path.exists():
         return path
+    rows = [f"| {item_id} | {requirement_root_rel}#{item_id} |" for item_id in (item_ids or [])]
+    count = f"领取条目数：{len(rows)}" if rows else "领取条目数：待填"
+    pointer = (
+        f"> 活文档模式：当前条款正文在 `{requirement_root_rel}/requirement.md`，"
+        "`items.md` 为稳定索引；本卡**不复制正文**，只写领取引用行。"
+        if task.get("intake_version") == 2 else
+        f"> 落点模式（RFC-20261122-03）：条目正文唯一住址在需求落点 `{requirement_root_rel}/items.md`；"
+        "本卡**不复制正文**，只写领取引用行。"
+    )
     path.write_text("\n".join([
         f"# 需求条目领取表 — {task['title']}",
         "",
-        f"> 落点模式（RFC-20261122-03）：条目正文唯一住址在需求落点 `{requirement_root_rel}/items.md`；"
-        "本卡**不复制正文**，只写领取引用行。",
+        pointer,
         "> `ID` = 落点条目 ID（如 `R-01`）；`来源` = `<落点路径>#<落点ID>`（项目根相对 POSIX 路径）。",
         "> 条目↔卡允许共担（同一条目跨卡实现合法），覆盖性由 `atlas workflow verify` 跨卡对账。",
         "> 本卡确不承接需求条目时写：`领取条目数：0（本卡不承接需求条目）`。",
         "",
         "| ID | 来源 |",
         "|---|---|",
+        *rows,
         "",
-        "领取条目数：待填",
+        count,
         "",
     ]), encoding="utf-8")
     return path
@@ -584,7 +616,8 @@ def write_task_card(task_dir: Path, task: dict, *,
     effective_root = requirement_root_rel or (
         prev_root if isinstance(prev_root, str) and prev_root else None)
     if effective_root and not requirement_root_rel:
-        task = {**task, "details": requirement_pointer_text(effective_root)}
+        request_rel = prev.get("request_path") if isinstance(prev, dict) else None
+        task = {**task, "details": requirement_pointer_text(effective_root, request_rel)}
     prd_text = render_prd_markdown(task)
     prd_path.write_text(prd_text, encoding="utf-8")
 
@@ -601,6 +634,15 @@ def write_task_card(task_dir: Path, task: dict, *,
         meta["paths"] = list(task["paths"])
     if effective_root:
         meta["requirement_root"] = effective_root
+    if (task.get("intake_version") in (1, 2)
+            and not (isinstance(prev, dict) and "intake_version" not in prev)):
+        meta["intake_version"] = task["intake_version"]
+        meta["intake_type"] = task.get("intake_type")
+        meta["intake_item_id"] = task.get("intake_item_id")
+        if task.get("intake_version") == 2:
+            meta["request_id"] = task.get("request_id")
+            meta["request_path"] = task.get("request_path")
+            meta["base_commit"] = task.get("base_commit")
     if isinstance(prev, dict):
         if prev.get("status") in ("todo", "in_progress", "completed"):
             meta["status"] = prev["status"]
@@ -613,7 +655,11 @@ def write_task_card(task_dir: Path, task: dict, *,
     atomic_write_json(task_json_path, meta)
     if with_requirement_items or effective_root:
         if effective_root:
-            write_claim_items(task_dir, task, effective_root)
+            claim_path = task_dir / REQUIREMENT_ITEMS_FILE
+            if prev_root and effective_root != prev_root and claim_path.is_file():
+                claim_path.unlink()
+            write_claim_items(task_dir, task, effective_root,
+                              task.get("claim_item_ids") if task.get("intake_version") in (1, 2) else None)
         else:
             write_requirement_items(task_dir, task)
         write_coverage_matrix(task_dir, task)

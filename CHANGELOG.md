@@ -6,7 +6,9 @@
 
 ## [Unreleased]
 
-- feat(workflow): 需求落点统一承载初始需求、需求变更与缺陷（`RFC-20261124-01` / D211）——三类增量共用 `requirements/<slug>/` 与既有四态状态机；新增类型、稳定 `<slug>#R-NN` 基线关联、缺陷报告证据分层、无卡分诊关闭、归档路径唯一回落、跨落点冒领拒绝、重跑 plan 指针保持与类型感知 finish 回写；`_index.md` 明确为派生导航视图，旧需求缺省初始需求、零迁移；workflow 测试 94 → 159 条。
+- feat(workflow): 功能点活需求文档与变更/缺陷 diff 回推（D211 增补）——一个大功能点只维护一份 `requirement.md`，首版快照入 `changes/CHG-000-initial`，后续变更/缺陷分 `changes/` 与 `bugs/`；新增 `atlas change` / `atlas bug`，按请求 base 以来代码 diff 反查 spec 与标识符，安全更新活文档/PRD/E2E/spec并运行现有校验；请求内 JSON 回执记录代码指纹、文档哈希、影响面、冲突与校验结果；活文档结构损坏（截断/空列/最近请求错指）写 fail 回执并阻断重跑与 finish，finish 对缺回执/冲突/过期分别阻断；旧 v1 独立 slug 与普通文件直填兼容。
+- feat(workflow): 自然语言需求先归类落盘再实现（D211 增补）——`plan/run --requirement` 对文本输入自动判定初始需求/需求变更/缺陷，唯一关联父需求条款并创建统一 `requirements/<slug>/`；新卡带 `intake_version: 2`，dispatch/verify/finish 缺落点、基线、确认状态或证据时退出 2 + `intake_missing`，旧卡保持兼容；用户原话支持 stdin 安全传入，重复输入幂等复用，同一 unit 换原文需显式 `--replan`；新增 intake 回归与 M245 假绿证明。
+- feat(workflow): 需求落点统一承载初始需求、需求变更与缺陷（`RFC-20261124-01` / D211）——三类增量共用 `requirements/<slug>/` 与既有四态状态机；新增类型、稳定 `<slug>#R-NN` 基线关联、缺陷报告证据分层、无卡分诊关闭、归档路径唯一回落、跨落点冒领拒绝、重跑 plan 指针保持与类型感知 finish 回写；`_index.md` 明确为派生导航视图，旧需求缺省初始需求、零迁移；workflow 测试 94 → 155 条。
 
 ## [v0.4.0-beta.7] - 2026-11-23
 

@@ -26,7 +26,9 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
   update    安全刷新当前项目中的 .atlas/ 工程线束与平台 Skills 至最新版本
   upgrade   自动拉取 npm 最新全局包升级全局 Atlas CLI
   check     运行项目级资产与门禁全套检查
-  workflow  自建全流程执行层调度（plan / dispatch / context / verify / finish / status / archive / run）
+  bug       按 diff 回推缺陷活文档与 PRD/AC/E2E/spec（atlas bug --unit <ID>）
+  change    按 diff 回推需求变更活文档与 PRD/AC/E2E/spec（atlas change --unit <ID>）
+  workflow  自建全流程执行层调度（plan 自动归类落盘 / dispatch / context / verify / finish / status / archive / run）
   solution  多仓方案层：init / adopt / status / check / lock / task（Phase 1 仅 federated）
   review    实例⑤实现代码独立审查一键编排（preview → CLI review → scope → convert → validate → closure）
   eval      消融对照跑分器（run：两 commit 对照出 ledger；gate：回归判定）
@@ -46,6 +48,10 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
   atlas upgrade               # 升级全局 CLI 至最新发布版
   atlas upgrade --tag beta    # 升级全局 CLI 至指定的 tag
   atlas check --fast          # 运行快速门禁体检
+  atlas workflow plan --unit <ID> --requirement -  # 自然语言自动归类并落盘（原文经 stdin）
+  atlas workflow plan --unit <ID> --requirement <文本|文件|落点> [--type auto|initial|change|bug] [--related <slug>#R-NN]
+  atlas bug --unit BUG-20261125-001 --from main  # 缺陷修复后回推并校验
+  atlas change --unit CHG-20261125-001 --from main
   atlas solution init --name demo --member web=web --member api=api
   atlas solution adopt        # 自动识别成员仓并生成 federated 清单
   atlas solution check        # 只读检查清单 / 守卫 / 契约锁
@@ -397,6 +403,21 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
     const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
 
     const res = runPython([runScript, '--root', targetDir, ...passthroughArgs], {
+      stdio: 'inherit',
+    });
+    exitWithResult(res, 'python');
+    break;
+  }
+
+  case 'bug':
+  case 'change': {
+    const passthroughArgs = args.slice(1);
+    const targetDir = process.cwd();
+    const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_bug.py');
+    const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_bug.py');
+    const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
+    const kind = command === 'bug' ? 'bug' : 'change';
+    const res = runPython([runScript, '--root', targetDir, '--kind', kind, ...passthroughArgs], {
       stdio: 'inherit',
     });
     exitWithResult(res, 'python');

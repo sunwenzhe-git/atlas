@@ -1,9 +1,19 @@
 ---
 name: atlas-apply
-description: "项目级跨环编排环（atlas 唯一编排件）：把一条需求灌进项目级应然资产——读 执行层任务卡，推导影响面，按 prd → e2e 增量更新，跑机器校验并出报告；四模式：apply <需求ID>（需求式跨环增量）、apply adopt（既有项目一次性接入开户：只跑 structure 全量 + 全局 PRD 按最小必填集、域级 PRD 按「开户最小集」逐域开一份）、all（按序跑 structure/prd/e2e 三环全量）与 backfill（回流原语：已裁决的回填条目按上游目标分组、攒批灌入，含下游用例改挂与各环门照跑）；先过三问门（改动既有能力 / 要人确认 UI / 要可重复验收），三问全否 ⇒ 只走 structure + 执行层。Use when 用户要求 接入 Atlas 工作流/把项目接入 Atlas/存量项目接入/应用需求/需求增量/更新项目级资产/跨环更新/apply 需求/跑三环全量/all 模式/旧项目接入/接入开户/adopt 模式/回填/backfill/回流原语/把需求灌进 PRD 与 E2E/实现前更新应然资产。不产 PRD 正文、E2E 用例、结构事实或业务代码（分别是各环与 执行层 实现阶段的职责）。"
+description: "项目级跨环编排环（atlas 唯一编排件）：把一条需求灌进项目级应然资产——读 执行层任务卡，推导影响面，按 prd → e2e 增量更新，跑机器校验并出报告；四模式：apply <需求ID>（需求式跨环增量）、apply adopt（既有项目一次性接入开户：只跑 structure 全量 + 全局 PRD 按最小必填集、域级 PRD 按「开户最小集」逐域开一份）、all（按序跑 structure/prd/e2e 三环全量）与 backfill（回流原语：已裁决的回填条目按上游目标分组、攒批灌入，含下游用例改挂与各环门照跑）；先过三问门（改动既有能力 / 要人确认 UI / 要可重复验收），三问全否 ⇒ 只走 structure + 执行层。Use when 用户要求 接入 Atlas 工作流/把项目接入 Atlas/存量项目接入/应用需求/需求增量/更新项目级资产/跨环更新/apply 需求/跑三环全量/all 模式/旧项目接入/接入开户/adopt 模式/回填/backfill/回流原语/把需求灌进 PRD 与 E2E/实现前更新应然资产；或用户在大需求下直接提出后续小需求、需求改动、bug 修复、联调问题、回归问题，需要先自动归类并关联父需求再实现。不产 PRD 正文、E2E 用例、结构事实或业务代码（分别是各环与 执行层 实现阶段的职责）。"
 ---
 
 # atlas apply
+
+## 自然语言 intake 与回推（先归类落盘，再实现）
+
+1. 保留用户原话，生成任务 ID，用带引号 heredoc 经 stdin 传给 `atlas workflow plan --unit <ID> --requirement -`；不要先把用户文本拼进 shell 命令。
+2. `plan` 自动判定初始需求/需求变更/缺陷。初始需求创建 `<assets_root>/requirements/<feature>/requirement.md`、`items.md` 与 `changes/CHG-000-initial/` 首版快照；变更/缺陷只在既有功能根创建 `changes/CHG-*` 或 `bugs/BUG-*` 请求。新卡标记 `intake_version: 2`。退出 0 后才继续 dispatch 与实现。
+3. 退出 2 时只问命令点名的缺口：父需求用 `--related <feature>#R-NN`，类型用 `--type initial|change|bug`，功能 slug 用 `--slug`。短标题子串不算唯一点名；变更与缺陷词同时出现时按变更，需要按缺陷处理必须显式 `--type bug`。
+4. 重复原话复用同一请求；同 unit 换原话默认拒绝，新请求用新 unit，显式 `--replan` 才重建绑定。旧卡/v1 独立 slug 保持兼容；普通文本文件 `--requirement <file>` 保持直填。
+5. 缺陷诊断后把实际环境、复现步骤与根因补入 `bugs/BUG-*.md`；需求变更把明确“变更后”口径补入 `changes/CHG-*/diff.md`。未提供的信息写“未提供”，不杜撰。
+6. 实现完成后运行 `atlas bug --unit <请求ID|任务ID>` 或 `atlas change --unit <请求ID|任务ID>`。命令按 base 以来 diff 反查 spec/标识符，更新活文档、产品事实、E2E/spec，并跑现有校验；语义冲突必须带 `--decision` 与 `--decision-by`，不得静默选边。
+7. `finish` 会校验回执的代码指纹与文档哈希；缺回执、冲突或过期都会阻断。重跑回推同快照应零写入。
 
 跨环编排环，atlas 里唯一的编排件。把一条需求灌进项目级应然资产：读 执行层任务卡 → 推导影响面 → 按 `prd → e2e` 增量更新（E1：原型环已移除）→ 跑机器校验 → 出报告；更新完成后 执行层 才去实现。四种模式：`apply <需求ID>`（需求式增量）、`apply adopt`（既有项目一次性接入开户）、`all`（按序跑三环全量）与 `backfill`（回流原语）。
 
@@ -28,7 +38,7 @@ description: "项目级跨环编排环（atlas 唯一编排件）：把一条需
 - **首次接入先分清「装配」与「开户」**：`product/prd/` 与 `.atlas/spec/structure/` 为空 ⇒ 本产品**尚未开户**。既有/存量项目 ⇒ `adopt`；全新空白项目 ⇒ `all`。**不得**因为 `.atlas/` / `product/` 已存在就判「已接入」或反问用户是不是接过了——这是用户说「把项目接入 Atlas」时最常见的踩空（判据：开户产物是那两个目录的**内容**，不是目录本身；见 `apply/reference.md` §1）。
 - **`adopt` 模式**：旧项目**第一次**接入——只跑 `structure` 全量，再把 `product/prd/` 开起来：全局 `prd.md` 按**最小必填集**（`范围形态：变更` + `覆盖度` + `基线`），**域级为域清单里每个域开一份「开户最小集」**（一 域概述 / 二 功能清单 / 四 业务规则 / 五 验收标准；三 功能详细说明与 六 Assumptions **整节不出现**，留到该域真有需求时补——契约 §4）；**开户交尾**跑一次 `gen_testid_stub.py` 出实现期薄桩（= 老页面 testid 的**实然**盘点表；**非门禁前置**——缺失由 `validate_testids` 机器兜底补齐，显式跑是为让交割物当场可见，契约 §1 + `rings/e2e/reference.md` §4.1）；**不预设** E2E（原型环已移除），它由后续每条需求按三问门长出。
 - **并发写面**：同一项目级文件**单写者**；并发前先声明写面，冲突时停下报告（`apply/reference.md` §5.1）。
-- **参与环与顺序**：`apply <需求ID>` = `prd → e2e`（按三问门取舍）；`structure` 不参与（实然，实现后由 `after_finish` hook 刷），唯一例外 = 本次 PRD 定稿改了域清单 ⇒ 末尾追一次 structure re-key。`all` = `structure → prd → e2e` 逐一全量。
+- **参与环与顺序**：`apply <需求ID>` = `prd → e2e`（按三问门取舍）；`structure` 不参与（实然，实现后显式运行 `refresh_structure.py --chain` 刷新），唯一例外 = 本次 PRD 定稿改了域清单 ⇒ 末尾追一次 structure re-key。`all` = `structure → prd → e2e` 逐一全量。
 - **`backfill` 模式（回流原语，第 4 种，`apply/reference.md` §5.2）**：把**已裁决**的回填条目（补写 / 修订 / 收口 / 配置四型）按「上游目标 + 改动类型」**分组**、**攒批**（≤ 10 条/批）灌入上游；**独立声明写面**走 §5.1 仲裁；**闭环钩子硬** —— 下游重跑/重审 + 台账**随批挪卷** + **各环门照跑**（不得以「只是回填」跳过）。裁决型走队列本体、退役型走生命周期（`shared/global-rules.md` §11）。
 - **判据「是否改变应然 UI」**（不是需求大小）：改 UI ⇒ 先把 PRD 文案 / 流程面落细，并把新元素的 testid **应然**写进用例分片（E1：原型环已移除，见 `rings/e2e/reference.md` §6.2）；不改 UI ⇒ 复用既有 testid，只补用例；纯后端不可见 ⇒ 本环不产用例。
 - **影响面识别归本环**：agent 语义判断 + 结构证据（`routes.md`/`_meta.json.domains`/索引页面表），产结构化清单；低置信 / 歧义 / 映射不到 ⇒ 一次性 ≤3 问，**不猜**；**禁**用正则判语义。

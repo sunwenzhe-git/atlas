@@ -5,14 +5,16 @@
   Plan（大任务自动拆解）→ Dispatch（最小上下文分发）→ Verify（暂存区自动审查与测试并轨）→ Finish（收口归档）
 
 用法：
-  atlas workflow plan --unit <ID> [--requirement <TEXT_OR_FILE|需求落点>]
+  atlas workflow plan --unit <ID> [--requirement <TEXT_OR_FILE|需求落点|->]
+      [--type auto|initial|change|bug] [--related <slug>#R-NN] [--slug <slug>] [--replan]
   atlas workflow dispatch [--unit <ID>]
   atlas workflow verify --unit <ID> [--staged] [--check-cmd <CMD>]
   atlas workflow finish --unit <ID>
   atlas workflow status [--unit <ID>] [--all]
   atlas workflow progress --unit <ID>   # 只读进度探针（RFC-20261122-02，不写盘不改状态）
   atlas workflow archive [--unit <ID>]
-  atlas workflow run --unit <ID> [--requirement <TEXT_OR_FILE|需求落点>] [--check-cmd <CMD>]
+  atlas workflow run --unit <ID> [--requirement <TEXT_OR_FILE|需求落点|->]
+      [--type auto|initial|change|bug] [--related <slug>#R-NN] [--slug <slug>] [--replan] [--check-cmd <CMD>]
 
 退出码（封闭分配，RFC-20261122-07，单源 `_support/workflow_causes.py`）：
   0 成功；1 判定失败·门红（扣预算类）；2 用法错误/前置不满足/环境异常/流程顺序（不扣）；
@@ -41,8 +43,14 @@ from _support.workflow_plan import (  # noqa: E402
     decompose_requirement, write_task_card, load_tasks, PlanError,
     ARCHIVE_DIR, REQUIREMENT_ITEMS_FILE, REQUIREMENT_DOC_FILE, detect_requirement_root,
     requirement_pointer_text, requirement_relation_findings,
-    logical_requirement_root_ref, resolve_requirement_root
+    logical_requirement_root_ref, resolve_requirement_root, requirement_type,
+    read_requirement_fields
 )
+from _support.workflow_intake import (
+    ensure_requirement_intake, intake_task_findings, mark_requirement_split,
+    refresh_requirement_index, requirement_matches_text
+)
+from _support.workflow_request import current_head, parse_request, request_source_text, sha256_text
 from _support.workflow_verify import (  # noqa: E402
     coverage_matrix_findings, requirement_root_findings, read_requirement_status,
     mechanism_doc_findings, mechanism_dead_declare_findings,
@@ -100,58 +108,130 @@ def _prune_orphan_cards(tasks_dir: Path, unit: str, keep: set[str]) -> None:
         print(f"  清理孤儿任务卡：{d.name}（本轮拆解已不再生成）")
 
 
+def _looks_like_requirement_path(value: str) -> bool:
+    return (Path(value).is_absolute() or value.startswith(("./", "../"))
+            or re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+", value) is not None)
+
+
 def cmd_plan(args: argparse.Namespace, root: Path) -> int:
     req_text = ""
     req_root: Path | None = None
     req_rel: str | None = None
-    if args.requirement:
-        p = Path(args.requirement)
+    intake = None
+    intake_allowed = True
+    requirement_arg = args.requirement
+    if requirement_arg == "-":
+        stream = getattr(sys.stdin, "buffer", None)
+        if stream is None:
+            requirement_arg = sys.stdin.read()
+        else:
+            try:
+                requirement_arg = stream.read().decode("utf-8")
+            except (OSError, UnicodeError) as exc:
+                return die(f"stdin 需求输入不是合法 UTF-8：{exc}")
+    existing = [t for t in load_tasks(_read_tasks_root(root), include_archived=True)
+                if t["id"] == args.unit or t["id"].startswith(f"{args.unit}-")]
+    prior_task = next((t for t in existing if t["id"] == args.unit), None)
+    prior_request_task = next((t for t in existing if t.get("intake_version") == 2
+                               and isinstance(t.get("request_path"), str) and t["request_path"]), None)
+    prior = next((t.get("requirement_root") for t in existing
+                  if isinstance(t.get("requirement_root"), str)), None)
+    try:
+        prior_root = resolve_requirement_root(root, prior) if prior else None
+    except (LayoutError, OSError):
+        prior_root = None
+    if (prior_root is not None and not requirement_arg
+            and read_requirement_fields(prior_root).get("状态") == "已收口"):
+        return die(f"任务 {args.unit} 的需求已收口；新请求请使用新的 --unit 与原文")
+    if not requirement_arg:
+        req_root = prior_root
+        if req_root is None:
+            return die("plan 缺少需求输入：用 --requirement <文本|文件|落点> 先完成归类与落盘")
+    if requirement_arg:
+        p = Path(requirement_arg)
         if not p.is_absolute():
             p = root / p
-        # 需求落点模式判定（RFC-20261122-03）：指向含 requirement.md 的目录或该文件本身；
-        # 否则直填模式（旧行为逐字节不变）。
         req_root = detect_requirement_root(p, root)
         if req_root is not None:
             try:
                 if resolve_requirement_root(root, req_root) is None:
                     return die(f"需求落点路径非法：{req_root}（须位于配置资产根的 requirements/<slug>/）")
                 req_rel = logical_requirement_root_ref(root, req_root)
+            except LayoutError as exc:
+                return die(str(exc))
+            try:
                 req_text = (req_root / REQUIREMENT_DOC_FILE).read_text(encoding="utf-8")
-                # 确认门软校验（纪律面 WARN，不拦停；状态机：候选→已确认→已拆→已收口）
-                status = read_requirement_status(req_root)
-                relation_findings = requirement_relation_findings(root, req_root)
-            except (LayoutError, OSError) as exc:
-                return die(f"需求落点不可读或布局非法：{exc}")
+            except (OSError, UnicodeError) as exc:
+                return die(f"需求落点不可读：{req_root}: {exc}")
+            status = read_requirement_status(req_root)
             if status is None:
                 print("WARN（需求落点）: requirement.md 缺「**状态**：」状态行——确认门未留痕"
                       "（RFC-20261122-03）", file=sys.stderr)
             elif status == "候选":
                 print("WARN（需求落点）: 落点状态 = 候选（未确认先拆）——先过确认门再拆卡",
                       file=sys.stderr)
-            for finding in relation_findings:
+            elif status == "已收口":
+                return die(f"需求落点已收口，不能作为新任务入口：{req_root}")
+            for finding in requirement_relation_findings(root, req_root):
                 print(f"WARN（需求落点）: {finding}", file=sys.stderr)
         elif p.is_file():
-            req_text = p.read_text(encoding="utf-8")
-        else:
-            ref_text = str(args.requirement).strip()
             try:
-                assets_rel = load_layout(root).assets_root.resolve().relative_to(
-                    root.resolve()).as_posix()
-                requirement_prefix = f"{assets_rel}/requirements/"
-            except (LayoutError, ValueError):
-                requirement_prefix = "product/requirements/"
-            path_like = (Path(ref_text).is_absolute()
-                         or ref_text.startswith("requirements/")
-                         or ref_text.startswith(requirement_prefix))
-            if path_like:
-                return die(f"需求落点引用无法解析：{args.requirement}")
-            req_text = args.requirement
-    else:
-        req_text = f"需求工作单元 {args.unit}"
+                req_text = p.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as exc:
+                return die(f"需求文件不可读：{p}: {exc}")
+            if prior_root is None:
+                intake_allowed = False
+        elif p.is_dir() or _looks_like_requirement_path(requirement_arg):
+            return die(f"需求落点引用无法解析：{requirement_arg}")
+        else:
+            req_text = requirement_arg
+        if prior_root is not None:
+            prior_request_matches = False
+            prior_request_ref = prior_request_task.get("request_path") if prior_request_task else None
+            if prior_request_task and isinstance(prior_request_ref, str) and prior_request_ref:
+                prior_request = parse_request(root / prior_request_ref)
+                prior_request_matches = prior_request.get("source_sha256") == sha256_text(req_text.strip())
+            if req_root is not None:
+                if resolve_requirement_root(root, req_root) != prior_root and not getattr(args, "replan", False):
+                    return die(f"任务 {args.unit} 已关联其他需求；切换落点需显式 --replan")
+            else:
+                if (read_requirement_fields(prior_root).get("状态") == "已收口"
+                        and not getattr(args, "replan", False)):
+                    return die(f"任务 {args.unit} 的需求已收口；新请求请使用新的 --unit 与原文")
+                if read_requirement_fields(prior_root).get("状态") == "已收口":
+                    pass
+                elif not (requirement_matches_text(prior_root, req_text) or prior_request_matches):
+                    if not getattr(args, "replan", False):
+                        return die(f"任务 {args.unit} 已关联其他需求；新请求请使用新的 --unit，"
+                                   "重跑同一计划可省略 --requirement")
+                else:
+                    req_root = prior_root
+                    req_rel = logical_requirement_root_ref(root, req_root)
+                    try:
+                        req_text = (request_source_text(root / prior_request_task["request_path"])
+                                    if prior_request_task else
+                                    (req_root / REQUIREMENT_DOC_FILE).read_text(encoding="utf-8"))
+                    except (PlanError, OSError) as exc:
+                        return die(str(exc))
+    elif req_root is not None:
+        req_rel = logical_requirement_root_ref(root, req_root)
+        try:
+            req_text = (request_source_text(root / prior_request_task["request_path"])
+                        if prior_request_task else
+                        (req_root / REQUIREMENT_DOC_FILE).read_text(encoding="utf-8"))
+        except (PlanError, OSError) as exc:
+            return die(str(exc))
 
     try:
         tasks = decompose_requirement(root, req_text, args.unit)
-    except PlanError as exc:
+        if requirement_arg and req_root is None and intake_allowed:
+            intake = ensure_requirement_intake(
+                root, req_text, declared=getattr(args, "type", "auto"),
+                related=getattr(args, "related", None), slug=getattr(args, "slug", None),
+                dry_run=args.dry_run)
+            req_root = intake.root
+            req_rel = logical_requirement_root_ref(root, req_root) if not args.dry_run else intake.rel
+    except (PlanError, OSError, LayoutError) as exc:
         return die(str(exc))
 
     tasks_dir = _tasks_root(root)
@@ -174,39 +254,74 @@ def cmd_plan(args: argparse.Namespace, root: Path) -> int:
                     if grandchild.is_dir())
             else:
                 reserved_archive_ids.add(child.name)
-    for t in tasks:
-        if t["id"] in reserved_archive_ids:
-            return die(f"任务 ID {t['id']} 已存在于归档命名空间，禁止重建同 ID 活跃卡")
+    for task in tasks:
+        if task["id"] in reserved_archive_ids:
+            return die(f"任务 ID {task['id']} 已存在于归档命名空间，禁止重建同 ID 活跃卡")
     created: list[dict] = []
     for t in tasks:
+        prior_task = next((item for item in existing_tasks if item["id"] == t["id"]), None)
+        inherited_v2 = (prior_task if prior_task and prior_task.get("intake_version") == 2
+                        and req_root == prior_root else None)
+        request_rel = (intake.request_rel if intake and intake.version == 2
+                       else inherited_v2.get("request_path") if inherited_v2 else None)
         paths = [str(p) for p in (getattr(args, "paths", None) or []) if str(p).strip()]
         if paths:
             t["paths"] = paths
         if req_root is not None:
-            assert req_rel is not None
-            # 落点模式：卡 §1 正文指针化——需求正文唯一住址在落点，卡不复制正文
-            t["details"] = requirement_pointer_text(req_rel)
+            t["details"] = requirement_pointer_text(req_rel, request_rel)
+            if request_rel:
+                t["details"] += f"\n> 本次请求记录：`{request_rel}`"
+            t["intake_version"] = intake.version if intake else (2 if inherited_v2 else 1)
+            t["intake_type"] = (intake.kind if intake else
+                                inherited_v2.get("intake_type") if inherited_v2
+                                else requirement_type(req_root))
+            t["intake_item_id"] = (intake.item_id if intake else
+                                   inherited_v2.get("intake_item_id") if inherited_v2 else None)
+            if t["intake_version"] == 2:
+                t["request_id"] = intake.request_id if intake else inherited_v2.get("request_id")
+                t["request_path"] = request_rel
+                t["base_commit"] = (current_head(root) if intake else
+                                    inherited_v2.get("base_commit") if inherited_v2 else None)
+                item_id = t.get("intake_item_id")
+                if item_id:
+                    t["claim_item_ids"] = [item_id]
         t_dir = tasks_dir / t["id"]
         if not args.dry_run:
-            # plan 显式给过 --requirement ⇒ 需求驱动卡：同步写条目表 + 覆盖矩阵骨架
-            # （#72/#73 开工前置产物；重跑不覆盖已填内容；落点模式写领取引用表）。
-            write_task_card(t_dir, t, with_requirement_items=bool(args.requirement),
+            write_task_card(t_dir, t, with_requirement_items=bool(requirement_arg),
                             requirement_root_rel=req_rel)
         created.append({"id": t["id"], "title": t["title"], "dir": str(t_dir.relative_to(root))})
 
     if not args.dry_run:
         _prune_orphan_cards(tasks_dir, args.unit, {t["id"] for t in created})
+        if req_root is not None:
+            mark_requirement_split(req_root)
+            refresh_requirement_index(root)
 
+    payload = {"status": "ok", "unit": args.unit, "tasks": created}
+    if intake:
+        payload["intake"] = {"path": intake.rel, "type": intake.kind,
+                             "related": intake.related, "created": intake.created,
+                             "request_id": intake.request_id,
+                             "request_path": intake.request_rel}
     if args.json:
-        print(json.dumps({"status": "ok", "unit": args.unit, "tasks": created},
-                         ensure_ascii=False, indent=2))
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print(f"atlas workflow plan @ {args.unit}   生成 {len(created)} 个工作单元：")
         for item in created:
             print(f"  - [{item['id']}] {item['title']} -> {item['dir']}")
         if req_root is not None:
-            print(f"  落点模式：条目正文唯一住址 = {req_rel}/items.md；"
-                  "开工前在卡 requirement-items.md 写领取引用行（RFC-20261122-03）")
+            request_rel = next((t.get("request_path") for t in tasks
+                                if isinstance(t.get("request_path"), str)), None)
+            if request_rel:
+                print(f"  活文档模式：当前需求正文 = {req_rel}/requirement.md；"
+                      f"items.md 为稳定索引；本次请求 = {request_rel}")
+            else:
+                print(f"  落点模式：条目正文唯一住址 = {req_rel}/items.md；"
+                      "开工前在卡 requirement-items.md 写领取引用行（RFC-20261122-03）")
+        if intake:
+            print(f"  自动归类：{intake.kind} -> {intake.rel}"
+                  + (f"（基线 {intake.related}）" if intake.related else "")
+                  + (f"；请求 {intake.request_id} -> {intake.request_rel}" if intake.request_id else ""))
     return 0
 
 
@@ -360,6 +475,14 @@ def cmd_verify(args: argparse.Namespace, root: Path) -> int:
     # 尝试预算门（RFC-20261122-07 §3.1.1；gates.md §2.1 同名行）：charged ≥ 上限
     # ⇒ 拒绝继续该单元（退出码 3 + budget_exceeded 留痕行），停下要求人工——不是放行。
     if not args.dry_run:
+        target = next((t for t in load_tasks(tasks_root, include_archived=True)
+                       if t["id"] == args.unit), None)
+        findings = intake_task_findings(root, target) if target else []
+        if findings:
+            record_attempt(tasks_root, args.unit, cmd="verify", cause="intake_missing")
+            return _verify_paused(
+                args, args.unit, "intake_missing",
+                "任务未完成需求归类与落点前置：" + "；".join(findings))
         charged = charged_count(tasks_root, args.unit)
         limit = max_verify_attempts(root)
         if charged >= limit:
@@ -706,7 +829,13 @@ def main() -> int:
     # plan
     p_plan = sub.add_parser("plan", help="根据需求分解任务并生成任务卡 (Task Cards)", parents=[common])
     p_plan.add_argument("--unit", required=True, help="大任务标识")
-    p_plan.add_argument("--requirement", help="需求说明文本或文件路径")
+    p_plan.add_argument("--requirement", help="需求说明文本、文件、落点；- 表示从 stdin 读取")
+    p_plan.add_argument("--type", choices=("auto", "initial", "change", "bug"), default="auto",
+                        help="归类方式；缺省按请求中的缺陷/变更证据自动判定")
+    p_plan.add_argument("--related", help="需求变更/缺陷的既有行为基线 <slug>#R-NN")
+    p_plan.add_argument("--slug", help="新落点稳定 slug；缺省按请求摘要生成")
+    p_plan.add_argument("--replan", action="store_true",
+                        help="确认用新原文重建同一 unit；缺省拒绝静默换需求")
     p_plan.add_argument("--paths", nargs="+", default=None,
                         help="本次需求涉及的改动路径 glob（写入任务卡，派发时用于最小上下文注入）")
 
@@ -755,7 +884,13 @@ def main() -> int:
     # run (一键全流程)
     p_run = sub.add_parser("run", help="串联闭环（Plan -> Dispatch -> Verify -> Finish；需先按派工单实现并暂存）", parents=[common])
     p_run.add_argument("--unit", required=True, help="大任务标识")
-    p_run.add_argument("--requirement", help="需求说明文本或文件路径")
+    p_run.add_argument("--requirement", help="需求说明文本、文件、落点；- 表示从 stdin 读取")
+    p_run.add_argument("--type", choices=("auto", "initial", "change", "bug"), default="auto",
+                       help="归类方式；缺省自动判定")
+    p_run.add_argument("--related", help="需求变更/缺陷的既有行为基线 <slug>#R-NN")
+    p_run.add_argument("--slug", help="新落点稳定 slug；缺省按请求摘要生成")
+    p_run.add_argument("--replan", action="store_true",
+                       help="确认用新原文重建同一 unit；缺省拒绝静默换需求")
     p_run.add_argument("--paths", nargs="+", default=None,
                        help="改动路径/目录（plan 写入任务卡，dispatch 时用于最小注入）")
     p_run.add_argument("--check-cmd", help="确定性检查命令")

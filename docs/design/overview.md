@@ -65,8 +65,10 @@ Atlas 的核心结构是**两层正交**（也常被称作**双线束模型**：
 每提一条需求走一遍；上面四种起点开好户后，最终都汇合到这条循环：
 
 ```text
-`product/requirements/<slug>/` 落初始需求、需求变更或缺陷确认稿（ID = slug，不另建 inbox）
-   ↓ `atlas workflow plan` 建任务卡（`.atlas/tasks/<需求ID>/prd.md`）
+用户原话 → `atlas workflow plan --requirement -` 自动判定初始需求/需求变更/缺陷
+   ↓ 初始需求建立 `product/requirements/<feature>/requirement.md` 活文档与首版快照
+   ↓ 后续变更/缺陷只在同一功能根的 `changes/` 或 `bugs/` 新增请求，再建任务卡
+   ↓ 新卡 `intake_version: 2`；dispatch/verify/finish 缺功能根、请求、条款或状态 ⇒ rc2
    ↓
 ① atlas apply <需求ID>   ←— `atlas workflow dispatch` 的派工单自动带上
    ↓   三问门分流：有一条「是」⇒ 拉起对应环；全否 ⇒ 走纯加法旁路，直接到 ②
@@ -77,6 +79,9 @@ Atlas 的核心结构是**两层正交**（也常被称作**双线束模型**：
    ↓   任一环失败 / 影响面定不下来 ⇒ 停在 planning，不得进入实现
    ↓
 ② 执行层实现（按 `atlas workflow dispatch` 派工单；写码动作由宿主 agent 执行，Atlas 不产需要创造判断的业务实现；实现期机器面三分见 `global-rules.md` §18〔D210〕：内容面契约 + check 行为者 / 过程门 / lint 归项目）
+   ↓
+②.5 变更/缺陷回推：`atlas change` / `atlas bug` 按 base 以来 diff 更新活文档/PRD/E2E/spec，跑现有校验并写回执
+   ↓ 语义冲突只报不选边；同快照重跑零写入
    ↓
 ③ 收口：实例 ⑤ 实现代码审查 → E2E red → green → 验收走查门
    → 运行态报错现场留底与结构化证据链快照
