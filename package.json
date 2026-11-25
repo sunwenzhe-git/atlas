@@ -24,6 +24,8 @@
     "agents",
     "skills",
     "_support",
+    "!**/__pycache__/**",
+    "!**/*.pyc",
     "install.py",
     "install.sh",
     "NOTICE",
