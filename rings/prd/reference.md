@@ -513,6 +513,7 @@ product/prd/
 | `items.md` | **落点条目表** `ID \| 页码 \| 章节 \| 原文（逐字）` | **条目正文唯一住址**（#71 口径：逐字不改写、限定语保留、表行数 = 声明总数） |
 | `work/` | 初始需求 `需求PDF-全文.md`；需求变更 `变更请求.md`；缺陷 `缺陷报告.md` | 来源材料唯一住址；缺陷报告存现象、期望、实际、复现与环境证据，不复制进 `items.md` |
 | `archive/<YYYY-MM>/` | 收口后目录移入 | 镜像 `.atlas/tasks/archive` 语义 |
+| `record.json`（仅缺陷） | 回推状态、影响面、文档前后哈希、签字决策、append-only 历史、diff 来源与 commit/PR | 机器台账；schema 见 `templates/bug/record.schema.json`，不复制需求/证据正文 |
 
 登记 = `requirements/_index.md`（需求 slug / 类型 / 状态 / 关联需求 / 关联卡），**派生导航视图，非真相源、不作判据输入**；不进 `product/prd/README.md` 追溯总表——追溯总表行形态受参数 4⑥ 行形态硬约束（已覆盖 / 未覆盖二值），需求登记行两态都不像。
 
@@ -537,3 +538,11 @@ product/prd/
 2. **按类型回写**：初始需求/需求变更沉淀回产品事实；缺陷默认只恢复既有行为，仅当产品事实缺失或错误时回写。verify 的关闭提示使用同一类型分流。
 3. **无卡分诊关闭**：重复、非缺陷、不修项不造任务卡；在 `requirement.md` 写 `**结论**：重复/非缺陷/不修` 与非空 `**证据**：<路径#锚或 commit>`，状态直接置「已收口」并归档。此类关闭不跑覆盖矩阵与 bug-fix 七检查点，也不得用「已修复」冒充分诊结论。
 4. **索引非权威**：`_index.md` 只导航；状态以 `requirement.md` 为准，关联卡以 `task.json` 为准。verify 先校验全局任务账本；损坏卡、非法 UTF-8 或无落点重复 ID 均拒绝收口提示，finish 对跨落点冒领同样拒绝推进。归档命名空间内同 ID 一律保留（含缺 task.json 的目录），`requirements/archive` 根拒 symlink 改道。
+
+### 12.5 缺陷回推与收口封印
+
+1. **唯一入口**：`atlas bug --unit <slug>` 负责 canonical 缺陷落点、diff 影响面、文档回推与 `record.json`；`show/list/link` 提供反查与提交后补链。
+2. **唯一顺序**：实现暂存 → `atlas bug --from staged` → 暂存 record/变化文档/生成薄桩 → `workflow verify` → `workflow finish`。
+3. **语义冲突**：可执行 hunk 默认待签字；只有注释/空白等价或注册 language adapter 的等价证明可自动确认。签字决策绑定 bug、source 摘要、conflict、文档摘要、签字人与时间。
+4. **finish 强制门**：缺陷任务必须有 `record.json`、staged 实现指纹、index/worktree 一致、变化产物已暂存，以及 `review.json.bug_backflow` 独立锚；缺记录/待决策/过期/未暂存/分叉/range 模式均阻断，`--force` 不绕。
+5. **双落点拒绝**：`.atlas/bugs/`、资产根缺陷 bugs 目录与 `requirements/<slug>/bugs/` 由 `validate_bug_ledger` 拒绝；历史文件不自动删除或搬迁。

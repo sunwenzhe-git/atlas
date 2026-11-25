@@ -39,6 +39,12 @@ if str(HERE.parent) not in sys.path:
 from _support.layout import LayoutError, load_layout  # noqa: E402
 from _support import review_scope_core as scope_core  # noqa: E402
 from _support.siblings import load_module  # noqa: E402
+from _support.bug_backflow import (  # noqa: E402
+    BackflowError, resolve_defect_root, review_anchor, validate_backflow,
+)
+from _support.bug_record import atomic_write_bytes, read_record  # noqa: E402
+from _support.workflow_causes import exit_code_for  # noqa: E402
+from _support.workflow_plan import load_tasks  # noqa: E402
 
 stack_profile = load_module("stack_profile")
 
@@ -287,6 +293,30 @@ def _staged_paths(root: Path) -> list[str]:
     return []
 
 
+def seal_bug_anchor(root: Path, unit: str, outdir: Path) -> None:
+    tasks_root = root / ".atlas" / "tasks"
+    if not tasks_root.is_dir():
+        return
+    task = next((item for item in load_tasks(tasks_root, include_archived=True)
+                 if item.get("id") == unit), None)
+    if not task or not task.get("requirement_root"):
+        return
+    checked = validate_backflow(root, task)
+    if not checked["applicable"]:
+        return
+    if checked["findings"]:
+        raise BackflowError("；".join(checked["findings"]), cause=checked["cause"])
+    req_root = resolve_defect_root(root, Path(str(task["requirement_root"])).name)
+    record = read_record(req_root) if req_root is not None else None
+    if req_root is None or record is None:
+        raise BackflowError("缺陷台账缺失", cause="bug_backflow_missing")
+    review_file = outdir / "review.json"
+    data = json.loads(review_file.read_text(encoding="utf-8"))
+    data["bug_backflow"] = review_anchor(root, req_root, record)
+    atomic_write_bytes(review_file, json.dumps(data, ensure_ascii=False, indent=2,
+                                               sort_keys=True).encode("utf-8") + b"\n")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", default=".")
@@ -482,14 +512,17 @@ def main() -> int:
             return die("v4 需要实审文件列表：CLI coverage.completed 为空且未给 --reviewed-files")
         reviewed = ["<coverage.completed>"]
     if args.dry_run:
+        hash_source = "index" if args.staged else "worktree"
         print(f"$ {sys.executable} {HERE / 'review_scope.py'} manifest --root {root} "
-              f"--reviewed-files {','.join(reviewed)} --out {scope_manifest}")
+              f"--reviewed-files {','.join(reviewed)} --hash-source {hash_source} --out {scope_manifest}")
     else:
         try:
             base_ref = "HEAD" if args.staged else args.ref_from
             head_ref = "INDEX" if args.staged else args.ref_to
+            hash_source = "index" if args.staged else "worktree"
             manifest = scope_core.build_manifest(root, reviewed,
-                                                 base=base_ref, head=head_ref)
+                                                 base=base_ref, head=head_ref,
+                                                 hash_source=hash_source)
             scope_core.atomic_write_json(scope_manifest, manifest)
         except scope_core.ScopeError as exc:
             return die(str(exc))
@@ -539,6 +572,13 @@ def main() -> int:
             return pr.returncode
         steps.append({"name": "convert", "status": "ok" if pr.returncode == 0 else "FAIL",
                       "detail": f"exit={pr.returncode}"})
+
+    if not args.dry_run:
+        try:
+            seal_bug_anchor(root, args.unit, outdir)
+            steps.append({"name": "bug_backflow_anchor", "status": "ok", "detail": "独立锚已封口"})
+        except BackflowError as exc:
+            return die(str(exc), exit_code_for(exc.cause))
 
     # 6) validator（只对本轮新产出报告带 --scope-manifest）
     val = [sys.executable, HERE / "validate_review_report.py", "--dir", outdir,

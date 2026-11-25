@@ -84,6 +84,14 @@ def make_project(root: Path, *, llm: str | None = "fake-model", cli: str | None 
     return root
 
 
+def init_git(root: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "-c", "user.name=Atlas Test", "-c", "user.email=atlas-test@example.invalid",
+                    "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "-c", "user.name=Atlas Test", "-c", "user.email=atlas-test@example.invalid",
+                    "commit", "-qm", "baseline"], cwd=root, check=True)
+
+
 def run(root: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     e = dict(os.environ)
     e.update(env or {})
@@ -291,6 +299,7 @@ def test_background_respects_overrides(tmp_path: Path) -> None:
 
 def test_staged_mode_runs_successfully(tmp_path: Path) -> None:
     root = make_project(tmp_path)
+    init_git(root)
     p = run(root, "--unit", "U", "--staged", "--expected-files", "1", "--scope", "staged-demo")
     assert p.returncode == 0, p.stdout + p.stderr
     d = report_dir(root)
@@ -317,6 +326,7 @@ def test_missing_from_to_without_staged(tmp_path: Path) -> None:
 
 def test_toolchain_check_cmd_recorded(tmp_path: Path) -> None:
     root = make_project(tmp_path)
+    init_git(root)
     p = run(root, "--unit", "U", "--staged", "--expected-files", "1",
             "--check-cmd", "echo toolchain_ok")
     assert p.returncode == 0, p.stdout + p.stderr

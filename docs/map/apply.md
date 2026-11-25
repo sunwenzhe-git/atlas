@@ -16,7 +16,7 @@
 | `apply/reference.md`(340 行) | 执行契约本体(安装后位于 `.atlas/apply/reference.md`),四模式 / 三问门 / 影响面 / 增量边界全在这 |
 | `skills/atlas-apply/` | agent 执行入口(skill 薄桩) |
 | `atlas workflow plan` / `dispatch` | 把 apply 挂进 执行层 工作流的锚点式补丁 |
-| `scripts/write_claim.py`(204 行) | 并发写面仲裁的 claim 钩子(M3,RFC-20261022-01) |
+| `scripts/write_claim.py`(211 行) | 并发写面仲裁的 claim 钩子(M3,RFC-20261022-01) |
 | `tests/test_backfill_contract.py` | backfill 契约符合性钉(弱判据形态面) |
 
 ## 四种模式(契约 §1,`apply/reference.md:19`)

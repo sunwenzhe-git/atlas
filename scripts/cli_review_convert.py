@@ -378,6 +378,7 @@ def main() -> int:
     if scope_manifest is not None:
         review["review_scope"] = {"manifest": "scope-manifest.json",
                                   "sha256": scope_manifest["scope_sha256"],
+                                  "hash_source": scope_manifest.get("hash_source", "worktree"),
                                   "files": scope_manifest["files"]}
     if drift_record:
         review["review_scope_drift"] = drift_record

@@ -489,6 +489,9 @@ def cmd_finish(args: argparse.Namespace, root: Path) -> int:
         arch = res.get("archived") or {}
         if arch:
             print(f"  归档：{arch.get('status')} -> {arch.get('path')}")
+        bug = res.get("bug_backflow") or {}
+        if bug.get("applicable"):
+            print(f"  缺陷回推：{len(bug.get('artifacts') or [])} 个封印产物；审查锚 {bug.get('review')}")
         req_root = target_task.get("requirement_root")
         closeout = res.get("requirement_closeout")
         if req_root and closeout:

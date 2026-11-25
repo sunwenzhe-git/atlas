@@ -67,7 +67,8 @@ def cmd_manifest(args: argparse.Namespace) -> int:
     paths = _paths(args.reviewed_files, args.reviewed_files_file)
     root = Path(args.root)
     try:
-        manifest = core.build_manifest(root, paths, base=args.base, head=args.head)
+        manifest = core.build_manifest(root, paths, base=args.base, head=args.head,
+                                       hash_source=args.hash_source)
     except core.ScopeError as exc:
         return die(str(exc))
     if args.out:
@@ -146,6 +147,8 @@ def main() -> int:
     m.add_argument("--reviewed-files-file", help="字符串数组 / 一行一路径的文件")
     m.add_argument("--base", help="可选：git 起 ref（只作人读，不参与 scope_sha256）")
     m.add_argument("--head", help="可选：git 止 ref（只作人读，不参与 scope_sha256）")
+    m.add_argument("--hash-source", choices=("worktree", "index", "commit"), default="worktree",
+                   help="内容哈希来源；staged 审查用 index")
     m.set_defaults(func=cmd_manifest)
 
     v = sub.add_parser("verify", help="复算清单内容是否仍一致")

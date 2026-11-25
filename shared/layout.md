@@ -70,7 +70,7 @@ layout:
 ├── .impeccable/                    # impeccable detect 配置（可选外部工具；config.json 的 detector.ignoreRules 须与 product/design.md 的 detect 豁免双向一致）
 └── product/                        # atlas 项目级文档
     ├── adr/                        # NNNN-<slug>.md（项目级长效架构决策记录，按需落笔，永不覆盖）
-    ├── requirements/               # 需求增量（RFC-20261122-03/20261124-01）：<slug>/（requirement.md + items.md + work/）+ archive/<YYYY-MM>/
+    ├── requirements/               # 需求增量（RFC-20261122-03/20261124-01）：<slug>/（requirement.md + items.md + work/；缺陷另有 record.json）+ archive/<YYYY-MM>/
     ├── stack-profile.yaml          # 技术栈画像（字段契约见 stack-profile.md）
     ├── design.md                   # 视觉设计档案（frontend-design skill 写；atlas 只读——走查对照 + 豁免对账）
     ├── reviews/                    # <日期>-<主题>/（人工缺口清单 + plans/）+ calibration.jsonl（审查校准账本，append-only）

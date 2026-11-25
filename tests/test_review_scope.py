@@ -102,6 +102,32 @@ def test_large_file_uses_size_mtime(tmp_path: Path) -> None:
     assert m["files"][0]["sha256"].startswith("size_mtime:")
 
 
+def test_staged_manifest_hashes_index_blob_not_diverged_worktree(tmp_path: Path) -> None:
+    init_repo(tmp_path)
+    path = tmp_path / "a.txt"
+    path.write_text("staged\n", encoding="utf-8")
+    git(tmp_path, "add", "a.txt")
+    git(tmp_path, "commit", "-qm", "init")
+    path.write_text("staged v2\n", encoding="utf-8")
+    git(tmp_path, "add", "a.txt")
+    path.write_text("unstaged v3\n", encoding="utf-8")
+
+    r = run(tmp_path, "manifest", "--reviewed-files", "a.txt",
+            "--hash-source", "index", "--head", "INDEX", "--out", "m.json")
+    assert r.returncode == 0, r.stderr
+    manifest = json.loads((tmp_path / "m.json").read_text(encoding="utf-8"))
+    assert manifest["hash_source"] == "index"
+    assert manifest["files"][0]["status"] == "MM"
+    import hashlib
+    assert manifest["files"][0]["sha256"] == hashlib.sha256(b"staged v2\n").hexdigest()
+
+    r = run(tmp_path, "verify", "--manifest", "m.json")
+    assert r.returncode == 0, r.stdout + r.stderr
+    git(tmp_path, "add", "a.txt")
+    r = run(tmp_path, "verify", "--manifest", "m.json")
+    assert r.returncode == 1 and "内容已变化" in r.stdout
+
+
 def test_untracked_file_included(tmp_path: Path) -> None:
     init_repo(tmp_path)
     (tmp_path / "tracked.txt").write_text("t\n", encoding="utf-8")

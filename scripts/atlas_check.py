@@ -65,7 +65,8 @@ VALIDATORS = (
     "validate_task_card",
     "validate_apply_record",
     "validate_adopt_facts",
-)  # E1：validate_prototype 随原型环退役；§B120：stack_profile / structure 纳入；#182：design_exemptions 纳入；§5.8：e2e_mocks 纳入；B209-1（3507 BT）：validate_ac_alignment 纳入；2026-10-13：validate_adr 纳入（架构决策资产门）；2026-10-14：validate_ledger 随知识库/台账子系统退役（AC 号唯一判据归位 validate_prd）；2026-10-23：validate_walkthrough 纳入（M1 走查锁，RFC-20261022-01）；2026-11-12：task_card / apply_record 纳入（RFC-20261111-03 C 批）；2026-11-19：validate_adopt_facts 纳入（RFC-20261119-03 Phase 3a，静态事实 stale 门）
+    "validate_bug_ledger",
+)  # E1：validate_prototype 随原型环退役；§B120：stack_profile / structure 纳入；#182：design_exemptions 纳入；§5.8：e2e_mocks 纳入；B209-1（3507 BT）：validate_ac_alignment 纳入；2026-10-13：validate_adr 纳入（架构决策资产门）；2026-10-14：validate_ledger 随知识库/台账子系统退役（AC 号唯一判据归位 validate_prd）；2026-10-23：validate_walkthrough 纳入（M1 走查锁，RFC-20261022-01）；2026-11-12：task_card / apply_record 纳入（RFC-20261111-03 C 批）；2026-11-19：validate_adopt_facts 纳入（RFC-20261119-03 Phase 3a，静态事实 stale 门）；2026-11-25：validate_bug_ledger 纳入（canonical 缺陷台账与双落点守卫）
 
 # 对齐测试门的预算（issue #63，2026-11-13 定标）：装配副本全量出厂测试实测 535s
 # （76 文件 / 1750 项，静默机器）、681s（1 个并行会话同机跑同款全量）；发版日 ~3× 负载

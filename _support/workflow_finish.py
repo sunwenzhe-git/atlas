@@ -22,6 +22,7 @@ from datetime import date
 from pathlib import Path
 
 from _support import review_scope_core as scope_core
+from _support.bug_backflow import validate_backflow
 from _support.layout import LayoutError, load_layout
 from _support.workflow_plan import (
     ARCHIVE_DIR, REQUIREMENT_ITEMS_FILE, REQUIREMENT_TYPES, PlanError, is_archived_task_dir,
@@ -104,7 +105,8 @@ def staged_files(root: Path) -> list[str] | None:
     return [line.strip() for line in pr.stdout.splitlines() if line.strip()]
 
 
-def _scope_matches(root: Path, data: dict) -> tuple[bool, str]:
+def _scope_matches(root: Path, data: dict, *,
+                   allowed_extra: set[str] | None = None) -> tuple[bool, str]:
     """检查报告落盘后暂存区内容未被替换（v4 内容封口）。
 
     三分类诊断（2026-11-21，自进化 campaign T3 三撞实测）：extra（暂存面多出实审集
@@ -114,12 +116,19 @@ def _scope_matches(root: Path, data: dict) -> tuple[bool, str]:
     """
     scope = data.get("review_scope")
     if not isinstance(scope, dict) or not scope.get("sha256"):
+        if allowed_extra:
+            return False, "缺陷 finish 要求带 sha256 的 v4 review_scope"
         return True, ""  # 旧报告兼容：无内容锚，无法比对
+    if allowed_extra and data.get("schema_version") != 4:
+        return False, "缺陷 finish 要求 schema_version=4 审查报告"
     staged = staged_files(root)
     if staged is None:
         return False, "无法读取暂存区，不能确认审查内容未被替换（请在 git 仓库内重跑 verify）"
     try:
-        manifest = scope_core.build_manifest(root, staged)
+        hash_source = scope.get("hash_source", "worktree")
+        head_ref = "INDEX" if hash_source == "index" else scope.get("head")
+        manifest = scope_core.build_manifest(root, staged, head=head_ref,
+                                             hash_source=hash_source)
     except Exception as exc:  # noqa: BLE001 —— 路径/状态异常一律视为不可封口
         return False, f"暂存区内容无法重算摘要：{exc}"
     if manifest.get("scope_sha256") == scope.get("sha256"):
@@ -137,7 +146,8 @@ def _scope_matches(root: Path, data: dict) -> tuple[bool, str]:
     changed = []
     for p in sorted(set(recorded) & set(staged)):
         try:
-            m = scope_core.build_manifest(root, [p])
+            m = scope_core.build_manifest(root, [p], head=head_ref,
+                                          hash_source=hash_source)
         except Exception:  # noqa: BLE001
             changed.append(p)
             continue
@@ -145,7 +155,8 @@ def _scope_matches(root: Path, data: dict) -> tuple[bool, str]:
         if entry.get("sha256") != recorded.get(p):
             changed.append(p)
     extra_review = [q for q in extra if q.startswith(review_prefixes)]
-    extra_other = [q for q in extra if not q.startswith(review_prefixes)]
+    extra_bug = [q for q in extra if q in (allowed_extra or set())]
+    extra_other = [q for q in extra if not q.startswith(review_prefixes) and q not in (allowed_extra or set())]
     parts = []
     if extra_review:
         parts.append("审查产物不得进暂存面：`git restore --staged "
@@ -159,12 +170,15 @@ def _scope_matches(root: Path, data: dict) -> tuple[bool, str]:
     if changed:
         parts.append("实审文件内容已变（" + " ".join(changed)
                      + "）：须重新审查（fresh review）后重跑 verify")
+    if not parts and extra_bug:
+        return True, ""
     if not parts:
         parts.append("暂存面与实审集内容均一致但整体摘要不一致（罕见）；请重跑 verify")
     return False, "；".join(parts)
 
 
-def check_task_review_passed(root: Path, unit: str) -> tuple[bool, str, str]:
+def check_task_review_passed(root: Path, unit: str, *,
+                             bug_artifacts: set[str] | None = None) -> tuple[bool, str, str]:
     """检查指定任务是否已产出合规的 review.json 且未被拦截；返回 `(passed, reason, cause)`。
 
     `cause` 为 RFC-20261122-07 失败原因词表成员：报告缺失/未执行 ⇒ `no_review_report`
@@ -203,7 +217,7 @@ def check_task_review_passed(root: Path, unit: str) -> tuple[bool, str, str]:
     if data.get("ok") is False:
         return False, "审查报告 ok=false（存在未解决的阻断问题）", "review_not_passed"
 
-    matched, why = _scope_matches(root, data)
+    matched, why = _scope_matches(root, data, allowed_extra=bug_artifacts)
     if not matched:
         return False, why, "scope_stale"
 
@@ -665,10 +679,31 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
     # 路径则头条病案永远到不了台账；fingerprint 幂等兜底复跑重复）。
     deferred_info = extract_deferred_findings(root, task, t_dir)
 
-    if not force:
+    bug_check = validate_backflow(root, task)
+    if bug_check["findings"]:
+        raise FinishError(f"任务 {t_id} 无法收口：{'；'.join(bug_check['findings'])}",
+                          cause=bug_check["cause"])
+    bug_artifacts = set(bug_check.get("artifacts") or {})
+    review_dir: str | None = None
+    if bug_check["applicable"]:
+        passed, reason, cause = check_task_review_passed(
+            root, t_id, bug_artifacts=bug_artifacts)
+        if not passed:
+            raise FinishError(f"任务 {t_id} 无法收口：{reason}", cause=cause)
+        review_dir = reason
+        try:
+            review_data = json.loads((Path(reason) / "review.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise FinishError(f"缺陷审查锚不可读：{exc}", cause="environment")
+        anchored = validate_backflow(root, task, review_data)
+        if anchored["findings"]:
+            raise FinishError(f"任务 {t_id} 无法收口：{'；'.join(anchored['findings'])}",
+                              cause=anchored["cause"])
+    elif not force:
         passed, reason, cause = check_task_review_passed(root, t_id)
         if not passed:
             raise FinishError(f"任务 {t_id} 无法收口：{reason}", cause=cause)
+        review_dir = reason
 
     e2e = check_e2e_precondition(root, task)
     if e2e["status"] == "FAIL":
@@ -719,6 +754,11 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
         "requirement_closeout": (
             requirement_closeout(root, task["requirement_root"])
             if task.get("requirement_root") else None),
+        "bug_backflow": {
+            "applicable": bug_check["applicable"],
+            "artifacts": sorted(bug_artifacts),
+            "review": review_dir,
+        },
         "e2e_precondition": e2e,
         "structure_freshness": structure,
         "deferred_registration": deferred_info,

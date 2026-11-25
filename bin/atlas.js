@@ -27,6 +27,7 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
   upgrade   自动拉取 npm 最新全局包升级全局 Atlas CLI
   check     运行项目级资产与门禁全套检查
   workflow  自建全流程执行层调度（plan / dispatch / context / verify / finish / status / archive / run）
+  bug       缺陷 canonical 落点、diff 回推台账与反向查询
   solution  多仓方案层：init / adopt / status / check / lock / task（Phase 1 仅 federated）
   review    实例⑤实现代码独立审查一键编排（preview → CLI review → scope → convert → validate → closure）
   eval      消融对照跑分器（run：两 commit 对照出 ledger；gate：回归判定）
@@ -408,6 +409,20 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
     const targetDir = process.cwd();
     const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_workflow.py');
     const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_workflow.py');
+    const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
+
+    const res = runPython([runScript, '--root', targetDir, ...passthroughArgs], {
+      stdio: 'inherit',
+    });
+    exitWithResult(res, 'python');
+    break;
+  }
+
+  case 'bug': {
+    const passthroughArgs = args.slice(1);
+    const targetDir = process.cwd();
+    const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_bug.py');
+    const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_bug.py');
     const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
 
     const res = runPython([runScript, '--root', targetDir, ...passthroughArgs], {

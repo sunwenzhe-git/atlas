@@ -92,9 +92,9 @@ def test_catalog_enumerates_full_surface_and_excludes_dispatcher():
     assert "validate_adopt_facts" in ids
     assert "check_generated" in ids
     assert "check_validators" not in ids
-    assert catalog["counts"]["validators"] == 13
+    assert catalog["counts"]["validators"] == 14
     assert catalog["counts"]["inline"] == 10
-    assert catalog["counts"]["total"] == 23
+    assert catalog["counts"]["total"] == 24
 
 
 def test_strip_rows_only_touches_target_function():

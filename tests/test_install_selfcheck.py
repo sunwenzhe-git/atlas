@@ -72,7 +72,7 @@ HINT_ENTRIES = ("atlas-apply adopt", "atlas-apply all")
 # 非环 skill 白名单（`3509 §95`）：它们不是「环」，不参与环退役对称判据。
 # 2026-11-14：+onegate（RFC-20261114-07 落刀批，协作方法 skill 非资产环）
 # 2026-11-19：+ablate（RFC-20261119-03 Phase 1，按需消融诊断非资产环）
-NON_RING_SKILLS = ("apply", "design-review", "grill", "release", "onegate", "ablate")
+NON_RING_SKILLS = ("apply", "design-review", "grill", "release", "onegate", "ablate", "bug")
 
 
 def _read(path: Path) -> str:

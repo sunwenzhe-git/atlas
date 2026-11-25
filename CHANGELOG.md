@@ -4,6 +4,11 @@
 
 ---
 
+## [Unreleased]
+
+- fix(workflow): 缺陷修复回推与 canonical 落点封印（issues #75/#76，`RFC-20261125-03`）——新增 `atlas bug` 的 bootstrap/影响面/签字回推/反向查询，`record.json` 存审计元数据与 append-only 历史；finish 强制 staged 实现指纹、index/worktree 一致、产物暂存与 `review.json.bug_backflow` 独立锚，`--force` 不绕；新增 `validate_bug_ledger` 拒绝 `.atlas/bugs/`、资产根缺陷 bugs 与 `requirements/<slug>/bugs/`；staged review scope 改哈希 index blob，write_claim 创建后写失败自动清理。
+- docs(guide): 生态选型文对齐 Atlas 自建执行层、语义透镜、覆盖维度与停更/协议事实；新增 2026-11-24 分享 PPT 口播稿、工具速查卡、痛点机制对照表与交接提示词归档。
+
 ## [v0.4.0-beta.8] - 2026-11-25
 
 - feat(workflow): 需求落点统一承载初始需求、需求变更与缺陷（`RFC-20261124-01` / D211）——三类增量共用 `requirements/<slug>/` 与既有四态状态机；新增类型、稳定 `<slug>#R-NN` 基线关联、缺陷报告证据分层、无卡分诊关闭、归档路径唯一回落、跨落点冒领拒绝、重跑 plan 指针保持与类型感知 finish 回写；`_index.md` 明确为派生导航视图，旧需求缺省初始需求、零迁移；workflow 测试 94 → 159 条。

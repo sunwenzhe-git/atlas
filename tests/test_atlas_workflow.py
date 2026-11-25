@@ -1060,7 +1060,7 @@ def test_replan_without_requirement_preserves_pointer(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("kind", "expected_writeback"),
-    [("初始需求", "required"), ("需求变更", "required"), ("缺陷", "conditional")],
+    [("初始需求", "required"), ("需求变更", "required")],
 )
 def test_finish_json_returns_type_aware_requirement_closeout(
         tmp_path: Path, kind: str, expected_writeback: str) -> None:
@@ -1083,6 +1083,24 @@ def test_finish_json_returns_type_aware_requirement_closeout(
     closeout = json.loads(p.stdout)["requirement_closeout"]
     assert closeout["type"] == kind
     assert closeout["product_fact_writeback"] == expected_writeback
+    assert closeout["requirement_status_target"] == "已收口"
+
+
+def test_requirement_closeout_defect_is_conditional(tmp_path: Path) -> None:
+    from _support.workflow_finish import requirement_closeout
+
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root)
+    make_requirement_root(root, slug="typed", kind="缺陷", related="demo-req#R-01")
+    _make_claim_card(root, "T-20", "product/requirements/typed", ["R-01"],
+                     status="completed")
+    source = root / ".atlas" / "tasks" / "T-20"
+    dest = root / ".atlas" / "tasks" / "archive" / "2026-11" / "T-20"
+    dest.parent.mkdir(parents=True)
+    source.rename(dest)
+    closeout = requirement_closeout(root, "product/requirements/typed")
+    assert closeout["type"] == "缺陷"
+    assert closeout["product_fact_writeback"] == "conditional"
     assert closeout["requirement_status_target"] == "已收口"
 
 
@@ -1400,7 +1418,7 @@ def test_finish_closeout_handles_io_error(tmp_path: Path, monkeypatch) -> None:
 
 def test_finish_text_reports_closeout_findings(tmp_path: Path) -> None:
     root = make_clean_project(tmp_path)
-    make_requirement_root(root, kind="未知类型")
+    make_requirement_root(root, kind="需求变更")
     run(root, "plan", "--unit", "T-28", "--requirement",
         "product/requirements/demo-req")
     run(root, "dispatch", "--unit", "T-28")
@@ -1411,7 +1429,7 @@ def test_finish_text_reports_closeout_findings(tmp_path: Path) -> None:
     }), encoding="utf-8")
     p = run(root, "finish", "--unit", "T-28")
     assert p.returncode == 0, p.stdout + p.stderr
-    assert "回写阻断" in p.stdout and "类型非法" in p.stdout
+    assert "回写阻断" in p.stdout and "关联需求" in p.stdout
     assert "仍有未归档或未 completed" not in p.stdout
 
 

@@ -126,8 +126,15 @@ def take(root: Path, raw_file: str, task: str) -> tuple[int, str]:
                 f"（taken_at={data.get('taken_at', '?')}）—— §5.1 停下报告，不得抢占")
     if fd is None:
         raise ClaimError("claim 状态竞争过频（连续两次 EEXIST 后消失）——请重试")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(payload)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+    except Exception:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     return 0, f"取得写权：{rel}（task={task}；claim={path.name}）"
 
 

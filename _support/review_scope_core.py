@@ -93,27 +93,44 @@ def _git_status_map(root: Path) -> dict[str, str]:
     return result
 
 
-def entry_for(root: Path, rel: str, status_map: dict[str, str] | None = None) -> dict:
+def entry_for(root: Path, rel: str, status_map: dict[str, str] | None = None, *,
+              hash_source: str = "worktree", head: str | None = None) -> dict:
     """单个路径的内容条目。删除 ⇒ `absent`；大文件 ⇒ `size_mtime`。"""
     rel = normalize_rel(root, rel)
     p = root / rel
     status = (status_map or {}).get(rel, "clean")
-    if not p.exists():
-        # 只有 git 明确报删除的路径才允许 absent；否则是「审了一个不存在的文件」
+    if hash_source not in ("worktree", "index", "commit"):
+        raise ScopeError(f"未知 hash_source：{hash_source}")
+    if hash_source == "worktree":
+        if not p.exists():
+            if status.startswith("D") or (len(status) > 1 and status[1] == "D"):
+                return {"path": rel, "status": "D", "sha256": HASH_ABSENT,
+                        "size": 0, "hash_mode": HASH_ABSENT}
+            raise ScopeError(f"文件不存在：{rel}")
+        if p.is_symlink():
+            raise ScopeError(f"不接受符号链接：{rel}")
+        if p.is_dir():
+            raise ScopeError(f"不接受目录：{rel}")
+        st = p.stat()
+        if st.st_size > MAX_HASH_BYTES:
+            return {"path": rel, "status": status, "sha256": f"{HASH_SIZE_MTIME}:{st.st_size}:{st.st_mtime_ns}",
+                    "size": st.st_size, "hash_mode": HASH_SIZE_MTIME}
+        return {"path": rel, "status": status, "sha256": sha256_file(p),
+                "size": st.st_size, "hash_mode": HASH_SHA256}
+    spec = f":{rel}" if hash_source == "index" else f"{head}:{rel}"
+    try:
+        result = subprocess.run(["git", "-C", str(root), "show", spec],
+                                capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ScopeError(f"读取 {hash_source} blob 失败：{rel}（{exc}）") from exc
+    if result.returncode != 0:
         if status.startswith("D") or (len(status) > 1 and status[1] == "D"):
             return {"path": rel, "status": "D", "sha256": HASH_ABSENT,
                     "size": 0, "hash_mode": HASH_ABSENT}
-        raise ScopeError(f"文件不存在：{rel}")
-    if p.is_symlink():
-        raise ScopeError(f"不接受符号链接：{rel}")
-    if p.is_dir():
-        raise ScopeError(f"不接受目录：{rel}")
-    st = p.stat()
-    if st.st_size > MAX_HASH_BYTES:
-        return {"path": rel, "status": status, "sha256": f"{HASH_SIZE_MTIME}:{st.st_size}:{st.st_mtime_ns}",
-                "size": st.st_size, "hash_mode": HASH_SIZE_MTIME}
-    return {"path": rel, "status": status, "sha256": sha256_file(p),
-            "size": st.st_size, "hash_mode": HASH_SHA256}
+        raise ScopeError(f"{hash_source} 中文件不存在：{rel}")
+    return {"path": rel, "status": status,
+            "sha256": hashlib.sha256(result.stdout).hexdigest(),
+            "size": len(result.stdout), "hash_mode": HASH_SHA256}
 
 
 def scope_digest(files: list[dict]) -> str:
@@ -129,19 +146,23 @@ def scope_digest(files: list[dict]) -> str:
 
 
 def build_manifest(root: Path, paths: list[str], *, base: str | None = None,
-                   head: str | None = None) -> dict:
+                   head: str | None = None, hash_source: str = "worktree") -> dict:
     root = root.resolve()
     normalized = sorted({normalize_rel(root, p) for p in paths})
     if not normalized:
         raise ScopeError("实审集为空：至少给一个 reviewed file")
+    if hash_source not in ("worktree", "index", "commit"):
+        raise ScopeError(f"未知 hash_source：{hash_source}")
     status_map = _git_status_map(root)
-    files = [entry_for(root, p, status_map) for p in normalized]
+    files = [entry_for(root, p, status_map, hash_source=hash_source, head=head)
+             for p in normalized]
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": now_iso(),
         "root": str(root),
         "base": (base or "").strip(),
         "head": (head or "").strip(),
+        "hash_source": hash_source,
         "files": files,
         "scope_sha256": scope_digest(files),
     }
@@ -170,7 +191,8 @@ def load_manifest(path: Path) -> dict:
 def verify_manifest(root: Path, manifest: dict) -> tuple[bool, dict, list[str]]:
     """按 manifest 的路径重算当前内容，返回 (ok, current_manifest, diffs)。"""
     paths = [item["path"] for item in manifest["files"]]
-    current = build_manifest(root, paths, base=manifest.get("base"), head=manifest.get("head"))
+    current = build_manifest(root, paths, base=manifest.get("base"), head=manifest.get("head"),
+                             hash_source=manifest.get("hash_source", "worktree"))
     diffs: list[str] = []
     before = {item["path"]: item for item in manifest["files"]}
     after = {item["path"]: item for item in current["files"]}

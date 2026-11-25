@@ -49,8 +49,16 @@ CAUSES: dict[str, bool] = {
     "e2e_red": True,                 # finish：E2E 关联用例 red（agent-pointer 口径）
     "mechanism_undeclared": True,    # verify：机制篇触及未跟改未申报（RFC-20261123-01）
     "mechanism_paths_invalid": True,  # verify：机制篇 mechanism-paths 词表非法（RFC-20261123-01）
+    "bug_backflow_stale": True,       # finish：缺陷实现 diff 或回推产物已变化
+    "bug_backflow_invalid": True,     # finish：缺陷台账/schema/决策/审查锚非法
     # 不扣预算：前置态 / 顺序 / 环境 / 留痕
     "staged_empty": False,           # verify：实现未暂存（前置态）
+    "bug_backflow_missing": False,    # finish：缺陷未执行 atlas bug / 缺台账
+    "bug_backflow_pending": False,    # finish：回推待完成或待签字
+    "bug_backflow_unstaged": False,   # finish：record/回推文档未暂存
+    "bug_backflow_worktree_diverged": False,  # finish：index 与工作树分叉
+    "bug_backflow_unsupported_object_type": False,  # bug/finish：symlink/gitlink/type-change
+    "bug_backflow_mode_not_finish_ready": False,    # finish：range 记录改 staged 重跑
     "no_task_card": False,           # 对账本外 / 非法 / 越界任务收口或派发
     "state_transition": False,       # 流程顺序错（未 completed 先归档、归档目标已存在等）
     "no_review_report": False,       # 审查报告缺失 / 会话待审 PENDING（流程顺序）

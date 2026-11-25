@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.local/schemas/bug-record-v1.json",
+  "title": "Atlas canonical defect backflow record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "dedupe_key",
+    "backflow_status",
+    "stage",
+    "report",
+    "root_cause",
+    "impact",
+    "conflicts",
+    "documents",
+    "decisions",
+    "history",
+    "source",
+    "links",
+    "content_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+    "dedupe_key": {"type": "string", "minLength": 1},
+    "backflow_status": {"enum": ["pending", "needs_decision", "ready", "applied", "not_applicable"]},
+    "stage": {"enum": ["prod", "integration", "test"]},
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"const": "work/缺陷报告.md"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "root_cause": {"type": "string"},
+    "impact": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "conflict_id", "kind", "target", "evidence", "action"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "conflict_id": {"type": ["string", "null"]},
+          "kind": {"enum": ["prd", "ac", "e2e", "spec"]},
+          "target": {"type": "string", "minLength": 1},
+          "evidence": {"type": "string", "minLength": 1},
+          "action": {"enum": ["update", "confirmed", "pending"]}
+        }
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "path", "old", "new", "reason", "status"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1},
+          "old": {"type": "string"},
+          "new": {"type": "string"},
+          "reason": {"type": "string", "minLength": 1},
+          "status": {"enum": ["open", "resolved"]}
+        }
+      }
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "action", "version", "change_ref", "before_sha256", "after_sha256"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "action": {"enum": ["update", "confirmed"]},
+          "version": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["supported", "before", "after"],
+            "properties": {
+              "supported": {"type": "boolean"},
+              "before": {"type": ["string", "null"]},
+              "after": {"type": ["string", "null"]}
+            }
+          },
+          "change_ref": {"type": ["string", "null"]},
+          "before_sha256": {"$ref": "#/$defs/sha256"},
+          "after_sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "conflict_id", "path", "old_sha256", "old", "new", "by", "at", "conclusion"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "conflict_id": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1},
+          "old_sha256": {"$ref": "#/$defs/sha256"},
+          "old": {"type": "string", "minLength": 1},
+          "new": {"type": "string"},
+          "by": {"type": "string", "minLength": 1},
+          "at": {"type": "string", "format": "date-time"},
+          "conclusion": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "history": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["seq", "prev_content_sha256", "event", "source_sha256", "document_sha256", "at", "event_sha256"],
+        "properties": {
+          "seq": {"type": "integer", "minimum": 1},
+          "prev_content_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+          "event": {"enum": ["bootstrap", "analysis", "decision_applied", "validated", "linked"]},
+          "source_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+          "document_sha256": {
+            "type": "object",
+            "additionalProperties": {"$ref": "#/$defs/sha256"}
+          },
+          "at": {"type": "string", "format": "date-time"},
+          "event_sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "base", "head", "implementation_files", "sha256"],
+      "properties": {
+        "mode": {"enum": ["staged", "range"]},
+        "base": {"type": "string", "minLength": 1},
+        "head": {"type": "string", "minLength": 1},
+        "implementation_files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "old_oid", "new_oid", "old_mode", "new_mode", "obj_type"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "old_oid": {"$ref": "#/$defs/oid"},
+              "new_oid": {"$ref": "#/$defs/oid"},
+              "old_mode": {"type": "string", "pattern": "^[0-7]{6}$"},
+              "new_mode": {"type": "string", "pattern": "^[0-7]{6}$"},
+              "obj_type": {"enum": ["blob", "symlink", "commit", "unknown"]}
+            }
+          }
+        },
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "links": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commits", "pull_requests"],
+      "properties": {
+        "commits": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "pull_requests": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+      }
+    },
+    "content_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"history": {"prefixItems": [{"properties": {"seq": {"const": 1}}, "required": ["seq"]}]}}},
+      "then": {"properties": {"history": {"prefixItems": [{"properties": {"prev_content_sha256": {"const": null}}}]}}}
+    },
+    {
+      "if": {"properties": {"backflow_status": {"enum": ["ready", "applied"]}}},
+      "then": {
+        "properties": {
+          "root_cause": {"minLength": 1},
+          "impact": {"minItems": 1, "items": {"properties": {"action": {"enum": ["update", "confirmed"]}}}},
+          "documents": {"minItems": 1},
+          "source": {"properties": {"implementation_files": {"minItems": 1}}},
+          "conflicts": {"items": {"properties": {"status": {"const": "resolved"}}}}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"backflow_status": {"const": "needs_decision"}}},
+      "then": {
+        "properties": {
+          "conflicts": {"contains": {"properties": {"status": {"const": "open"}}, "required": ["status"]}},
+          "impact": {"contains": {"properties": {"action": {"const": "pending"}}, "required": ["action"]}}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"backflow_status": {"const": "not_applicable"}}},
+      "then": {
+        "properties": {
+          "source": {"properties": {"implementation_files": {"maxItems": 0}}},
+          "links": {"properties": {"commits": {"maxItems": 0}, "pull_requests": {"maxItems": 0}}}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "oid": {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"}
+  }
+}

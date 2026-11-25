@@ -49,6 +49,39 @@ def test_take_creates_atomic_claim_file(tmp_path) -> None:
     assert data["task"] == "T1" and isinstance(data["pid"], int) and data["taken_at"]
 
 
+def test_take_removes_o_excl_file_when_payload_write_fails(tmp_path, monkeypatch) -> None:
+    real_fdopen = MOD.os.fdopen
+
+    class BrokenWriter:
+        def __init__(self, fd):
+            self.fd = fd
+
+        def __enter__(self):
+            return self
+
+        def write(self, _payload):
+            raise OSError("simulated payload write failure")
+
+        def __exit__(self, *_exc):
+            os_close = MOD.os.close
+            os_close(self.fd)
+            return False
+
+    def broken_fdopen(fd, *_args, **_kwargs):
+        return BrokenWriter(fd)
+
+    monkeypatch.setattr(MOD.os, "fdopen", broken_fdopen)
+    try:
+        MOD.take(tmp_path, "shared/gates.md", "T1")
+    except OSError as exc:
+        assert "simulated payload write failure" in str(exc)
+    else:
+        raise AssertionError("payload write failure must propagate")
+    finally:
+        monkeypatch.setattr(MOD.os, "fdopen", real_fdopen)
+    assert not _claim_files(tmp_path)
+
+
 def test_take_is_idempotent_for_same_task(tmp_path) -> None:
     MOD.take(tmp_path, "shared/gates.md", "T1")
     code, msg = MOD.take(tmp_path, "shared/gates.md", "T1")
