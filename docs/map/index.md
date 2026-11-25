@@ -45,7 +45,7 @@
 | 8 | 门禁与校验 | 〔数:校验器=13〕 校验器 + 编排器 + 门册 + 变异证明 | `scripts/atlas_check.py`、`validators/` | [gates.md](gates.md) |
 | 9 | 评审与收口 | 独立审查产物链 + 收口触发派生 | `shared/independent-review.md`、`scripts/closeout_derive.py` | [review.md](review.md) |
 | 10 | 运营面 | 每日巡检 / 自感知上报 / 发版 | `duty-review/`、`scripts/atlas_report.py` | — |
-| 11 | 执行层 | atlas workflow 全流程调度:plan/dispatch/verify/finish + 需求落点与机制文档机器面 | `bin/atlas.js workflow`、`scripts/atlas_workflow.py` | — |
+| 11 | 执行层 | atlas workflow 全流程调度:plan/dispatch/verify/finish + 三类需求增量与机制文档机器面 | `bin/atlas.js workflow`、`scripts/atlas_workflow.py` | — |
 
 ## 各子系统速览
 

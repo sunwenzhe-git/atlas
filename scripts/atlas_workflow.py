@@ -36,10 +36,12 @@ HERE = Path(__file__).resolve().parent
 if str(HERE.parent) not in sys.path:
     sys.path.insert(0, str(HERE.parent))
 
+from _support.layout import LayoutError, load_layout  # noqa: E402
 from _support.workflow_plan import (  # noqa: E402
     decompose_requirement, write_task_card, load_tasks, PlanError,
-    REQUIREMENT_ITEMS_FILE, REQUIREMENT_DOC_FILE, detect_requirement_root,
-    requirement_pointer_text
+    ARCHIVE_DIR, REQUIREMENT_ITEMS_FILE, REQUIREMENT_DOC_FILE, detect_requirement_root,
+    requirement_pointer_text, requirement_relation_findings,
+    logical_requirement_root_ref, resolve_requirement_root
 )
 from _support.workflow_verify import (  # noqa: E402
     coverage_matrix_findings, requirement_root_findings, read_requirement_status,
@@ -101,26 +103,48 @@ def _prune_orphan_cards(tasks_dir: Path, unit: str, keep: set[str]) -> None:
 def cmd_plan(args: argparse.Namespace, root: Path) -> int:
     req_text = ""
     req_root: Path | None = None
+    req_rel: str | None = None
     if args.requirement:
         p = Path(args.requirement)
         if not p.is_absolute():
             p = root / p
         # 需求落点模式判定（RFC-20261122-03）：指向含 requirement.md 的目录或该文件本身；
         # 否则直填模式（旧行为逐字节不变）。
-        req_root = detect_requirement_root(p)
+        req_root = detect_requirement_root(p, root)
         if req_root is not None:
-            req_text = (req_root / REQUIREMENT_DOC_FILE).read_text(encoding="utf-8")
-            # 确认门软校验（纪律面 WARN，不拦停；状态机：候选→已确认→已拆→已收口）
-            status = read_requirement_status(req_root)
+            try:
+                if resolve_requirement_root(root, req_root) is None:
+                    return die(f"需求落点路径非法：{req_root}（须位于配置资产根的 requirements/<slug>/）")
+                req_rel = logical_requirement_root_ref(root, req_root)
+                req_text = (req_root / REQUIREMENT_DOC_FILE).read_text(encoding="utf-8")
+                # 确认门软校验（纪律面 WARN，不拦停；状态机：候选→已确认→已拆→已收口）
+                status = read_requirement_status(req_root)
+                relation_findings = requirement_relation_findings(root, req_root)
+            except (LayoutError, OSError) as exc:
+                return die(f"需求落点不可读或布局非法：{exc}")
             if status is None:
                 print("WARN（需求落点）: requirement.md 缺「**状态**：」状态行——确认门未留痕"
                       "（RFC-20261122-03）", file=sys.stderr)
             elif status == "候选":
                 print("WARN（需求落点）: 落点状态 = 候选（未确认先拆）——先过确认门再拆卡",
                       file=sys.stderr)
+            for finding in relation_findings:
+                print(f"WARN（需求落点）: {finding}", file=sys.stderr)
         elif p.is_file():
             req_text = p.read_text(encoding="utf-8")
         else:
+            ref_text = str(args.requirement).strip()
+            try:
+                assets_rel = load_layout(root).assets_root.resolve().relative_to(
+                    root.resolve()).as_posix()
+                requirement_prefix = f"{assets_rel}/requirements/"
+            except (LayoutError, ValueError):
+                requirement_prefix = "product/requirements/"
+            path_like = (Path(ref_text).is_absolute()
+                         or ref_text.startswith("requirements/")
+                         or ref_text.startswith(requirement_prefix))
+            if path_like:
+                return die(f"需求落点引用无法解析：{args.requirement}")
             req_text = args.requirement
     else:
         req_text = f"需求工作单元 {args.unit}"
@@ -131,17 +155,35 @@ def cmd_plan(args: argparse.Namespace, root: Path) -> int:
         return die(str(exc))
 
     tasks_dir = _tasks_root(root)
+    try:
+        existing_tasks = load_tasks(tasks_dir, include_archived=True)
+        reserved_archive_ids = {
+            t["id"] for t in existing_tasks
+            if ARCHIVE_DIR in Path(t["_dir"]).relative_to(tasks_dir).parts
+        }
+    except PlanError as exc:
+        return die(str(exc))
+    archive_dir = tasks_dir / ARCHIVE_DIR
+    if archive_dir.is_dir():
+        for child in archive_dir.iterdir():
+            if not child.is_dir():
+                continue
+            if re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", child.name):
+                reserved_archive_ids.update(
+                    grandchild.name for grandchild in child.iterdir()
+                    if grandchild.is_dir())
+            else:
+                reserved_archive_ids.add(child.name)
+    for t in tasks:
+        if t["id"] in reserved_archive_ids:
+            return die(f"任务 ID {t['id']} 已存在于归档命名空间，禁止重建同 ID 活跃卡")
     created: list[dict] = []
     for t in tasks:
         paths = [str(p) for p in (getattr(args, "paths", None) or []) if str(p).strip()]
         if paths:
             t["paths"] = paths
-        req_rel: str | None = None
         if req_root is not None:
-            try:
-                req_rel = str(req_root.resolve().relative_to(root.resolve())).replace("\\", "/")
-            except ValueError:
-                req_rel = str(req_root.resolve())  # 仓外落点：绝对路径兜底（对账仍可读）
+            assert req_rel is not None
             # 落点模式：卡 §1 正文指针化——需求正文唯一住址在落点，卡不复制正文
             t["details"] = requirement_pointer_text(req_rel)
         t_dir = tasks_dir / t["id"]
@@ -448,10 +490,20 @@ def cmd_finish(args: argparse.Namespace, root: Path) -> int:
         if arch:
             print(f"  归档：{arch.get('status')} -> {arch.get('path')}")
         req_root = target_task.get("requirement_root")
-        if req_root:
-            # 收口双回写提醒（RFC-20261122-03 B5，纪律面不设门）
-            print(f"  回写提醒：① 需求落点 {req_root} 的条目按域沉淀回域级产品事实"
-                  "（FN/R/AC/文案规范表 + 变更记录）；② 落点状态行推进为「已收口」。")
+        closeout = res.get("requirement_closeout")
+        if req_root and closeout:
+            if closeout["product_fact_writeback"] == "conditional":
+                print(f"  回写提醒：缺陷 {req_root} 先比对既有产品事实；"
+                      "仅当事实缺失或错误时回写，否则只关闭缺陷。")
+            elif closeout["product_fact_writeback"] == "required":
+                print(f"  回写提醒：① 需求落点 {req_root} 的条目按域沉淀回产品事实"
+                      "（FN/R/AC/文案规范表 + 变更记录）；② 落点状态行推进为「已收口」。")
+            else:
+                for finding in closeout.get("findings", []):
+                    print(f"  回写阻断：{finding}")
+                if not closeout.get("findings"):
+                    print(f"  回写提醒：需求落点 {req_root} 仍有未归档或未 completed 关联卡，"
+                          "暂不推进落点状态。")
         print(f"  进度：{res['completed_tasks']}/{res['total_tasks']} 已完成")
         if res.get("all_done"):
             print("  ★ 全部工作单元已顺利完成收口！")
@@ -473,7 +525,7 @@ def cmd_archive(args: argparse.Namespace, root: Path) -> int:
     else:
         targets = all_tasks
     pending = [t for t in targets
-               if archive_month(Path(t["_dir"]), tasks_dir) is None]
+               if archive_month(Path(t["_dir"]), tasks_dir, t["id"]) is None]
     if args.dry_run:
         print(f"$ # 归档 {len(pending)} 项到 {tasks_dir / 'archive'}/{date.today():%Y-%m}"
               "（dry-run 不移动）")

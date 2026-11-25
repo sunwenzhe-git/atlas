@@ -693,18 +693,26 @@ from _support.workflow_verify import (  # noqa: E402
 
 def make_requirement_root(root: Path, slug: str = "demo-req", *,
                           status: str | None = "已确认",
-                          item_ids: tuple[str, ...] = ("R-01", "R-02")) -> Path:
+                          item_ids: tuple[str, ...] = ("R-01", "R-02"),
+                          kind: str | None = None,
+                          related: str | None = None) -> Path:
     """需求落点夹具：<assets_root>/requirements/<slug>/（确认稿 + 条目表 + 转换稿）。"""
     req_dir = root / "product" / "requirements" / slug
     (req_dir / "work").mkdir(parents=True, exist_ok=True)
-    doc = f"# 演示需求\n\n## Scope\n\n- 事项甲\n- 事项乙\n"
+    lines = ["# 演示需求", ""]
+    if kind is not None:
+        lines.append(f"**类型**：{kind}")
+    if related is not None:
+        lines.append(f"**关联需求**：{related}")
     if status is not None:
-        doc = f"# 演示需求\n\n**状态**：{status}\n\n## Scope\n\n- 事项甲\n- 事项乙\n"
-    (req_dir / REQUIREMENT_DOC_FILE).write_text(doc, encoding="utf-8")
-    lines = ["# 落点条目表", "", "| ID | 页码 | 章节 | 原文 |", "|---|---|---|---|"]
-    lines += [f"| {i} | p1 | §2 | 条目原文 {i} |" for i in item_ids]
-    (req_dir / "items.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    (req_dir / "work" / "需求PDF-全文.md").write_text(
+        lines.append(f"**状态**：{status}")
+    lines += ["", "## Scope", "", "- 事项甲", "- 事项乙", ""]
+    (req_dir / REQUIREMENT_DOC_FILE).write_text("\n".join(lines), encoding="utf-8")
+    table = ["# 落点条目表", "", "| ID | 页码 | 章节 | 原文 |", "|---|---|---|---|"]
+    table += [f"| {i} | p1 | §2 | 条目原文 {i} |" for i in item_ids]
+    (req_dir / "items.md").write_text("\n".join(table) + "\n", encoding="utf-8")
+    source_name = "缺陷报告.md" if kind == "缺陷" else "需求PDF-全文.md"
+    (req_dir / "work" / source_name).write_text(
         "<!-- page 1 -->\n条目原文 R-01\n", encoding="utf-8")
     return req_dir
 
@@ -856,8 +864,12 @@ def test_requirement_root_coverage_scenarios(tmp_path: Path) -> None:
     root = make_clean_project(tmp_path / "stuckclosed")
     make_requirement_root(root, status="已拆")
     _make_claim_card(root, "T-A", rel, ["R-01", "R-02"], status="completed")
+    source = root / ".atlas" / "tasks" / "T-A"
+    dest = root / ".atlas" / "tasks" / "archive" / "2026-11" / "T-A"
+    dest.parent.mkdir(parents=True)
+    source.rename(dest)
     findings = requirement_root_findings(root)
-    assert any("已全部收口" in f and "已收口" in f for f in findings)
+    assert any("已全部归档且 completed" in f and "已收口" in f for f in findings)
 
     root = make_clean_project(tmp_path / "noitems")
     make_requirement_root(root)
@@ -901,6 +913,914 @@ def test_finish_requirement_root_writeback_reminder(tmp_path: Path) -> None:
     p = run(root, "finish", "--unit", "T-13")
     assert p.returncode == 0, p.stdout + p.stderr
     assert "回写提醒" in p.stdout and "已收口" in p.stdout and "demo-req" in p.stdout
+
+
+def test_plan_warns_on_invalid_requirement_type(tmp_path: Path) -> None:
+    """M209：摘除类型/关联检查调用后，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, kind="未知类型")
+    p = run(root, "plan", "--unit", "T-14", "--requirement",
+            "product/requirements/demo-req")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "类型" in p.stderr and "非法" in p.stderr
+
+
+@pytest.mark.parametrize("kind", ["需求变更", "缺陷"])
+def test_plan_warns_when_change_or_bug_has_no_related_requirement(
+        tmp_path: Path, kind: str) -> None:
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, kind=kind)
+    p = run(root, "plan", "--unit", "T-15", "--requirement",
+            "product/requirements/demo-req")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "关联需求" in p.stderr and "必填" in p.stderr
+
+
+def test_plan_warns_on_missing_related_target_and_item(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path / "missing")
+    make_clean_project(root)
+    make_requirement_root(root, slug="change", kind="需求变更", related="absent#R-01")
+    p = run(root, "plan", "--unit", "T-16", "--requirement",
+            "product/requirements/change")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "关联需求" in p.stderr and "absent" in p.stderr
+
+    root2 = make_clean_project(tmp_path / "item")
+    make_requirement_root(root2)
+    make_requirement_root(root2, slug="change", kind="需求变更",
+                          related="demo-req#R-99")
+    p2 = run(root2, "plan", "--unit", "T-16", "--requirement",
+             "product/requirements/change")
+    assert p2.returncode == 0, p2.stdout + p2.stderr
+    assert "R-99" in p2.stderr
+
+
+def test_plan_resolves_archived_related_requirement(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    base = make_requirement_root(root)
+    archive = root / "product" / "requirements" / "archive" / "2026-11"
+    archive.mkdir(parents=True)
+    base.rename(archive / base.name)
+    make_requirement_root(root, slug="change", kind="需求变更",
+                          related="demo-req#R-01")
+    p = run(root, "plan", "--unit", "T-17", "--requirement",
+            "product/requirements/change")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "关联需求" not in p.stderr
+
+
+def test_plan_warns_on_related_requirement_cycle(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, slug="a", kind="需求变更", related="b#R-01")
+    make_requirement_root(root, slug="b", kind="需求变更", related="a#R-01")
+    p = run(root, "plan", "--unit", "T-18", "--requirement",
+            "product/requirements/a")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "关联需求" in p.stderr and "循环" in p.stderr
+
+
+def test_plan_warns_on_self_relation_and_ambiguous_archive(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path / "self")
+    make_requirement_root(root, slug="a", kind="需求变更", related="a#R-01")
+    p = run(root, "plan", "--unit", "T-18A", "--requirement",
+            "product/requirements/a")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "自引" in p.stderr
+
+    root2 = make_clean_project(tmp_path / "ambiguous")
+    for month in ("2026-10", "2026-11"):
+        target = root2 / "product" / "requirements" / "archive" / month / "base"
+        target.mkdir(parents=True)
+        (target / "requirement.md").write_text("**状态**：已收口\n", encoding="utf-8")
+        (target / "items.md").write_text(
+            "| ID | 页码 | 章节 | 原文 |\n|---|---|---|---|\n| R-01 | p1 | §1 | x |\n",
+            encoding="utf-8")
+    make_requirement_root(root2, slug="change", kind="需求变更", related="base#R-01")
+    p2 = run(root2, "plan", "--unit", "T-18B", "--requirement",
+             "product/requirements/change")
+    assert p2.returncode == 0, p2.stdout + p2.stderr
+    assert "唯一落点" in p2.stderr
+
+
+def test_requirement_root_rejects_cross_root_claim(tmp_path: Path) -> None:
+    """M207：摘除领取来源路径校验后，跨落点冒领必须红。"""
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, slug="a")
+    make_requirement_root(root, slug="b")
+    _make_claim_card(root, "T-A", "product/requirements/a", ["R-01"])
+    claims = root / ".atlas" / "tasks" / "T-A" / "requirement-items.md"
+    claims.write_text(
+        "# 领取表\n\n| ID | 来源 |\n|---|---|\n"
+        "| R-01 | product/requirements/b#R-01 |\n", encoding="utf-8")
+    findings = requirement_root_findings(root)
+    assert any("来源路径" in f and "冒领" in f for f in findings)
+
+
+def test_requirement_root_resolves_archived_task_target(tmp_path: Path) -> None:
+    """M208：摘除归档 slug 回落解析后，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    req_dir = make_requirement_root(root, status="已拆")
+    _make_claim_card(root, "T-A", "product/requirements/demo-req", ["R-01", "R-02"])
+    archive = root / "product" / "requirements" / "archive" / "2026-11"
+    archive.mkdir(parents=True)
+    req_dir.rename(archive / req_dir.name)
+    findings = requirement_root_findings(root)
+    assert findings == []
+
+
+def test_requirement_root_resolves_custom_assets_root_archive(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    req_dir = make_requirement_root(root, status="已拆")
+    docs = root / "docs"
+    docs.mkdir()
+    (root / "product" / "requirements").rename(docs / "requirements")
+    moved = docs / "requirements" / "demo-req"
+    archive = docs / "requirements" / "archive" / "2026-11"
+    archive.mkdir(parents=True)
+    moved.rename(archive / moved.name)
+    (root / "atlas.config.yaml").write_text(
+        "version: 1\nlayout:\n  assets_root: docs\n", encoding="utf-8")
+    _make_claim_card(root, "T-A", "docs/requirements/demo-req", ["R-01", "R-02"])
+    findings = requirement_root_findings(root)
+    assert findings == []
+
+
+def test_replan_without_requirement_preserves_pointer(tmp_path: Path) -> None:
+    """M211：摘除重跑指针保持后，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root)
+    run(root, "plan", "--unit", "T-19", "--requirement",
+        "product/requirements/demo-req")
+    p = run(root, "plan", "--unit", "T-19", "--requirement", "重新拆解")
+    assert p.returncode == 0, p.stdout + p.stderr
+    prd = (root / ".atlas" / "tasks" / "T-19" / "prd.md").read_text(encoding="utf-8")
+    assert "需求正文唯一住址" in prd
+    assert "product/requirements/demo-req" in prd
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected_writeback"),
+    [("初始需求", "required"), ("需求变更", "required"), ("缺陷", "conditional")],
+)
+def test_finish_json_returns_type_aware_requirement_closeout(
+        tmp_path: Path, kind: str, expected_writeback: str) -> None:
+    """M210：摘除 finish 类型收口待办后，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    related = "demo-req#R-01" if kind != "初始需求" else None
+    if related:
+        make_requirement_root(root)
+    make_requirement_root(root, slug="typed", kind=kind, related=related)
+    run(root, "plan", "--unit", "T-20", "--requirement",
+        "product/requirements/typed")
+    run(root, "dispatch", "--unit", "T-20")
+    r_dir = root / "product" / "reviews" / "2026-11-22-impl-review-T-20"
+    r_dir.mkdir(parents=True, exist_ok=True)
+    (r_dir / "review.json").write_text(json.dumps({
+        "schema_version": 4, "ok": True, "status": "PASS", "checks": [], "other": []
+    }), encoding="utf-8")
+    p = run(root, "finish", "--unit", "T-20", "--json")
+    assert p.returncode == 0, p.stdout + p.stderr
+    closeout = json.loads(p.stdout)["requirement_closeout"]
+    assert closeout["type"] == kind
+    assert closeout["product_fact_writeback"] == expected_writeback
+    assert closeout["requirement_status_target"] == "已收口"
+
+
+@pytest.mark.parametrize(
+    ("other_status", "other_archived"),
+    [("todo", False), ("completed", False), ("todo", True)],
+)
+def test_finish_waits_for_all_requirement_cards(
+        tmp_path: Path, other_status: str, other_archived: bool) -> None:
+    """M212：把归档条件退回 completed 或 archived 任一成立，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, status="已拆")
+    _make_claim_card(root, "T-A", "product/requirements/demo-req", ["R-01"])
+    _make_claim_card(root, "T-B", "product/requirements/demo-req", ["R-02"],
+                     status=other_status)
+    if other_archived:
+        source = root / ".atlas" / "tasks" / "T-B"
+        dest = root / ".atlas" / "tasks" / "archive" / "2026-11" / "T-B"
+        dest.parent.mkdir(parents=True)
+        source.rename(dest)
+    run(root, "dispatch", "--unit", "T-A")
+    r_dir = root / "product" / "reviews" / "2026-11-22-impl-review-T-A"
+    r_dir.mkdir(parents=True, exist_ok=True)
+    (r_dir / "review.json").write_text(json.dumps({
+        "schema_version": 4, "ok": True, "status": "PASS", "checks": [], "other": []
+    }), encoding="utf-8")
+    p = run(root, "finish", "--unit", "T-A", "--json")
+    assert p.returncode == 0, p.stdout + p.stderr
+    closeout = json.loads(p.stdout)["requirement_closeout"]
+    assert closeout["all_cards_closed"] is False
+    assert closeout["product_fact_writeback"] == "pending"
+    assert closeout["requirement_status_target"] is None
+
+
+@pytest.mark.parametrize(
+    ("status", "archived", "expect_closed"),
+    [("completed", False, False), ("todo", True, False), ("completed", True, True)],
+)
+def test_requirement_root_closeout_requires_archived_completed_card(
+        tmp_path: Path, status: str, archived: bool, expect_closed: bool) -> None:
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, status="已拆")
+    _make_claim_card(root, "T-A", "product/requirements/demo-req", ["R-01", "R-02"],
+                     status=status)
+    if archived:
+        source = root / ".atlas" / "tasks" / "T-A"
+        dest = root / ".atlas" / "tasks" / "archive" / "2026-11" / "T-A"
+        dest.parent.mkdir(parents=True)
+        source.rename(dest)
+    findings = requirement_root_findings(root)
+    assert any("已全部归档且 completed" in f for f in findings) is expect_closed
+
+
+def test_finish_invalid_type_does_not_issue_closeout(tmp_path: Path) -> None:
+    """M216：非法类型不再阻断收口待办时，本用例必须红。"""
+    from _support.workflow_finish import requirement_closeout
+
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, kind="未知类型")
+    closeout = requirement_closeout(root, "product/requirements/demo-req")
+    assert closeout["type"] == "未知"
+    assert closeout["product_fact_writeback"] == "pending"
+    assert closeout["requirement_status_target"] is None
+
+
+def test_finish_ambiguous_archive_does_not_issue_closeout(tmp_path: Path) -> None:
+    from _support.workflow_finish import requirement_closeout
+
+    root = make_clean_project(tmp_path)
+    for month in ("2026-10", "2026-11"):
+        target = root / "product" / "requirements" / "archive" / month / "base"
+        target.mkdir(parents=True)
+        (target / "requirement.md").write_text("**状态**：已收口\n", encoding="utf-8")
+        (target / "items.md").write_text(
+            "| ID | 页码 | 章节 | 原文 |\n|---|---|---|---|\n| R-01 | p1 | §1 | x |\n",
+            encoding="utf-8")
+    closeout = requirement_closeout(root, "product/requirements/base")
+    assert closeout["type"] == "未知"
+    assert closeout["product_fact_writeback"] == "pending"
+    assert closeout["requirement_status_target"] is None
+
+
+def test_requirement_root_rejects_non_requirements_directory(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    rogue = root / "product" / "prd"
+    (rogue / "requirement.md").write_text("**状态**：已拆\n", encoding="utf-8")
+    (rogue / "items.md").write_text(
+        "| ID | 页码 | 章节 | 原文 |\n|---|---|---|---|\n| R-01 | p1 | §1 | x |\n",
+        encoding="utf-8")
+    _make_claim_card(root, "T-A", "product/prd", ["R-01"])
+    findings = requirement_root_findings(root)
+    assert any("需求落点" in f and "非法" in f for f in findings)
+
+
+def test_requirement_relation_rejects_symlink_escape(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    (outside / "work").mkdir(parents=True)
+    (outside / "requirement.md").write_text("**状态**：已确认\n", encoding="utf-8")
+    (outside / "items.md").write_text(
+        "| ID | 页码 | 章节 | 原文 |\n|---|---|---|---|\n| R-01 | p1 | §1 | x |\n",
+        encoding="utf-8")
+    link = root / "product" / "requirements" / "base"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(outside, target_is_directory=True)
+    make_requirement_root(root, slug="change", kind="需求变更", related="base#R-01")
+    p = run(root, "plan", "--unit", "T-21", "--requirement",
+            "product/requirements/change")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "关联需求" in p.stderr and ("根内" in p.stderr or "非法" in p.stderr)
+
+
+def test_requirement_relation_ignores_fenced_item(tmp_path: Path) -> None:
+    """M214：嵌套围栏关闭条件放宽后，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    base = make_requirement_root(root, item_ids=())
+    (base / "items.md").write_text(
+        "# items\n\n````md\n```md\n| ID | 页码 | 章节 | 原文 |\n|---|---|---|---|\n"
+        "| R-01 | p1 | §1 | fake |\n```\n````\n", encoding="utf-8")
+    make_requirement_root(root, slug="change", kind="需求变更",
+                          related="demo-req#R-01")
+    p = run(root, "plan", "--unit", "T-22", "--requirement",
+            "product/requirements/change")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "R-01" in p.stderr and "不存在" in p.stderr
+
+
+def test_requirement_relation_rejects_candidate_baseline(tmp_path: Path) -> None:
+    """M215：候选基线不再被拒绝时，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, status="候选")
+    make_requirement_root(root, slug="change", kind="需求变更",
+                          related="demo-req#R-01")
+    p = run(root, "plan", "--unit", "T-23", "--requirement",
+            "product/requirements/change")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "候选" in p.stderr and "基线" in p.stderr
+
+
+def test_requirement_relation_rejects_slug_reuse_and_bad_archive_month(
+        tmp_path: Path) -> None:
+    """M213：活跃/归档同名 slug 不再视为复用时，本用例必须红。"""
+    root = make_clean_project(tmp_path / "reuse")
+    archived = root / "product" / "requirements" / "archive" / "2026-10" / "base"
+    archived.mkdir(parents=True)
+    (archived / "requirement.md").write_text("**状态**：已收口\n", encoding="utf-8")
+    (archived / "items.md").write_text(
+        "| ID | 页码 | 章节 | 原文 |\n|---|---|---|---|\n| R-01 | p1 | §1 | old |\n",
+        encoding="utf-8")
+    make_requirement_root(root, slug="base")
+    make_requirement_root(root, slug="change", kind="需求变更", related="base#R-01")
+    p = run(root, "plan", "--unit", "T-24", "--requirement",
+            "product/requirements/change")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "复用" in p.stderr or "唯一落点" in p.stderr
+
+    root2 = make_clean_project(tmp_path / "month")
+    bad = root2 / "product" / "requirements" / "archive" / "not-a-month" / "base"
+    bad.mkdir(parents=True)
+    (bad / "requirement.md").write_text("**状态**：已收口\n", encoding="utf-8")
+    (bad / "items.md").write_text(
+        "| ID | 页码 | 章节 | 原文 |\n|---|---|---|---|\n| R-01 | p1 | §1 | old |\n",
+        encoding="utf-8")
+    make_requirement_root(root2, slug="change", kind="需求变更", related="base#R-01")
+    p2 = run(root2, "plan", "--unit", "T-24", "--requirement",
+             "product/requirements/change")
+    assert p2.returncode == 0, p2.stdout + p2.stderr
+    assert "唯一落点" in p2.stderr
+
+    root3 = make_clean_project(tmp_path / "invalid-collision")
+    (root3 / "product" / "requirements" / "archive" / "not-a-month" / "base").mkdir(
+        parents=True)
+    make_requirement_root(root3, slug="base")
+    make_requirement_root(root3, slug="change", kind="需求变更", related="base#R-01")
+    p3 = run(root3, "plan", "--unit", "T-24C", "--requirement",
+             "product/requirements/change")
+    assert p3.returncode == 0, p3.stdout + p3.stderr
+    assert "唯一落点" in p3.stderr
+
+
+def test_requirement_relation_rejects_incomplete_archive_collision(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    (root / "product" / "requirements" / "archive" / "2026-10" / "base").mkdir(parents=True)
+    make_requirement_root(root, slug="base")
+    make_requirement_root(root, slug="change", kind="需求变更", related="base#R-01")
+    p = run(root, "plan", "--unit", "T-27", "--requirement",
+            "product/requirements/change")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "唯一落点" in p.stderr
+
+
+def test_requirement_root_rejects_stale_default_root_when_assets_root_changed(
+        tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, status="已拆")
+    (root / "docs").mkdir()
+    (root / "atlas.config.yaml").write_text(
+        "version: 1\nlayout:\n  assets_root: docs\n", encoding="utf-8")
+    _make_claim_card(root, "T-A", "product/requirements/demo-req", ["R-01", "R-02"])
+    findings = requirement_root_findings(root)
+    assert any("需求落点" in f and "非法" in f for f in findings)
+
+
+def test_requirement_root_normalizes_logical_paths(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, status="已拆")
+    _make_claim_card(root, "T-A", "product/requirements/demo-req", ["R-01"])
+    _make_claim_card(root, "T-B", "product/requirements/./demo-req", ["R-02"])
+    assert requirement_root_findings(root) == []
+
+
+def test_requirement_metadata_ignores_fenced_example(tmp_path: Path) -> None:
+    from _support.workflow_plan import requirement_type
+
+    root = make_clean_project(tmp_path)
+    req = make_requirement_root(root)
+    (req / "requirement.md").write_text(
+        "# demo\n\n````md\n**类型**：未知\n**状态**：候选\n```\n````\n\n"
+        "**状态**：已确认\n", encoding="utf-8")
+    assert requirement_type(req) == "初始需求"
+    assert read_requirement_status(req) == "已确认"
+
+
+def test_requirement_relation_rejects_symlinked_authority_files(tmp_path: Path) -> None:
+    """M221：权威文件 symlink 边界摘除后，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    outside = tmp_path.parent / f"{tmp_path.name}-files"
+    outside.mkdir()
+    (outside / "requirement.md").write_text("**状态**：已确认\n", encoding="utf-8")
+    (outside / "items.md").write_text(
+        "| ID | 页码 | 章节 | 原文 |\n|---|---|---|---|\n| R-01 | p1 | §1 | x |\n",
+        encoding="utf-8")
+    base = root / "product" / "requirements" / "base"
+    base.mkdir(parents=True)
+    (base / "requirement.md").symlink_to(outside / "requirement.md")
+    (base / "items.md").symlink_to(outside / "items.md")
+    make_requirement_root(root, slug="change", kind="需求变更", related="base#R-01")
+    p = run(root, "plan", "--unit", "T-25", "--requirement",
+            "product/requirements/change")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "关联需求" in p.stderr and "唯一落点" in p.stderr
+
+
+def test_requirement_relation_rejects_symlinked_archive_month(tmp_path: Path) -> None:
+    """M220：归档月份 symlink 守卫摘除后，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    real = root / "product" / "requirements" / "archive" / "foo" / "base"
+    real.mkdir(parents=True)
+    (real / "requirement.md").write_text("**状态**：已收口\n", encoding="utf-8")
+    (real / "items.md").write_text(
+        "| ID | 页码 | 章节 | 原文 |\n|---|---|---|---|\n| R-01 | p1 | §1 | x |\n",
+        encoding="utf-8")
+    (real.parent.parent / "2026-11").symlink_to(real.parent, target_is_directory=True)
+    make_requirement_root(root, slug="change", kind="需求变更", related="base#R-01")
+    p = run(root, "plan", "--unit", "T-26", "--requirement",
+            "product/requirements/change")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "关联需求" in p.stderr and "唯一落点" in p.stderr
+
+
+@pytest.mark.parametrize("archive_path", ["archive/not-a-month/T-B", "archive/T-B"])
+def test_finish_closeout_rejects_invalid_task_archive(
+        tmp_path: Path, archive_path: str) -> None:
+    """M217：任务归档不再校验月份形态时，本用例必须红。"""
+    from _support.workflow_finish import requirement_closeout
+
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, status="已拆")
+    _make_claim_card(root, "T-B", "product/requirements/demo-req", ["R-01", "R-02"],
+                     status="completed")
+    source = root / ".atlas" / "tasks" / "T-B"
+    dest = root / ".atlas" / "tasks" / archive_path
+    dest.parent.mkdir(parents=True)
+    source.rename(dest)
+    closeout = requirement_closeout(root, "product/requirements/demo-req")
+    assert closeout["all_cards_closed"] is False
+    assert closeout["requirement_status_target"] is None
+
+
+def test_archived_and_logical_refs_share_one_requirement_identity(tmp_path: Path) -> None:
+    """M218：归档实体不再归一为逻辑 slug 时，本用例必须红。"""
+    from _support.workflow_finish import requirement_closeout
+
+    root = make_clean_project(tmp_path)
+    req = make_requirement_root(root, status="已拆")
+    archive = root / "product" / "requirements" / "archive" / "2026-11"
+    archive.mkdir(parents=True)
+    req.rename(archive / req.name)
+    _make_claim_card(root, "T-A", "product/requirements/demo-req", ["R-01"],
+                     status="completed")
+    _make_claim_card(root, "T-B", "product/requirements/archive/2026-11/demo-req",
+                     ["R-02"], status="todo")
+    assert requirement_root_findings(root) == []
+    closeout = requirement_closeout(root, "product/requirements/demo-req")
+    assert closeout["all_cards_closed"] is False
+
+
+def test_finish_closeout_handles_io_error(tmp_path: Path, monkeypatch) -> None:
+    """M219：finish 不再捕获 OSError 时，本用例必须红。"""
+    from _support import workflow_finish
+
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root)
+
+    def fail(_req_root):
+        raise OSError("read failed")
+
+    monkeypatch.setattr(workflow_finish, "requirement_type", fail)
+    closeout = workflow_finish.requirement_closeout(root, "product/requirements/demo-req")
+    assert closeout["type"] == "未知"
+    assert closeout["product_fact_writeback"] == "pending"
+    assert closeout["requirement_status_target"] is None
+    assert closeout["findings"]
+
+
+def test_finish_text_reports_closeout_findings(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, kind="未知类型")
+    run(root, "plan", "--unit", "T-28", "--requirement",
+        "product/requirements/demo-req")
+    run(root, "dispatch", "--unit", "T-28")
+    r_dir = root / "product" / "reviews" / "2026-11-22-impl-review-T-28"
+    r_dir.mkdir(parents=True, exist_ok=True)
+    (r_dir / "review.json").write_text(json.dumps({
+        "schema_version": 4, "ok": True, "status": "PASS", "checks": [], "other": []
+    }), encoding="utf-8")
+    p = run(root, "finish", "--unit", "T-28")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "回写阻断" in p.stdout and "类型非法" in p.stdout
+    assert "仍有未归档或未 completed" not in p.stdout
+
+
+def test_finish_closeout_handles_requirement_read_error(
+        tmp_path: Path, monkeypatch) -> None:
+    """M219：真实需求文件读取错误未被转成 pending 时，本用例必须红。"""
+    from _support import workflow_finish
+
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root)
+    original = Path.read_text
+
+    def read_text(path, *args, **kwargs):
+        if path.name == "requirement.md":
+            raise PermissionError("denied")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    closeout = workflow_finish.requirement_closeout(root, "product/requirements/demo-req")
+    assert closeout["type"] == "未知"
+    assert closeout["product_fact_writeback"] == "pending"
+    assert closeout["requirement_status_target"] is None
+    assert closeout["findings"]
+
+
+def test_archive_month_requires_directory_name_match(tmp_path: Path) -> None:
+    """M222：归档目录名不等于任务 ID 仍被认作已归档时，本用例必须红。"""
+    from _support.workflow_finish import archive_month
+
+    tasks = tmp_path / ".atlas" / "tasks"
+    wrong = tasks / "archive" / "2026-11" / "WRONG"
+    wrong.mkdir(parents=True)
+    assert archive_month(wrong, tasks, "T-A") is None
+
+
+def test_load_tasks_rejects_duplicate_ids(tmp_path: Path) -> None:
+    """M223：重复任务 ID 不再拒绝时，本用例必须红。"""
+    from _support.workflow_plan import PlanError, load_tasks
+
+    root = make_clean_project(tmp_path)
+    _make_claim_card(root, "T-A", "product/requirements/demo-req", ["R-01"],
+                     status="completed")
+    source = root / ".atlas" / "tasks" / "T-A"
+    dest = root / ".atlas" / "tasks" / "archive" / "2026-11" / "T-A"
+    dest.parent.mkdir(parents=True)
+    source.rename(dest)
+    _make_claim_card(root, "T-A", "product/requirements/demo-req", ["R-01"])
+    with pytest.raises(PlanError, match="重复"):
+        load_tasks(root / ".atlas" / "tasks", include_archived=True)
+
+
+def test_requirement_pointer_uses_generic_source_for_bug(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, kind="缺陷", related="base#R-01")
+    make_requirement_root(root, slug="base")
+    run(root, "plan", "--unit", "T-29", "--requirement",
+        "product/requirements/demo-req")
+    prd = (root / ".atlas" / "tasks" / "T-29" / "prd.md").read_text(encoding="utf-8")
+    assert "work/ 来源材料" in prd
+    assert "work/需求PDF-全文.md" not in prd
+
+
+def test_requirement_root_bug_closeout_does_not_require_fact_writeback(
+        tmp_path: Path) -> None:
+    """M224：缺陷关闭提示不再区分类型时，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, slug="bug", kind="缺陷", related="base#R-01",
+                          status="已拆")
+    make_requirement_root(root, slug="base")
+    _make_claim_card(root, "T-A", "product/requirements/bug", ["R-01", "R-02"],
+                     status="completed")
+    source = root / ".atlas" / "tasks" / "T-A"
+    dest = root / ".atlas" / "tasks" / "archive" / "2026-11" / "T-A"
+    dest.parent.mkdir(parents=True)
+    source.rename(dest)
+    findings = requirement_root_findings(root)
+    assert any("仅当产品事实缺失或错误时回写" in f for f in findings)
+    assert not any("按域沉淀回产品事实" in f for f in findings)
+
+
+def test_plan_accepts_logical_slug_for_archived_requirement(tmp_path: Path) -> None:
+    """M225：逻辑 slug 不再回落唯一归档实体时，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    req = make_requirement_root(root)
+    archive = root / "product" / "requirements" / "archive" / "2026-11"
+    archive.mkdir(parents=True)
+    req.rename(archive / req.name)
+    p = run(root, "plan", "--unit", "T-30", "--requirement",
+            "product/requirements/demo-req")
+    assert p.returncode == 0, p.stdout + p.stderr
+    meta = json.loads((root / ".atlas" / "tasks" / "T-30" / "task.json").read_text())
+    assert meta["requirement_root"] == "product/requirements/demo-req"
+    assert (root / ".atlas" / "tasks" / "T-30" / "requirement-items.md").is_file()
+
+
+def test_plan_rejects_rebuilding_archived_task_id(tmp_path: Path) -> None:
+    """M226：已归档任务 ID 重建 guard 摘除后，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root)
+    run(root, "plan", "--unit", "T-31", "--requirement",
+        "product/requirements/demo-req")
+    source = root / ".atlas" / "tasks" / "T-31"
+    dest = root / ".atlas" / "tasks" / "archive" / "2026-11" / "T-31"
+    dest.parent.mkdir(parents=True)
+    source.rename(dest)
+    p = run(root, "plan", "--unit", "T-31", "--requirement",
+            "product/requirements/demo-req")
+    assert p.returncode == 2
+    assert "归档命名空间" in p.stderr
+    assert not (root / ".atlas" / "tasks" / "T-31").exists()
+
+
+def test_requirement_root_rejects_duplicate_ids_across_archive_months(
+        tmp_path: Path) -> None:
+    """M227：verify 不再拒绝重复任务 ID 时，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, status="已拆")
+    for month in ("2026-10", "2026-11"):
+        task = root / ".atlas" / "tasks" / "archive" / month / "T-A"
+        task.mkdir(parents=True)
+        (task / "task.json").write_text(json.dumps({
+            "id": "T-A", "title": "T-A", "status": "completed", "depends_on": [],
+            "affected_domains": [], "acs": [], "created_at": "2026-11-01",
+            "requirement_root": "product/requirements/demo-req",
+        }), encoding="utf-8")
+        _write_claims(task, ["R-01", "R-02"])
+    findings = requirement_root_findings(root)
+    assert any("任务 ID 重复" in f for f in findings)
+    assert not any("已全部归档且 completed" in f for f in findings)
+
+
+def test_requirement_root_invalid_type_does_not_close(tmp_path: Path) -> None:
+    """M228：verify 非法类型不再阻断收口时，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, kind="未知类型", status="已拆")
+    _make_claim_card(root, "T-A", "product/requirements/demo-req", ["R-01", "R-02"],
+                     status="completed")
+    source = root / ".atlas" / "tasks" / "T-A"
+    dest = root / ".atlas" / "tasks" / "archive" / "2026-11" / "T-A"
+    dest.parent.mkdir(parents=True)
+    source.rename(dest)
+    findings = requirement_root_findings(root)
+    assert any("类型非法" in f for f in findings)
+    assert not any("推进为「已收口」" in f for f in findings)
+
+
+def test_normalize_requirement_ref_accepts_null(tmp_path: Path) -> None:
+    from _support.workflow_plan import normalize_requirement_ref
+
+    assert normalize_requirement_ref(tmp_path, None) == ""
+
+
+def test_finish_task_load_error_does_not_report_all_done(
+        tmp_path: Path, monkeypatch) -> None:
+    """M229：账本失败兜底不再禁止 all_done 时，本用例必须红。"""
+    from _support import workflow_finish
+    from _support.workflow_plan import load_tasks
+
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root)
+    run(root, "plan", "--unit", "T-32", "--requirement",
+        "product/requirements/demo-req")
+    run(root, "dispatch", "--unit", "T-32")
+    task = load_tasks(root / ".atlas" / "tasks")[0]
+    r_dir = root / "product" / "reviews" / "2026-11-22-impl-review-T-32"
+    r_dir.mkdir(parents=True, exist_ok=True)
+    (r_dir / "review.json").write_text(json.dumps({
+        "schema_version": 4, "ok": True, "status": "PASS", "checks": [], "other": []
+    }), encoding="utf-8")
+
+    def fail(*_args, **_kwargs):
+        raise OSError("ledger unreadable")
+
+    monkeypatch.setattr(workflow_finish, "load_tasks", fail)
+    result = workflow_finish.finish_task(root, task)
+    assert result["all_done"] is False
+    assert result["task_load_error"]
+    assert result["requirement_closeout"]["product_fact_writeback"] == "pending"
+
+
+def test_plan_rejects_unresolved_requirement_path(tmp_path: Path) -> None:
+    """M230：路径型需求引用解析失败不再退成直填时，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    for month in ("2026-10", "2026-11"):
+        target = root / "product" / "requirements" / "archive" / month / "base"
+        target.mkdir(parents=True)
+        (target / "requirement.md").write_text("**状态**：已收口\n", encoding="utf-8")
+        (target / "items.md").write_text(
+            "| ID | 页码 | 章节 | 原文 |\n|---|---|---|---|\n| R-01 | p1 | §1 | x |\n",
+            encoding="utf-8")
+    p = run(root, "plan", "--unit", "T-33", "--requirement",
+            "product/requirements/base")
+    assert p.returncode == 2
+    assert "无法解析" in p.stderr
+    assert not (root / ".atlas" / "tasks" / "T-33").exists()
+
+
+def test_requirement_root_duplicate_without_root_invalidates_closeout(
+        tmp_path: Path) -> None:
+    """M231：无落点同 ID 卡不再参与全局重复校验时，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, status="已拆")
+    task = root / ".atlas" / "tasks" / "archive" / "2026-11" / "T-A"
+    task.mkdir(parents=True)
+    (task / "task.json").write_text(json.dumps({
+        "id": "T-A", "title": "T-A", "status": "completed", "depends_on": [],
+        "affected_domains": [], "acs": [], "created_at": "2026-11-01",
+        "requirement_root": "product/requirements/demo-req",
+    }), encoding="utf-8")
+    _write_claims(task, ["R-01", "R-02"])
+    _make_claim_card(root, "T-A", "product/requirements/other", ["R-01"])
+    findings = requirement_root_findings(root)
+    assert any("任务 ID 重复" in f for f in findings)
+    assert not any("已全部归档且 completed" in f for f in findings)
+
+
+def test_requirement_root_bad_ledger_invalidates_closeout(tmp_path: Path) -> None:
+    """M232：损坏任务账本不再阻断收口提示时，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, status="已拆")
+    task = root / ".atlas" / "tasks" / "archive" / "2026-11" / "T-A"
+    task.mkdir(parents=True)
+    (task / "task.json").write_text(json.dumps({
+        "id": "T-A", "title": "T-A", "status": "completed", "depends_on": [],
+        "affected_domains": [], "acs": [], "created_at": "2026-11-01",
+        "requirement_root": "product/requirements/demo-req",
+    }), encoding="utf-8")
+    _write_claims(task, ["R-01", "R-02"])
+    broken = root / ".atlas" / "tasks" / "broken"
+    broken.mkdir()
+    (broken / "task.json").write_text("{", encoding="utf-8")
+    findings = requirement_root_findings(root)
+    assert any("任务账本不可读" in f for f in findings)
+    assert not any("已全部归档且 completed" in f for f in findings)
+
+
+def test_plan_reserves_ids_in_invalid_archive_paths(tmp_path: Path) -> None:
+    """M233：非法归档形态中的 ID 不再保留时，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root)
+    task = root / ".atlas" / "tasks" / "archive" / "not-a-month" / "T-34"
+    task.mkdir(parents=True)
+    (task / "task.json").write_text(json.dumps({
+        "id": "T-34", "title": "T-34", "status": "completed", "depends_on": [],
+        "affected_domains": [], "acs": [], "created_at": "2026-11-01",
+    }), encoding="utf-8")
+    p = run(root, "plan", "--unit", "T-34", "--requirement",
+            "product/requirements/demo-req")
+    assert p.returncode == 2
+    assert "归档命名空间" in p.stderr
+    assert not (root / ".atlas" / "tasks" / "T-34").exists()
+
+
+def test_requirement_archive_root_symlink_is_rejected(tmp_path: Path) -> None:
+    """M234：归档根 symlink 逃逸不再拒绝时，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    outside = tmp_path.parent / f"{tmp_path.name}-archive"
+    (outside / "2026-11" / "base").mkdir(parents=True)
+    (outside / "2026-11" / "base" / "requirement.md").write_text(
+        "**状态**：已收口\n", encoding="utf-8")
+    (outside / "2026-11" / "base" / "items.md").write_text(
+        "| ID | 页码 | 章节 | 原文 |\n|---|---|---|---|\n| R-01 | p1 | §1 | x |\n",
+        encoding="utf-8")
+    archive_link = root / "product" / "requirements" / "archive"
+    archive_link.parent.mkdir(parents=True)
+    archive_link.symlink_to(outside, target_is_directory=True)
+    make_requirement_root(root, slug="base")
+    make_requirement_root(root, slug="change", kind="需求变更", related="base#R-01")
+    p = run(root, "plan", "--unit", "T-35", "--requirement",
+            "product/requirements/change")
+    assert p.returncode == 2
+    assert "symlink" in p.stderr
+
+
+def test_normalize_requirement_ref_handles_symlink_loop(tmp_path: Path) -> None:
+    """M235：规范化路径的 OSError 不再被兜底时，本用例必须红。"""
+    from _support.workflow_plan import normalize_requirement_ref
+
+    loop = tmp_path / "loop"
+    loop.symlink_to(loop)
+    assert normalize_requirement_ref(tmp_path, "loop") == "loop"
+
+
+def test_plan_keeps_plain_file_direct_mode(tmp_path: Path) -> None:
+    """M236：普通文件直填被路径型入口守卫误拒时，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    req = root / "req.txt"
+    req.write_text("实现首页标题", encoding="utf-8")
+    p = run(root, "plan", "--unit", "T-36", "--requirement", "req.txt")
+    assert p.returncode == 0, p.stdout + p.stderr
+    meta = json.loads((root / ".atlas" / "tasks" / "T-36" / "task.json").read_text())
+    assert "requirement_root" not in meta
+
+
+def test_plan_rejects_missing_absolute_requirement_path(tmp_path: Path) -> None:
+    root = make_clean_project(tmp_path)
+    p = run(root, "plan", "--unit", "T-37", "--requirement",
+            str(tmp_path / "missing.md"))
+    assert p.returncode == 2
+    assert "无法解析" in p.stderr
+
+
+def test_plan_reserves_archive_directory_without_task_json(tmp_path: Path) -> None:
+    """M237：无 task.json 的归档目录 ID 不再保留时，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root)
+    (root / ".atlas" / "tasks" / "archive" / "2026-11" / "T-38").mkdir(parents=True)
+    p = run(root, "plan", "--unit", "T-38", "--requirement",
+            "product/requirements/demo-req")
+    assert p.returncode == 2
+    assert "归档命名空间" in p.stderr
+    assert not (root / ".atlas" / "tasks" / "T-38").exists()
+
+
+def test_requirement_root_symlink_loop_returns_finding(tmp_path: Path) -> None:
+    """M238：verify 后续 resolve 不再捕获 symlink loop 时，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    (root / "loop").symlink_to(root / "loop")
+    _make_claim_card(root, "T-A", "loop", ["R-01"])
+    findings = requirement_root_findings(root)
+    assert any("路径不可解析" in f or "无法解析" in f for f in findings)
+
+
+def test_requirement_root_invalid_utf8_returns_finding(tmp_path: Path) -> None:
+    """M239：非法 UTF-8 账本不再转坏账本 finding 时，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, status="已拆")
+    broken = root / ".atlas" / "tasks" / "broken"
+    broken.mkdir(parents=True)
+    (broken / "task.json").write_bytes(b"\xff")
+    findings = requirement_root_findings(root)
+    assert any("任务账本不可读" in f for f in findings)
+
+
+def test_finish_closeout_rejects_cross_root_claim(tmp_path: Path) -> None:
+    """M240：finish 不再拒绝跨落点冒领时，本用例必须红。"""
+    from _support.workflow_finish import requirement_closeout
+
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, slug="a", status="已拆")
+    make_requirement_root(root, slug="b", status="已拆")
+    task = root / ".atlas" / "tasks" / "archive" / "2026-11" / "T-A"
+    task.mkdir(parents=True)
+    (task / "task.json").write_text(json.dumps({
+        "id": "T-A", "title": "T-A", "status": "completed", "depends_on": [],
+        "affected_domains": [], "acs": [], "created_at": "2026-11-01",
+        "requirement_root": "product/requirements/a",
+    }), encoding="utf-8")
+    _write_claims(task, ["R-01", "R-02"], root_rel="product/requirements/b")
+    closeout = requirement_closeout(root, "product/requirements/a")
+    assert closeout["all_cards_closed"] is False
+    assert closeout["requirement_status_target"] is None
+    assert any("冒领" in f for f in closeout["findings"])
+
+
+def test_plan_keeps_slash_text_direct_mode(tmp_path: Path) -> None:
+    """M241：含斜杠普通需求文本不再被误拒时，本用例必须红。"""
+    root = make_clean_project(tmp_path)
+    p = run(root, "plan", "--unit", "T-41", "--requirement", "实现 /api/users 接口")
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+def test_load_tasks_rejects_non_string_id(tmp_path: Path) -> None:
+    """M242：任务 ID 非字符串不再拒绝时，本用例必须红。"""
+    from _support.workflow_plan import PlanError, load_tasks
+
+    root = make_clean_project(tmp_path)
+    task = root / ".atlas" / "tasks" / "bad"
+    task.mkdir(parents=True)
+    (task / "task.json").write_text(json.dumps({"id": ["T-A"]}), encoding="utf-8")
+    with pytest.raises(PlanError, match="合法字符串 id"):
+        load_tasks(root / ".atlas" / "tasks")
+
+
+def test_archive_task_rejects_symlink_month(tmp_path: Path) -> None:
+    """M243：归档月份 symlink 不再拒绝时，本用例必须红。"""
+    from _support.workflow_finish import FinishError, archive_task
+
+    root = make_clean_project(tmp_path)
+    tasks = root / ".atlas" / "tasks"
+    source = tasks / "T-A"
+    source.mkdir(parents=True)
+    outside = tmp_path.parent / f"{tmp_path.name}-month"
+    outside.mkdir()
+    (tasks / "archive").mkdir()
+    (tasks / "archive" / "2026-11").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(FinishError, match="symlink"):
+        archive_task(root, tasks, source, "T-A")
+    assert source.is_dir()
+
+
+def test_relation_findings_block_requirement_closeout(tmp_path: Path) -> None:
+    """M244：关联/缺陷报告缺失不再阻断收口时，本用例必须红。"""
+    from _support.workflow_finish import requirement_closeout
+
+    root = make_clean_project(tmp_path)
+    make_requirement_root(root, slug="bug", kind="缺陷", status="已拆")
+    task = root / ".atlas" / "tasks" / "archive" / "2026-11" / "T-A"
+    task.mkdir(parents=True)
+    (task / "task.json").write_text(json.dumps({
+        "id": "T-A", "title": "T-A", "status": "completed", "depends_on": [],
+        "affected_domains": [], "acs": [], "created_at": "2026-11-01",
+        "requirement_root": "product/requirements/bug",
+    }), encoding="utf-8")
+    _write_claims(task, ["R-01", "R-02"], root_rel="product/requirements/bug")
+    assert any("推进为「已收口」" in f for f in requirement_root_findings(root)) is False
+    closeout = requirement_closeout(root, "product/requirements/bug")
+    assert closeout["requirement_status_target"] is None
+    assert closeout["findings"]
 
 
 def test_requirement_pointer_text_mentions_authority_order() -> None:

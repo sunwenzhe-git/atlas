@@ -65,7 +65,8 @@ Atlas 的核心结构是**两层正交**（也常被称作**双线束模型**：
 每提一条需求走一遍；上面四种起点开好户后，最终都汇合到这条循环：
 
 ```text
-`atlas workflow plan` 建需求卡（.atlas/tasks/<需求ID>/prd.md；ID = task 目录名，不另建 inbox）
+`product/requirements/<slug>/` 落初始需求、需求变更或缺陷确认稿（ID = slug，不另建 inbox）
+   ↓ `atlas workflow plan` 建任务卡（`.atlas/tasks/<需求ID>/prd.md`）
    ↓
 ① atlas apply <需求ID>   ←— `atlas workflow dispatch` 的派工单自动带上
    ↓   三问门分流：有一条「是」⇒ 拉起对应环；全否 ⇒ 走纯加法旁路，直接到 ②

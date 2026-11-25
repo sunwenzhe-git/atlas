@@ -35,6 +35,13 @@ import re
 import subprocess
 from pathlib import Path
 
+from _support.layout import LayoutError
+from _support.workflow_plan import (
+    REQUIREMENT_TYPES, is_archived_task_dir, normalize_requirement_ref,
+    read_requirement_fields, requirement_relation_findings, requirement_type,
+    resolve_requirement_root, strip_fences,
+)
+
 ITEMS_FILE = "requirement-items.md"
 MATRIX_FILE = "coverage-matrix.md"
 MATRIX_COLUMNS = ("PRD", "设计文档", "实现", "E2E")
@@ -43,25 +50,7 @@ NO_REQUIREMENT_MARKER = "无外部需求原件"
 CLAIM_NONE_MARKER = "不承接需求条目"
 REQUIREMENT_DOC_FILE = "requirement.md"
 REQUIREMENT_ROOT_ITEMS_FILE = "items.md"
-REQUIREMENT_STATUSES = ("候选", "已确认", "已拆", "已收口")
-STATUS_LINE_RE = re.compile(r"^\*\*状态\*\*[：:]\s*(\S+)\s*$", re.MULTILINE)
 SOURCE_REF_RE = re.compile(r"^(?P<path>\S+)#(?P<id>\S+)$")
-ARCHIVE_DIR = "archive"
-
-_FENCE_RE = re.compile(r"^(```|~~~)")
-
-
-def strip_fences(text: str) -> str:
-    """去围栏代码块（含条目原文中贴代码示例的情形），保留行结构。"""
-    out: list[str] = []
-    in_fence = False
-    for line in text.splitlines():
-        if _FENCE_RE.match(line.strip()):
-            in_fence = not in_fence
-            out.append("")
-            continue
-        out.append("" if in_fence else line)
-    return "\n".join(out)
 
 
 def first_table(text: str, header_needles: tuple[str, ...]) -> list[list[str]] | None:
@@ -86,12 +75,8 @@ def first_table(text: str, header_needles: tuple[str, ...]) -> list[list[str]] |
 
 
 def read_requirement_status(req_root: Path) -> str | None:
-    """读需求落点 `requirement.md` 的状态行（`**状态**：<值>`）；缺失 ⇒ None。"""
-    doc = Path(req_root) / REQUIREMENT_DOC_FILE
-    if not doc.is_file():
-        return None
-    m = STATUS_LINE_RE.search(doc.read_text(encoding="utf-8", errors="replace"))
-    return m.group(1).strip() if m else None
+    """读需求落点首部状态字段；围栏示例不参与。"""
+    return read_requirement_fields(req_root).get("状态")
 
 
 def _parse_claim_rows(
@@ -220,18 +205,39 @@ def requirement_root_findings(root: Path) -> list[str]:
         return []
 
     per_root: dict[str, dict] = {}
+    ledger_findings: list[str] = []
+    seen_ids: dict[str, str | None] = {}
+    duplicate_roots: set[str] = set()
+    ledger_invalid = False
     for p in sorted(tasks_root.rglob("task.json")):
         try:
             meta = json.loads(p.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue  # 损坏卡：本判据沉默，损坏由 status/load_tasks 面点名
-        if not isinstance(meta, dict):
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            ledger_findings.append(f"任务账本不可读：{p}（{exc}）")
+            ledger_invalid = True
             continue
-        req_root = meta.get("requirement_root")
-        if not isinstance(req_root, str) or not req_root.strip():
+        if not isinstance(meta, dict) or not meta.get("id"):
+            ledger_findings.append(f"任务卡缺少 id：{p}")
+            ledger_invalid = True
+            continue
+        task_id = str(meta["id"])
+        raw_root = meta.get("requirement_root")
+        req_root = (normalize_requirement_ref(root, raw_root)
+                    if isinstance(raw_root, str) and raw_root.strip() else None)
+        if task_id in seen_ids:
+            prior_root = seen_ids[task_id]
+            duplicate_roots.update(r for r in (prior_root, req_root) if r)
+            ledger_findings.append(
+                f"任务 ID 重复：{task_id}（{prior_root or '无落点'} / {req_root or '无落点'}），"
+                "拒绝判定全部收口")
+            ledger_invalid = True
+        else:
+            seen_ids[task_id] = req_root
+        if req_root is None:
             continue
         entry = per_root.setdefault(
-            req_root.strip(), {"claimed": set(), "cards": [], "any_claim": False})
+            req_root, {"claimed": set(), "cards": [], "any_claim": False,
+                       "findings": []})
         t_dir = p.parent
         items_path = t_dir / ITEMS_FILE
         if items_path.is_file():
@@ -246,18 +252,46 @@ def requirement_root_findings(root: Path) -> list[str]:
                     entry["any_claim"] = True
                     m = SOURCE_REF_RE.match(r[src_idx].strip() if len(r) > src_idx else "")
                     if m:
-                        entry["claimed"].add(m.group("id"))
-        archived = ARCHIVE_DIR in p.relative_to(tasks_root).parts
+                        source_root = normalize_requirement_ref(root, m.group("path"))
+                        if source_root == req_root:
+                            entry["claimed"].add(m.group("id"))
+                        else:
+                            entry["findings"].append(
+                                f"任务 {meta.get('id', '?')} 领取来源路径 {source_root!r} "
+                                f"与 requirement_root {req_root!r} 不一致：拒绝跨落点冒领")
+        archived = (is_archived_task_dir(tasks_root, p.parent)
+                    and p.parent.name == meta.get("id"))
         entry["cards"].append(
             {"id": meta.get("id", "?"), "archived": archived,
              "status": meta.get("status", "")})
 
-    findings: list[str] = []
+    findings: list[str] = ledger_findings
     for req_root_rel, entry in per_root.items():
-        req_dir = (root / req_root_rel).resolve()
-        if root.resolve() not in req_dir.parents and req_dir != root.resolve():
+        try:
+            candidate = (root / req_root_rel).resolve()
+        except (OSError, RuntimeError) as exc:
+            findings.append(f"需求落点 {req_root_rel} 路径不可解析：{exc}")
+            continue
+        if root.resolve() not in candidate.parents and candidate != root.resolve():
             findings.append(
                 f"需求落点 {req_root_rel} 路径越界（项目根外）：领取引用须指向项目根内落点")
+            continue
+        try:
+            req_dir = resolve_requirement_root(root, req_root_rel)
+        except (LayoutError, OSError) as exc:
+            findings.append(f"需求落点 {req_root_rel} 无法解析：{exc}")
+            continue
+        if req_dir is None:
+            findings.append(
+                f"需求落点 {req_root_rel} 非法或不存在（须为配置资产根内唯一 requirements/<slug>）："
+                "检查 slug 是否复用、归档是否完整或路径是否越界")
+            continue
+        findings.extend(entry["findings"])
+        try:
+            relation_findings = requirement_relation_findings(root, req_dir)
+            findings.extend(relation_findings)
+        except OSError as exc:
+            findings.append(f"需求落点 {req_root_rel} 元数据不可读：{exc}")
             continue
         items_file = req_dir / REQUIREMENT_ROOT_ITEMS_FILE
         if not items_file.is_file():
@@ -265,9 +299,13 @@ def requirement_root_findings(root: Path) -> list[str]:
                 f"需求落点 {req_root_rel} 缺 {REQUIREMENT_ROOT_ITEMS_FILE}："
                 "条目正文唯一住址未建（RFC-20261122-03）")
             continue
-        rows = first_table(
-            strip_fences(items_file.read_text(encoding="utf-8", errors="replace")),
-            ("原文",))
+        try:
+            rows = first_table(
+                strip_fences(items_file.read_text(encoding="utf-8", errors="replace")),
+                ("原文",))
+        except OSError as exc:
+            findings.append(f"需求落点 {req_root_rel} 条目表不可读：{exc}")
+            continue
         root_ids = [r[0].strip() for r in rows[1:] if r and r[0].strip()] if rows else []
         if not root_ids:
             findings.append(
@@ -288,18 +326,33 @@ def requirement_root_findings(root: Path) -> list[str]:
             if ghost:
                 findings.append(
                     f"需求落点 {req_root_rel} 幽灵引用（ID 不在 items.md）：{'、'.join(ghost)}")
-        status = read_requirement_status(req_dir)
+        try:
+            status = read_requirement_status(req_dir)
+            kind = requirement_type(req_dir)
+        except OSError as exc:
+            findings.append(f"需求落点 {req_root_rel} 元数据不可读：{exc}")
+            continue
+        valid_type = kind in REQUIREMENT_TYPES
+        if not valid_type:
+            findings.append(f"需求落点 {req_root_rel} 类型非法：{kind!r}，不推进收口")
         if status not in ("已确认", "已拆", "已收口"):
             findings.append(
                 f"需求落点 {req_root_rel} 状态 = {status or '缺失'} 但已有卡领取："
                 "先过确认门（候选 → 已确认）")
         cards = entry["cards"]
-        all_done = bool(cards) and all(
-            c["archived"] or c["status"] == "completed" for c in cards)
+        all_done = (valid_type and not ledger_invalid and not entry["findings"]
+                    and not relation_findings and req_root_rel not in duplicate_roots
+                    and bool(cards) and all(
+                        c["archived"] and c["status"] == "completed" for c in cards))
         if all_done and status != "已收口":
-            findings.append(
-                f"需求落点 {req_root_rel} 关联卡已全部收口但状态 = {status or '缺失'}："
-                "推进为「已收口」并按域沉淀回产品事实（RFC-20261122-03 B5）")
+            if kind == "缺陷":
+                findings.append(
+                    f"需求落点 {req_root_rel} 关联卡已全部归档且 completed，状态 = {status or '缺失'}："
+                    "推进为「已收口」；仅当产品事实缺失或错误时回写")
+            else:
+                findings.append(
+                    f"需求落点 {req_root_rel} 关联卡已全部归档且 completed，状态 = {status or '缺失'}："
+                    "推进为「已收口」并按域沉淀回产品事实（RFC-20261122-03 B5）")
     return findings
 
 

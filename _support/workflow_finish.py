@@ -23,8 +23,14 @@ from pathlib import Path
 
 from _support import review_scope_core as scope_core
 from _support.layout import LayoutError, load_layout
-from _support.workflow_plan import ARCHIVE_DIR, load_tasks, atomic_write_json, UNIT_RE
+from _support.workflow_plan import (
+    ARCHIVE_DIR, REQUIREMENT_ITEMS_FILE, REQUIREMENT_TYPES, PlanError, is_archived_task_dir,
+    load_tasks,
+    atomic_write_json, normalize_requirement_ref, requirement_relation_findings,
+    requirement_type, resolve_requirement_root, strip_fences, UNIT_RE,
+)
 from _support.workflow_causes import FALLBACK_CAUSE
+from _support.workflow_verify import SOURCE_REF_RE, first_table
 
 
 class FinishError(ValueError):
@@ -39,7 +45,6 @@ class FinishError(ValueError):
 
 
 REVIEW_DIR_PREFIX_RE = r"^\d{4}-\d{2}-\d{2}-impl-review-"
-ARCHIVE_MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")  # `archive/<YYYY-MM>/<ID>/`
 
 # 审查证据命名契约单源（RFC-20261122-02）：目录 `<date>-impl-review-<unit>/findings/<unit>.r<N>.json`。
 # 取号（当日）与跨日扫描（进度探针）双方 import 同一构造，命名契约改名时全部消费点自动跟随。
@@ -513,21 +518,13 @@ def check_structure_freshness(root: Path) -> dict:
     return {"status": "PASS", "reason": f"baseline ≡ HEAD（{cur[:12]}）且无非豁免未暂存/未跟踪改动"}
 
 
-def archive_month(t_dir: Path, tasks_root: Path) -> str | None:
-    """任务目录若已在 `archive/<YYYY-MM>/<ID>/` 下，返回月份名；否则 None。
-
-    月份层是判据侧的既有契约：`validators/validate_task_card.py` 按
-    `archive/*/*/prd.md` 找卡，封条按 `archive/*/<ID>/<tail>` 定位。写入侧
-    只用月度目录，避免归档卡静默掉出判据覆盖（issue #70）。
-    """
-    archive_root = (tasks_root / ARCHIVE_DIR).resolve()
-    try:
-        rel = t_dir.resolve().relative_to(archive_root)
-    except ValueError:
+def archive_month(t_dir: Path, tasks_root: Path, task_id: str | None = None) -> str | None:
+    """任务目录若已在 `archive/<YYYY-MM>/<ID>/` 下，返回月份名；否则 None。"""
+    if not is_archived_task_dir(tasks_root, t_dir):
         return None
-    if len(rel.parts) == 2 and ARCHIVE_MONTH_RE.match(rel.parts[0]):
-        return rel.parts[0]
-    return None
+    if task_id is not None and t_dir.name != task_id:
+        return None
+    return t_dir.parent.name
 
 
 def archive_task(root: Path, tasks_root: Path, t_dir: Path, t_id: str) -> dict:
@@ -539,9 +536,21 @@ def archive_task(root: Path, tasks_root: Path, t_dir: Path, t_id: str) -> dict:
     if not UNIT_RE.match(t_id):
         raise FinishError(f"非法任务标识：{t_id!r}", cause="no_task_card")
     root = root.resolve()
-    if archive_month(t_dir, tasks_root) is not None:
+    if archive_month(t_dir, tasks_root, t_id) is not None:
         return {"status": "already", "path": str(t_dir.resolve().relative_to(root))}
-    dest = tasks_root / ARCHIVE_DIR / date.today().strftime("%Y-%m") / t_id
+    archive_root = tasks_root / ARCHIVE_DIR
+    month_dir = archive_root / date.today().strftime("%Y-%m")
+    if archive_root.is_symlink() or month_dir.is_symlink():
+        raise FinishError("归档链含 symlink，拒绝移出任务账本", cause="environment")
+    try:
+        month_resolved = month_dir.resolve()
+        dest_resolved = (month_dir / t_id).resolve()
+    except (OSError, RuntimeError) as exc:
+        raise FinishError(f"归档目标不可解析：{exc}", cause="environment") from exc
+    if (month_resolved.parent != archive_root.resolve()
+            or tasks_root not in dest_resolved.parents or root not in dest_resolved.parents):
+        raise FinishError("归档目标越界，拒绝移动", cause="environment")
+    dest = month_dir / t_id
     if dest.exists():
         raise FinishError(f"归档目标已存在：{dest}（源目录仍在 {t_dir}；请人工核对后处理）",
                           cause="state_transition")
@@ -551,6 +560,83 @@ def archive_task(root: Path, tasks_root: Path, t_dir: Path, t_id: str) -> dict:
     except OSError as exc:
         raise FinishError(f"归档失败：{t_dir} → {dest}（{exc}）", cause="environment") from exc
     return {"status": "moved", "path": str(dest.relative_to(root))}
+
+
+def requirement_closeout(root: Path, req_root_rel: str) -> dict:
+    """按需求类型生成收口待办；只有关联卡全部归档才推进落点状态。"""
+    root = Path(root).resolve()
+    req_root_rel = normalize_requirement_ref(root, req_root_rel)
+    try:
+        req_dir = resolve_requirement_root(root, req_root_rel)
+        declared_type = requirement_type(req_dir) if req_dir is not None else None
+    except (LayoutError, OSError):
+        req_dir = None
+        declared_type = None
+    valid_type = declared_type in REQUIREMENT_TYPES
+    kind = declared_type if valid_type else "未知"
+    findings: list[str] = []
+    try:
+        relation_findings = (requirement_relation_findings(root, req_dir)
+                             if req_dir is not None else ["需求落点无法解析"])
+        findings.extend(relation_findings)
+    except OSError as exc:
+        relation_findings = [f"需求落点元数据不可读：{exc}"]
+        findings.extend(relation_findings)
+    load_error: str | None = None
+    try:
+        related = [
+            t for t in load_tasks((root / ".atlas" / "tasks"), include_archived=True)
+            if normalize_requirement_ref(root, t.get("requirement_root", ""))
+            == req_root_rel
+        ]
+    except (PlanError, OSError) as exc:
+        related = []
+        load_error = str(exc)
+        findings.append(f"任务账本不可读或存在重复 ID：{load_error}")
+    claim_findings: list[str] = []
+    for task in related:
+        items_path = Path(task["_dir"]) / REQUIREMENT_ITEMS_FILE
+        if not items_path.is_file():
+            continue
+        try:
+            rows = first_table(
+                strip_fences(items_path.read_text(encoding="utf-8", errors="replace")),
+                ("来源",))
+        except (OSError, UnicodeError) as exc:
+            claim_findings.append(f"任务 {task.get('id')} 领取表不可读：{exc}")
+            continue
+        if not rows or not any("来源" in cell for cell in rows[0]):
+            continue
+        src_idx = next(i for i, cell in enumerate(rows[0]) if "来源" in cell)
+        for row in rows[1:]:
+            source = row[src_idx].strip() if len(row) > src_idx else ""
+            match = SOURCE_REF_RE.match(source)
+            if match and normalize_requirement_ref(root, match.group("path")) != req_root_rel:
+                claim_findings.append(
+                    f"任务 {task.get('id')} 领取来源 {match.group('path')!r} "
+                    f"与 {req_root_rel!r} 不一致：拒绝跨落点冒领")
+    findings.extend(claim_findings)
+    all_closed = (bool(req_dir) and valid_type and not load_error and not relation_findings
+                  and not claim_findings and bool(related) and all(
+                      t.get("_archived") and t.get("status") == "completed" for t in related))
+    if not all_closed:
+        writeback = "pending"
+    elif kind == "缺陷":
+        writeback = "conditional"
+    else:
+        writeback = "required"
+    if req_dir is None:
+        findings.append("需求落点无法解析为唯一合法目录")
+    elif not valid_type:
+        findings.append(f"需求类型非法：{declared_type!r}")
+    return {
+        "requirement_root": req_root_rel,
+        "type": kind,
+        "all_cards_closed": all_closed,
+        "product_fact_writeback": writeback,
+        "requirement_status_target": "已收口" if all_closed else None,
+        "findings": findings,
+    }
 
 
 def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
@@ -567,7 +653,7 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
 
     if not t_dir.is_dir():
         raise FinishError(f"任务目录不存在：{t_dir}", cause="no_task_card")
-    if archive_month(t_dir, tasks_root) is None:
+    if archive_month(t_dir, tasks_root, t_id) is None:
         archive_dest = tasks_root / ARCHIVE_DIR / date.today().strftime("%Y-%m") / t_id
         if archive_dest.exists():
             raise FinishError(
@@ -613,8 +699,13 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
     # 归档（issue #70）：completed 任务移出活跃区；幂等，失败显式报错
     archived = archive_task(root, tasks_root, t_dir, t_id)
 
-    # 检查整体工作流是否全部收工（含归档任务）
-    all_tasks = load_tasks(tasks_root, include_archived=True)
+    # 检查整体工作流是否全部收工（含归档任务）；账本读取失败不得把已归档任务变成崩溃现场。
+    task_load_error: str | None = None
+    try:
+        all_tasks = load_tasks(tasks_root, include_archived=True)
+    except (PlanError, OSError) as exc:
+        all_tasks = [{**task, "status": "completed", "_archived": True}]
+        task_load_error = str(exc)
     total = len(all_tasks)
     completed_count = sum(1 for t in all_tasks if t.get("status") == "completed")
 
@@ -623,7 +714,11 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
         "status": "completed",
         "total_tasks": total,
         "completed_tasks": completed_count,
-        "all_done": (total > 0 and completed_count == total),
+        "all_done": (task_load_error is None and total > 0 and completed_count == total),
+        "task_load_error": task_load_error,
+        "requirement_closeout": (
+            requirement_closeout(root, task["requirement_root"])
+            if task.get("requirement_root") else None),
         "e2e_precondition": e2e,
         "structure_freshness": structure,
         "deferred_registration": deferred_info,
