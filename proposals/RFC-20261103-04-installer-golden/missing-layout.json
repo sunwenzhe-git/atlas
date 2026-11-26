@@ -1,7 +1,7 @@
 {
   "installer": [
     "bash",
-    "/private/tmp/atlas-golden-wt/install.sh"
+    "/private/tmp/atlas-golden-77-78/install.sh"
   ],
   "runs": [
     {
