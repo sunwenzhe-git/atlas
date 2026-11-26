@@ -344,3 +344,214 @@ def test_worktree_root_explicit(repo) -> None:
                         capture_output=True, text=True).stdout
     assert wt.count("\n") == 1, wt
     assert not wt_root.exists() or not any(wt_root.iterdir())
+
+
+def _make_harness_and_host(tmp: Path) -> tuple[Path, str, Path, str]:
+    """构造最小双仓夹具：harness 源包仓 + host 采纳宿主仓。"""
+    harness = tmp / "harness"
+    harness.mkdir()
+    git(harness, "init", "-q")
+    git(harness, "config", "user.email", "t@example.com")
+    git(harness, "config", "user.name", "t")
+    (harness / "scripts").mkdir()
+    (harness / "skills" / "demo").mkdir(parents=True)
+    (harness / "patches" / "project-wiring").mkdir(parents=True)
+    (harness / "skills" / "demo" / "SKILL.md").write_text("skill-v1\n", encoding="utf-8")
+    (harness / "patches" / "project-wiring" / "agent-pointer.md").write_text(
+        "pointer-v1\n", encoding="utf-8")
+    (harness / "install.py").write_text(
+        "import argparse, pathlib, shutil, sys\n"
+        "ap = argparse.ArgumentParser()\n"
+        "ap.add_argument('--target', required=True)\n"
+        "ap.add_argument('--update', action='store_true')\n"
+        "ap.add_argument('--force', action='store_true')\n"
+        "ap.add_argument('--no-skill', action='store_true')\n"
+        "ap.add_argument('--no-wiring', action='store_true')\n"
+        "args = ap.parse_args()\n"
+        "pkg = pathlib.Path(__file__).resolve().parent\n"
+        "tgt = pathlib.Path(args.target)\n"
+        "if (pkg / 'FAIL_INSTALL').exists():\n"
+        "    sys.exit(3)\n"
+        "(tgt / '.atlas').mkdir(parents=True, exist_ok=True)\n"
+        "if not args.no_skill:\n"
+        "    dst = tgt / '.agents' / 'skills' / 'demo'\n"
+        "    dst.mkdir(parents=True, exist_ok=True)\n"
+        "    shutil.copy2(pkg / 'skills' / 'demo' / 'SKILL.md', dst / 'SKILL.md')\n"
+        "if not args.no_wiring:\n"
+        "    shutil.copy2(pkg / 'patches' / 'project-wiring' / 'agent-pointer.md', tgt / 'AGENTS.md')\n",
+        encoding="utf-8",
+    )
+    git(harness, "add", "-A")
+    git(harness, "commit", "-qm", "harness-v1")
+    h_base = subprocess.run(["git", "-C", str(harness), "rev-parse", "HEAD"],
+                            capture_output=True, text=True).stdout.strip()
+
+    host = tmp / "host"
+    host.mkdir()
+    git(host, "init", "-q")
+    git(host, "config", "user.email", "t@example.com")
+    git(host, "config", "user.name", "t")
+    (host / "README.md").write_text("host-anchor\n", encoding="utf-8")
+    (host / "AGENTS.md").write_text("pointer-v1\n", encoding="utf-8")
+    (host / ".agents" / "skills" / "demo").mkdir(parents=True)
+    (host / ".agents" / "skills" / "demo" / "SKILL.md").write_text("skill-v1\n", encoding="utf-8")
+    (host / ".atlas" / "runs").mkdir(parents=True)
+    (host / ".atlas" / "runs" / "check-events.jsonl").write_text(
+        json.dumps({"timestamp": "2026-11-26T00:00:00", "rows": [{"name": "g0", "status": "ok", "duration_ms": 1}]}) + "\n",
+        encoding="utf-8",
+    )
+    git(host, "add", "-A")
+    git(host, "commit", "-qm", "host-base")
+    host_sha = subprocess.run(["git", "-C", str(host), "rev-parse", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
+    return harness, h_base, host, host_sha
+
+
+def test_host_assembles_skills_wiring_and_gate_passes(tmp_path: Path) -> None:
+    """M258：host 模式默认装配 skills/ 与 AGENTS.md，且可通过 atlas eval gate。"""
+    harness, h_base, host, _host_sha = _make_harness_and_host(tmp_path)
+    (harness / "skills" / "demo" / "SKILL.md").write_text("skill-v2\n", encoding="utf-8")
+    (harness / "patches" / "project-wiring" / "agent-pointer.md").write_text(
+        "pointer-v2\n", encoding="utf-8")
+    cases_path = write_cases(tmp_path, {
+        "schema_version": 1,
+        "gate_command": "python3 -c \"print('ok gate1')\"",
+        "cases": [
+            {
+                "id": "H1-skill",
+                "kind": "fast-lane",
+                "anchor": "README.md#host-anchor",
+                "command": (
+                    "python3 -c \"import pathlib, sys; "
+                    "s=pathlib.Path('.agents/skills/demo/SKILL.md').read_text().strip(); "
+                    "a=pathlib.Path('AGENTS.md').read_text().strip(); "
+                    "sys.exit(0 if s.startswith('skill-v') and a.startswith('pointer-v') else 1)\""
+                ),
+            },
+            {
+                "id": "H2-v2-check",
+                "kind": "fast-lane",
+                "anchor": ".agents/skills/demo/SKILL.md#skill-v2",
+                "command": (
+                    "python3 -c \"import pathlib, sys; "
+                    "sys.exit(0 if 'skill-v2' in pathlib.Path('.agents/skills/demo/SKILL.md').read_text() "
+                    "and 'pointer-v2' in pathlib.Path('AGENTS.md').read_text() else 1)\""
+                ),
+            },
+        ],
+    }, "host-cases.json")
+    out = tmp_path / "out-host"
+    p = run_eval(host, "host", "--cases", str(cases_path),
+                 "--harness-base", h_base, "--harness-cand", "WORKTREE",
+                 "--harness-root", str(harness), "--host-root", str(host),
+                 "--out", str(out))
+    assert p.returncode == 0, p.stdout + p.stderr
+    ledger = json.loads((out / "ledger.json").read_text(encoding="utf-8"))
+    assert ledger["mode"] == "host" and ledger["root"] == str(host.resolve())
+    assert ledger["summary"]["pass2pass"] == 1 and ledger["summary"]["new_ok"] == 1
+    assert (out / "summary.md").is_file()
+    g = run_eval(host, "gate", "--ledger", str(out / "ledger.json"), "--out", "gate-res.json")
+    assert g.returncode == 0, g.stdout + g.stderr
+    assert (host / "gate-res.json").is_file()
+
+
+def test_host_worktree_anti_noop_refused_without_allow(tmp_path: Path) -> None:
+    """M257：WORKTREE 与 harness-base 装配集一致时（即使非装配文档脏）拒绝空跑；--allow-noop 放行。"""
+    harness, h_base, host, _host_sha = _make_harness_and_host(tmp_path)
+    (harness / "README.md").write_text("non-assembly-only\n", encoding="utf-8")
+    cases_path = write_cases(tmp_path, registry([
+        {"id": "H0", "kind": "smoke", "anchor": "README.md#host-anchor",
+         "command": "python3 -c \"print('ok')\""}
+    ], gate_command=None), "noop-cases.json")
+    r_refuse = run_eval(host, "host", "--cases", str(cases_path),
+                        "--harness-base", h_base, "--harness-cand", "WORKTREE",
+                        "--harness-root", str(harness), "--host-root", str(host),
+                        "--out", str(tmp_path / "out1"))
+    assert r_refuse.returncode == 2 and "完全一致" in r_refuse.stderr
+    r_allow = run_eval(host, "host", "--cases", str(cases_path),
+                       "--harness-base", h_base, "--harness-cand", "WORKTREE",
+                       "--harness-root", str(harness), "--host-root", str(host),
+                       "--allow-noop", "--out", str(tmp_path / "out2"))
+    assert r_allow.returncode == 0, r_allow.stdout + r_allow.stderr
+
+
+def test_host_cleans_both_repos_on_install_failure(tmp_path: Path) -> None:
+    harness, h_base, host, _host_sha = _make_harness_and_host(tmp_path)
+    (harness / "skills" / "demo" / "SKILL.md").write_text("skill-v2\n", encoding="utf-8")
+    (harness / "FAIL_INSTALL").write_text("boom\n", encoding="utf-8")
+    cases_path = write_cases(tmp_path, registry([
+        {"id": "H0", "kind": "smoke", "anchor": "README.md#host-anchor",
+         "command": "python3 -c \"print('ok')\""}
+    ], gate_command=None), "fail-install.json")
+    wt_root = tmp_path / "wt-clean"
+    r = run_eval(host, "host", "--cases", str(cases_path),
+                 "--harness-base", h_base, "--harness-cand", "WORKTREE",
+                 "--harness-root", str(harness), "--host-root", str(host),
+                 "--worktree-root", str(wt_root), "--out", str(tmp_path / "out-fail"))
+    assert r.returncode == 2 and "退出码 3" in r.stderr
+    for repo_dir in (harness, host):
+        wt = subprocess.run(["git", "-C", str(repo_dir), "worktree", "list"],
+                            capture_output=True, text=True).stdout
+        assert wt.count("\n") == 1, wt
+    assert not wt_root.exists()
+
+
+def test_host_check_events_delta_excludes_gate_command_and_ablation(tmp_path: Path) -> None:
+    harness, h_base, host, _host_sha = _make_harness_and_host(tmp_path)
+    (harness / "skills" / "demo" / "SKILL.md").write_text("skill-v2\n", encoding="utf-8")
+    append_case = (
+        "python3 -c \"import json, pathlib; p=pathlib.Path('.atlas/runs/check-events.jsonl'); "
+        "lines=[json.dumps({'timestamp':'t1','ablation_id':None,'rows':[{'name':'g1','status':'WARN','duration_ms':12}]}),"
+        "json.dumps({'timestamp':'t2','ablation_id':'ab-1','rows':[{'name':'g2','status':'FAIL','duration_ms':99}]}),"
+        "'{bad-json']; p.write_text(p.read_text()+chr(10).join(lines)+chr(10))\""
+    )
+    gate_cmd = (
+        "python3 -c \"import json, pathlib; p=pathlib.Path('.atlas/runs/check-events.jsonl'); "
+        "p.write_text(p.read_text()+json.dumps({'timestamp':'tg','ablation_id':None,'rows':[{'name':'g3','status':'FAIL','duration_ms':5}]})+chr(10)); "
+        "print('ok g1')\""
+    )
+    cases_path = write_cases(tmp_path, registry([
+        {"id": "H-EV", "kind": "obs", "anchor": "README.md#host-anchor", "command": append_case}
+    ], gate_command=gate_cmd), "ev-cases.json")
+    out = tmp_path / "out-ev"
+    r = run_eval(host, "host", "--cases", str(cases_path),
+                 "--harness-base", h_base, "--harness-cand", "WORKTREE",
+                 "--harness-root", str(harness), "--host-root", str(host),
+                 "--out", str(out))
+    assert r.returncode == 0, r.stdout + r.stderr
+    delta = json.loads((out / "ledger.json").read_text(encoding="utf-8"))["check_events_delta"]["candidate"]
+    assert delta["runs"] == 1 and delta["warn_rows"] == 1 and delta["fail_rows"] == 0
+    assert delta["parse_errors"] == 1 and "g3" not in delta["by_gate"]
+
+
+def test_host_rejects_missing_installer_in_historical_base(tmp_path: Path) -> None:
+    harness = tmp_path / "old-harness"
+    harness.mkdir()
+    git(harness, "init", "-q")
+    git(harness, "config", "user.email", "t@example.com")
+    git(harness, "config", "user.name", "t")
+    (harness / "README.md").write_text("pre-install-py\n", encoding="utf-8")
+    git(harness, "add", "-A")
+    git(harness, "commit", "-qm", "old")
+    old_sha = subprocess.run(["git", "-C", str(harness), "rev-parse", "HEAD"],
+                             capture_output=True, text=True).stdout.strip()
+    (harness / "install.py").write_text("print('ok')\n", encoding="utf-8")
+    (harness / "skills" / "demo").mkdir(parents=True)
+    (harness / "skills" / "demo" / "SKILL.md").write_text("v1\n", encoding="utf-8")
+    host = tmp_path / "host-old"
+    host.mkdir()
+    git(host, "init", "-q")
+    git(host, "config", "user.email", "t@example.com")
+    git(host, "config", "user.name", "t")
+    (host / "README.md").write_text("host\n", encoding="utf-8")
+    git(host, "add", "-A")
+    git(host, "commit", "-qm", "h")
+    cases_path = write_cases(tmp_path, registry([
+        {"id": "H0", "kind": "smoke", "anchor": "README.md#host",
+         "command": "python3 -c \"print('ok')\""}
+    ], gate_command=None), "old-cases.json")
+    r = run_eval(host, "host", "--cases", str(cases_path),
+                 "--harness-base", old_sha, "--harness-cand", "WORKTREE",
+                 "--harness-root", str(harness), "--host-root", str(host),
+                 "--out", str(tmp_path / "out-old"))
+    assert r.returncode == 2 and "不支持无 install.py" in r.stderr

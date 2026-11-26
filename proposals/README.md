@@ -46,6 +46,17 @@ proposals/RFC-YYYYMMDD-序号-<短横线英文主题>.md
 * **负断言消融规则（2026-11-22，`RFC-20261122-07` §3.2.1）**：任何断言「X 被拒/缺席/不出声」的测试，**必须先摘除守卫代码实跑确认变红**后才可信——负断言对「值缺席的所有原因」都放行；摘不红的负断言只证明「该输入路径没走到」，不证明「守卫在」（出处：bmad-loop AGENTS.md Ablation rule，MIT；同认识论先例 = D206 消融口径）。
 * **系统性修复的留出验证（2026-10-26，D156；`RFC-20261026-03` Phase 1）**：改门 / 校验器 / 契约判据、且 RFC §1 引子族锚（`bugs.md` 同根归纳）或 ≥3 条独立审查重复 finding、或 diff 落在 DR4 段级锚路径族的，**§4.5 必写留出集 + pre-fix 红证**；三态 `闭族` / `未闭族` / `单案修复（无留出集，须 QUEUE 观察行 owner + 期限）`。**留出独立性三条**（缺一按「同夹具变体」驳回，独立评审当场重放）：①判据输出翻转（verdict / 案数 / 最近日期 / 精确病案数至少一项；仅 WARN 文本 / 日志 / 通道变化不算）；②变异增量杀伤（既有钉全绿而留出案红）；③结构不可达（夹具不可由既有钉夹具只改日期串 / 通道 / 增删行得到）。「只换日期串 / 只换调用通道」不合格。流程门登记 = `shared/gates.md` §2.5。
 
+### 2.1 分层演进车道（全仓库路径覆盖；`RFC-20261126-03`）
+本节仅规范 **Atlas 自身 PR/RFC 的准入验收**（不改变 `shared/gates.md` §2.1「`atlas eval` 独立跑分门、不挂业务收口」的定位）。所有车道均**不免除**全量 `pytest tests/` 与 `python3 scripts/atlas_check.py --fast`（含 `test_install_selfcheck` 与 `SKILL_BUDGET_CHARS < 20000`）：
+
+| 车道 | 路径覆盖范围（全仓闭集无盲区） | 必跑验收要求 |
+|---|---|---|
+| **快车道（行为引导与提示面）** | **仅**触及 `skills/`、`patches/project-wiring/agent-pointer.md`、`docs/`、`duty-review/`、`proposals/`、`README.md`、`DESIGN.md` | 既有一致性/体积单测照跑；当触及 `skills/` 或 `agent-pointer.md` 时，须附 `atlas eval host` 在自养宿主（`atlas-playground`）的 Tier A 回归绿灯（并建议附 Tier B 实效对照，防 Updating ≠ Benefit） |
+| **慢车道（门禁、契约与运行时核心）** | 触及 `validators/`、`shared/`、`rings/`、`apply/`、`scripts/`、`_support/`、`adapters/`、`templates/`、`patches/`（除 `agent-pointer.md`）、`install.py`、`install.sh`、`bin/`、`extensions/`、`package.json`、`agents/` | 强制对应单测 + M 系列变异钉 + D156 留出验证（触发时）+ 维护者拍板；涉及校验/装配/工作流运行时须附 `atlas eval host` Tier A 装配绿灯 |
+| **纯测试面** | **仅**触及 `tests/` | 对应单测 + 全量 `pytest tests/` |
+
+> **Tier A 与 Tier B 区隔**：`atlas eval gate` 是 **Tier A（确定性检查与工作流烟测）**的硬回归门；Tier B（headless Agent 端到端重放）受模型随机性影响，仅作 `research/` 收益对照与人工/rubric 评审输入，不直接进确定性阻断门。
+
 ### 3. 一键审批体验
 当维护者打开你的 PR 时，通过查看 `proposals/` 中的提案记录，可以一秒看懂：
 * **前因后果**：你在什么场景下报了什么错；

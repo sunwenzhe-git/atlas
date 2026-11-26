@@ -40,7 +40,7 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
   bug       change 的缺陷兼容别名
   solution  多仓方案层：init / adopt / status / check / lock / task（Phase 1 仅 federated）
   review    实例⑤实现代码独立审查一键编排（preview → CLI review → scope → convert → validate → closure）
-  eval      消融对照跑分器（run：两 commit 对照出 ledger；gate：回归判定）
+  eval      消融与跨仓宿主对照跑分器（run/host 出 ledger；gate 回归判定）
   console   启动本地 E2E 用例评审控制台 (http://127.0.0.1:4190)
   e2e       一次性人工登录入口：atlas e2e login（写出 .atlas-auth/state.json）
   report    将流水线设计冲突或缺陷自感知上报至云端设计池
@@ -69,7 +69,8 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
   atlas solution task create --requirement REQ-001 --apply  # 父级需求 → 成员任务卡
   atlas solution task status --requirement REQ-001
   atlas review --unit <ID> --from main --to HEAD  # 实例⑤独立审查一键走全
-  atlas eval run --cases cases.json --base <sha> --candidate <sha>  # 消融对照跑分
+  atlas eval run --cases cases.json --base <sha> --candidate <sha>  # 同仓消融对照跑分
+  atlas eval host --cases cases.json --harness-base <ref> --harness-cand WORKTREE  # 跨仓宿主对照
   atlas console               # 启动可视化 E2E 评审控制台
   atlas report --title "..."  # 上报流水线设计缺陷或规则冲突
 `);
@@ -598,9 +599,11 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
   case 'eval': {
     const passthroughArgs = args.slice(1);
     const targetDir = process.cwd();
+    const sub = passthroughArgs[0] || '';
     const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_eval.py');
     const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_eval.py');
-    const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
+    // `host` 子命令由源包 PKG_ROOT 直接提供（采纳仓旧 .atlas/scripts/atlas_eval.py 无跨仓模式）
+    const runScript = (sub !== 'host' && fs.existsSync(scriptPath)) ? scriptPath : fallbackScript;
 
     const res = runPython([runScript, '--root', targetDir, ...passthroughArgs], {
       stdio: 'inherit',

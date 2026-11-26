@@ -32,6 +32,119 @@ python3 "$(git rev-parse --show-toplevel)/duty-review/families.py"
 echo; echo "== bugs.md 族 JSON (机器段,供脚本取数) =="
 python3 "$(git rev-parse --show-toplevel)/duty-review/families.py" --json
 
+echo; echo "== 运行态轨迹摘要 (check-events.jsonl; 只读观测面) =="
+COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || echo ".git")
+MAIN_ROOT=$(cd "$COMMON_DIR/.." 2>/dev/null && pwd || pwd)
+EVENTS_FILE=""
+EVENTS_SOURCE=""
+if [ -n "${ATLAS_PLAYGROUND_ROOT:-}" ]; then
+  EVENTS_FILE="$ATLAS_PLAYGROUND_ROOT/.atlas/runs/check-events.jsonl"
+  EVENTS_SOURCE="ATLAS_PLAYGROUND_ROOT"
+else
+  SIBLING_EVENTS="$(dirname "$MAIN_ROOT")/atlas-playground/.atlas/runs/check-events.jsonl"
+  if [ -f "$SIBLING_EVENTS" ]; then
+    EVENTS_FILE="$SIBLING_EVENTS"
+    EVENTS_SOURCE="sibling:atlas-playground"
+  elif [ ! -f "$MAIN_ROOT/install.py" ] || [ ! -d "$MAIN_ROOT/rings" ]; then
+    # 仅非 Atlas 源仓才回退当前仓，防源仓全 SKIP 自影（M259）
+    EVENTS_FILE="$MAIN_ROOT/.atlas/runs/check-events.jsonl"
+    EVENTS_SOURCE="repo-local"
+  fi
+fi
+
+if [ -n "$EVENTS_FILE" ] && [ -f "$EVENTS_FILE" ]; then
+  python3 - "$EVENTS_FILE" "$EVENTS_SOURCE" <<'PY'
+import json
+import statistics
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+path = Path(sys.argv[1])
+source_label = sys.argv[2]
+clean_runs = 0
+dirty_runs = 0
+ablation_skipped = 0
+parse_errors = 0
+friction = defaultdict(lambda: {"fail": 0, "warn": 0})
+# M259: 仅统计非消融、非 SKIP/N/A/ABSENT 且 duration_ms 非空的实跑行
+ablate_stats = defaultdict(lambda: {"ok": 0, "fail": 0, "warn": 0, "durations": []})
+
+with path.open("r", encoding="utf-8", errors="replace") as fh:
+    for raw in fh:
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            parse_errors += 1
+            continue
+        if not isinstance(ev, dict) or not isinstance(ev.get("rows"), list):
+            parse_errors += 1
+            continue
+        if ev.get("ablation_id") is not None:
+            ablation_skipped += 1
+            continue
+        is_clean = (ev.get("git_dirty") is False)
+        if is_clean:
+            clean_runs += 1
+        else:
+            dirty_runs += 1
+        for row in ev["rows"]:
+            if not isinstance(row, dict):
+                continue
+            name = row.get("name")
+            status = row.get("status")
+            dur = row.get("duration_ms")
+            if not isinstance(name, str) or not isinstance(status, str):
+                continue
+            if is_clean and status in ("FAIL", "WARN"):
+                friction[name]["fail" if status == "FAIL" else "warn"] += 1
+            if status in ("SKIP", "N/A", "ABSENT"):
+                continue
+            if status == "FAIL":
+                ablate_stats[name]["fail"] += 1
+            elif status == "WARN":
+                ablate_stats[name]["warn"] += 1
+            elif status in ("ok", "PASS"):
+                ablate_stats[name]["ok"] += 1
+            if isinstance(dur, (int, float)) and not isinstance(dur, bool):
+                ablate_stats[name]["durations"].append(float(dur))
+
+print(
+    f"来源={source_label} ({path}) · clean={clean_runs} · wip_dirty={dirty_runs} "
+    f"· ablation_filtered={ablation_skipped} · parse_errors={parse_errors}"
+)
+hot = sorted(
+    ((k, v["fail"], v["warn"]) for k, v in friction.items()),
+    key=lambda x: (-(x[1] * 3 + x[2]), x[0]),
+)[:5]
+if hot:
+    print("-- clean 运行摩擦热点 Top 5 (FAIL/WARN) --")
+    for name, f_n, w_n in hot:
+        print(f"  {name}: FAIL={f_n} WARN={w_n}")
+else:
+    print("-- clean 运行摩擦热点: (无 FAIL/WARN) --")
+
+zero_trig = []
+for name, st in ablate_stats.items():
+    if st["ok"] > 0 and st["fail"] == 0 and st["warn"] == 0 and st["durations"]:
+        med = statistics.median(st["durations"])
+        tot = sum(st["durations"])
+        zero_trig.append((name, st["ok"], med, tot))
+zero_trig.sort(key=lambda x: (-x[2], -x[3], x[0]))
+if zero_trig[:5]:
+    print("-- 0 触发(仅实跑 ok)高耗时 Top 5 (atlas-ablate 观察线索) --")
+    for name, ok_n, med, tot in zero_trig[:5]:
+        print(f"  {name}: ok={ok_n} median={med:.0f}ms total={tot:.0f}ms")
+else:
+    print("-- 0 触发高耗时线索: (无符合条件门) --")
+PY
+else
+  echo "(无 check-events.jsonl，跳过)"
+fi
+
 REPO=$(git remote get-url origin 2>/dev/null | sed -E 's#.*github\.com[:/]##; s#\.git$##')
 echo; echo "== GitHub issues (${REPO:-仓库不明, 跳过}; open 全列 + closed 近 14 天有动静 + closed 全索引) =="
 if [ -n "$REPO" ]; then
