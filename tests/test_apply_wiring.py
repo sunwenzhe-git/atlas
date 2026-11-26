@@ -291,6 +291,7 @@ const ui = {
 };
 const pi: any = {
   registerCommand: (n: string, d: any) => { commands[n] = d; },
+  registerTool: (_t: any) => {},
   on: (e: string, f: any) => { hooks[e] = f; },
   exec: async () => { execCount += 1; return { code: 0, stdout: "", stderr: "" }; },
 };
@@ -435,6 +436,7 @@ let last = "";
 const hooks: Record<string, any> = {};
 const pi: any = {
   registerCommand: () => {},
+  registerTool: (_t: any) => {},
   on: (e: string, f: any) => { hooks[e] = f; },
   exec: async () => {
     const r = script[cursor++];

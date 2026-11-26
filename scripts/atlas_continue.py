@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -211,6 +212,10 @@ def cmd_audit(args: argparse.Namespace) -> int:
                            [c["name"] for c in calls])
     if not replay["ok"]:
         return _audit_fail(run, "guard_replay_failed", replay)
+    # F1（评审 A/B 共认 Critical）：机械对账通过 ≠ 成功链。失败/回退链走 CLOSED_FAILED
+    # （终态、解锁、不签成功证书）；只有全绿链才配 SUCCEEDED。
+    chain_green = receipt.get("terminal_reason") == "chain_ok" and all(
+        a.get("ok") is True for a in receipt["actions"])
 
     # 3) raw 回执逐动作对账：文件字节哈希（完整性）与结果规范哈希（语义）分列核对
     subs: list[dict] = []
@@ -226,10 +231,20 @@ def cmd_audit(args: argparse.Namespace) -> int:
         body = read_json(p)
         if body.get("canonical_hash") != result_sha:
             return _audit_fail(run, "raw_receipt_hash_mismatch", {"path": path})
+        # F5-A（评审 A）：supplemental evidence 交叉核对（两层对账的第二层；
+        # 缺失/不一致即 AUDIT_FAILED——此前 evidence 层只写不读，形同虚设）
+        child_id = str(action.get("child_tool_call_id") or "")
+        ev_path = run / "evidence" / (re.sub(r"[^A-Za-z0-9._-]", "_", child_id) + ".json") if child_id else None
+        if not ev_path or not ev_path.is_file():
+            return _audit_fail(run, "evidence_missing", {"action": action.get("action_id"), "child": child_id})
+        ev_body = read_json(ev_path)
+        if ev_body.get("result_hash_observed") != result_sha:
+            return _audit_fail(run, "evidence_hash_mismatch", {"action": action.get("action_id")})
         subs.append({
             "action_index": action.get("action_index"),
             "action_id": action.get("action_id"),
             "tool": action.get("tool"),
+            "child_tool_call_id": action.get("child_tool_call_id"),
             "guard_result": action.get("guard_result"),
             "exit_code": action.get("exit_code"),
             "result_sha256": result_sha,
@@ -255,6 +270,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
                            {"expected": receipt["expected_parent_result_sha256"], "actual": actual})
 
     from _support.guarded_continuation import certificate_payload
+    status = "SUCCEEDED" if chain_green else "CLOSED_FAILED"
     cert = certificate_payload(
         run_id=receipt["run_id"], unit=receipt["unit"],
         plan_sha256=receipt["plan_sha256"], atlas_version=args.atlas_version,
@@ -266,19 +282,23 @@ def cmd_audit(args: argparse.Namespace) -> int:
         host_nested_calls=nested,
         session_seal={"entry_id": seal.get("id"), "data": seal.get("data")},
         execution_receipt_sha256=file_sha256(receipt_path),
+        input_manifest_sha256=receipt.get("input_manifest_sha256", ""),
         raw_receipts_manifest_sha256=manifest_hash(run, "raw-receipts"),
         git_calls_manifest_sha256=manifest_hash(run, "git-calls.jsonl"),
-        substitutions=subs, status="SUCCEEDED",
+        substitutions=subs, status=status,
     )
     write_json_exclusive(run / "certificate.json", cert)
-    print(json.dumps({"status": "ok", "verdict": "SUCCEEDED",
+    print(json.dumps({"status": "ok", "verdict": status,
                       "certificate": str(run / "certificate.json")}))
     return EXIT_OK
 
 
 def _audit_fail(run: Path, reason: str, detail: dict) -> int:
     from _support.guarded_continuation import audit_failure_payload
-    write_json_exclusive(run / "audit-failure.json", audit_failure_payload(run, reason, detail))
+    # F7（评审 B）：失败记录可重试覆盖（非防篡改面；防篡改锚在 session 封印与 raw 回执）
+    (run / "audit-failure.json").write_text(
+        json.dumps(audit_failure_payload(run, reason, detail), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8")
     print(json.dumps({"status": "error", "verdict": "AUDIT_FAILED", "reason": reason}))
     return EXIT_FAIL
 

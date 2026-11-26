@@ -44,6 +44,7 @@ type GcObservation = {
   action_index: number;
   action_id: string;
   tool: string;
+  child_tool_call_id: string;
   guard_result: boolean;
   guard_refs: string[];
   exit_code: number;
@@ -434,6 +435,19 @@ export default function (pi: ExtensionAPI) {
             ctx.ui.notify(`unit ${unit} 已有治理态，先 revoke`, "warning");
             return;
           }
+          // F7（评审 B）：ISOLATED/非终态标记存在时禁止再 ARMED（防旧 run 永不审计）
+          if (gcIsolatedUnits.has(unit)) {
+            ctx.ui.notify(`unit ${unit} 处于 ISOLATED，先 /atlas recover-continuation ${unit} 重试审计`, "warning");
+            return;
+          }
+          const existingMarker = gcMarkerPath(ctx.cwd, unit);
+          if (existsSync(existingMarker)) {
+            const mk = JSON.parse(readFileSync(existingMarker, "utf-8")) as { state?: string };
+            if (mk.state && !GC_TERMINAL_STATES.has(mk.state)) {
+              ctx.ui.notify(`unit ${unit} 有非终态标记（${mk.state}），先 recover 或 revoke`, "warning");
+              return;
+            }
+          }
           const listing = planActions
             .map((a, i) => `  ${i + 1}. ${a.id}: ${a.tool}({unit:"${a.args.unit}"})`)
             .join("\n");
@@ -580,6 +594,9 @@ export default function (pi: ExtensionAPI) {
   // ──────────────────────────────────────────────────────────────────────────
 
   pi.on("turn_end", async (event, ctx: ExtensionContext) => {
+    // §6.4 机制化（评审 F3-B）：治理窗口内跳过 check 写面——check-events.jsonl 为追加型，
+    // 建基线也救不了 tree_changed；A/B/C/D 各臂与治理链在此互斥。
+    if (gcTickets.size > 0 || gcIsolatedUnits.size > 0 || gcPendingAudit.length > 0) return;
     if (event?.outcome !== "completed") return;
     if (!event?.toolResults?.length) return; // 没动工具 ⇒ 没写盘 ⇒ 不校验
 
@@ -702,7 +719,8 @@ export default function (pi: ExtensionAPI) {
 
   // — tool_call：治理窗口默认拒绝所有模型工具，只放行父工具与精确授权子调用 —
   pi.on("tool_call", (event) => {
-    const armed = gcTickets.size > 0 || gcIsolatedUnits.size > 0;
+    // F2（评审）：RECORDED→审计窗口也必须封锁（防审计落地前改写 receipt/evidence）
+    const armed = gcTickets.size > 0 || gcIsolatedUnits.size > 0 || gcPendingAudit.length > 0;
     if (!gcActive && !armed) return;
     if (event.toolName === "atlas_continue") return; // 父工具：execute 内部原子 claim 自验
     // 授权子调用：parentToolCallId + 动作名 + 规范参数哈希三方精确匹配，一次性登记
@@ -734,8 +752,6 @@ export default function (pi: ExtensionAPI) {
     if (!gcActive || !event.parentToolCallId || event.parentToolCallId !== gcActive.parentToolCallId) return;
     try {
       const runDirPath = join(ctx.cwd, ".atlas", "runs", "continuations", gcActive.runId);
-      const obs = gcActive.observations[gcActive.observations.length - 1];
-      if (!obs) return;
       const evidence = {
         kind: "supplemental",
         child_tool_call_id: event.toolCallId,
@@ -808,7 +824,7 @@ export default function (pi: ExtensionAPI) {
             // 上次消费后文件被截断/外写 ⇒ 记账面不可信，fail-closed
             gitCallsOk = false;
           }
-          const sizeAfter = statSync(gcLog).size;
+          const sizeAfter = existsSync(gcLog) ? statSync(gcLog).size : gcSizeBefore;
           if (sizeAfter > gcOffset) {
             const chunk = readFileSync(gcLog, "utf-8").slice(gcOffset);
             for (const line of chunk.split("\n")) {
@@ -870,6 +886,7 @@ export default function (pi: ExtensionAPI) {
       "Run the human-approved read-only continuation chain for a unit (frozen plan: progress -> status). " +
       "Requires the human to have approved via /atlas approve-continuation first. Args: {unit} only.",
     exposure: "model-only",
+    executionMode: "sequential", // §5.3：父工具串行化声明（PoC 单槽 gcActive）
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     parameters: Type.Object({ unit: Type.String({ description: "任务单元 ID，与已批准计划一致" }) }),
     async execute(toolCallId: string, params: { unit: string }, signal: AbortSignal, _onUpdate, ctx) {
@@ -914,13 +931,21 @@ export default function (pi: ExtensionAPI) {
       const workflowScript = join(cwd, ".atlas", "scripts", "atlas_workflow.py");
       if (!existsSync(continueScript) || !existsSync(workflowScript)) {
         gcActive = null;
+        gcWriteMarker(cwd, params.unit, { state: "ISOLATED", run_id: runId, parent_tool_call_id: toolCallId, reason: "缺审计/动作脚本（零前缀窗口）" });
+        gcIsolatedUnits.add(params.unit);
         return fail("采纳仓缺 atlas_continue.py / atlas_workflow.py（P1 未部署）");
       }
       try {
         // 4) prepare：契约校验 + 输入闭集快照
         const prep = gcLauncher(cwd, gcLog, continueScript,
           ["prepare", "--root", cwd, "--unit", params.unit, "--run-dir", runId], 30_000);
-        if (prep.code !== 0) return fail(`prepare 失败: ${(prep.stderr || prep.stdout).slice(0, 200)}`);
+        let inputManifestSha = "";
+        if (prep.code !== 0) {
+          gcWriteMarker(cwd, params.unit, { state: "ISOLATED", run_id: runId, parent_tool_call_id: toolCallId, reason: `prepare 失败（零前缀窗口）: ${(prep.stderr || prep.stdout).slice(0, 120)}` });
+          gcIsolatedUnits.add(params.unit);
+          return fail(`prepare 失败: ${(prep.stderr || prep.stdout).slice(0, 200)}`);
+        }
+        try { inputManifestSha = (JSON.parse(prep.stdout) as { input_manifest_sha256?: string }).input_manifest_sha256 ?? ""; } catch { /* keep empty */ }
         const plan = gcPlanBytes(cwd, params.unit)!;
         const planDoc = JSON.parse(plan.bytes.toString("utf8")) as {
           actions: Array<{ id: string; tool: string; args: { unit: string }; guard: { kind: string; refs?: string[] } }>;
@@ -968,6 +993,7 @@ export default function (pi: ExtensionAPI) {
           const d = (outcome.result?.details ?? {}) as { exit_code?: number; json_ok?: boolean };
           const observation: GcObservation = {
             action_index: i + 1, action_id: action.id, tool: action.tool,
+            child_tool_call_id: childToolCallId,
             guard_result: true, guard_refs: action.guard?.refs ?? [],
             exit_code: Number(d.exit_code ?? -1), json_ok: d.json_ok === true,
             ok: !outcome.isError && threeWayOk,
@@ -1012,6 +1038,7 @@ export default function (pi: ExtensionAPI) {
           session_id: ctx.sessionManager.getSessionId(),
           parent_tool_call_id: toolCallId, parent_tool_name: "atlas_continue",
           expected_parent_result_sha256: expectedParentHash,
+          input_manifest_sha256: inputManifestSha,
           actions: gcActive.observations,
         }, null, 2) + "\n");
         const rec = gcLauncher(cwd, gcLog, continueScript,
@@ -1100,11 +1127,20 @@ export default function (pi: ExtensionAPI) {
           ["audit", "--root", cwd, "--unit", job.unit, "--run-dir", job.runId,
            "--session", sessionFile, "--host-record", join(runDirPath, "host-record.json"),
            "--atlas-version", detectAtlasStatus(cwd).version ?? "poc"], 60_000);
-        if (res.code === 0) {
+        let verdict = "";
+        try { verdict = (JSON.parse(res.stdout.trim().split("\n").filter(Boolean).pop() ?? "{}") as { verdict?: string }).verdict ?? ""; } catch { /* fallthrough */ }
+        if (res.code === 0 && verdict === "SUCCEEDED") {
           gcWriteMarker(cwd, job.unit, {
             state: "SUCCEEDED", run_id: job.runId,
             parent_tool_call_id: job.parentToolCallId,
             certificate: join(runDirPath, "certificate.json"),
+            audited_at: new Date().toISOString(),
+          });
+        } else if (res.code === 0 && verdict === "CLOSED_FAILED") {
+          gcWriteMarker(cwd, job.unit, {
+            state: "CLOSED_FAILED", run_id: job.runId,
+            parent_tool_call_id: job.parentToolCallId,
+            detail: "失败/回退链审计通过（零违规后续调用）；不签成功证书",
             audited_at: new Date().toISOString(),
           });
         } else {
