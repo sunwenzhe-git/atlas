@@ -4,6 +4,10 @@
 
 ---
 
+## [Unreleased]
+
+- chore(golden)+fix(map): installer golden 全量重录（P1 / eval / docs 四批叠加改了装配面——`extensions/pi.ts`、`shared/gates.md`、`rings/structure/reference.md`、`apply/reference.md`、`scripts/atlas_eval.py`、`scripts/duty_signals.sh` 等，重录前 `--check` 报 9 件内容漂移，重录后 8/8 场景一致）；出厂测试文件计数快照回锚提交树口径 102→103（`tests/test_guarded_continuation.py` 落仓后，`docs/map/index.md` / `docs/map/gates.md` / `docs/map/atlas-map.html` / `shared/gates.md` 四处副本由两个唯一写者重写，写后自检全绿）。注：上节 beta.14 段内 docs(drift) bullet 末尾「〔数:共享内核〕43→42 回锚」「随批重录 golden」两句写于未推的本地分叉线，对 main 线不成立（共享内核锚已由 P1 批以 43 落真；golden 实由本条随 [Unreleased] 补录）。
+
 ## [v0.4.0-beta.14] - 2026-11-26
 
 - docs(drift): 结构事实刷新触发面残留清扫——D205 退役 `after_archive` 钩子后仍有活文档宣称钩子自动刷新，统一回写「收口后 / CI 显式 `refresh_structure.py --chain`（finish 新鲜度门拒收没刷的收口）」口径：`rings/structure/reference.md` §7 触发列与两条 hook 纪律行、`shared/gates.md` 三行触发列、`apply/reference.md` 三处、`docs/design/structure-ring.md`、`docs/guide/quick-start.md` 与 `README.md`（接线清单与场景 C）、`tests/test_apply_wiring.py` docstring 对齐实际覆盖；顺带把用户确认门行残留的 `workflow.md` 死条款按 `global-rules.md` §7 签名清单对齐；`docs/map` 数字快照〔数:共享内核〕43→42 回锚提交树口径（并行会话未跟踪件在场时按工作树点数的陷阱复发，干净树重推）。装配面三件（gates / rings-structure / apply 契约）随批重录 installer golden。
