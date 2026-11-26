@@ -622,6 +622,100 @@ def test_advance_skips_when_product_dirty() -> None:
         assert "产品侧" in r.stdout, r.stdout
 
 
+def test_advance_exempts_declared_local_dirty_paths() -> None:
+    """RFC-20261126-01：申报面（structure.local_dirty_paths）不算脏 ⇒ 自动 --chain 也推进，
+    消费必须 loud log 逐条留痕（评审 C1 人审点：.atlas/config.yaml 不入库，
+    豁免清单只在日志与 finish 归档 task.json 里可见）；中文路径经 quotePath=false
+    不转义（评审 M2，与 finish 侧同口径）。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build(root)
+        git_ready(root)
+        write_profile(root, "product: demo\napps: []\nadapters: {}\n")
+        (root / ".atlas" / "config.yaml").write_text(
+            "workflow:\n  max_verify_attempts: 2\n"
+            "structure:\n  local_dirty_paths:\n    - scratch/\n    - 笔记.md\n",
+            encoding="utf-8")
+        # 已跟踪文件再改 ⇒ porcelain 文件级（scratch/local.txt）；未跟踪文件 ⇒ 裸名
+        (root / "scratch").mkdir(parents=True, exist_ok=True)
+        (root / "scratch" / "local.txt").write_text("v1\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "scratch/local.txt"], capture_output=True)
+        subprocess.run(["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t",
+                        "commit", "-m", "scratch tracked"], capture_output=True)
+        (root / "scratch" / "local.txt").write_text("常驻本地面（未暂存再改）\n", encoding="utf-8")
+        (root / "笔记.md").write_text("中文常驻（未跟踪）\n", encoding="utf-8")
+        r = run(root, "--chain")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "advanced baseline" in r.stdout, r.stdout
+        assert "申报本地脏面豁免" in r.stdout, r.stdout
+        assert "scratch/local.txt" in r.stdout and "笔记.md" in r.stdout, r.stdout
+        meta_now = json.loads((root / ".atlas" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))
+        assert meta_now["baseline"]["commit"] == head_sha(root)
+
+
+def test_advance_undeclared_dirty_refuses_then_override_backs_loud() -> None:
+    """RFC-20261126-01：未申报脏面自动 --chain 仍拒（文案带申报与背书双通道）；
+    --advance-baseline 显式背书 ⇒ 忽略未申报面推进并 loud log 列出被忽略路径。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build(root)
+        git_ready(root)
+        write_profile(root, "product: demo\napps: []\nadapters: {}\n")
+        (root / "svc").mkdir(parents=True, exist_ok=True)
+        (root / "svc" / "pending.py").write_text("# 未提交代码\n", encoding="utf-8")
+        r1 = run(root, "--chain")
+        assert r1.returncode == 0, r1.stdout + r1.stderr
+        assert "不推进" in r1.stdout, r1.stdout
+        assert "structure.local_dirty_paths" in r1.stdout and "--advance-baseline" in r1.stdout, r1.stdout
+        r2 = run(root, "--chain", "--advance-baseline")
+        assert r2.returncode == 0, r2.stdout + r2.stderr
+        # 全未跟踪目录在 porcelain 折叠为 `?? svc/`（目录形态，不含子文件名）
+        assert "显式人工背书" in r2.stdout and "svc/" in r2.stdout, r2.stdout
+        meta_now = json.loads((root / ".atlas" / "spec" / "structure" / "_meta.json").read_text(encoding="utf-8"))
+        assert meta_now["baseline"]["commit"] == head_sha(root)
+
+
+def test_advance_declared_matching_is_prefix_or_exact() -> None:
+    """RFC-20261126-01 评审 M1：条目 `/` 结尾=前缀匹配，否则全路径精确匹配；
+    `notes.md` 不得豁免 `notes.md.bak`（负例钉）。引号包裹条目剥引号。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build(root)
+        git_ready(root)
+        write_profile(root, "product: demo\napps: []\nadapters: {}\n")
+        (root / ".atlas" / "config.yaml").write_text(
+            "structure:\n  local_dirty_paths:\n    - notes.md\n    - \"scratch/\"\n",
+            encoding="utf-8")
+        (root / "notes.md").write_text("常驻精确条目\n", encoding="utf-8")
+        (root / "notes.md.bak").write_text("不在申报内\n", encoding="utf-8")
+        r = run(root, "--chain")
+        assert "不推进" in r.stdout and "notes.md.bak" in r.stdout, r.stdout
+        (root / "notes.md.bak").unlink()
+        (root / "scratch").mkdir(parents=True, exist_ok=True)
+        (root / "scratch" / "a.txt").write_text("常驻前缀条目\n", encoding="utf-8")
+        r2 = run(root, "--chain")
+        assert r2.returncode == 0, r2.stdout + r2.stderr
+        assert "advanced baseline" in r2.stdout, r2.stdout
+
+
+def test_advance_ignores_invalid_declared_entries_fail_soft() -> None:
+    """RFC-20261126-01 评审 M1：非法条目（绝对路径 / .. / 空串）跳过 + WARN，不反噬。"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build(root)
+        git_ready(root)
+        write_profile(root, "product: demo\napps: []\nadapters: {}\n")
+        (root / ".atlas" / "config.yaml").write_text(
+            "structure:\n  local_dirty_paths:\n    - /etc\n    - ../escape\n    -\n    - ok-dir/\n",
+            encoding="utf-8")
+        (root / "ok-dir").mkdir(parents=True, exist_ok=True)
+        (root / "ok-dir" / "x.txt").write_text("合法申报\n", encoding="utf-8")
+        r = run(root, "--chain")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "advanced baseline" in r.stdout, r.stdout
+        assert "WARN（structure.local_dirty_paths）" in r.stderr, r.stderr
+
+
 def test_render_tour_lists_adapter_run_command() -> None:
     """F29：tour.md「项目概况」行含适配器来源的测试运行命令（消费闭环落在门面文件）。"""
     with tempfile.TemporaryDirectory() as td:

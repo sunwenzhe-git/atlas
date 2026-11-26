@@ -187,7 +187,11 @@ def run(args: argparse.Namespace, root: Path) -> int:
         kind = getattr(args, "kind", None) or "缺陷"
         if action != "run" or not args.requirement or not args.report or not args.stage:
             raise BackflowError(
-                "落点不存在；新建需 --requirement <slug#R-NN> --report <path> --stage <prod|integration|test>",
+                "落点不存在；有父级需求走 --requirement <slug#R-NN> --report <path> "
+                "--stage <prod|integration|test>（此处 --unit 为落点 slug）；"
+                "无父级需求的历史遗留缺陷不建变更/缺陷落点（台账必须锚定需求），"
+                "改走直填卡：atlas workflow plan --unit <任务卡ID>（现象证据写任务卡 PRD，"
+                "走同一条 verify/finish 门；RFC-20261126-02）",
                 cause="bug_backflow_missing")
         try:
             report_text = Path(args.report).read_text(encoding="utf-8")

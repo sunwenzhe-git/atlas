@@ -2471,6 +2471,85 @@ def test_finish_adapterless_reanchor_channel_reachable(tmp_path: Path) -> None:
     assert p.returncode == 0, p.stdout + p.stderr
 
 
+def test_finish_structure_declared_dirty_passes_with_audit_reason(tmp_path: Path) -> None:
+    """RFC-20261126-01：已申报常驻本地面（structure.local_dirty_paths）不阻断 finish；
+    PASS reason 逐条列豁免清单（评审 C1 人审点：归档 task.json 在 .atlas/tasks/ 白名单
+    内入库可审）。"""
+    root = make_clean_project(_git_repo(tmp_path))
+    sha = _commit_all(root, "init")
+    _write_meta(root, sha)
+    (root / ".atlas" / "config.yaml").write_text(
+        "workflow:\n  max_verify_attempts: 2\n"
+        "structure:\n  local_dirty_paths:\n    - scratch/\n    - notes.md\n",
+        encoding="utf-8")
+    (root / "scratch").mkdir()
+    (root / "scratch" / "local.txt").write_text("常驻本地面\n", encoding="utf-8")
+    (root / "notes.md").write_text("常驻笔记\n", encoding="utf-8")
+    _plan_and_dispatch(root, "T-S12")
+    p = run(root, "finish", "--unit", "T-S12", "--force")
+    assert p.returncode == 0, p.stdout + p.stderr
+    meta = json.loads((root / ".atlas/tasks/archive" / _month() / "T-S12/task.json")
+                      .read_text(encoding="utf-8"))
+    st = meta["structure_freshness"]
+    assert st["status"] == "PASS"
+    assert "已申报本地脏面豁免" in st["reason"]
+    assert "scratch/local.txt" in st["reason"] and "notes.md" in st["reason"]
+
+
+def test_finish_structure_undeclared_dirty_names_declaration_knob(tmp_path: Path) -> None:
+    """RFC-20261126-01：未申报库外脏面仍 FAIL（charged 不变），文案带申报旋钮指引；
+    T-S7 文案子串「未暂存/未跟踪」保留（评审 M3）。"""
+    root = make_clean_project(_git_repo(tmp_path))
+    sha = _commit_all(root, "init")
+    _write_meta(root, sha)
+    _plan_and_dispatch(root, "T-S13")
+    (root / "src").mkdir()
+    (root / "src" / "a.py").write_text("x\n", encoding="utf-8")
+    p = run(root, "finish", "--unit", "T-S13", "--force")
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "未暂存/未跟踪" in p.stderr
+    assert "structure.local_dirty_paths" in p.stderr
+
+
+def test_finish_structure_half_staged_fails_even_when_declared(tmp_path: Path) -> None:
+    """RFC-20261126-01：半暂存（暂存∩脏同路径）恒 FAIL——申报不豁免半暂存面
+    （审查锚封的是 index 内容，工作树分叉会让审查锚与提交内容不一致）。"""
+    root = make_clean_project(_git_repo(tmp_path))
+    sha = _commit_all(root, "init")
+    _write_meta(root, sha)
+    (root / ".atlas" / "config.yaml").write_text(
+        "structure:\n  local_dirty_paths:\n    - src/impl.py\n", encoding="utf-8")
+    (root / "src").mkdir()
+    (root / "src" / "impl.py").write_text("v1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "src/impl.py"], cwd=str(root), check=True, capture_output=True)
+    (root / "src" / "impl.py").write_text("v2（工作树再改）\n", encoding="utf-8")
+    _plan_and_dispatch(root, "T-S14")
+    p = run(root, "finish", "--unit", "T-S14", "--force")
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "半暂存" in p.stderr
+    meta = json.loads((root / ".atlas/tasks/T-S14/task.json").read_text(encoding="utf-8"))
+    assert meta["status"] != "completed"
+
+
+def test_finish_structure_declared_entry_is_prefix_or_exact(tmp_path: Path) -> None:
+    """RFC-20261126-01 评审 M1：条目 `/` 结尾=前缀匹配，否则全路径精确；
+    `notes.md` 不得豁免 `notes.md.bak`（负例钉）。"""
+    root = make_clean_project(_git_repo(tmp_path))
+    sha = _commit_all(root, "init")
+    _write_meta(root, sha)
+    (root / ".atlas" / "config.yaml").write_text(
+        "structure:\n  local_dirty_paths:\n    - notes.md\n", encoding="utf-8")
+    (root / "notes.md").write_text("常驻\n", encoding="utf-8")
+    (root / "notes.md.bak").write_text("不在申报内\n", encoding="utf-8")
+    _plan_and_dispatch(root, "T-S15")
+    p = run(root, "finish", "--unit", "T-S15", "--force")
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "notes.md.bak" in p.stderr
+    (root / "notes.md.bak").unlink()
+    p2 = run(root, "finish", "--unit", "T-S15", "--force")
+    assert p2.returncode == 0, p2.stdout + p2.stderr
+
+
 # ── workflow 回收面（RFC-20261122-07：双轨失败分类学 + 尝试预算 + 退出码封闭）────
 
 import argparse  # noqa: E402

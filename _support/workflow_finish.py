@@ -467,10 +467,12 @@ def _load_refresh_helpers() -> tuple | None:
                 sys.path.insert(0, str(cand))
             break
     try:
-        from refresh_structure import clean_exempt_prefixes, sha_matches_prefix  # noqa: E402
+        from refresh_structure import (  # noqa: E402
+            clean_exempt_prefixes, declared_dirty_hit, load_local_dirty_paths,
+            sha_matches_prefix)
     except Exception:  # noqa: BLE001 —— ImportError 与旧装配同名模块损坏同吃
         return None
-    return clean_exempt_prefixes, sha_matches_prefix
+    return clean_exempt_prefixes, sha_matches_prefix, load_local_dirty_paths, declared_dirty_hit
 
 
 def _worktree_dirty_paths(root: Path,
@@ -497,10 +499,14 @@ def check_structure_freshness(root: Path) -> dict:
 
     三态复刻 `check_e2e_precondition`。SKIP 仅两种：无 `_meta.json`（未开户，
     与 atlas_check `validate_structure` 前置同口径）/ 无 `.git`（非 git 仓）；
-    其余一律 FAIL 或 PASS（响亮原则）。判据盲区（gates.md §2.1 同步声明）：
+    其余一律 FAIL 或 PASS（响亮原则）。脏面三分诊（RFC-20261126-01）：半暂存
+    （暂存∩脏）与未申报库外脏面 ⇒ FAIL（charged 同 `freshness_fail`）；
+    `structure.local_dirty_paths` 申报面 ⇒ 豁免并在 PASS reason 逐条留痕（人审点，
+    归档 task.json 入库可审）。判据盲区（gates.md §2.1 同步声明）：
     暂存面内容一致性（review 封口门辖区）、键级漂移登记语义（未终审漂移经
-    F26 baseline 冻结在有已提交改动时间接阻断，终审通道 `--advance-baseline`）、
-    适配器产物与源码实时一致、内容级漂移、`baseline.branch` 方向。
+    F26 baseline 冻结在有已提交改动时间接阻断，终审通道 `--advance-baseline`，
+    RFC-20261126-01 起扩越脏树）、适配器产物与源码实时一致、内容级漂移、
+    `baseline.branch` 方向。
     """
     root = root.resolve()
     meta_path = root / ".atlas" / "spec" / "structure" / "_meta.json"
@@ -520,7 +526,7 @@ def check_structure_freshness(root: Path) -> dict:
     if helpers is None:
         return {"status": "FAIL",
                 "reason": "装配缺 scripts/refresh_structure.py（新鲜度判据单源）——重跑 install.sh --update 后重试"}
-    clean_exempt_prefixes, sha_matches_prefix = helpers
+    clean_exempt_prefixes, sha_matches_prefix, load_local_dirty_paths, declared_dirty_hit = helpers
     ok, head = _git_out(root, "rev-parse", "HEAD")
     if not ok:
         return {"status": "FAIL", "reason": "git 探测失败（rev-parse HEAD 不可得）——结构事实新鲜度不可证"}
@@ -533,16 +539,40 @@ def check_structure_freshness(root: Path) -> dict:
         return {"status": "FAIL", "reason": (
             f"结构事实 baseline（{old[:12]}）落后当前 HEAD（{cur[:12]}）——先重刷结构事实："
             "python3 .atlas/scripts/refresh_structure.py --root . --chain"
-            "（facts 由 agent 维持、无适配器时追加 --advance-baseline 显式背书）")}
+            "（树非干净——含暂存实现或未申报本地面——时追加 --advance-baseline 显式背书；"
+            "facts 由 agent 维持、无适配器时同样以 --advance-baseline 背书）")}
     dirty = _worktree_dirty_paths(root, prefixes)
     if dirty is None:
         return {"status": "FAIL", "reason": "git 探测失败（工作树状态不可读）——结构事实新鲜度不可证"}
-    if dirty:
-        shown = " ".join(dirty[:3]) + ("…" if len(dirty) > 3 else "")
+    # 脏面三分诊（RFC-20261126-01）：半暂存（暂存∩脏，审查锚失效风险）与未申报库外
+    # 脏面 ⇒ FAIL（charged 不变）；已申报常驻本地面（structure.local_dirty_paths，
+    # 判据单源 refresh_structure）⇒ 豁免，PASS reason 逐条留痕（评审 C1 人审点：
+    # 归档 task.json 在 .atlas/tasks/ 白名单内入库可审）。
+    staged = set(staged_files(root) or [])
+    declared = load_local_dirty_paths(root)
+    half = sorted(p for p in dirty if p in staged)
+    declared_hits = sorted(p for p in dirty
+                           if p not in staged and declared_dirty_hit(p, declared))
+    undeclared = sorted(p for p in dirty
+                        if p not in staged and not declared_dirty_hit(p, declared))
+    if half:
+        shown = " ".join(half[:3]) + ("…" if len(half) > 3 else "")
         return {"status": "FAIL", "reason": (
-            f"产品侧存在未暂存/未跟踪改动（{shown}）：先暂存并入审查"
-            "（暂存面由审查封口门背书）或清理后重试")}
-    return {"status": "PASS", "reason": f"baseline ≡ HEAD（{cur[:12]}）且无非豁免未暂存/未跟踪改动"}
+            f"产品侧存在半暂存改动（{shown}）：暂存与工作树内容分叉会让审查锚与提交"
+            "内容不一致——先 git add 并入审查或 restore 还原后重试"
+            "（structure.local_dirty_paths 申报不豁免半暂存面）")}
+    if undeclared:
+        shown = " ".join(undeclared[:3]) + ("…" if len(undeclared) > 3 else "")
+        return {"status": "FAIL", "reason": (
+            f"产品侧存在未申报的未暂存/未跟踪改动（{shown}）：先暂存并入审查"
+            "（暂存面由审查封口门背书）或清理后重试；确属常驻不打算提交的本地面，"
+            "在 .atlas/config.yaml 申报 structure.local_dirty_paths（目录条目以 / "
+            "结尾按前缀匹配，其余精确匹配；申报消费留痕可审）")}
+    note = ""
+    if declared_hits:
+        note = (f"；已申报本地脏面豁免 {len(declared_hits)} 条"
+                f"（structure.local_dirty_paths）：{' '.join(declared_hits)}")
+    return {"status": "PASS", "reason": f"baseline ≡ HEAD（{cur[:12]}）且无非豁免未暂存/未跟踪改动" + note}
 
 
 def archive_month(t_dir: Path, tasks_root: Path, task_id: str | None = None) -> str | None:

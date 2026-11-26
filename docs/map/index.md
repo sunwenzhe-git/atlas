@@ -56,7 +56,7 @@
 ### 1. CLI 与装配
 
 - `bin/atlas.js`(702 行):命令面 = `init / update / upgrade / check / migrate / incident / docs / topology / contracts / receipt / classify / calibrate / metrics / workflow / change / bug / solution / review / eval / e2e / console / report / apply / version`。`init` 直接调装配器(前置仅 Node.js + Python 3.10+);平台探测拆在 `bin/platform.js`(bash 只认 Git Bash 不回落 WSL 中继壳;Python 按平台探测 `py -3`/`python`/`python3` 并校验 3.10+)。
-- `install.py`(998 行):装配单源(`install.sh` 56 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`(RFC-20261114-01 起不含出厂测试目录,历史残留经 MANIFEST 基线闸清理),落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 121 条 `c()` 自检声明。
+- `install.py`(1006 行):装配单源(`install.sh` 56 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`(RFC-20261114-01 起不含出厂测试目录,历史残留经 MANIFEST 基线闸清理),落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 121 条 `c()` 自检声明。
 - `patches/`:`project-wiring`(AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.adapter-out/` / pi 扩展五触点)。锚点式版本化补丁,可重放;其余 3 族 workflow 补丁已随执行层退役删除。
 - 对账:`scripts/pkg_digest.py`(摘要算法单点)+ `scripts/backflow.py`(副本⇔源包三态回灌,SOURCE_ONLY 拒绝护栏)。
 
@@ -68,7 +68,7 @@
 
 - 结构适配器:`routes.py` / `api.py` / `models.py` / `tests.py`；全局 `topology` category 固定输出 `.adapter-out/topology.json`,由 `product/stack-profile.yaml` 的 `adapters` 段声明启用。统一契约:只读、幂等、失败非零且零部分产物、输出 JSON 形如 `{category, items, source_files, adapter_version}`,落 `.adapter-out/`(项目根,运行态不入库)。
 - `_lib.py` / `_scaffold.py` 是共享件;`_graph.py` 不是适配器(归子系统 4)。
-- `scripts/refresh_structure.py`(878 行)把适配器产物渲染进 `.atlas/spec/structure/` 的 `atlas:facts` 标记区:键级单元格重写、语义列保留、键级增删落漂移标记 `.adapter-out/_drift.json`(由「结构漂移」门消费)。
+- `scripts/refresh_structure.py`(959 行)把适配器产物渲染进 `.atlas/spec/structure/` 的 `atlas:facts` 标记区:键级单元格重写、语义列保留、键级增删落漂移标记 `.adapter-out/_drift.json`(由「结构漂移」门消费)。
 
 ### 4. 语义透镜 → [graph.md](graph.md)
 

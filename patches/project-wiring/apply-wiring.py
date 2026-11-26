@@ -6,8 +6,11 @@
 
 做四件事（各自独立幂等）：
 
-  1. `<项目根>/AGENTS.md`：追加 `<!-- ATLAS:START -->…<!-- ATLAS:END -->` 段；
-     已存在则整段按源更新（不新建重复段）。文件不存在时创建。
+  1. `<项目根>/AGENTS.md`：把 `<!-- ATLAS:START -->…<!-- ATLAS:END -->` 段**置顶注入**
+     （RFC-20261126-02：文件头 = BOM + YAML front-matter（若有）之后；宿主规则窗口
+     截断尾部，EOF 注入会被整段截掉——issue #77 实证 27KB 文档截尾 3235B）；
+     已存在且在头部则整段按源更新（幂等）；存量尾部块在下次接线时迁移到头部
+     （内容逐字节不变，仅位置）；标记不成对或多对（≠1）⇒ 报错不修改。文件不存在时创建。
 
   2. `<项目根>/<测试配置>`（仅 extractor 声明的栈）：由 `adapters/ac/` 的 extractor
      提供项目级配置 hook；无 hook 的栈跳过，不写任何配置。
@@ -63,6 +66,26 @@ def render_pointer() -> str:
 
 # --------------------------------------------------------------------- AGENTS.md
 
+def _head_prefix(text: str) -> str:
+    """文件头保留前缀：BOM + YAML front-matter（RFC-20261126-02 评审 M2/M3）。
+
+    置顶注入的「顶」= 这段前缀之后：front-matter 必须是文件的字节序列头部才会被
+    宿主解析，atlas 块不得插到它前面；BOM 同理保持在物理文件头。无 front-matter
+    （首行非 `---`，或 `---` 后无闭合行）⇒ 前缀只含 BOM（若有）。
+    """
+    prefix = ""
+    if text.startswith("\ufeff"):
+        prefix = "\ufeff"
+        text = text[1:]
+    lines = text.split("\n")
+    if lines and lines[0].strip() == "---":
+        for idx in range(1, len(lines)):
+            if lines[idx].strip() in ("---", "..."):
+                prefix += "\n".join(lines[:idx + 1]) + "\n"
+                break
+    return prefix
+
+
 def wire_agents(target: Path) -> dict:
     path = target / AGENTS_REL
     block = render_pointer()
@@ -74,26 +97,38 @@ def wire_agents(target: Path) -> dict:
         }
 
     text = path.read_text(encoding="utf-8")
-    has_start = ATLAS_START in text
-    has_end = ATLAS_END in text
+    start_count = text.count(ATLAS_START)
+    end_count = text.count(ATLAS_END)
+    if (start_count, end_count) not in ((0, 0), (1, 1)):
+        if start_count == 0 or end_count == 0:
+            detail = (f"标记不成对（{ATLAS_START if start_count else ATLAS_END} 单侧存在），不修改")
+        else:
+            detail = (f"标记多对（START×{start_count} / END×{end_count}，"
+                      "疑似内容粘贴复读了标记），不修改——请人工清理后重跑")
+        return {"file": AGENTS_REL, "status": "error", "detail": detail}
 
-    if has_start != has_end:
-        return {"file": AGENTS_REL, "status": "error",
-                "detail": f"标记不成对（{ATLAS_START if has_start else ATLAS_END} 单侧存在），不修改"}
-
-    if has_start:
-        i = text.index(ATLAS_START)
-        j = text.index(ATLAS_END) + len(ATLAS_END)
-        if text[j:j + 1] == "\n":
-            j += 1
-        new_text = text[:i] + block + text[j:]
-        detail = "updated (block replaced)"
+    head = _head_prefix(text)
+    body = text[len(head):]
+    if start_count == 0:
+        # 无块：头部前置注入（用户内容原样保留，RFC-20261126-02）
+        new_text = head + block + body
+        detail = "applied (injected at head)"
     else:
-        new_text = text
-        if not new_text.endswith("\n"):
-            new_text += "\n"
-        new_text += "\n" + block
-        detail = "applied (appended at EOF)"
+        i = body.index(ATLAS_START)
+        j = body.index(ATLAS_END) + len(ATLAS_END)
+        if body[j:j + 2] == "\r\n":
+            j += 2
+        elif body[j:j + 1] == "\n":
+            j += 1
+        if i == 0:
+            # 块已在头部：原位整段替换（幂等路径）
+            new_text = head + block + body[j:]
+            detail = "updated (block replaced at head)"
+        else:
+            # 存量块不在头部（EOF 等）：原位摘除 + 头部前置，幂等收敛到置顶
+            #（标记外内容原样保留；RFC-20261126-02）
+            new_text = head + block + body[:i] + body[j:]
+            detail = "relocated to head"
 
     if new_text == text:
         return {"file": AGENTS_REL, "status": "skipped", "detail": "already current"}

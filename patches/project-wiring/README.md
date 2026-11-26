@@ -38,4 +38,4 @@ python3 apply-wiring.py --target <项目根> --apply     # 写入
 
 ## 回归测试
 
-`atlas/tests/test_project_wiring.py`：验证「追加 / 幂等 / 缺文件创建 / 区块更新 / dry-run 不写 / 标记不成对报错不改」。
+`atlas/tests/test_project_wiring.py`：验证「置顶注入（BOM / front-matter 之后）/ 存量尾部块迁移到头部 / 幂等 / 缺文件创建 / 区块更新 / dry-run 不写 / 标记不成对与多对报错不改」（RFC-20261126-02）。

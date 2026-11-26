@@ -607,3 +607,19 @@ def test_legacy_source_fingerprint_and_anchor_cannot_hide_root_change(tmp_path: 
     data["review_scope"]["files"].append({"path": requirement_rel})
     findings = validate_backflow(root, fixture.task, data)["findings"]
     assert any("legacy bug_backflow 未覆盖 canonical 产物" in finding for finding in findings)
+
+
+def test_bug_bootstrap_error_names_parentless_direct_fill_route(tmp_path: Path) -> None:
+    """RFC-20261126-02：无父级落点 bootstrap 报错改双通道指引——有父级 --requirement
+    建落点；无父级走 workflow plan 直填建卡（--unit 记号区分落点 slug 与任务卡 ID，
+    评审 m4；台账必须锚定需求立场不变，eb25713）。"""
+    root = tmp_path
+    init_repo(root)
+    make_clean_project(root)
+    p = subprocess.run(["node", str(ATLAS_BIN), "bug", "--unit", "legacy-bug", "--json"],
+                       cwd=root, capture_output=True, text=True, timeout=60)
+    assert p.returncode != 0
+    err = p.stdout + p.stderr
+    assert "--requirement <slug#R-NN>" in err
+    assert "atlas workflow plan --unit" in err and "直填" in err
+    assert "任务卡ID" in err

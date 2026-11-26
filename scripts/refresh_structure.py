@@ -124,6 +124,64 @@ def read_cfg_int(root: Path, key: str, default: int) -> int:
     return default
 
 
+_LOCAL_DIRTY_SECTION_RE = re.compile(r"^structure:\s*$", re.M)
+_LOCAL_DIRTY_KEY_RE = re.compile(r"^[ \t]+local_dirty_paths:\s*$", re.M)
+_LOCAL_DIRTY_ITEM_RE = re.compile(r"^[ \t]+-[ \t]*(.*?)[ \t]*$", re.M)
+
+
+def load_local_dirty_paths(root: Path) -> tuple[str, ...]:
+    """`structure.local_dirty_paths` 申报清单 loader（RFC-20261126-01，判据单源）。
+
+    只认 `.atlas/config.yaml`（与 workflow 参数同文件；install 建模板，--update 保留
+    已有编辑）。形状：顶层 `structure:` 段下的 `local_dirty_paths:` 块列表
+    （`- 条目` 行；`m3`：只在本段内找键，不跨段命中同名缩进键）。语义：条目以
+    `/` 结尾 ⇒ 目录前缀匹配；否则全路径精确匹配（`notes.md` 不豁免 `notes.md.bak`，
+    评审 M1 负例）。fail-soft：无文件/无键/坏形状 ⇒ 空表（= 现状严格语义，缺省安全）；
+    非法条目（空串 / 绝对路径 / 含 `..` 段 / 含反斜杠）⇒ 跳过并 stderr WARN 不反噬。
+    """
+    cfg = root / ".atlas" / "config.yaml"
+    try:
+        text = cfg.read_text(encoding="utf-8")
+    except OSError:
+        return ()
+    sec = _LOCAL_DIRTY_SECTION_RE.search(text)
+    if not sec:
+        return ()
+    block_end = re.compile(r"^\S", re.M).search(text, sec.end())
+    block = text[sec.end():block_end.start() if block_end else len(text)]
+    key = _LOCAL_DIRTY_KEY_RE.search(block)
+    if not key:
+        return ()
+    tail = block[key.end():]
+    # 列表体到第一个同段新键（缩进 ≤ 键的非列表行）为止
+    stop = re.compile(r"^[ \t]*[^\s\-\[#]", re.M).search(tail.lstrip("\n"))
+    if stop:
+        tail = tail.lstrip("\n")[:stop.start()]
+    entries: list[str] = []
+    for raw in _LOCAL_DIRTY_ITEM_RE.findall(tail):
+        item = raw.strip()
+        if len(item) >= 2 and item[0] == item[-1] and item[0] in "\"'":
+            item = item[1:-1].strip()
+        if (not item or item.startswith("/") or ".." in item.split("/")
+                or "\\" in item):
+            print(f"WARN（structure.local_dirty_paths）: 非法条目已忽略：{raw!r}",
+                  file=sys.stderr)
+            continue
+        entries.append(item)
+    return tuple(dict.fromkeys(entries))
+
+
+def declared_dirty_hit(path: str, declared: tuple[str, ...]) -> bool:
+    """申报匹配语义单源（RFC-20261126-01 评审 M1）：`/` 结尾=前缀，否则精确。"""
+    for entry in declared:
+        if entry.endswith("/"):
+            if path.startswith(entry):
+                return True
+        elif path == entry:
+            return True
+    return False
+
+
 def body_block(body: str) -> str:
     return f"{BEGIN}\n{body.rstrip()}\n{END}"
 
@@ -672,7 +730,11 @@ def maybe_advance_baseline(root: Path, meta: dict, fact_results: list[dict],
     四前置（docstring 与方案 §1.2）：本轮 drift 已写盘（调用时序由 main 保证）/ 零漂移
     （override 显式越过）/ 事实结果非空（override 亦可显式越过，2026-11-22 `RFC-20261122-05`
     —— facts 由 agent 维持、无适配器的空转态仓原本 baseline 永不可达 HEAD，是 finish
-    「结构事实新鲜度」前置下唯一可达的重锚出路）/ 产品侧干净。SHA 前缀归一比较。
+    「结构事实新鲜度」前置下唯一可达的重锚出路）/ 产品侧干净（2026-11-26 `RFC-20261126-01`
+    收窄：豁免前缀 + `structure.local_dirty_paths` 申报面不算脏——申报消费 loud log 留痕；
+    剩余脏面无 override ⇒ 拒推进，有 override ⇒ loud log 列出被忽略面后推进，facts =
+    人工背书的 worktree 态）。SHA 前缀归一比较。porcelain 读面带
+    `-c core.quotePath=false`（与 finish 侧同口径，中文/特殊路径不转义，评审 M2）。
     """
     if drifts and not override:
         log("  baseline: 存在未终审键级漂移 ⇒ 冻结待终审（诚实 ratchet；--advance-baseline 可显式越过）")
@@ -687,10 +749,12 @@ def maybe_advance_baseline(root: Path, meta: dict, fact_results: list[dict],
     if not ok:
         log("  baseline: git HEAD 不可得 ⇒ SKIP 推进")
         return
-    ok2, porcelain = _git(root, "status", "--porcelain")
+    ok2, porcelain = _git(root, "-c", "core.quotePath=false", "status", "--porcelain")
     if ok2:
         dirty = []
         prefixes = clean_exempt_prefixes(root)
+        declared = load_local_dirty_paths(root)
+        declared_hits: list[str] = []
         for line in porcelain.splitlines():
             # v1 格式 `XY path`：_git 的 .strip() 会吃掉首行前导空格 ⇒ 不能盲切 [3:]，
             # 按状态字符扫描到 path 起点（行首空格跳2位即可见 path）。
@@ -702,10 +766,27 @@ def maybe_advance_baseline(root: Path, meta: dict, fact_results: list[dict],
                 i += 1
             rest = line[i:]
             if rest and not rest.startswith(prefixes):
+                if declared_dirty_hit(rest, declared):
+                    declared_hits.append(rest)
+                    continue
                 dirty.append(rest)
+        if declared_hits:
+            # 申报消费必须响亮留痕（评审 C1：申报载体 .atlas/config.yaml 不入库，
+            # 人审点 = 本日志 + finish 归档 task.json 的豁免清单行）
+            log("  baseline: 申报本地脏面豁免（structure.local_dirty_paths）"
+                f"{len(declared_hits)} 条：{' '.join(declared_hits[:5])}"
+                + ("…" if len(declared_hits) > 5 else ""))
         if dirty:
-            log(f"  baseline: 产品侧工作树有未提交改动（{dirty[:3]}…）⇒ 不推进（不给未审定代码背书）")
-            return
+            if override:
+                log("  baseline: --advance-baseline 显式人工背书 ⇒ 忽略未申报脏面 "
+                    f"{len(dirty)} 条：{' '.join(dirty[:3])}"
+                    + ("…" if len(dirty) > 3 else "")
+                    + "（facts = 人工背书的 worktree 态，RFC-20261126-01）")
+            else:
+                log(f"  baseline: 产品侧工作树有未提交改动（{dirty[:3]}…）⇒ 不推进"
+                    "（不给未审定代码背书；确属常驻不打算提交的本地面先申报 "
+                    "structure.local_dirty_paths，或 --advance-baseline 显式背书）")
+                return
     cur = cur.splitlines()[0] if cur else ""
     old = (meta.get("baseline") or {}).get("commit") or ""
     if sha_matches_prefix(cur, old):

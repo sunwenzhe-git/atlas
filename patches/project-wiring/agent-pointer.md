@@ -13,6 +13,7 @@
 - **装配 ≠ 开户**：`atlas init` 只装线束；`product/prd/` 与 `.atlas/spec/structure/` 为空即未开户，走 `atlas-apply adopt` 断点续跑，不得回「已接入」。
 
 - 开工：`atlas workflow plan --unit <ID> [--paths <glob...>]` → `atlas workflow dispatch [--paths <file...>]`
+- 口头报缺陷：先判有无父级需求落点——有 ⇒ `atlas change --unit <落点slug> --requirement <base#R-NN> --report <报告.md> --stage prod|integration|test`；无 ⇒ `atlas workflow plan --unit <任务卡ID>` 直填建卡（不建变更/缺陷落点，证据写任务卡 PRD）
 - 提交前：`atlas workflow verify --unit <ID>`（未通过不得提交或收口）
 - 收口：`atlas workflow finish --unit <ID>`（读独立审查 PASS + 本任务 AC 关联的 E2E 结论：`red` 阻断，缺数据显式 `SKIP`；完成后任务移入 `.atlas/tasks/archive/<YYYY-MM>/`）
 - **平台口径（Windows）**：契约里的 `python3` 用 `python` 替代（需 Python 3.10+）。

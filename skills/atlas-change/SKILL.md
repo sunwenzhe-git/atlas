@@ -30,6 +30,14 @@ description: 需求变更或缺陷实现后自动执行 canonical 落点、diff 
    - 运行 `atlas change link <slug> --commit <sha> [--pr <url>]`。
    - 完成判据：`atlas change show <slug>` 能看到 commit/PR 与 append-only 历史。
 
+## 无父级缺陷路由
+
+口头报的历史缺陷若无父级需求落点（`atlas change --unit <落点slug> …` 报「落点不存在」时）：
+
+- **不建变更/缺陷落点**：台账必须锚定既有需求，无父级就不建台账。
+- **直填建卡**：`atlas workflow plan --unit <任务卡ID>`（无 `--requirement`），现象/期望/实际证据写进任务卡 PRD；走同一条独立审查 verify/finish 门，审查与收口一分不少。
+- 两个 `--unit` 记号不同：`atlas change` 的 `--unit` 是落点 slug，`atlas workflow plan` 的 `--unit` 是任务卡 ID，不要把 slug 直填成卡 ID。
+
 ## 查询与兼容
 
 - `atlas change show <slug>`：查看单条台账。

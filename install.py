@@ -694,7 +694,15 @@ def main() -> None:
                 "# 只认下列键，未知键被忽略；词表与缺省值单源 = _support/workflow_causes.py。\n"
                 "workflow:\n"
                 "  max_verify_attempts: 2"
-                "   # verify 失败（charged）预算上限；超限停下要求人工（退出码 3）\n",
+                "   # verify 失败（charged）预算上限；超限停下要求人工（退出码 3）\n"
+                "# structure.local_dirty_paths：常驻不打算提交的本地面申报（RFC-20261126-01；\n"
+                "# finish 新鲜度门与 refresh_structure 基线自进两门同吃；判据单源 =\n"
+                "# scripts/refresh_structure.py::load_local_dirty_paths。目录条目以 / 结尾按\n"
+                "# 前缀匹配，其余按路径精确匹配；申报消费留痕可审）：\n"
+                "# structure:\n"
+                "#   local_dirty_paths:\n"
+                "#     - scratch/\n"
+                "#     - notes.md\n",
                 encoding="utf-8"))
         say("      -> .atlas/config.yaml（workflow 参数模板）")
 
