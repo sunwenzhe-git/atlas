@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "atlas:semantic-expected:v1",
+  "title": "Expected semantic contracts only",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "clauses"],
+  "properties": {"schema_version": {"const": 1}, "clauses": {"type": "array", "items": {"$ref": "#/$defs/clause"}}},
+  "$defs": {
+    "source": {"type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": {"path": {"type": "string", "minLength": 1}, "line": {"type": "integer", "minimum": 1}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}},
+    "contract": {"oneOf": [
+      {"type": "object", "additionalProperties": false, "required": ["kind", "value"], "properties": {"kind": {"const": "route"}, "value": {"type": "string", "minLength": 1}, "source": {"$ref": "#/$defs/source"}}},
+      {"type": "object", "additionalProperties": false, "required": ["kind", "name", "type", "required"], "properties": {"kind": {"const": "field"}, "table": {"type": "string"}, "name": {"type": "string", "minLength": 1}, "type": {"type": "string", "minLength": 1}, "required": {"type": "boolean"}, "source": {"$ref": "#/$defs/source"}}},
+      {"type": "object", "additionalProperties": false, "required": ["kind", "name", "values"], "properties": {"kind": {"const": "enum"}, "name": {"type": "string", "minLength": 1}, "values": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}}, "source": {"$ref": "#/$defs/source"}}},
+      {"type": "object", "additionalProperties": false, "required": ["kind", "value"], "properties": {"kind": {"enum": ["testid", "tests"]}, "value": {"type": "string", "minLength": 1}, "source": {"$ref": "#/$defs/source"}}},
+      {"type": "object", "additionalProperties": false, "required": ["kind", "value"], "properties": {"kind": {"enum": ["ac", "error_code", "config", "cli", "state"]}, "value": {"type": ["string", "object"]}, "source": {"$ref": "#/$defs/source"}}}
+    ]},
+    "clause": {"type": "object", "additionalProperties": false, "required": ["clause_id", "contracts"], "properties": {"clause_id": {"type": "string", "minLength": 1}, "request_id": {"type": "string"}, "task_id": {"type": "string"}, "contracts": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/contract"}}}}
+  }
+}

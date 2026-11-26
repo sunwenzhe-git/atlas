@@ -41,7 +41,7 @@
 
 ### `adapters`
 
-四个可枚举事实类别，各声明一个适配器名或 `null`：
+五个可枚举事实类别，各声明一个适配器名或 `null`（`topology` 自 RFC-20261125-01 起登记为全局类别；缺失时对应能力显式 UNVERIFIED，不冒充通过）：
 
 | 键 | 对应结构事实类别 |
 |---|---|
@@ -49,6 +49,7 @@
 | `api` | D 接口清单 |
 | `models` | E 数据模型清单 |
 | `tests` | H 测试现状 |
+| `topology` | 全局 Runtime Topology（Compose/Helm/Kong 静态节点与边） |
 
 - 值为 `null` → 该类别降级为 agent 撰写，结构基线 `README.md` 标 `maintained_by: agent`。
 - 值为非空 → 必须能被解析到 `adapters/` 下的可执行脚本（解析规则见 §3.3）。
@@ -132,7 +133,7 @@
 ```
 
 - `--root` 传**项目根**（`source_file` 用项目根相对路径）；`--app` 传 `apps[].name` 时只扫该 app。
-- **域级类别**（`api` / `models` / `tests`）的 `items` 需归属到 app（契约字段无 app 列）⇒ 由调用方**按 app 各调一次**再合并；**全局类别**（`routes`）可整项目调一次。
+- **域级类别**（`api` / `models` / `tests`）的 `items` 需归属到 app（契约字段无 app 列）⇒ 由调用方**按 app 各调一次**再合并；**全局类别**（`routes` / `topology`）可整项目调一次。`topology` 固定输出 `.adapter-out/topology.json`，由 `refresh_structure --chain` 渲染到 `.atlas/spec/structure/global/runtime-topology.md`。
 - **产物落点约定**：`--out` 写 `<项目根>/.adapter-out/<category>[/<app>].json`（全局类别写 `routes.json`，按 app 类别写 `models/<app>.json`）。该目录是 **atlas 全部中间产物的单一位点**（适配器产物 / 漂移标记 `_drift.json` / 图谱新鲜度标记 `_graph_index.json` **同址**；2026-10-15 统一，issue #8）。它是**中间产物、非真相源**，不进注入、可覆盖重生成；**该目录必须被 git 忽略**——接线脚本在项目已有 `.gitignore` 时自动追加一行 `.adapter-out/`（2026-10-15 起，issue #8 之后对所有项目成立，不只图谱用户）；无 `.gitignore` 的项目由接线报告显式提示手动添加。
 
 ### 3.2 输出 JSON
@@ -155,6 +156,7 @@
 | `api` | `method` · `path` · `summary?` · `source_module` · `source_file` | 有机器可读描述时**不产 `items`**，改产 `{category:"api", spec_entry:"…", source_files:[…]}`（见 §3.5） |
 | `models` | 每字段一行：`table` · `field` · `type` · `constraints?` · `default?` · `relation?` · `enum?` · `source_file`；另加顶层 `enums[]`：`{table, field, values:[{value, meaning}]}` | 对应 `data-models.md` 表；`source_file` 供「表→域」归属（C7） |
 | `tests` | `type`(unit/integration/e2e/other) · `location` · `run_command?` · `status?` | `status` 属运行事实，适配器留空由 agent 补 |
+| `topology` | 复用全局 adapter 契约：`items[]` 为 node/edge；node 含 `id/kind/name/namespace/app/image/ports/source_file/line/sha256`，edge 含 `id/kind/from/to/relation/port?/source_file/line/sha256`；顶层 `coverage{parsed,unverified_fields,parse_errors}` 与 `inputs{project,environment,cluster,release,scan_globs}` | 动态模板只记字段名并标 UNVERIFIED；不输出 secret 值；节点 ID = `project:environment:cluster:release:namespace:name` |
 
 - **`route_coverage`（仅 `routes`；2026-10-16 补，issue #15，D83/D84）**：识别与挂载合成的**覆盖计数**，形如 `{declared, site_level, mounted, skipped_items, skipped:[{file, reason, items}]}`。语义 = 「声明路由表的文件数 → 站点级 / 已挂载 / 未解析（逐文件原因）」。
   - **为何要它**：候选闸与挂载前缀都会丢弃条目（命名不匹配、前缀求不出），而丢弃**必须可见**——不完整的事实表冒充「structure ⇔ 代码」配门比诚实缺口更糟（`global-rules.md` §15 同族）。同理须在 stderr 逐文件列出未解析原因。

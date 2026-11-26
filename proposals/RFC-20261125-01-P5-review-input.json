@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "input": "RFC-20261125-01-P5-r4",
+  "algorithm": "SHA256(concat(path + NUL + bytes + NUL))",
+  "sha256": "21ae7e7a88963ed4da8e022049ff01e90d8b31dbcad69115bc988cfc5fcce998",
+  "files": [
+    {
+      "path": "_support/classification_contract.py",
+      "sha256": "e3f173adb152832b0e15f228ddeb907ffc23d937e9855ae873dabd1513fe3086"
+    },
+    {
+      "path": "_support/governance_metrics.py",
+      "sha256": "34f3a84ac231cd9e693fec3f299f39daee5bf1d42e956ea427f6e766a1048abc"
+    },
+    {
+      "path": "scripts/atlas_classify.py",
+      "sha256": "38a4a2ddfd48b43a54cafe8fb231f68c79dce89e768cb58a2b9ec85083c310ad"
+    },
+    {
+      "path": "scripts/atlas_calibrate.py",
+      "sha256": "835db23e113b25339081ccff371ae9a54c49e206f712e07ff3fcee39c10beec7"
+    },
+    {
+      "path": "scripts/atlas_metrics.py",
+      "sha256": "ee026641d2c032996c9421d1073bb1d4c50171b8a3f368ba19cbb509177df42f"
+    },
+    {
+      "path": "validators/validate_calibration.py",
+      "sha256": "a0ce40ba66fbcd449d81d816109b0b6ff95bef3bb030dc2902350a6a6134b487"
+    },
+    {
+      "path": "tests/test_governance_calibration.py",
+      "sha256": "1e08ac74e8188421ccbc618b693a1b1b1110e07f6830dee2a31d4d49ef2544f8"
+    },
+    {
+      "path": "tests/test_governance_wiring.py",
+      "sha256": "67f440571dc892500a8c1a5fb7a318daffea9ab1ed86135a8b047c78eda2da84"
+    },
+    {
+      "path": "scripts/atlas_check.py",
+      "sha256": "415ca2596f7b02184dedad2781ed393b8c798d0566108934d2c781bb7d748dc3"
+    },
+    {
+      "path": "bin/atlas.js",
+      "sha256": "8bb2674c077c945efd8fffaacfa0fa75a6a1aaaf0215b18044e1297d25c1937d"
+    },
+    {
+      "path": "install.py",
+      "sha256": "4d6b66bab22ee7b391a75c09f3b1c00a27f2d884ef34ff2aac4d66ac8ef78378"
+    },
+    {
+      "path": "shared/gates.md",
+      "sha256": "38a5113c1cf3b8b531d79ec464906875c9eaf577e0d2023f9192cb941ae89585"
+    },
+    {
+      "path": "shared/schemas/governance-common.json",
+      "sha256": "accde58cbe46654f662009ce84f108e9e68f793c7b659b17d2fafd3b2f0a3b6d"
+    },
+    {
+      "path": ".atlas/runs/mutation-proof/M251.txt",
+      "sha256": "fd42aa760e4f925cc5dde404647d8b9cdcd77bed221f0df2f0b63878a1f9085e"
+    }
+  ]
+}

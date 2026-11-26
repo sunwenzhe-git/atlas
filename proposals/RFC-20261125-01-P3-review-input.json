@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "input": "RFC-20261125-01-P3-r5",
+  "algorithm": "SHA256(concat(path + NUL + bytes + NUL))",
+  "sha256": "2b4c3a2f5ef6a2c7fe11e1fd88807f65948c0710314e4702542b251a88a45c85",
+  "files": [
+    {
+      "path": "_support/runtime_topology.py",
+      "sha256": "8b60864823c60f81f96c6fb2ffda0c90afff13bf420a2e62efa0c32004c4ff20"
+    },
+    {
+      "path": "adapters/runtime_topology.py",
+      "sha256": "0ccb72004f5b88723e906bbaebbbdd63b22ab43aa58db9a82bcb53e5a7d220bf"
+    },
+    {
+      "path": "adapters/topology_compose.py",
+      "sha256": "c2eb7ed9c4e1748e37717e364282c0538218ae5ed69d425147d846849196e244"
+    },
+    {
+      "path": "adapters/topology_helm.py",
+      "sha256": "211458941e118327e2bcc8f52f088c15fab7647e2bbdf4c8fe3d94c7ab326cee"
+    },
+    {
+      "path": "adapters/topology_kong.py",
+      "sha256": "f98e636906e4d2e82d4af4f091c6f8135585c4de39cf92ef9dd6209e16911c9a"
+    },
+    {
+      "path": "scripts/atlas_topology.py",
+      "sha256": "444b13d0e5b7a6a04d5ac97f1c544c42e95f95bf44cf8cd8cf20c14b9a0f6c0a"
+    },
+    {
+      "path": "validators/validate_runtime_topology.py",
+      "sha256": "5b4b0b685690347d59eabddbee4dd6e44432b77acacff8acc3bacd05f10d16c4"
+    },
+    {
+      "path": "tests/test_runtime_topology.py",
+      "sha256": "33dcba7fe7ab12207bc81cf270b2f77c9af4372c4b20a84830b9a6a16352988e"
+    },
+    {
+      "path": "tests/test_refresh_facts.py",
+      "sha256": "39a44a6636ba65d02e5ee0a7fc42e94313235a5a71bc956e441ed16a8eb1e56c"
+    },
+    {
+      "path": "tests/test_governance_wiring.py",
+      "sha256": "4cfc9313cc4bcb1fafdc851b16c9af3df7b76e7045423cb9026ba6db40816606"
+    },
+    {
+      "path": "scripts/refresh_structure.py",
+      "sha256": "3830f57d70446404870ee18903949410862c7b8481353793ad24155c069fc274"
+    },
+    {
+      "path": "scripts/atlas_workflow.py",
+      "sha256": "8dce7aa368087f7e8ac13f84daa9ace46ca91bbdc3c8342627389fd850ca1001"
+    },
+    {
+      "path": "_support/workflow_finish.py",
+      "sha256": "7990c13c57fab1461b175c52a6f36a0721121847784bc4b31a9360e2083619f2"
+    },
+    {
+      "path": "scripts/atlas_check.py",
+      "sha256": "50259fe93ad85c7dc4250fd6252fe088d5dc27d68ea7c6c2bf4ee5615d6748fd"
+    },
+    {
+      "path": "bin/atlas.js",
+      "sha256": "ae8654edf753e58c459cf7b001808efe5f9cc327d3f5177212085ff701faa54b"
+    },
+    {
+      "path": "install.py",
+      "sha256": "0df5955562540df8ecdc767a2fbb9af19b8c9b8afc69d0a0d8862513d7beb45c"
+    },
+    {
+      "path": "shared/gates.md",
+      "sha256": "81a2001edb170f9bca495843712c33715d2dfc88b26eebcbb82f53136862aaa0"
+    },
+    {
+      "path": "shared/stack-profile.md",
+      "sha256": "8a92262e45f7ed4bf907f87f804b8766f401427a777fc9c9edf4c608b9249565"
+    },
+    {
+      "path": "shared/schemas/runtime-topology.json",
+      "sha256": "da731db3405ddc03f8a27b763c65d4d5396ec16923db759176f14eb71054199f"
+    },
+    {
+      "path": ".atlas/runs/mutation-proof/M248.txt",
+      "sha256": "0369f54f67a21cd7a06f5116c9501bb5c6c019bd09abfa6408e57f2ddbaf23a7"
+    }
+  ]
+}

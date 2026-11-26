@@ -1,7 +1,7 @@
 # L1 · 门禁与校验子系统
 
 > 子系统 #8 / 上级地图:[index.md](index.md) / 锚定版本:见 index.md 数字快照(2026-10-24)
-> 一句话:**「每道机器门都要真的会咬」的执行体系**——〔数:校验器文件=14〕 个校验器 + 1 个编排器 + 1 本门册总账 + 变异证明协议 + 〔数:出厂测试文件=92〕个出厂测试文件。判据分散在各校验器实现,编排器只聚合不改判。
+> 一句话:**「每道机器门都要真的会咬」的执行体系**——〔数:校验器文件=21〕 个校验器 + 1 个编排器 + 1 本门册总账 + 变异证明协议 + 〔数:出厂测试文件=101〕个出厂测试文件。判据分散在各校验器实现,编排器只聚合不改判。
 
 ## 设计三律(门册元规则,`shared/gates.md:3-9`)
 
@@ -13,11 +13,11 @@
 
 | 文件 | 角色 |
 |---|---|
-| `scripts/atlas_check.py`(1224 行) | 统一检查入口 / 编排器(**只聚合,不改判据**) |
-| `validators/`(〔数:校验器文件=14〕 器) | 判据本体,每器一行输出 |
-| `shared/gates.md`(196 行) | 门登记总账:六列(门 / 对账平面 / 查什么 / **不查什么** / 预算 / 假绿测试等级);§4.1 另有无门约束登记(不参与门计数) |
+| `scripts/atlas_check.py`(1298 行) | 统一检查入口 / 编排器(**只聚合,不改判据**) |
+| `validators/`(〔数:校验器文件=21〕 器) | 判据本体,每器一行输出 |
+| `shared/gates.md`(208 行) | 门登记总账:六列(门 / 对账平面 / 查什么 / **不查什么** / 预算 / 假绿测试等级);§4.1 另有无门约束登记(不参与门计数) |
 | `scripts/mutation_proof.py`(155 行) | 变异证明工具:把缺陷放回去看门红不红,还原须逐字节一致 + 报告须含注入 diff |
-| `tests/`(77 文件) | 出厂测试套件(`check-all.py --only atlas` 全绿为出厂条件) |
+| `tests/`(101 文件) | 出厂测试套件(`check-all.py --only atlas` 全绿为出厂条件) |
 
 ## 编排器 atlas_check 的结构
 
@@ -27,24 +27,24 @@
 
 `SKIP` = 未走到 / 前置未声明(**不是通过也不是失败**,必须带原因)≠ `WARN`(过期/提醒,不置红)≠ `FAIL`(硬阻断)≠ `ok`。生成物门三态:未就绪(SKIP)≠ 生成物过期(WARN)≠ 生成失败(FAIL)。
 
-### 门行全景(`main()`,`scripts/atlas_check.py:1125`)
+### 门行全景(`main()`,`scripts/atlas_check.py:1201`)
 
 | 门行 | 实现 | 一句话判据 |
 |---|---|---|
-| 〔数:校验器=14〕 个 validate_* | `check_validators` :217 | 逐器调用,一门一行;前置文件缺失 ⇒ SKIP(`_gate_preconditions` :70 定义 〔数:前置SKIP器=7〕 器的三态前置) |
-| 对齐测试(.atlas/tests) | `check_factory` :264 | 装配副本跑 pytest;目录不存在 = 装配未含测试(F53 三形态 SKIP) |
-| 生成物最新 | `check_generated` :320 | gen_e2e_scripts 干跑 diff;exit 3 = not_ready SKIP |
-| 审查报告形态 | `check_review_report` :376 | 最新 E2E 审查报告复算(validate_review_report 单源) |
-| 执行串行 | `check_serial_execution` :290 | 运行器配置必须 `workers: 1` + `fullyParallel: false`(D115) |
-| 结构漂移 | `check_drift` :426 | 只读 `.adapter-out/_drift.json` 标记,不做二次判定 |
-| 装配版本 | `check_version` :488 | `.atlas/VERSION` 摘要戳 + `.atlas/MANIFEST.json` 逐文件基线 ⇔ 当前源包重算(D145);历史坏戳单列根因级 WARN |
+| 〔数:校验器=21〕 个 validate_* | `check_validators` :378 | 逐器调用,一门一行;前置文件缺失 ⇒ SKIP(`scripts/atlas_check.py:87` `_gate_preconditions` 定义 〔数:前置SKIP器=14〕 器的三态前置) |
+| 对齐测试(.atlas/tests) | `scripts/atlas_check.py:471` `check_factory` | 装配副本跑 pytest;目录不存在 = 装配未含测试(F53 三形态 SKIP) |
+| 生成物最新 | `scripts/atlas_check.py:540` `check_generated` | gen_e2e_scripts 干跑 diff;exit 3 = not_ready SKIP |
+| 审查报告形态 | `scripts/atlas_check.py:606` `check_review_report` | 最新 E2E 审查报告复算(validate_review_report 单源) |
+| 执行串行 | `scripts/atlas_check.py:510` `check_serial_execution` | 运行器配置必须 `workers: 1` + `fullyParallel: false`(D115) |
+| 结构漂移 | `scripts/atlas_check.py:656` `check_drift` | 只读 `.adapter-out/_drift.json` 标记,不做二次判定 |
+| 装配版本 | `scripts/atlas_check.py:719` `check_version` | `.atlas/VERSION` 摘要戳 + `.atlas/MANIFEST.json` 逐文件基线 ⇔ 当前源包重算(D145);历史坏戳单列根因级 WARN |
 | 写面残留 | `check_write_claims` :612 | glob 未释放 claim ⇒ WARN 指名(提醒面,不是门禁) |
 | 消融残留 | `check_ablation_residue` :642 | 项目外 active/marker/manifest ⇔ 当前项目;健康 active=ok+剩余,异常=WARN,永不 FAIL;只读不还原 |
 | E2E 真跑 | `check_e2e` :733 | 单段执行:TCP 探活 → e2e.reset → 运行器可解析性判据 → 浏览器就绪探针 → 真跑;结果 JSON 供控制台/失败留证 |
 
 **辅助机制**:失败详情落 `.atlas/runs/last-check-error.log`(全绿轮自动清);每轮观测事件追加 `.atlas/runs/check-events.jsonl`(门名/状态/耗时,**观测面不参与判定**);成功真跑写 `.atlas/runs/e2e-summary.json`(带 git_head/dirty 溯源)。
 
-## 〔数:校验器=14〕 个校验器(判据本体)
+## 〔数:校验器=21〕 个校验器(判据本体)
 
 | 校验器 | 对账平面 | 核心判据 |
 |---|---|---|
@@ -67,9 +67,9 @@
 
 同族的「可执行性判据本体」纪律(D101/DR4):可执行/可用类前置判据必须 ① 真跑一次功能性探针 ② 有反面包(「东西在但用不了」必须红) ③ 失败原因不被吞。同族复发两轮才立此行(#1 恒绿门 / #24 路径存在当充要)。
 
-## 三态前置表 `_gate_preconditions`(`scripts/atlas_check.py:80`)
+## 三态前置表 `_gate_preconditions`(`scripts/atlas_check.py:87`)
 
-〔数:前置SKIP器=7〕 个校验器声明了「前置文件缺失 ⇒ SKIP」（清单单源 = `scripts/atlas_check.py` `_gate_preconditions`，AST 实收——散文枚举曾漏 task_card，改派生）：〔数:前置SKIP清单=stack_profile/structure/design_exemptions/e2e_mocks/ac_alignment/adr/task_card〕。**SKIP 是合法降级不是放行**——文案必须带「未就绪,非失败」与出路。
+〔数:前置SKIP器=14〕 个校验器声明了「前置文件缺失 ⇒ SKIP」（清单单源 = `scripts/atlas_check.py` `_gate_preconditions`，AST 实收——散文枚举曾漏 task_card，改派生）：〔数:前置SKIP清单=stack_profile/structure/design_exemptions/e2e_mocks/ac_alignment/adr/task_card/migration/incident/docs_governance/runtime_topology/contracts/receipt/calibration〕。**SKIP 是合法降级不是放行**——文案必须带「未就绪,非失败」与出路。
 
 ## 显式盲区
 

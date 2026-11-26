@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "atlas:incident-timeline-event:v1",
+  "title": "Atlas incident append-only timeline event",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "id", "ts", "kind", "actor", "summary", "evidence_refs"],
+  "properties": {
+    "schema_version": {"const": 1}, "id": {"type": "string", "minLength": 1},
+    "ts": {"type": "string", "format": "date-time"},
+    "kind": {"enum": ["evidence", "hypothesis", "action", "resolution", "status", "rollback"]},
+    "actor": {"type": "string", "minLength": 1}, "summary": {"type": "string", "minLength": 1},
+    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+    "from": {"enum": ["detected", "contained", "resolved", null]},
+    "to": {"enum": ["detected", "contained", "resolved", "closed", null]}
+  },
+  "allOf": [
+    {"if": {"properties": {"kind": {"const": "rollback"}}, "required": ["kind"]}, "then": {"required": ["from", "to"], "properties": {"from": {"const": "resolved"}, "to": {"const": "contained"}}}}
+  ]
+}

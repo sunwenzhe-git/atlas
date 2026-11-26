@@ -1,0 +1,464 @@
+{
+  "schema_version": 1,
+  "input": "RFC-20261125-01-final+beta.11-snapshot",
+  "algorithm": "SHA256(concat(path + NUL + bytes + NUL))",
+  "sha256": "d6ce3275fc5e0e3f06d3d5ed6d01a32c6f32a26e3511e8d561357dcdb11f9491",
+  "files": [
+    {
+      "path": "CHANGELOG.md",
+      "sha256": "f6c75c024c1acb749f3d07ffded5a74b15e556d5df523b660745d44ed78dfed8"
+    },
+    {
+      "path": "DESIGN.md",
+      "sha256": "3dae825d93768e2580435d7b16236abf308ea5158c36588ab7cd0d1990810305"
+    },
+    {
+      "path": "README.md",
+      "sha256": "fde14e8dfff858a66cf83d6eecdff91f19673bef0a917c97798036066aa3ce62"
+    },
+    {
+      "path": "_support/bug_backflow.py",
+      "sha256": "64da3757bd30d026b454efdf1da593e8b8db9dbe289299ab34cbb4f2c9cff182"
+    },
+    {
+      "path": "_support/bug_record.py",
+      "sha256": "e7d3e50bcc461a24325423c5954bdd877ea6ec8b6f7e13aa1817cc1ef7609e0e"
+    },
+    {
+      "path": "_support/classification_contract.py",
+      "sha256": "b100a0ffebec465a95e554160427268a23ad13347dc3b6dc053f8f904d97fc84"
+    },
+    {
+      "path": "_support/docs_governance.py",
+      "sha256": "429500514ecbf7d5f86bdc32981ca38bddec6c7e38169ad3efd0bdb36f740c85"
+    },
+    {
+      "path": "_support/governance_corpus.py",
+      "sha256": "71ae9143d2e8a3e4d2ae826e246b2d00a9587b135e54e1b8c05544ed520388a3"
+    },
+    {
+      "path": "_support/governance_io.py",
+      "sha256": "b77ae1bc2d77742881165adec33527d0a0fa741fa2ecc4d33c2617a3f3df2965"
+    },
+    {
+      "path": "_support/governance_metrics.py",
+      "sha256": "6ffc752711affe3d31465359766d62cd1625ee10c4587b6dd78e067e298e925c"
+    },
+    {
+      "path": "_support/governance_schema.py",
+      "sha256": "65e9add9c16cba5ad1f4d6e9e5c11d85a93d27da6159f61a8b84024a586f3dd3"
+    },
+    {
+      "path": "_support/incident.py",
+      "sha256": "9a8a0a3164b06a9d8a9a5a5249d4a94ad8b1c92a54d8d86b4ab04a634b21531d"
+    },
+    {
+      "path": "_support/legacy_migration.py",
+      "sha256": "2bad4b3274058718e02af30c29da50ee6e94095735f0ba1846337e997f0892c3"
+    },
+    {
+      "path": "_support/review_scope_core.py",
+      "sha256": "d47d6aaa4e369f68afe2e9153da826f12e995a53275dc46193a0d3c3d1b20bc5"
+    },
+    {
+      "path": "_support/runtime_topology.py",
+      "sha256": "1705e58178cd7d4b82a3b0c578aa415e16c7a477f855a41bf45f3da8837b8feb"
+    },
+    {
+      "path": "_support/semantic_contracts.py",
+      "sha256": "be7b25b4af5bf4ada06c31ca6cb341bcc8e097f4026165e72a3cb4864479fbb1"
+    },
+    {
+      "path": "_support/workflow_causes.py",
+      "sha256": "1640dedb4bee7c26b9b05b4002474c63c83ec133d9bff43fa6af4bcd034d18f8"
+    },
+    {
+      "path": "_support/workflow_finish.py",
+      "sha256": "51b9e48c06a8aee5035a74c12eb126a23de9192c9c31e7ae00d11a103db49a6b"
+    },
+    {
+      "path": "_support/workflow_plan.py",
+      "sha256": "f7340e6f51a59badd949229f843e61555fe90c190df3f8cadb60295b20478fa0"
+    },
+    {
+      "path": "_support/workflow_receipt.py",
+      "sha256": "319b598b6ad180d7492e9f05fa053ee2d5bd552a67ee09ad5c5736d3dcb0cfec"
+    },
+    {
+      "path": "adapters/models.py",
+      "sha256": "42e21e6aef85ba70ff3edfd906828483255badd7fc48659dfad28842eb4ca283"
+    },
+    {
+      "path": "adapters/runtime_topology.py",
+      "sha256": "2c32f2a5703da371d952225b743a6807d81330a6e3eb7724f8dea9ee3454ddd0"
+    },
+    {
+      "path": "adapters/topology_compose.py",
+      "sha256": "4f3bc496696355894c887cbeb3835a3c38c0ca2a08dfed4d7117887f86c14b40"
+    },
+    {
+      "path": "adapters/topology_helm.py",
+      "sha256": "211458941e118327e2bcc8f52f088c15fab7647e2bbdf4c8fe3d94c7ab326cee"
+    },
+    {
+      "path": "adapters/topology_kong.py",
+      "sha256": "b60e3095e6c9198ade41c82d3a91a4014d701c270fd2d4b2b09c097d90ebc509"
+    },
+    {
+      "path": "bin/atlas.js",
+      "sha256": "42b675f90be2e875b6ee8c82193aa0590d58a6bb73d1f2c016a99ae420a6cab0"
+    },
+    {
+      "path": "docs/.vitepress/config.mts",
+      "sha256": "28f6e4f7543b0ca0da2914839cfb8eb7f84894b6f47caa92661eb546acf82eab"
+    },
+    {
+      "path": "docs/design/overview.md",
+      "sha256": "199039efdb4f03904f8a31813a1fabe28620749e8ce31efb24116cb95a284580"
+    },
+    {
+      "path": "docs/guide/changelog.md",
+      "sha256": "f6c75c024c1acb749f3d07ffded5a74b15e556d5df523b660745d44ed78dfed8"
+    },
+    {
+      "path": "docs/guide/comparison.md",
+      "sha256": "d8743d5513b80bd8d74030e36f6a50b6ebc5a388c7e487d5ec44ee9c6bc339b4"
+    },
+    {
+      "path": "docs/map/adapters.md",
+      "sha256": "dce8cad78250a867d27e4abf32306ba64b31245186c10994d1861708923452f4"
+    },
+    {
+      "path": "docs/map/apply.md",
+      "sha256": "bf68d73409b29d740dbd39c66b9d98e06f8745286536649cbbd15853c44976a5"
+    },
+    {
+      "path": "docs/map/atlas-map.html",
+      "sha256": "f8d76ead7fa4c518dbf9a29ad348c0ff4d577dcfc259ca17e727dab48737dbd6"
+    },
+    {
+      "path": "docs/map/cli.md",
+      "sha256": "e888a3ee3b2515a5ddd701e71ea391eaac8dc6ca458aee28ee6b45a42a2b9295"
+    },
+    {
+      "path": "docs/map/e2egen.md",
+      "sha256": "801395ea199de23ae33720afb709bddff2635a4973e27f204104da692a51c3e7"
+    },
+    {
+      "path": "docs/map/gates.md",
+      "sha256": "51883bd20777b938a0057525d744d40687b748d065ea656a9cfed625aa85f999"
+    },
+    {
+      "path": "docs/map/graph.md",
+      "sha256": "247fdb018ba94526ccae70ee5c0ce41b4d13fc87895d2a12678e36881df2e65d"
+    },
+    {
+      "path": "docs/map/index.md",
+      "sha256": "74542a42b300c4d55d509522ba493cada2ae5c763be37f2b8a22cc1522d05d49"
+    },
+    {
+      "path": "docs/map/review.md",
+      "sha256": "d2ac525b5ac7cb15c35d86aa7aee5106ca9a6bfb2b0ae94ce5b6d862a7dabec0"
+    },
+    {
+      "path": "extensions/pi.ts",
+      "sha256": "4745a31dedf4620759d8ca1b10cea5d31b6e171027311eb560f7b627bc2708e0"
+    },
+    {
+      "path": "install.py",
+      "sha256": "5edf12af861b5ac7249912b90c96523f1ff1dead27ca45a0463c1268eb18c555"
+    },
+    {
+      "path": "package.json",
+      "sha256": "18cd4dc7e24084d6f6cd23cf840a5359ca276dd16f2f059f342bfe5ec0bd1bd8"
+    },
+    {
+      "path": "proposals/RFC-20261125-03-bug-backflow-and-canonical-landing.md",
+      "sha256": "09bf46b0c3591e264b7228045ac4d50d655c66b6cf351df06468dd60a76d4c24"
+    },
+    {
+      "path": "rings/prd/reference.md",
+      "sha256": "2da6d68e20318897cd805825b49e486acd50187f656af28e35640218628608f8"
+    },
+    {
+      "path": "scripts/atlas_bug.py",
+      "sha256": "29cb9bd30a66af7647483c9b72fdbb0a96c8b019713dae7dfc0dec0f7fd2b1c1"
+    },
+    {
+      "path": "scripts/atlas_calibrate.py",
+      "sha256": "110043f885afb40569613f2feb1008d6d47ac8546ee86901d771d03fc8443931"
+    },
+    {
+      "path": "scripts/atlas_check.py",
+      "sha256": "1e95f379953c2b6ebbb0f0ef7800928343c2e2762f90ecff38d5e14b2b967036"
+    },
+    {
+      "path": "scripts/atlas_classify.py",
+      "sha256": "8609191236d9a9b50f01ef99bfea38dc51a896823ab42698157a2fdd695cad0e"
+    },
+    {
+      "path": "scripts/atlas_contracts.py",
+      "sha256": "34a67165b3ecf8ab22d75b77a059a3279eaa561bbfe27810a2bd305ef1a56fc2"
+    },
+    {
+      "path": "scripts/atlas_docs.py",
+      "sha256": "ae9a0638f1c83f88376eb87560f2f4e4338924ae3d99add0da5ba4b0cd19bb4d"
+    },
+    {
+      "path": "scripts/atlas_incident.py",
+      "sha256": "ba392a392538dadcd8499270b78b9985ec91a90dc278af5067452e861bd72cc2"
+    },
+    {
+      "path": "scripts/atlas_metrics.py",
+      "sha256": "2c30aaee85c7e972399442e760d66a28dc9fb37dea6876769590d323581e5262"
+    },
+    {
+      "path": "scripts/atlas_migrate.py",
+      "sha256": "92d538be959a0cb120330d24b5b1b3c1831254bcc2e79b2a110a9a01893c29e5"
+    },
+    {
+      "path": "scripts/atlas_review.py",
+      "sha256": "f24d312d297c8a50c0764cae3673d46f1451ad8a62e0670655df2190361ff928"
+    },
+    {
+      "path": "scripts/atlas_topology.py",
+      "sha256": "b56005dd68a23dca7c63bf0a6c52c3fc50d2a5b112fbfec0547bd319ba04c338"
+    },
+    {
+      "path": "scripts/atlas_workflow.py",
+      "sha256": "8d2e8131e6145a2bce64ca3dc0b4c300773f48b24fe7b494891f0265b7541071"
+    },
+    {
+      "path": "scripts/cli_review_convert.py",
+      "sha256": "8c10bdd4414fe228c122b447fa84564d64b544c966a31510dcba94f1753310ed"
+    },
+    {
+      "path": "scripts/refresh_structure.py",
+      "sha256": "f055a132e9c6080ab0a303e26bdf6d05832aedfd6ffc5fe3cd47b39cae713c90"
+    },
+    {
+      "path": "scripts/review_scope.py",
+      "sha256": "df4f33e93090548a560bc126bee2c749e607c716ca969e8c00880ef3758754f8"
+    },
+    {
+      "path": "scripts/verify_receipt.py",
+      "sha256": "c243f1642c76d4556faaff55e9b3a4363cbe13cc60bdd50d45e68dee58e2e315"
+    },
+    {
+      "path": "scripts/write_claim.py",
+      "sha256": "fbb963974a81a9ab48a497959ad850f1bdeecb69e75a190f544ee1ca50aa2653"
+    },
+    {
+      "path": "shared/closeout.md",
+      "sha256": "c9d38f18947deee6bbebe952fc76b8aeda7896dee8cfd871a3d7a9c970d4718d"
+    },
+    {
+      "path": "shared/gates.md",
+      "sha256": "022b9cb7749e9e5a85f2b40862815c7705d46990b75db52e3a3e3b93af473757"
+    },
+    {
+      "path": "shared/layout.md",
+      "sha256": "c46b096149e43ee4b25aa94b80de603091a41f6e6138e1737a16540a58081e6b"
+    },
+    {
+      "path": "shared/schemas/docs-governance-event.json",
+      "sha256": "99534fb63e82bc97d8fd50e357b4b1e9979e5f37b9fbfeefe95f1ab6bcea633c"
+    },
+    {
+      "path": "shared/schemas/docs-governance.json",
+      "sha256": "431b5cf592d6d5be9be022622224db6f086f080944cf8abfc8f222c110576920"
+    },
+    {
+      "path": "shared/schemas/governance-common.json",
+      "sha256": "2fdcb2a726b41e2622748ad5a61b974ddfbc0850953c40e4465aae6bdf87c006"
+    },
+    {
+      "path": "shared/schemas/heldout-spec.json",
+      "sha256": "77ac0da783c9eeb6948053cbc79f15600bfe4ac14c792843271ef57ad93d6dd5"
+    },
+    {
+      "path": "shared/schemas/incident-timeline-event.json",
+      "sha256": "47fd338f7cf2dca953d66d6cc4dc0496d2f8b24eb7cc39957eb855b7af5d944e"
+    },
+    {
+      "path": "shared/schemas/incident.json",
+      "sha256": "5e0169f3411b1c55b083c761e0186eca50865b8187145f9bf0abad05889ff22e"
+    },
+    {
+      "path": "shared/schemas/runtime-topology.json",
+      "sha256": "822b51d0df5976793566fbf6b931ca8ce59ac392a45a8e085cc2a6f00d92af1c"
+    },
+    {
+      "path": "shared/schemas/semantic-contracts.json",
+      "sha256": "565407ba34e71b454f93ea55dc9d5328814abe894d2d75af7d3e7ed78fe95a67"
+    },
+    {
+      "path": "shared/schemas/semantic-expected.json",
+      "sha256": "798a109fe25e4c6fcd181a67e25565b1ebe4b43201b065361d15e5f43e9c0d49"
+    },
+    {
+      "path": "shared/schemas/semantic-graph.json",
+      "sha256": "71aff154df98f2a45f4160278d8765b67dc461c0cd1a681667d72f9b21e43585"
+    },
+    {
+      "path": "shared/schemas/semantic-observed.json",
+      "sha256": "ac474b5e5e451cf108e08db7540b8417f258126640958323ba55353256bb9c97"
+    },
+    {
+      "path": "shared/schemas/workflow-receipt.json",
+      "sha256": "f3f42d1efe54e946d6a382a8956c83139b98880974fb4d281e093da97965e942"
+    },
+    {
+      "path": "shared/single-source.md",
+      "sha256": "da81e5fab1d9421f33d0f1b239644bd08712902e0eb024916feda6ec9e4b5302"
+    },
+    {
+      "path": "shared/stack-profile.md",
+      "sha256": "8a92262e45f7ed4bf907f87f804b8766f401427a777fc9c9edf4c608b9249565"
+    },
+    {
+      "path": "skills/atlas-bug/SKILL.md",
+      "sha256": "013014cef7471cc0a0326f5a3604227b8ada51ec620d6e9f586f49ce66af9cbc"
+    },
+    {
+      "path": "templates/bug/record.schema.json",
+      "sha256": "4051a2532797c44676f897f6236e8e516d3f766eba52492a7d55be864d9210c9"
+    },
+    {
+      "path": "templates/stack-profile.yaml",
+      "sha256": "d163c51b97dc3a94d37fbca13cc2dd2e82500105b2547da6a3c8731b5ab9ce2a"
+    },
+    {
+      "path": "tests/fixtures/governance/corpus-manifest.json",
+      "sha256": "35363df84f1245e82f4b6a84c573be17dc500fb0977960b1290fe1770a799cf6"
+    },
+    {
+      "path": "tests/fixtures/governance/corpus.json",
+      "sha256": "45c6f3412af490f227bad52e39bb256d1292fa681a3077bcf43a7139594f7cee"
+    },
+    {
+      "path": "tests/test_ablate_all.py",
+      "sha256": "5f4458ab1ba9f877cab2c1aa5d4baee946e7a2a8148d19dc66143bb913936472"
+    },
+    {
+      "path": "tests/test_assembly_surface.py",
+      "sha256": "f491154775c8b73abd70528ef8ddd5bba26b117d424d526bb5647625fe0fe4e0"
+    },
+    {
+      "path": "tests/test_atlas_review.py",
+      "sha256": "ae2abeff94a32ca55640c20facef50e466ed5921a300586df026ef5afa0a4958"
+    },
+    {
+      "path": "tests/test_atlas_workflow.py",
+      "sha256": "98d753199d42f5bf823c03eaafd41ef84a7f8059e36c369d7f3c01e1f2c5c145"
+    },
+    {
+      "path": "tests/test_bug_backflow.py",
+      "sha256": "f833dd227929bbd967cc453e96b242103bc7636ffd26324d39681ec7f97bafb8"
+    },
+    {
+      "path": "tests/test_bug_record_schema.py",
+      "sha256": "44e9330cd057f12c7ad5ad3e242dcaadb33a941b5e95eb7e2f2dadf01bbaaab3"
+    },
+    {
+      "path": "tests/test_bug_workflow_integration.py",
+      "sha256": "284ed180e324ce2d73a42abce4621bb9b25d7a3255de5a6496008389a22cecfe"
+    },
+    {
+      "path": "tests/test_canonical_consistency.py",
+      "sha256": "fe4b5cad0df8dde635b6add1c2740e768613db14b4f81ef5bfef42a1834686c9"
+    },
+    {
+      "path": "tests/test_docs_governance.py",
+      "sha256": "06b428d531fe3d1370872a96ba29ca96bc07d0967abe778bcef23ab1dfef1231"
+    },
+    {
+      "path": "tests/test_governance_calibration.py",
+      "sha256": "7f0bdd0f129a600903d1379e2470d5652bcd115d3535ff9285df3a609404468e"
+    },
+    {
+      "path": "tests/test_governance_contracts.py",
+      "sha256": "d72517067f1f7b0a74f7cc80c9dca0fa94cd80f26ed024f82faf676320d7e4ed"
+    },
+    {
+      "path": "tests/test_governance_wiring.py",
+      "sha256": "42151cb66f5b770e7c13c657450d6d857cc63dd8e008211130babdd5ba3a9c25"
+    },
+    {
+      "path": "tests/test_incident.py",
+      "sha256": "93e79b85276a3dbbae8610ce52825452db4c89f85e6f424722cf34b76ed8d980"
+    },
+    {
+      "path": "tests/test_install_selfcheck.py",
+      "sha256": "7d6db67f76e458442cf365b8c6dffbebdb359dd7ec00f0c80e274480eec295e4"
+    },
+    {
+      "path": "tests/test_legacy_migration.py",
+      "sha256": "9b5fb8616ef2907d327846f698c78636a7628b7da416f1e3b631dd41519c24b4"
+    },
+    {
+      "path": "tests/test_map_anchors.py",
+      "sha256": "295eb12adce978f59062345a31eca4168288a3386025d4f72a5c7fa3d6bcdb80"
+    },
+    {
+      "path": "tests/test_refresh_facts.py",
+      "sha256": "82fc3a0d4ca98f604187de87f955d2fb3d8d33eb65b911e62b93f190c5a98b11"
+    },
+    {
+      "path": "tests/test_review_scope.py",
+      "sha256": "1c728bee0e79ef65771a8ab7a7ff05e1040a1179a1baacbe127be92a0812449c"
+    },
+    {
+      "path": "tests/test_runtime_topology.py",
+      "sha256": "9bdd29f69498129fbee571c8f70526859102b168e9dce72d0433e067664556aa"
+    },
+    {
+      "path": "tests/test_semantic_contracts.py",
+      "sha256": "df3cb49a410bc10c9120cfa02dd160ba8d839d1dd810ff3ec5bbf720549d611f"
+    },
+    {
+      "path": "tests/test_validate_bug_ledger.py",
+      "sha256": "933403df053ebbb3881ce0de13acca3982451d05b0176f3928de7c7c6fb38b80"
+    },
+    {
+      "path": "tests/test_workflow_receipt.py",
+      "sha256": "7f0fb2625f7066b98abf0c5b2ad9a2fc6c475c75ae3804e9d07f7e4fa76b13c8"
+    },
+    {
+      "path": "tests/test_write_claim.py",
+      "sha256": "70f8f9074eb03beaa943b6fb3e403e9d350dc2034e05fb5b92bf243b58dfce93"
+    },
+    {
+      "path": "validators/validate_bug_ledger.py",
+      "sha256": "c6d0d94ecca123a2a866c43276b80c5fe65288e56ca73d76c664381f1277644a"
+    },
+    {
+      "path": "validators/validate_calibration.py",
+      "sha256": "fb66090a16a11cd765e42199e20ea30e5e49388d38082b7b176adc08475d737b"
+    },
+    {
+      "path": "validators/validate_contracts.py",
+      "sha256": "6e4fb71c6de3edddadc9ac8147fd9c0b26e55f6769f324f756fba781d77d9a8b"
+    },
+    {
+      "path": "validators/validate_docs_governance.py",
+      "sha256": "4c095bfd77ebee676f628c47b3cdf3b0e031b6f0900c670fd6ca47f2c984a8fd"
+    },
+    {
+      "path": "validators/validate_incident.py",
+      "sha256": "58409098116989f9ea4b38c20b4539d6c797b27e38c0388bdbc0af517a956d34"
+    },
+    {
+      "path": "validators/validate_migration.py",
+      "sha256": "d24c5551fcad4cd0927ff28a0b2a93a8485be6701ff68ccb98b13502f326889f"
+    },
+    {
+      "path": "validators/validate_receipt.py",
+      "sha256": "0b6a2bc655771e3a0d774cd138ee1bef8350e8faee2b3982319cd9fd7b272599"
+    },
+    {
+      "path": "validators/validate_runtime_topology.py",
+      "sha256": "5b4b0b685690347d59eabddbee4dd6e44432b77acacff8acc3bacd05f10d16c4"
+    }
+  ]
+}

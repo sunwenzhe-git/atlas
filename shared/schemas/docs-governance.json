@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "atlas:docs-governance:v1",
+  "title": "Atlas explicit document registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "documents"],
+  "$defs": {"relpath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*\\\\)(?!^[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$)).+"}},
+  "properties": {
+    "version": {"const": 1},
+    "documents": {
+      "type": "array", "uniqueItems": true, "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "path", "owner", "kind", "status", "reviewed_at", "review_due", "source_paths", "links"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^DOC-[A-Za-z0-9-]+$"},
+          "path": {"$ref": "#/$defs/relpath"},
+          "owner": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["readme", "guide", "operations", "architecture", "postmortem", "other"]},
+          "status": {"enum": ["active", "retired"]},
+          "reviewed_at": {"type": "string", "format": "date"},
+          "review_due": {"type": "string", "format": "date"},
+          "source_paths": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/relpath"}},
+          "links": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        }
+      }
+    }
+  }
+}

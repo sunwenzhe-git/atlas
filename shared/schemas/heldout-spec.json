@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "frozen_at": "2026-11-25",
+  "split": "held-out",
+  "tuning_allowed": false,
+  "domains": {
+    "semantic": ["ledger", "shipment", "billing", "warehouse", "identity", "notification", "audit", "settlement", "membership", "catalog", "payroll", "procurement", "ticket", "booking", "subscription", "inventory", "approval", "timesheet", "expense", "forecast"],
+    "docs": ["deployment", "rollback", "oncall", "backup", "restore", "upgrade", "observability", "tracing", "retention", "recovery", "capacity", "scheduler", "webhook", "migration", "integration", "release", "security", "compliance", "support", "troubleshooting"],
+    "incident": ["latency", "outage", "corruption", "saturation", "auth", "routing", "queue", "cache", "database", "gateway", "worker", "storage", "certificate", "clock", "memory", "disk", "network", "dependency", "replication", "deadlock"],
+    "topology": ["compose", "helm", "kong"],
+    "classification": ["initial", "change", "bug"]
+  },
+  "samples_per_positive_negative_pair": 20,
+  "classification_samples_per_class": 50,
+  "receipt_positive": 4,
+  "receipt_negative": 4
+}

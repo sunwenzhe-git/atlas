@@ -4,6 +4,10 @@
 
 ---
 
+## [Unreleased]
+
+- feat(governance): 落地 RFC-20261125-01 P0–P5 治理能力吸收——版本化 schema/黄金语料、OpenSpec/Trellis/legacy 代码优先迁移、Incident 与 Docs Governance、Compose/Helm/Kong Runtime Topology、Semantic expected/observed/graph 对账、base+staged binary patch+tree receipt 重放、分类置信度/校准/治理度量；全链路 shadow/enforce/off、UNVERIFIED/rc2、原子代际与回滚，M245–M251 假绿变异证明，双评审修后通过；默认保持 shadow，未获得真实项目域校准证据前不宣称 enforce。
+
 ## [v0.4.0-beta.11] - 2026-11-26
 
 - fix(workflow): 缺陷落点强制关联既有需求条款，校验器与 finish 拒绝已存在的 standalone 缺陷，避免 bug 被单独建成需求。

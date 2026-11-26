@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import os
 import re
 import subprocess
 import sys
@@ -44,6 +45,7 @@ from pathlib import Path
 if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _support.layout import LayoutError, load_layout  # noqa: E402
+from _support.governance_schema import load_schema, validate, validate_topology  # noqa: E402
 
 BEGIN = "<!-- atlas:facts:begin -->"
 END = "<!-- atlas:facts:end -->"
@@ -68,7 +70,8 @@ def clean_exempt_prefixes(root: Path) -> tuple[str, ...]:
         prefixes.add(p.relative_to(root).as_posix() + "/")
     return tuple(sorted(prefixes))
 # 适配器四类目（shared/stack-profile.md §3.3）：routes 全局跑一次，域级按 app 各跑一次
-ADAPTER_CATEGORIES = ("routes", "api", "models", "tests")
+ADAPTER_CATEGORIES = ("routes", "api", "models", "tests", "topology")
+GLOBAL_ADAPTER_CATEGORIES = frozenset({"routes"})
 # `.adapter-out/` 的**单一位点 = 项目根**（2026-10-15 统一，issue #8）。
 # 适配器产物 / 漂移标记 / 图谱新鲜度标记同址——设计档案 `docs/design/structure-ring.md`
 # 的目录树从一开始写的就是项目根，实现却漂到了 `.atlas/spec/structure/` 下 ⇒ 同名两处，
@@ -167,7 +170,10 @@ def render_tour(root: Path, meta: dict) -> tuple[str, str]:
            "## 全局事实（跨域）", "",
            "| 事实 | 出处 |", "|---|---|",
            "| 目录与模块地图 | `.atlas/spec/structure/global/directory-map.md` |",
-           "| 全站路由总表 | `.atlas/spec/structure/global/routes.md` |", "",
+           "| 全站路由总表 | `.atlas/spec/structure/global/routes.md` |"]
+    if (out_dir / "topology.json").is_file():
+        out.append("| Runtime Topology | `.atlas/spec/structure/global/runtime-topology.md`（来源：`.adapter-out/topology.json`） |")
+    out += ["",
            "## 域速查表", "",
            "| 域 | 中文名 | 涉及 app | 状态 |", "|---|---|---|---|"]
     for d in domains:
@@ -528,6 +534,17 @@ def render_models(base: Path, items: list[dict], apps: list[dict], domains: list
         record_drift(spath, sold, skeys, "models", results, sexisted)
 
 
+def validate_topology_artifact(root: Path) -> tuple[int, list[str]]:
+    path = adapter_out_dir(root) / "topology.json"
+    if not path.is_file():
+        return 0, []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return 2, [f"{path.relative_to(root)} 不可解析：{exc}"]
+    return 1, validate_topology(data)
+
+
 def load_adapters_profile(root: Path) -> dict[str, str | None]:
     """读 stack-profile 顶层 `adapters:` 段（`key: value|null`；契约 shared/stack-profile.md §3）。
 
@@ -573,6 +590,30 @@ def run_chain(root: Path, meta: dict) -> int:
     for cat, name in ((c, adapters.get(c)) for c in ADAPTER_CATEGORIES):
         if not name:
             continue
+        if cat == "topology":
+            command = [sys.executable, str(Path(__file__).with_name("atlas_topology.py")),
+                       "--root", str(root), "--mode", os.environ.get("ATLAS_TOPOLOGY_MODE", "shadow"),
+                       "refresh"]
+            existing = root / ".adapter-out/topology.json"
+            if existing.is_file():
+                try:
+                    inputs = json.loads(existing.read_text(encoding="utf-8")).get("inputs") or {}
+                    for key in ("project", "environment", "cluster", "release"):
+                        if inputs.get(key):
+                            command += [f"--{key}", str(inputs[key])]
+                    for pattern in inputs.get("scan_globs") or []:
+                        command += ["--scan-glob", str(pattern)]
+                    pointer = root / ".adapter-out/topology/manifest.json"
+                    if pointer.is_file():
+                        command += ["--adapter", str(json.loads(pointer.read_text(encoding="utf-8")).get("adapter", "all"))]
+                except (OSError, json.JSONDecodeError):
+                    pass
+            result = subprocess.run(command, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"ERROR: chain: topology refresh exit {result.returncode}：{(result.stderr or result.stdout).strip()}", file=sys.stderr)
+                return result.returncode
+            log("  chain topology → .adapter-out/topology.json（代际 manifest 已切换）")
+            continue
         # 解析顺序（契约 §3.3）：.atlas/adapters/<名> → .atlas/adapters/<名>.py → 目标项目根同名可执行
         script = root / ".atlas" / "adapters" / name
         script_py = Path(f"{script}.py")
@@ -587,8 +628,8 @@ def run_chain(root: Path, meta: dict) -> int:
             print(f"ERROR: chain: 适配器 {cat}={name!r} 解析失败（.atlas/adapters/<名>(.py) 与项目根皆缺）——"
                   "中止链条不进 refresh（先装配 .atlas/adapters）", file=sys.stderr)
             return 2
-        if cat == "routes":
-            targets: list[tuple[str | None, Path]] = [(None, out_dir / "routes.json")]
+        if cat in GLOBAL_ADAPTER_CATEGORIES:
+            targets: list[tuple[str | None, Path]] = [(None, out_dir / f"{cat}.json")]
         elif not apps:
             log(f"  chain: {cat} 有适配器但 apps 为空 ⇒ 无执行对象，跳过")
             continue
@@ -711,6 +752,12 @@ def main() -> int:
         rc = run_chain(root, meta)
         if rc != 0:
             return rc
+
+    topology_rc, topology_errors = validate_topology_artifact(root)
+    if topology_errors:
+        label = "FAIL" if topology_rc == 1 else "UNVERIFIED"
+        print(f"ERROR: topology artifact {label}：" + "；".join(topology_errors), file=sys.stderr)
+        return topology_rc
 
     # F27 单遍化：事实区先渲染落盘（apply 时），指针层（L2 链接表）后拼装
     # ⇒ 首建一遍即得完整 L2 链接表。已知语义：预算 die 时事实区已落盘（部分写盘态）。

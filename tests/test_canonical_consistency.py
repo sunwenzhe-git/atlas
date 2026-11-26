@@ -456,7 +456,9 @@ def check_pin_implementation() -> dict:
     if (PKG_ROOT / ".git").exists():
         out = subprocess.run(["git", "ls-files"], capture_output=True, text=True,
                              cwd=PKG_ROOT).stdout.splitlines()
-        rels = [r for r in out if r.strip()]
+        untracked = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"],
+                                   capture_output=True, text=True, cwd=PKG_ROOT).stdout.splitlines()
+        rels = [r for r in out + untracked if r.strip()]
     else:
         rels = [q.relative_to(PKG_ROOT).as_posix().replace("\\", "/")
                 for q in sorted(PKG_ROOT.rglob("*")) if q.is_file()]

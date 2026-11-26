@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "atlas:docs-governance-event:v1",
+  "title": "Atlas machine document review event",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "event_id", "ts", "actor", "doc_id", "kind", "evidence", "old", "new"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "event_id": {"type": "string", "minLength": 1},
+    "ts": {"type": "string", "format": "date-time"},
+    "actor": {"type": "string", "minLength": 1},
+    "doc_id": {"type": "string", "pattern": "^DOC-[A-Za-z0-9-]+$"},
+    "kind": {"enum": ["touch", "attestation"]},
+    "evidence": {"type": "string", "minLength": 1},
+    "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "old": {"$ref": "#/$defs/digests"}, "new": {"$ref": "#/$defs/digests"}
+  },
+  "allOf": [
+    {"if": {"properties": {"kind": {"const": "attestation"}}, "required": ["kind"]}, "then": {"required": ["evidence_sha256"]}}
+  ],
+  "$defs": {
+    "digests": {
+      "type": "object", "additionalProperties": false,
+      "required": ["document", "sources"],
+      "properties": {
+        "document": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sources": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+      }
+    }
+  }
+}

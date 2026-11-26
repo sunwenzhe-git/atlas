@@ -13,17 +13,28 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 from datetime import date
 from pathlib import Path
 
 from _support import review_scope_core as scope_core
 from _support.bug_backflow import validate_backflow
+from _support.docs_governance import DocsGovernanceError, check_docs_for_ids, docs_mode
+from _support.incident import IncidentError, configured_mode as incident_mode, validate_task_incidents
 from _support.layout import LayoutError, load_layout
+from _support.runtime_topology import TopologyError, refresh_topology, scope_topology_result, topology_mode
+from _support.semantic_contracts import SemanticError
+from _support.workflow_receipt import (
+    ReceiptError, _classification_result, _staged_scope_digest,
+    build_receipt, receipt_mode, validate_workflow_origin, verify_receipt,
+)
+from _support.governance_schema import canonical_digest
 from _support.workflow_plan import (
     ARCHIVE_DIR, REQUIREMENT_ITEMS_FILE, REQUIREMENT_TYPES, PlanError, is_archived_task_dir,
     load_tasks,
@@ -95,14 +106,14 @@ def staged_files(root: Path) -> list[str] | None:
     """
     try:
         pr = subprocess.run(
-            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACDMRT", "-z"],
             cwd=str(root), capture_output=True, text=True, timeout=15,
         )
     except (OSError, subprocess.SubprocessError):
         return None
     if pr.returncode != 0:
         return None
-    return [line.strip() for line in pr.stdout.splitlines() if line.strip()]
+    return [item for item in pr.stdout.split("\0") if item]
 
 
 def _scope_matches(root: Path, data: dict, *,
@@ -127,6 +138,8 @@ def _scope_matches(root: Path, data: dict, *,
     try:
         hash_source = scope.get("hash_source", "worktree")
         head_ref = "INDEX" if hash_source == "index" else scope.get("head")
+        if hash_source == "index" and _staged_scope_digest(root, staged) == scope.get("sha256"):
+            return True, ""
         manifest = scope_core.build_manifest(root, staged, head=head_ref,
                                              hash_source=hash_source)
     except Exception as exc:  # noqa: BLE001 —— 路径/状态异常一律视为不可封口
@@ -653,6 +666,16 @@ def requirement_closeout(root: Path, req_root_rel: str) -> dict:
     }
 
 
+def _refresh_staged_topology(root: Path, options: dict) -> dict:
+    with tempfile.TemporaryDirectory(prefix="atlas-finish-topology-") as temporary:
+        source_root = Path(temporary)
+        checked_out = subprocess.run(["git", "checkout-index", "--all", f"--prefix={source_root}/"],
+                                     cwd=root, capture_output=True, text=True, timeout=60)
+        if checked_out.returncode != 0:
+            raise TopologyError("staged index 不可物化：" + checked_out.stderr.strip())
+        return refresh_topology(root, source_root=source_root, **options)
+
+
 def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
     """完成单个任务的收口流转。"""
     root = root.resolve()
@@ -667,6 +690,8 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
 
     if not t_dir.is_dir():
         raise FinishError(f"任务目录不存在：{t_dir}", cause="no_task_card")
+    if receipt_mode(root) == "off":
+        raise FinishError("receipt off 模式下不能完成或归档任务", cause="receipt_unverified")
     if archive_month(t_dir, tasks_root, t_id) is None:
         archive_dest = tasks_root / ARCHIVE_DIR / date.today().strftime("%Y-%m") / t_id
         if archive_dest.exists():
@@ -704,6 +729,8 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
         if not passed:
             raise FinishError(f"任务 {t_id} 无法收口：{reason}", cause=cause)
         review_dir = reason
+    if force and receipt_mode(root) == "enforce":
+        raise FinishError("receipt enforce 模式下 --force 不能生成完成凭据", cause="review_not_passed")
 
     e2e = check_e2e_precondition(root, task)
     if e2e["status"] == "FAIL":
@@ -715,6 +742,185 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
     if structure["status"] == "FAIL":
         raise FinishError(f"任务 {t_id} 无法收口：{structure['reason']}",
                           cause="freshness_fail")
+
+    # P2 shadow 消费：仅 resolves_incidents/doc_ids 进入 scope；shadow 不阻断旧任务。
+    try:
+        incident_results = validate_task_incidents(
+            root, task, force=force,
+            mode="off" if incident_mode(root) == "off" else "enforce")
+        docs_result = (check_docs_for_ids(root, task.get("doc_ids") or [],
+                                          mode=docs_mode(root))
+                       if task.get("doc_ids") else None)
+        topology_options = {}
+        topology_path = root / ".adapter-out/topology.json"
+        if topology_path.is_file():
+            try:
+                topology_data = json.loads(topology_path.read_text(encoding="utf-8"))
+                topology_options = topology_data.get("inputs") or {}
+                if os.environ.get("ATLAS_TOPOLOGY_OWNER"):
+                    topology_options["owner"] = os.environ["ATLAS_TOPOLOGY_OWNER"]
+                if os.environ.get("ATLAS_TOPOLOGY_DUE"):
+                    topology_options["due"] = os.environ["ATLAS_TOPOLOGY_DUE"]
+                pointer_path = root / ".adapter-out/topology/manifest.json"
+                if pointer_path.is_file():
+                    topology_options.setdefault("adapter", json.loads(pointer_path.read_text()).get("adapter", "all"))
+            except (OSError, ValueError):
+                topology_options = {}
+        topology_options["mode"] = topology_mode(root)
+        topology_result = (_refresh_staged_topology(root, topology_options)
+                           if task.get("topology_required") else None)
+        if topology_result and topology_result.get("verdict") == "UNVERIFIED" \
+                and topology_result.get("cause") == "topology_unverified":
+            topology_data = json.loads((root / ".adapter-out/topology.json").read_text(encoding="utf-8"))
+            ok_staged, staged_output = _git_out(root, "diff", "--cached", "--name-only",
+                                                "--diff-filter=ACDMRT", "-z")
+            if ok_staged:
+                staged = [item for item in staged_output.split("\0") if item]
+            else:
+                staged = staged_files(root)
+                if staged is None:
+                    raise TopologyError("暂存面不可判定，不能降级动态拓扑 scope")
+            topology_result = scope_topology_result(topology_result, topology_data, staged)
+    except (IncidentError, DocsGovernanceError, TopologyError, OSError, ValueError) as exc:
+        raise FinishError(f"治理引用无法校验：{exc}", cause="environment") from exc
+    for governed in incident_results + ([docs_result] if docs_result else []) + ([topology_result] if topology_result else []):
+        if governed.get("rc") != 0:
+            cause = governed.get("cause")
+            if not cause and governed.get("verdict") == "UNVERIFIED":
+                cause = {"incident": "incident_unverified", "topology": "topology_unverified",
+                         "docs": "docs_unverified", "semantic": "contract_unverified",
+                         "classification": "calibration_unverified", "migration": "migration_unverified",
+                         "receipt": "receipt_unverified"}.get(governed.get("module"), "environment")
+            cause = cause or {
+                "incident": "incident_not_resolved", "topology": "topology_stale",
+                "docs": "docs_stale", "semantic": "contract_stale",
+            }.get(governed.get("module"), "environment")
+            raise FinishError(f"任务 {t_id} 无法收口：" + "; ".join(
+                item.get("message", "") for item in governed.get("findings", [])), cause=cause)
+
+    classification_result = None
+    calibrated = None
+    expected_digest = None
+    if task.get("classification_required"):
+        try:
+            classification_result = _classification_result(root, None)
+            expected_digest = task.get("classification_input_digest")
+            if classification_result["input_digest"] != expected_digest:
+                raise FinishError("任务分类结果 input_digest 与任务输入不符", cause="calibration_unverified")
+        except (ReceiptError, OSError, ValueError) as exc:
+            raise FinishError(f"任务 {t_id} 分类结果未通过：{exc}", cause="calibration_unverified") from exc
+        calibration_validator = Path(__file__).resolve().parents[1] / "validators" / "validate_calibration.py"
+        calibration_run = subprocess.run([sys.executable, str(calibration_validator), "--root", str(root), "--json"],
+                                         capture_output=True, text=True, timeout=60)
+        calibrated = json.loads(calibration_run.stdout)
+        if calibrated["rc"] != 0:
+            raise FinishError("分类校准未通过：" + "; ".join(f["message"] for f in calibrated["findings"]),
+                              cause=calibrated.get("cause") or "calibration_unverified")
+        if calibrated.get("decision") != "enforce":
+            raise FinishError("classification_required 只接受 enforce 校准决策", cause="calibration_unverified")
+        ledger = json.loads((root / ".atlas/runs/governance-calibration.json").read_text(encoding="utf-8"))
+        if classification_result["decision"] == "auto":
+            thresholds = ledger.get("thresholds") or {}
+            if classification_result.get("scorer_version") != ledger.get("threshold_selection", {}).get("scorer_version") \
+                    or classification_result.get("thresholds") != thresholds \
+                    or classification_result["score"] < thresholds.get("top1_score", 1) \
+                    or classification_result["margin"] < thresholds.get("margin", 1):
+                raise FinishError("任务分类 scorer/threshold/分数与校准账本不符", cause="calibration_unverified")
+
+    receipt_result = None
+    if receipt_mode(root) == "enforce":
+        try:
+            validate_workflow_origin(root, t_id,
+                                     (Path(review_dir) / "review.json").relative_to(root).as_posix())
+        except ReceiptError as exc:
+            raise FinishError(f"任务 {t_id} 缺有效 workflow verify 来源：{exc}", cause="review_not_passed") from exc
+        scope = ["workflow"]
+        governed_results = [{"module": "workflow", "verdict": "PASS", "rc": 0,
+                             "digest": canonical_digest({"review": review_dir})}]
+        module_modes = {"workflow": "enforce"}
+        if task.get("clause_ids"):
+            scope.append("semantic")
+            semantic_validator = Path(__file__).resolve().parents[1] / "validators" / "validate_contracts.py"
+            semantic_run = subprocess.run([sys.executable, str(semantic_validator), "--root", str(root), "--json"],
+                                          capture_output=True, text=True, timeout=180)
+            semantic = json.loads(semantic_run.stdout)
+            module_modes["semantic"] = semantic["mode"]
+            if semantic["rc"] != 0:
+                raise FinishError("Semantic 契约未通过：" + "; ".join(f["message"] for f in semantic["findings"]),
+                                  cause=semantic.get("cause") or "contract_unverified")
+            governed_results.append({key: semantic[key] for key in ("module", "verdict", "rc")} | {"digest": canonical_digest(semantic)})
+        if task.get("doc_ids"):
+            scope.append("docs")
+            module_modes["docs"] = docs_mode(root)
+        if task.get("resolves_incidents"):
+            scope.append("incident")
+            module_modes["incident"] = incident_mode(root)
+        if task.get("topology_required"):
+            scope.append("topology")
+            module_modes["topology"] = topology_mode(root)
+        if task.get("classification_required"):
+            scope.append("classification")
+            module_modes["classification"] = calibrated["decision"]
+            governed_results.append({key: calibrated[key] for key in ("module", "verdict", "rc")} | {"digest": canonical_digest(calibrated)})
+        if task.get("source_manifest"):
+            scope.append("migration")
+            migration_validator = Path(__file__).resolve().parents[1] / "validators" / "validate_migration.py"
+            migration_run = subprocess.run([sys.executable, str(migration_validator), "--root", str(root), "--json"],
+                                           capture_output=True, text=True, timeout=60)
+            migrated = json.loads(migration_run.stdout)
+            module_modes["migration"] = migrated["mode"]
+            if migrated["rc"] != 0:
+                raise FinishError("迁移证据未通过：" + "; ".join(f["message"] for f in migrated["findings"]),
+                                  cause=migrated.get("cause") or "migration_unverified")
+            governed_results.append({key: migrated[key] for key in ("module", "verdict", "rc")} | {"digest": canonical_digest(migrated)})
+        if incident_results:
+            incident_summary = {
+                "module": "incident",
+                "verdict": "PASS" if all(item["rc"] == 0 for item in incident_results) else "FAIL",
+                "rc": 0 if all(item["rc"] == 0 for item in incident_results) else next(
+                    item["rc"] for item in incident_results if item["rc"] != 0),
+                "digest": canonical_digest(incident_results),
+            }
+            governed_results.append(incident_summary)
+        governed_results += [{key: item[key] for key in ("module", "verdict", "rc")} | {"digest": canonical_digest(item)}
+                             for item in ([docs_result] if docs_result else []) + ([topology_result] if topology_result else [])]
+        if any(mode != "enforce" for mode in module_modes.values()):
+            blocked_module = next(name for name, mode in module_modes.items() if mode != "enforce")
+            cause = {"semantic": "contract_unverified", "incident": "incident_unverified",
+                     "docs": "docs_unverified", "topology": "topology_unverified",
+                     "classification": "calibration_unverified", "migration": "migration_unverified",
+                     "receipt": "receipt_unverified"}.get(blocked_module, "environment")
+            raise FinishError("receipt enforce 要求 in-scope 模块均为 enforce；当前 " + json.dumps(module_modes, sort_keys=True), cause=cause)
+        ok_base, base = _git_out(root, "rev-parse", "HEAD")
+        if not ok_base:
+            raise FinishError("receipt base HEAD 不可得", cause="environment")
+        try:
+            receipt = build_receipt(root=root, unit=t_id, task_id=t_id, base=base,
+                                    validators=governed_results, in_scope_modules=scope,
+                                    module_modes=module_modes,
+                                    review_path=(Path(review_dir).absolute().relative_to(root).as_posix() + "/review.json"),
+                                    requirement_id=task.get("requirement_root"), clause_ids=task.get("clause_ids") or [],
+                                    incident_ids=task.get("incident_ids") or [], resolves_incidents=task.get("resolves_incidents") or [],
+                                    doc_ids=task.get("doc_ids") or [], topology_refs=task.get("topology_refs") or [],
+                                    topology_required=bool(task.get("topology_required")), migration_required=bool(task.get("source_manifest")),
+                                    classification_required=bool(task.get("classification_required")),
+                                    classification_result=classification_result,
+                                    classification_input_digest=expected_digest,
+                                    review_origin="workflow", force=False)
+            receipt_result = verify_receipt(root, mode="enforce", check_current_tree=True,
+                                            expected_unit=t_id, expected_task_id=t_id,
+                                            expected_validator_digests={item["module"]: item["digest"] for item in governed_results})
+            if receipt_result["rc"] != 0:
+                raise FinishError("；".join(item["message"] for item in receipt_result["findings"]),
+                                  cause=receipt_result.get("cause") or "receipt_unverified")
+        except FinishError:
+            raise
+        except ReceiptError as exc:
+            raise FinishError(f"receipt 验证失败：{exc}", cause="receipt_stale") from exc
+        except SemanticError as exc:
+            raise FinishError(f"receipt Semantic 验证失败：{exc}", cause="contract_unverified") from exc
+        except (OSError, ValueError) as exc:
+            raise FinishError(f"receipt 验证失败：{exc}", cause="environment") from exc
 
     # 更新 task.json 状态为 completed（E2E 前置结论一并落盘，issue #69）
     task_json_file = t_dir / "task.json"
@@ -729,6 +935,8 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
     meta["status"] = "completed"
     meta["e2e_precondition"] = e2e
     meta["structure_freshness"] = structure
+    meta["governance_precondition"] = {"incidents": incident_results, "docs": docs_result,
+                                       "topology": topology_result, "receipt": receipt_result}
     atomic_write_json(task_json_file, meta)
 
     # 归档（issue #70）：completed 任务移出活跃区；幂等，失败显式报错
@@ -761,6 +969,8 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
         },
         "e2e_precondition": e2e,
         "structure_freshness": structure,
+        "governance_precondition": {"incidents": incident_results, "docs": docs_result,
+                                    "topology": topology_result, "receipt": receipt_result},
         "deferred_registration": deferred_info,
         "archived": archived,
     }

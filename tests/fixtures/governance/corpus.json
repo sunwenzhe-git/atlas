@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "semantic": [
+    {"id": "SEM-P-01", "expected": {"kind": "field", "name": "detailUrl", "type": "string", "required": true}, "observed": {"kind": "field", "name": "detailUrl", "type": "string", "required": true}, "verdict": "PASS"},
+    {"id": "SEM-N-01", "expected": {"kind": "field", "name": "detailUrl", "type": "string", "required": true}, "observed": {"kind": "field", "name": "detail", "type": "object", "required": true}, "verdict": "FAIL"},
+    {"id": "SEM-P-02", "expected": {"kind": "enum", "name": "SearchStatus", "values": ["NEW", "PAID"]}, "observed": {"kind": "enum", "name": "SearchStatus", "values": ["NEW", "PAID"]}, "verdict": "PASS"},
+    {"id": "SEM-N-02", "expected": {"kind": "enum", "name": "SearchStatus", "values": ["NEW", "PAID"]}, "observed": {"kind": "enum", "name": "SearchStatus", "values": ["NEW", "PAID", "CANCELLED"]}, "verdict": "FAIL"},
+    {"id": "SEM-P-03", "expected": {"kind": "testid", "value": "search-result"}, "observed": {"kind": "testid", "value": "search-result"}, "verdict": "PASS"},
+    {"id": "SEM-N-03", "expected": {"kind": "testid", "value": "search-result"}, "observed": null, "verdict": "UNVERIFIED"}
+  ],
+  "topology": {
+    "compose": "services:\n  api:\n    image: demo/api:1\n    ports:\n      - \"8080:8080\"\n    depends_on:\n      - db\n  db:\n    image: postgres:16\n",
+    "helm": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\nspec:\n  template:\n    spec:\n      containers:\n        - name: api\n          image: demo/api:1\n          ports:\n            - containerPort: 8080\n",
+    "kong": "_format_version: \"3.0\"\nservices:\n  - name: api\n    url: http://api:8080\nroutes:\n  - name: search\n    paths:\n      - /search\n    service:\n      name: api\n",
+    "dynamic": "services:\n  api:\n    image: ${IMAGE}\n    ports:\n      - \"${PORT}:8080\"\n"
+  }
+}

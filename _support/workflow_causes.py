@@ -49,9 +49,24 @@ CAUSES: dict[str, bool] = {
     "e2e_red": True,                 # finish：E2E 关联用例 red（agent-pointer 口径）
     "mechanism_undeclared": True,    # verify：机制篇触及未跟改未申报（RFC-20261123-01）
     "mechanism_paths_invalid": True,  # verify：机制篇 mechanism-paths 词表非法（RFC-20261123-01）
+    "migration_integrity": True,
+    "contract_stale": True,
+    "incident_evidence_missing": True,
+    "incident_not_resolved": True,
+    "docs_stale": True,
+    "docs_owner_missing": True,
+    "topology_stale": True,
+    "receipt_stale": True,
     "bug_backflow_stale": True,       # finish：缺陷实现 diff 或回推产物已变化
     "bug_backflow_invalid": True,     # finish：缺陷台账/schema/决策/审查锚非法
     # 不扣预算：前置态 / 顺序 / 环境 / 留痕
+    "migration_unverified": False,
+    "contract_unverified": False,
+    "incident_unverified": False,
+    "docs_unverified": False,
+    "topology_unverified": False,
+    "receipt_unverified": False,
+    "calibration_unverified": False,
     "staged_empty": False,           # verify：实现未暂存（前置态）
     "bug_backflow_missing": False,    # finish：缺陷未执行 atlas bug / 缺台账
     "bug_backflow_pending": False,    # finish：回推待完成或待签字

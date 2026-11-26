@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "input": "RFC-20261125-01-P2-r5",
+  "algorithm": "SHA256(concat(path + NUL + bytes + NUL))",
+  "sha256": "2162c2611294182596a49ae563ee8d77768736685cb2fb7249c65eac08d67bfc",
+  "files": [
+    {
+      "path": "_support/incident.py",
+      "sha256": "7fd32bf99584ff6cb627b12094f982e9f7f79efbb825b9bd7be61dd38a9ee491"
+    },
+    {
+      "path": "_support/docs_governance.py",
+      "sha256": "8bc8fb38d3dcafafa9d82b91e71b62feb464a9888385f73761628560739bfe88"
+    },
+    {
+      "path": "scripts/atlas_incident.py",
+      "sha256": "ba392a392538dadcd8499270b78b9985ec91a90dc278af5067452e861bd72cc2"
+    },
+    {
+      "path": "scripts/atlas_docs.py",
+      "sha256": "d9ca708808f9cf185ca4a95075eaa70091b00cdb0c10931d775494c497eb8068"
+    },
+    {
+      "path": "validators/validate_incident.py",
+      "sha256": "7909e1b82b8896298a5eb970362739361ab1a291a55c3c3435813d98b4c63539"
+    },
+    {
+      "path": "validators/validate_docs_governance.py",
+      "sha256": "4c095bfd77ebee676f628c47b3cdf3b0e031b6f0900c670fd6ca47f2c984a8fd"
+    },
+    {
+      "path": "tests/test_incident.py",
+      "sha256": "9a7bcf172d253b3d6867e1e3865d2267b62ee8e22e66f14678595cf674e3973f"
+    },
+    {
+      "path": "tests/test_docs_governance.py",
+      "sha256": "a4059d5faecb73aafd30b18765c709575de7de9741147f704194f233020e0752"
+    },
+    {
+      "path": "tests/test_governance_wiring.py",
+      "sha256": "032b5752ad0d0f42e45e0c059cc28273e6f2245a2c7c636693a71a1c07b1a21c"
+    },
+    {
+      "path": "_support/workflow_finish.py",
+      "sha256": "adcee8abef7ef6f4d8ba35182fe5e8809f5ca1d6288b589882f03bb5510ef9a0"
+    },
+    {
+      "path": "scripts/atlas_check.py",
+      "sha256": "3d8747e9d1e2aad823a53e57a8b581106555f89235891adfc494c760a6dbb82b"
+    },
+    {
+      "path": "bin/atlas.js",
+      "sha256": "f56320bca1ef24427303cc543e97d850e67aefacb52b16e492bdb2f7a8e26a64"
+    },
+    {
+      "path": "install.py",
+      "sha256": "128b7a71605b54702f8c4bb41e352d90d415e2c66f441e7ef8ba779fa950f932"
+    },
+    {
+      "path": "shared/gates.md",
+      "sha256": "6978e2fe447c1751f27a405ed2889f6b97bdcdceeefa816948a77a60b8f48a4d"
+    },
+    {
+      "path": "shared/schemas/governance-common.json",
+      "sha256": "9c35fb5f29b6282c221e300fa7a29acc8042ae69959035b59efe207f2e80e347"
+    },
+    {
+      "path": "shared/schemas/incident.json",
+      "sha256": "5e0169f3411b1c55b083c761e0186eca50865b8187145f9bf0abad05889ff22e"
+    },
+    {
+      "path": "shared/schemas/incident-timeline-event.json",
+      "sha256": "47fd338f7cf2dca953d66d6cc4dc0496d2f8b24eb7cc39957eb855b7af5d944e"
+    },
+    {
+      "path": "shared/schemas/docs-governance.json",
+      "sha256": "431b5cf592d6d5be9be022622224db6f086f080944cf8abfc8f222c110576920"
+    },
+    {
+      "path": "shared/schemas/docs-governance-event.json",
+      "sha256": "99534fb63e82bc97d8fd50e357b4b1e9979e5f37b9fbfeefe95f1ab6bcea633c"
+    },
+    {
+      "path": ".atlas/runs/mutation-proof/M246.txt",
+      "sha256": "985c472d907c86165912d874a4e3c7f3facfca7fbf65f6b55877a488c20f5dc1"
+    },
+    {
+      "path": ".atlas/runs/mutation-proof/M247.txt",
+      "sha256": "0f86041f658e3fc2b13fd0c0b93f5b90ec9cef847207a41cdc56aa3f743441cb"
+    }
+  ]
+}

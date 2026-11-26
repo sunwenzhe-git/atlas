@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "atlas:incident:v1",
+  "title": "Atlas incident case",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "title", "status", "severity", "owner", "started_at", "detected_at", "environment", "services", "impact", "evidence", "hypotheses", "contributing_factors", "actions", "links", "previous_status"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^INC-[0-9]{8}-[0-9]{3}$"},
+    "title": {"type": "string", "minLength": 1},
+    "status": {"enum": ["detected", "contained", "resolved", "closed"]},
+    "severity": {"enum": ["SEV1", "SEV2", "SEV3", "SEV4"]},
+    "owner": {"type": "string", "minLength": 1},
+    "started_at": {"type": "string", "format": "date-time"},
+    "detected_at": {"type": "string", "format": "date-time"},
+    "resolved_at": {"type": ["string", "null"], "format": "date-time"},
+    "environment": {"type": "string", "minLength": 1},
+    "services": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "impact": {"type": "string", "minLength": 1},
+    "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}},
+    "hypotheses": {"type": "array", "items": {"$ref": "#/$defs/hypothesis"}},
+    "root_cause": {"$ref": "#/$defs/root_cause"},
+    "contributing_factors": {"type": "array", "items": {"type": "string"}},
+    "resolution": {"$ref": "#/$defs/resolution"},
+    "actions": {"type": "array", "items": {"$ref": "#/$defs/action"}},
+    "links": {"$ref": "#/$defs/links"},
+    "previous_status": {"enum": ["detected", "contained", "resolved", null]}
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type", "path", "sha256"],
+      "properties": {"id": {"type": "string", "minLength": 1}, "type": {"type": "string", "minLength": 1}, "path": {"type": "string", "minLength": 1}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+    },
+    "hypothesis": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "statement", "status", "evidence_refs"],
+      "properties": {"id": {"type": "string", "minLength": 1}, "statement": {"type": "string", "minLength": 1}, "status": {"enum": ["open", "supported", "rejected"]}, "evidence_refs": {"type": "array", "items": {"type": "string"}}}
+    },
+    "root_cause": {
+      "type": ["object", "null"], "additionalProperties": false,
+      "required": ["summary", "evidence_refs"],
+      "properties": {"summary": {"type": "string", "minLength": 1}, "evidence_refs": {"type": "array", "minItems": 1, "items": {"type": "string"}}}
+    },
+    "resolution": {
+      "type": ["object", "null"], "additionalProperties": false,
+      "required": ["summary", "verification_refs", "verified_by", "verified_at", "before", "after"],
+      "properties": {
+        "summary": {"type": "string", "minLength": 1},
+        "verification_refs": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "verified_by": {"type": "string", "minLength": 1},
+        "verified_at": {"type": "string", "format": "date-time"},
+        "before": {"type": "string", "minLength": 1}, "after": {"type": "string", "minLength": 1}
+      }
+    },
+    "action": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["id", "task_id"], "properties": {"id": {"type": "string", "minLength": 1}, "task_id": {"type": "string", "minLength": 1}}},
+        {"type": "object", "additionalProperties": false, "required": ["id", "owner", "due", "status", "waiver"], "properties": {"id": {"type": "string", "minLength": 1}, "owner": {"type": "string", "minLength": 1}, "due": {"type": "string", "format": "date"}, "status": {"enum": ["open", "done"]}, "waiver": {"type": ["string", "null"]}}}
+      ]
+    },
+    "links": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "task_ids", "review_refs", "spec_refs"],
+      "properties": {
+        "request_id": {"type": ["string", "null"]},
+        "task_ids": {"type": "array", "items": {"type": "string"}},
+        "review_refs": {"type": "array", "items": {"type": "string"}},
+        "spec_refs": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "event": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ts", "kind", "actor", "summary", "evidence_refs"],
+      "properties": {
+        "ts": {"type": "string", "format": "date-time"},
+        "kind": {"enum": ["evidence", "hypothesis", "action", "resolution", "status", "rollback"]},
+        "actor": {"type": "string", "minLength": 1},
+        "summary": {"type": "string", "minLength": 1},
+        "evidence_refs": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"status": {"enum": ["resolved", "closed"]}}, "required": ["status"]}, "then": {"required": ["root_cause", "resolution", "resolved_at"], "properties": {"root_cause": {"type": "object"}, "resolution": {"type": "object"}, "resolved_at": {"type": "string"}, "evidence": {"minItems": 1}}}},
+    {"if": {"properties": {"status": {"enum": ["detected", "contained"]}}, "required": ["status"]}, "then": {"properties": {"resolved_at": {"type": "null"}}}},
+    {"if": {"properties": {"status": {"const": "contained"}, "previous_status": {"const": "resolved"}}, "required": ["status", "previous_status"]}, "then": {"required": ["root_cause", "resolution"], "properties": {"root_cause": {"type": "object"}, "resolution": {"type": "object"}}}}
+  ]
+}

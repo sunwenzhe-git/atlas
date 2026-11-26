@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "atlas:semantic-contracts:v1",
+  "title": "Semantic three-store manifest",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "expected", "observed", "graph"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "expected": {"type": "object", "additionalProperties": false, "required": ["path", "digest"], "properties": {"path": {"const": "expected.json"}, "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}},
+    "observed": {"type": "object", "additionalProperties": false, "required": ["path", "digest"], "properties": {"path": {"const": "observed.json"}, "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}},
+    "graph": {"type": "object", "additionalProperties": false, "required": ["path", "digest"], "properties": {"path": {"const": "graph.json"}, "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}
+  }
+}

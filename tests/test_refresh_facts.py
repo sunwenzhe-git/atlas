@@ -458,6 +458,61 @@ def test_chain_runs_adapters_then_refresh_in_one_pass() -> None:
         assert "current/home/apis.md" in dom, dom
 
 
+def test_topology_is_global_chain_category_and_renders_fixed_path() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build(root)
+        write_profile(root, "product: demo\napps: []\nadapters:\n  topology: runtime_topology\n")
+        (root / "compose.yaml").write_text("services:\n  api:\n    image: demo/api:1\n", encoding="utf-8")
+        result = run(root, "--chain")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (root / ".adapter-out" / "topology.json").is_file()
+        assert (root / ".adapter-out" / "topology" / "manifest.json").is_file()
+        rendered = root / ".atlas" / "spec" / "structure" / "global" / "runtime-topology.md"
+        assert ":none:api" in rendered.read_text(encoding="utf-8")
+        before = rendered.read_bytes()
+        assert run(root, "--apply").returncode == 0
+        assert rendered.read_bytes() == before
+        from _support.runtime_topology import check_topology
+        assert check_topology(root, mode="enforce")["verdict"] == "PASS"
+        custom = subprocess.run([sys.executable, str(PKG_ROOT / "scripts/atlas_topology.py"),
+                                 "--root", str(root), "--mode", "enforce", "refresh",
+                                 "--project", "custom", "--environment", "prod", "--cluster", "cluster",
+                                 "--release", "release", "--scan-glob", "compose.yaml"],
+                                capture_output=True, text=True)
+        assert custom.returncode == 0, custom.stdout + custom.stderr
+        before_inputs = json.loads((root / ".adapter-out/topology.json").read_text())["inputs"]
+        assert run(root, "--chain").returncode == 0
+        assert json.loads((root / ".adapter-out/topology.json").read_text())["inputs"] == before_inputs
+        artifact = root / ".adapter-out" / "topology.json"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        data["items"][0]["id"] = "wrong"
+        artifact.write_text(json.dumps(data), encoding="utf-8")
+        invalid = run(root, "--apply")
+        assert invalid.returncode == 1 and "FAIL" in invalid.stderr
+        artifact.write_text("{broken", encoding="utf-8")
+        unverified = run(root, "--apply")
+        assert unverified.returncode == 2 and "UNVERIFIED" in unverified.stderr
+
+
+def test_chain_requires_fresh_dynamic_exemption_instead_of_inheriting(tmp_path, monkeypatch):
+    root = tmp_path
+    build(root)
+    write_profile(root, "product: demo\napps: []\nadapters:\n  topology: runtime_topology\n")
+    (root / "compose.yaml").write_text(
+        "services:\n  api:\n    image: '{{ .Values.image }}'\n", encoding="utf-8")
+    monkeypatch.delenv("ATLAS_TOPOLOGY_OWNER", raising=False)
+    monkeypatch.delenv("ATLAS_TOPOLOGY_DUE", raising=False)
+    rejected = run(root, "--chain")
+    assert rejected.returncode == 0
+    assert not (root / ".adapter-out/topology.json").exists()
+    monkeypatch.setenv("ATLAS_TOPOLOGY_OWNER", "platform")
+    monkeypatch.setenv("ATLAS_TOPOLOGY_DUE", "2099-12-31")
+    accepted = run(root, "--chain")
+    assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+    assert (root / ".adapter-out/topology.json").is_file()
+
+
 def test_chain_failure_aborts_before_refresh() -> None:
     """F25 失败语义（拍板）：任一适配器非零退出 ⇒ 中止链条不进 refresh，exit 2；
     中止前已落盘产物 = 上一轮一致态，残留无害。"""

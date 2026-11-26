@@ -39,7 +39,7 @@
 
 ### 5. cgc 兼容 shim(过渡件)
 
-`callers`(`adapters/_graph.py:240`)双轨:PATH 有 cgc 走旧 CALLS 查询,否则 FRAS 反查。`GRAPH_BACKENDS`(`adapters/_graph.py:29`)词表常量保留防外部加载断裂;`freshness_key`(`adapters/_graph.py:151`)仅 shim 路径消费。退役的是依赖,不是兼容。
+`callers`(`adapters/_graph.py:240`)双轨:PATH 有 cgc 走旧 CALLS 查询,否则 FRAS 反查。`GRAPH_BACKENDS`(`adapters/_graph.py:29`)词表常量保留防外部加载断裂;`freshness_key`(`adapters/_graph.py:29`)仅 shim 路径消费。退役的是依赖,不是兼容。
 
 ## 对外接口(谁咬它)
 

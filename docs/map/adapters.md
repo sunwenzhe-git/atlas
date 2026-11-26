@@ -1,7 +1,7 @@
 # L1 · 结构抽取适配器子系统
 
 > 子系统 #3 / 上级地图:[index.md](index.md) / 锚定版本:见 index.md 数字快照(2026-10-25 复核)
-> 一句话:**从业务代码确定性抽取路由 / API / 模型 / 测试四类事实**,渲染进结构事实区;只读、幂等、失败零部分产物,是实然侧的唯一入口。
+> 一句话:**从业务代码确定性抽取路由 / API / 模型 / 测试事实与 Runtime Topology**,渲染进结构事实区;只读、幂等、失败零部分产物,是实然侧的唯一入口。
 
 ## 它不是什么
 
@@ -15,14 +15,14 @@
 |---|---|---|
 | `adapters/routes.py` | 797 | 路由适配器:文件式路由 + `pyxle_route`(`adapters/routes.py:124`)的 JSX `<Route>` 两种形态,`load_apps`(`adapters/routes.py:75`)解析 apps 段并合成挂载前缀 |
 | `adapters/api.py` | 611 | API 适配器:OpenAPI/Swagger 描述文件(`DESCRIPTOR_FILES`,`adapters/api.py:46`)+ 运行时 schema 构造调用判定(AST)+ Python/JS/Java Spring/NestJS-Midway/Go 路由双通道 |
-| `adapters/models.py` | 766 | 模型适配器:AST 解析(`_index_columns`,`adapters/models.py:115`),SQLModel 继承/TS/JPA/MyBatis-Plus(走 `_jpa.py`)/Go struct |
+| `adapters/models.py` | 769 | 模型适配器:AST 解析(`_index_columns`,`adapters/models.py:155`),SQLModel 继承/TS/JPA/MyBatis-Plus(走 `_jpa.py`)/Go struct |
 | `adapters/tests.py` | 219 | 测试盘点适配器:`PY_TEST_RE` / `JS_TEST_RE` / `JAVA_TEST_RE` / `GO_TEST_RE`(`adapters/tests.py:38`)识别 pytest / Playwright / Vitest / JUnit / Go 与 Maven/Gradle/Go 运行命令 |
 | `adapters/_jpa.py` | 313 | JPA 跨文件类图:`@MappedSuperclass` 继承合并 + `@Embeddable` 内嵌字段展开(不猜命名策略) |
 | `adapters/_lib.py` | 278 | 适配器共享件:文件遍历 / apps 解析 / `write_json`(`adapters/_lib.py:230`)落盘约定 |
 | `adapters/_scaffold.py` | 80 | 新适配器脚手架:`CATEGORY`(`adapters/_scaffold.py:25`)占位待改 |
-| `scripts/refresh_structure.py` | 831 | 事实渲染器:适配器产物 → `atlas:facts` 标记区 |
+| `scripts/refresh_structure.py` | 878 | 事实渲染器:适配器产物 → `atlas:facts` 标记区 |
 
-### Adopt 专用静态解析器（不属四类结构事实）
+### Adopt 专用静态解析器（不属 structure adapter category）
 
 `RFC-20261119-03` Phase 3 新增，由 `scripts/adopt_static.py` 直接调用，**不注册 `refresh_structure` 的 `ADAPTER_CATEGORIES`**，产物只落 `.adapter-out/adopt/`：
 
@@ -40,7 +40,7 @@
 
 ### 2. 事实渲染:标记区内键级重写(`scripts/refresh_structure.py`)
 
-`BEGIN` / `END`(`scripts/refresh_structure.py:45`)框出 `atlas:facts` 标记区:区内键级单元格按适配器产物重写,区外语义内容原样保留;旧行按行键对齐(`old_rows_by_key`,`scripts/refresh_structure.py:226`),三张表头(`ROUTES_HEADER`,`scripts/refresh_structure.py:217`)对 routes / api / models 各定义列序。默认 dry-run,`--apply` 写盘;预算按每域 L1+L2 ≤ `DEFAULT_MAX_TOTAL`(`scripts/refresh_structure.py:48`,9500 字符)校验。单遍化(F27):事实区先行落盘、指针层后拼装,首遍 `--apply` 即完整。
+`BEGIN` / `END`(`scripts/refresh_structure.py:49`)框出 `atlas:facts` 标记区:区内键级单元格按适配器产物重写,区外语义内容原样保留;旧行按行键对齐(`old_rows_by_key`,`scripts/refresh_structure.py:235`),三张表头(`ROUTES_HEADER`,`scripts/refresh_structure.py:235`)对 routes / api / models 各定义列序。默认 dry-run,`--apply` 写盘;预算按每域 L1+L2 ≤ `DEFAULT_MAX_TOTAL`(`scripts/refresh_structure.py:48`,9500 字符)校验。单遍化(F27):事实区先行落盘、指针层后拼装,首遍 `--apply` 即完整。
 
 ### 3. 键级漂移检测
 
@@ -81,6 +81,6 @@
 
 ## 讲述时的三个抓手
 
-1. **实然侧只有这一个入口**:业务代码 → 事实的全部通道在这四件里,口径统一、失败响亮。
+1. **实然侧只有这一个入口**:业务代码 → 事实的通道在 scripts/adapters 族与 topology 适配器族里,口径统一、失败响亮。
 2. **发现与可见分层**:漂移由适配器发现、由门可见——每个部件只做自己那层。
 3. **基线是诚实 ratchet**:四前置挡住「拿未审代码给自己背书」,自进不是自动放行。

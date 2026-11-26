@@ -24,11 +24,14 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 
@@ -55,8 +58,9 @@ from _support.workflow_finish import (  # noqa: E402
     finish_task, check_task_review_passed, FinishError, archive_task, archive_month,
     scan_review_rounds, deferred_open_count
 )
+from _support.workflow_receipt import create_workflow_origin
 from _support.workflow_causes import (  # noqa: E402
-    EXIT_BUDGET, FALLBACK_CAUSE, charged_count, exit_code_for, load_attempts,
+    EXIT_BUDGET, EXIT_USAGE, FALLBACK_CAUSE, charged_count, exit_code_for, load_attempts,
     max_verify_attempts, record_attempt
 )
 from _support.workflow_context import select_specs, render_specs  # noqa: E402
@@ -346,6 +350,30 @@ def _mech_verdict_lines(violations: list[dict]) -> list[str]:
     return lines
 
 
+def _topology_precheck_needed(root: Path, topology: dict, staged: list[str]) -> bool:
+    from _support.runtime_topology import scan_sources
+    scan_globs = topology.get("inputs", {}).get("scan_globs") or []
+    current, errors = scan_sources(root, scan_globs)
+    baseline = set(topology.get("source_files") or [])
+    staged = set(staged)
+    matched = any(fnmatch.fnmatch(path, pattern)
+                  or (pattern.startswith("**/") and fnmatch.fnmatch(path, pattern[3:]))
+                  for path in staged for pattern in scan_globs)
+    return bool(errors or matched or staged & (set(current) | baseline))
+
+
+def _check_staged_topology(root: Path, mode: str) -> dict:
+    from _support.runtime_topology import check_topology
+    with tempfile.TemporaryDirectory(prefix="atlas-workflow-topology-") as temporary:
+        source_root = Path(temporary)
+        checked_out = subprocess.run(["git", "checkout-index", "--all", f"--prefix={source_root}/"],
+                                     cwd=root, capture_output=True, text=True, timeout=60)
+        if checked_out.returncode != 0:
+            return {"rc": 2, "cause": "topology_unverified",
+                    "findings": [{"message": "staged index 不可物化：" + checked_out.stderr.strip()}]}
+        return check_topology(root, mode=mode, source_root=source_root)
+
+
 def cmd_verify(args: argparse.Namespace, root: Path) -> int:
     if not args.unit:
         return die("verify 步骤必须指定 --unit <ID>")
@@ -393,6 +421,63 @@ def cmd_verify(args: argparse.Namespace, root: Path) -> int:
                                                  for v in violations]},
                                  ensure_ascii=False, indent=2))
             return 1
+    topology_path = root / ".adapter-out/topology.json"
+    if not args.dry_run and topology_path.is_file():
+        from _support.runtime_topology import topology_mode
+        try:
+            topology_data = json.loads(topology_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            topology_data = {}
+        try:
+            precheck = _topology_precheck_needed(root, topology_data, _staged_files(root))
+        except (OSError, ValueError) as exc:
+            topology = {"rc": 2, "cause": "topology_unverified",
+                        "findings": [{"message": f"Topology 预检不可判定：{exc}"}]}
+        else:
+            if precheck:
+                topology = _check_staged_topology(root, topology_mode(root))
+            else:
+                topology = {"rc": 0, "cause": None, "findings": []}
+        if topology["rc"] != 0:
+            record_attempt(tasks_root, args.unit, cmd="verify", cause=topology["cause"])
+            if args.json:
+                print(json.dumps({"unit": args.unit, "status": "gate_fail",
+                                  "cause": topology["cause"], "findings": topology["findings"]},
+                                 ensure_ascii=False, indent=2))
+            for finding in topology["findings"]:
+                print(f"FAIL（Topology）: {finding['message']}", file=sys.stderr)
+            return topology["rc"]
+    if not args.dry_run:
+        from _support.docs_governance import DocsGovernanceError, check_docs_for_ids, docs_mode
+        from _support.incident import IncidentError, configured_mode as incident_mode, validate_task_incidents
+
+        task = next((item for item in load_tasks(_read_tasks_root(root)) if item.get("id") == args.unit), None)
+        if task is None:
+            return die(f"任务卡不存在：{args.unit}", exit_code_for("no_task_card"))
+        governed = []
+        try:
+            if task.get("resolves_incidents"):
+                governed.extend(validate_task_incidents(
+                    root, task, force=False,
+                    mode="off" if incident_mode(root) == "off" else "enforce"))
+            if task.get("doc_ids"):
+                governed.append(check_docs_for_ids(root, task.get("doc_ids") or [], mode=docs_mode(root)))
+        except (IncidentError, DocsGovernanceError, OSError, ValueError) as exc:
+            governed.append({"module": "governance", "rc": 2, "cause": "environment",
+                             "findings": [{"message": f"治理引用无法校验：{exc}"}]})
+        for result in governed:
+            if result.get("rc") == 0:
+                continue
+            cause = result.get("cause") or {
+                "incident": "incident_unverified", "docs": "docs_unverified",
+            }.get(result.get("module"), "environment")
+            record_attempt(tasks_root, args.unit, cmd="verify", cause=cause)
+            if args.json:
+                print(json.dumps({"unit": args.unit, "status": "gate_fail", "cause": cause,
+                                  "findings": result["findings"]}, ensure_ascii=False, indent=2))
+            for finding in result["findings"]:
+                print(f"FAIL（{result.get('module', 'Governance')}）: {finding['message']}", file=sys.stderr)
+            return result["rc"]
     cmd = [
         sys.executable, str(review_script),
         "--root", str(root),
@@ -414,6 +499,17 @@ def cmd_verify(args: argparse.Namespace, root: Path) -> int:
     # 缺口打到 stderr、不改退出码（升格 FAIL 另案）。
     # 落点模式（RFC-20261122-03）：逐卡对账之外再跑跨卡落点覆盖性与状态机对账。
     if pr.returncode == 0 and not args.dry_run:
+        passed, review_dir, review_cause = check_task_review_passed(root, args.unit)
+        if not passed:
+            return die(review_dir, exit_code_for(review_cause))
+        has_head = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=root,
+                                  capture_output=True, timeout=15).returncode == 0
+        if has_head:
+            try:
+                create_workflow_origin(root, args.unit,
+                                      (Path(review_dir) / "review.json").relative_to(root).as_posix())
+            except (OSError, ValueError) as exc:
+                return die(f"workflow verify 来源标记写入失败：{exc}", EXIT_USAGE)
         for finding in coverage_matrix_findings(_read_tasks_root(root) / args.unit):
             print(f"WARN（需求条目覆盖）: {finding}", file=sys.stderr)
         for finding in requirement_root_findings(root):
@@ -635,13 +731,13 @@ def _staged_files(root: Path) -> list[str]:
     """暂存区改动清单（--no-renames：改名两侧都算改动，防丢旧路径的机制篇命中）。"""
     try:
         pr = subprocess.run(
-            ["git", "diff", "--cached", "--name-only", "--no-renames"], cwd=str(root),
+            ["git", "diff", "--cached", "--name-only", "--no-renames", "-z"], cwd=str(root),
             capture_output=True, text=True, timeout=15)
     except (OSError, subprocess.SubprocessError):
         return []
     if pr.returncode != 0:
         return []
-    return [ln.strip() for ln in pr.stdout.splitlines() if ln.strip()]
+    return [item for item in pr.stdout.split("\0") if item]
 
 
 def _with_unit(args: argparse.Namespace, unit: str) -> argparse.Namespace:

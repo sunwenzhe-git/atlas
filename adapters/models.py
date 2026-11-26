@@ -262,6 +262,7 @@ def parse_models(text: str) -> tuple[list[dict], list[dict]]:
                 "default": _default_text(kw.get("default")),
                 "relation": relation,
                 "enum": enum_name or ("枚举" if enum_values else None),
+                "line": stmt.lineno,
             }
             items.append(row)
             if enum_values:
@@ -593,7 +594,8 @@ def parse_go_models(text: str, rel: str) -> list[dict]:
         table = _go_table_name(clean, struct, "")
         rows: list[dict] = []
         has_tag = False
-        for line in body.splitlines():
+        body_start = m.start(2)
+        for line_index, line in enumerate(body.splitlines()):
             fm = GO_FIELD_RE.match(line)
             if not fm:
                 continue
@@ -627,6 +629,7 @@ def parse_go_models(text: str, rel: str) -> list[dict]:
                 "relation": relation,
                 "enum": None,
                 "source_file": rel,
+                "line": clean.count("\n", 0, body_start) + line_index + 1,
             })
         # 无 tag 且无 TableName 的 struct 多为 service/infra，不是数据模型；
         # 宁可少收，不把 `server{mu,counters}` 这种当表（真实仓烟测暴露）。

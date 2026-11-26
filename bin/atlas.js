@@ -26,6 +26,15 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
   update    安全刷新当前项目中的 .atlas/ 工程线束与平台 Skills 至最新版本
   upgrade   自动拉取 npm 最新全局包升级全局 Atlas CLI
   check     运行项目级资产与门禁全套检查
+  migrate   迁移 OpenSpec/Trellis/旧文档为代码事实代际（--rollback 仅切指针）
+  incident  故障案例生命周期：open / event / link / close / check
+  docs      显式通用文档治理：list / check / touch
+  topology  静态 Runtime Topology：refresh / check / rollback
+  contracts 语义契约：check / --write 投影 observed 与 graph
+  receipt   校验 workflow 完成凭据与 staged tree 重建
+  classify  校验外部分类输出并按冻结阈值落类/弃权
+  calibrate 以 calibration 选阈值、held-out 只评测
+  metrics   只读治理指标与来源摘要
   workflow  自建全流程执行层调度（plan / dispatch / context / verify / finish / status / archive / run）
   bug       缺陷 canonical 落点、diff 回推台账与反向查询
   solution  多仓方案层：init / adopt / status / check / lock / task（Phase 1 仅 federated）
@@ -47,6 +56,8 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
   atlas upgrade               # 升级全局 CLI 至最新发布版
   atlas upgrade --tag beta    # 升级全局 CLI 至指定的 tag
   atlas check --fast          # 运行快速门禁体检
+  atlas migrate --test-command "python3 -m pytest -q"  # 真跑测试并发布迁移代际
+  atlas migrate --rollback    # 只恢复上一代 manifest 指针
   atlas solution init --name demo --member web=web --member api=api
   atlas solution adopt        # 自动识别成员仓并生成 federated 清单
   atlas solution check        # 只读检查清单 / 守卫 / 契约锁
@@ -404,6 +415,21 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
     break;
   }
 
+  case 'migrate': {
+    const passthroughArgs = args.slice(1);
+    const targetDir = process.cwd();
+    const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_migrate.py');
+    const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_migrate.py');
+    const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
+
+    const res = runPython([runScript, '--root', targetDir, ...passthroughArgs], {
+      stdio: 'inherit',
+      env: { ...process.env, ATLAS_PKG_ROOT: PKG_ROOT },
+    });
+    exitWithResult(res, 'python');
+    break;
+  }
+
   case 'workflow': {
     const passthroughArgs = args.slice(1);
     const targetDir = process.cwd();
@@ -414,6 +440,88 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
     const res = runPython([runScript, '--root', targetDir, ...passthroughArgs], {
       stdio: 'inherit',
     });
+    exitWithResult(res, 'python');
+    break;
+  }
+
+  case 'incident': {
+    const passthroughArgs = args.slice(1);
+    const targetDir = process.cwd();
+    const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_incident.py');
+    const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_incident.py');
+    const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
+    const res = runPython([runScript, ...passthroughArgs], { stdio: 'inherit' });
+    exitWithResult(res, 'python');
+    break;
+  }
+
+  case 'docs': {
+    const passthroughArgs = args.slice(1);
+    const targetDir = process.cwd();
+    const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_docs.py');
+    const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_docs.py');
+    const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
+    const res = runPython([runScript, ...passthroughArgs], { stdio: 'inherit' });
+    exitWithResult(res, 'python');
+    break;
+  }
+
+  case 'topology': {
+    const passthroughArgs = args.slice(1);
+    const targetDir = process.cwd();
+    const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_topology.py');
+    const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_topology.py');
+    const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
+    const res = runPython([runScript, ...passthroughArgs], { stdio: 'inherit' });
+    exitWithResult(res, 'python');
+    break;
+  }
+
+  case 'contracts': {
+    const passthroughArgs = args.slice(1);
+    const targetDir = process.cwd();
+    const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_contracts.py');
+    const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_contracts.py');
+    const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
+    const res = runPython([runScript, ...passthroughArgs], { stdio: 'inherit' });
+    exitWithResult(res, 'python');
+    break;
+  }
+
+  case 'receipt': {
+    const passthroughArgs = args.slice(1);
+    const targetDir = process.cwd();
+    const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'verify_receipt.py');
+    const fallbackScript = path.join(PKG_ROOT, 'scripts', 'verify_receipt.py');
+    const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
+    const res = runPython([runScript, ...passthroughArgs], { stdio: 'inherit' });
+    exitWithResult(res, 'python');
+    break;
+  }
+
+  case 'classify': {
+    const targetDir = process.cwd();
+    const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_classify.py');
+    const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_classify.py');
+    const res = runPython([fs.existsSync(scriptPath) ? scriptPath : fallbackScript, ...args.slice(1)], { stdio: 'inherit' });
+    exitWithResult(res, 'python');
+    break;
+  }
+
+  case 'calibrate': {
+    const targetDir = process.cwd();
+    const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_calibrate.py');
+    const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_calibrate.py');
+    const res = runPython([fs.existsSync(scriptPath) ? scriptPath : fallbackScript, ...args.slice(1)], { stdio: 'inherit' });
+    exitWithResult(res, 'python');
+    break;
+  }
+
+  case 'metrics': {
+    const targetDir = process.cwd();
+    const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_metrics.py');
+    const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_metrics.py');
+    const res = runPython([fs.existsSync(scriptPath) ? scriptPath : fallbackScript, ...args.slice(1)], { stdio: 'inherit' });
     exitWithResult(res, 'python');
     break;
   }

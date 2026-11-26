@@ -13,10 +13,10 @@
 
 | 文件 | 行数 | 角色 |
 |---|---|---|
-| `bin/atlas.js` | 568 | CLI 入口:命令面总表见 `printHelp`(`bin/atlas.js:18`)= init / update / upgrade / check / workflow / bug / solution / review / eval / e2e / console / report / version,分派在同文件 `switch (command)`;平台探测拆到 `bin/platform.js`(bash 只认 Git Bash、Python 按平台探测 3.10+) |
-| `install.py` | 954 | 装配单源:白名单拷贝 + 版本戳 + manifest + 77 条 `c()` 自检 + 图谱探测;叶子脚本(layout / apply-patches / apply-wiring / pkg_digest / ablation / evidence_archive)复用不重写 |
+| `bin/atlas.js` | 676 | CLI 入口:命令面总表见 `printHelp`(`bin/atlas.js:18`)= init / update / upgrade / check / migrate / incident / docs / topology / contracts / receipt / classify / calibrate / metrics / workflow / bug / solution / review / eval / e2e / console / report / apply / version,分派在同文件 `switch (command)`;平台探测拆到 `bin/platform.js`(bash 只认 Git Bash、Python 按平台探测 3.10+) |
+| `install.py` | 997 | 装配单源:白名单拷贝 + 版本戳 + manifest + 120 条 `c()` 自检 + 图谱探测;叶子脚本(layout / apply-patches / apply-wiring / pkg_digest / ablation / evidence_archive)复用不重写 |
 | `install.sh` | 56 | 薄 wrapper:头部用法说明 + `exec python3 install.py`(装配逻辑零残留,自检门守) |
-| `scripts/atlas_workflow.py` | 793 | 执行层调度:plan / dispatch / context / verify / finish / status / progress / archive / run;任务账本 `.atlas/tasks`(收口后归档到 `tasks/archive/<YYYY-MM>/`,`status --all` 可查),`--paths`(最小注入) / `--round` / `--resolves` 透传;`context` 为只读查询(不写盘、不改状态);`progress` 为只读进度探针(RFC-20261122-02,聚合派工/暂存/审查轮次/覆盖矩阵四格;命中=路径级存在性非内容级证据,AC 结论只认 verify);verify 末尾跑需求条目覆盖对账(逐卡 WARN,`_support/workflow_verify.py`)+需求落点跨卡对账(漏领/幽灵引用/状态机 WARN,RFC-20261122-03)+机制文档提示族残部(疑似死 paths/词表点名/死测试锚/申报死行 WARN,RFC-20261122-04)+**机制文档触及申报判决门**(前置判定带,触及未跟改未申报⇒FAIL rc1 扣预算 `mechanism_undeclared`/词表两档非法⇒`mechanism_paths_invalid`,申报面=卡目录 `mech-declares.md`,触及提示 WARN 同日退役,RFC-20261123-01);plan 支持需求落点模式(`--requirement` 指向落点,卡持领取引用行、正文指针化,初始需求/需求变更/缺陷三类增量与基线关联检查,重跑保持指针,RFC-20261122-03/20261124-01);finish 硬校验结构事实新鲜度(baseline≡HEAD ∧ 无非豁免未暂存/未跟踪改动,跳过刷新⇒FAIL 带修复命令,空转态经 --advance-baseline 重锚,RFC-20261122-05),关联卡全归档且 completed 后按类型返回/提醒产品事实回写(D211);回收面(RFC-20261122-07):失败双轨记账(attempts.jsonl,cause 封闭词表单源 _support/workflow_causes.py)+verify 尝试预算门(charged≥上限⇒rc3 拒绝+budget_exceeded 留痕)+退出码封闭(0/1/2/3/130,:332 按 cause 分流)+deferred 存量缺陷台账(门判定前提取,fingerprint 幂等)+status 聚合(attempts/坏行/deferred 开放,含归档卡) |
+| `scripts/atlas_workflow.py` | 889 | 执行层调度:plan / dispatch / context / verify / finish / status / progress / archive / run;任务账本 `.atlas/tasks`(收口后归档到 `tasks/archive/<YYYY-MM>/`,`status --all` 可查),`--paths`(最小注入) / `--round` / `--resolves` 透传;`context` 为只读查询(不写盘、不改状态);`progress` 为只读进度探针(RFC-20261122-02,聚合派工/暂存/审查轮次/覆盖矩阵四格;命中=路径级存在性非内容级证据,AC 结论只认 verify);verify 末尾跑需求条目覆盖对账(逐卡 WARN,`_support/workflow_verify.py`)+需求落点跨卡对账(漏领/幽灵引用/状态机 WARN,RFC-20261122-03)+机制文档提示族残部(疑似死 paths/词表点名/死测试锚/申报死行 WARN,RFC-20261122-04)+**机制文档触及申报判决门**(前置判定带,触及未跟改未申报⇒FAIL rc1 扣预算 `mechanism_undeclared`/词表两档非法⇒`mechanism_paths_invalid`,申报面=卡目录 `mech-declares.md`,触及提示 WARN 同日退役,RFC-20261123-01);plan 支持需求落点模式(`--requirement` 指向落点,卡持领取引用行、正文指针化,初始需求/需求变更/缺陷三类增量与基线关联检查,重跑保持指针,RFC-20261122-03/20261124-01);finish 硬校验结构事实新鲜度(baseline≡HEAD ∧ 无非豁免未暂存/未跟踪改动,跳过刷新⇒FAIL 带修复命令,空转态经 --advance-baseline 重锚,RFC-20261122-05),关联卡全归档且 completed 后按类型返回/提醒产品事实回写(D211);回收面(RFC-20261122-07):失败双轨记账(attempts.jsonl,cause 封闭词表单源 _support/workflow_causes.py)+verify 尝试预算门(charged≥上限⇒rc3 拒绝+budget_exceeded 留痕)+退出码封闭(0/1/2/3/130,:332 按 cause 分流)+deferred 存量缺陷台账(门判定前提取,fingerprint 幂等)+status 聚合(attempts/坏行/deferred 开放,含归档卡) |
 | `scripts/atlas_bug.py` | 373 | 缺陷 canonical 落点与回推 CLI：bootstrap / staged-range diff 影响面 / 签字决策事务 / `record.json` / show-list-link；finish 只认 staged 实现指纹与独立审查锚 |
 | `_support/bug_backflow.py` | 832 | 缺陷回推内核：OID 指纹、影响面分析、精确写入集、claim+rollback 事务、校验器编排、review/finish 锚 |
 | `_support/bug_record.py` | 543 | 缺陷台账 schema 运行时校验、canonical JSON 哈希、append-only history 与原子存储 |
@@ -29,11 +29,11 @@
 
 ### 1. 装配四步(`install.py`;`install.sh` 薄 wrapper)
 
-`[1/4]` 整包 → `.atlas/`(`atlas_dest`,`install.py:5`,白名单目录拷贝,不整目录删,保住 `.atlas/runs/` 运行态)→ `[2/4]` skill 瘦桩(引用契约不复制正文)→ `[3/4]` 骨架 → `[4/4]` 项目接线(AGENTS.md 指针 / 测试配置 / `.gitignore` / pi 扩展)→ 图谱后端探测(可选)→ 自检段(`say("自检")`,`install.py:5`,78 条 `c()` 声明)。`--dry-run`(F54)零落盘、双摘要可见化;`--update` 刷新已装配副本。
+`[1/4]` 整包 → `.atlas/`(`atlas_dest`,`install.py:544`,白名单目录拷贝,不整目录删,保住 `.atlas/runs/` 运行态)→ `[2/4]` skill 瘦桩(引用契约不复制正文)→ `[3/4]` 骨架 → `[4/4]` 项目接线(AGENTS.md 指针 / 测试配置 / `.gitignore` / pi 扩展)→ 图谱后端探测(可选)→ 自检段(`say("自检")`,`install.py:785`,120 条 `c()` 声明)。`--dry-run`(F54)零落盘、双摘要可见化;`--update` 刷新已装配副本。
 
 ### 2. 装配基线三件(D145/D146/D147)
 
-`.atlas/VERSION` 内容摘要戳(落点 `install.py:2` `stamp_file`)与 `.atlas/MANIFEST.json` 逐文件基线(同点落),摘要算法单源在 `pkg_digest.py`——atlas_check 装配版本门按「配对校验先行」重算对账:戳在而 manifest 缺 = 显式「旧装配」半态,不是失败。写序先 manifest 后 VERSION。
+`.atlas/VERSION` 内容摘要戳(落点 `install.py:946` `stamp_file`)与 `.atlas/MANIFEST.json` 逐文件基线(同点落),摘要算法单源在 `pkg_digest.py`——atlas_check 装配版本门按「配对校验先行」重算对账:戳在而 manifest 缺 = 显式「旧装配」半态,不是失败。写序先 manifest 后 VERSION。
 
 ### 3. 三态回灌(`backflow.py`)
 
@@ -52,7 +52,7 @@ AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.ada
 | 消费方 | 触点 |
 |---|---|
 | atlas_check 装配版本门 | VERSION 戳 + MANIFEST 基线 ⇔ 源包重算 |
-| test_install_selfcheck | 自检引用必须存在:63 条 `check` 指向的文件必须真落下 |
+| test_install_selfcheck | 自检引用必须存在:120 条 `c()` 声明指向的文件必须真落下 |
 | test_backflow | 三态语义 + SOURCE_ONLY 护栏钉 |
 | 执行层 | `atlas workflow` 把 apply / 工作流步骤写进 `.atlas/tasks` 任务卡与派工单 |
 
@@ -79,4 +79,4 @@ AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.ada
 
 1. **副本是资产就有对账面**:版本戳 / manifest / 回灌三态——「装配 ≠ 开户,装完还要对得上」。
 2. **白名单 + 不整删**:装配器知道自己的边界(哪些目录归它),也知道别人的运行态(`.atlas/runs/`)不能碰。
-3. **自检是装配的一部分**:声称落下的每个文件必须真落下——63 条声明本身就是契约。
+3. **自检是装配的一部分**:声称落下的每个文件必须真落下——120 条声明本身就是契约。

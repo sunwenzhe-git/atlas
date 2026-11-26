@@ -480,6 +480,163 @@ def test_verify_refuses_empty_staged(tmp_path: Path) -> None:
     assert p.returncode == 2 and "暂存区为空" in p.stderr
 
 
+def test_finish_preserves_governance_unverified_cause_and_rc2(tmp_path, monkeypatch):
+    from _support import workflow_finish
+    from _support.workflow_causes import exit_code_for
+    from _support.workflow_plan import load_tasks
+
+    root = make_clean_project(tmp_path)
+    _plan_and_dispatch(root, "T-GOV")
+    task = load_tasks(root / ".atlas" / "tasks")[0]
+    task["resolves_incidents"] = ["INC-20261125-001"]
+    monkeypatch.setattr(workflow_finish, "validate_task_incidents", lambda *_args, **_kwargs: [{
+        "module": "incident", "verdict": "UNVERIFIED", "rc": 2,
+        "cause": None, "findings": [{"message": "evidence unavailable"}],
+    }])
+    with pytest.raises(workflow_finish.FinishError) as caught:
+        workflow_finish.finish_task(root, task, force=True)
+    assert caught.value.cause == "incident_unverified"
+    assert exit_code_for(caught.value.cause) == 2
+
+
+def test_verify_malformed_topology_returns_structured_rc2_and_records_attempt(tmp_path):
+    root = _git_repo(tmp_path)
+    make_clean_project(root)
+    _commit_all(root, "base")
+    _plan_and_dispatch(root, "T-TOP")
+    (root / "compose.yaml").write_text("services:\n  api:\n    image: demo:1\n")
+    subprocess.run(["git", "add", "compose.yaml"], cwd=root, check=True)
+    topology = root / ".adapter-out/topology.json"
+    topology.parent.mkdir(parents=True, exist_ok=True)
+    topology.write_text("{broken")
+    result = run(root, "verify", "--unit", "T-TOP", "--json")
+    assert result.returncode == 2, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["cause"] == "topology_unverified"
+    from _support.workflow_causes import load_attempts
+    rows, bad = load_attempts(root / ".atlas/tasks", "T-TOP")
+    assert bad == 0 and rows[-1]["cause"] == "topology_unverified" and rows[-1]["charged"] is False
+
+
+def test_finish_receipt_enforce_keeps_origin_tree_and_immediate_verify_green(tmp_path):
+    from _support import review_scope_core
+    from _support.workflow_receipt import create_workflow_origin, verify_receipt
+
+    root = _git_repo(tmp_path)
+    make_clean_project(root)
+    _commit_all(root, "base")
+    _plan_and_dispatch(root, "T-RCPT")
+    (root / "src").mkdir(exist_ok=True)
+    (root / "src/a.ts").write_text("export const a = 1\n")
+    subprocess.run(["git", "add", "src/a.ts"], cwd=root, check=True)
+    review = root / "product/reviews/2026-11-25-impl-review-T-RCPT/review.json"
+    review.parent.mkdir(parents=True)
+    staged = subprocess.check_output(["git", "diff", "--cached", "--name-only"], cwd=root, text=True).splitlines()
+    scope = review_scope_core.build_manifest(root, staged)
+    review.write_text(json.dumps({"status": "PASS", "ok": True, "review_scope": {"sha256": scope["scope_sha256"]}}))
+    create_workflow_origin(root, "T-RCPT", review.relative_to(root).as_posix())
+    config = root / ".atlas/config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text('receipt_mode: "enforce"\n')
+    result = run(root, "finish", "--unit", "T-RCPT")
+    assert result.returncode == 0, result.stdout + result.stderr
+    receipt = json.loads((root / ".atlas/runs/workflow-receipt.json").read_text())
+    current = subprocess.check_output(["git", "write-tree"], cwd=root, text=True).strip()
+    assert current != receipt["tree_hash"]
+    assert subprocess.check_output(["git", "ls-files", "--", ".atlas/runs/workflow-review-origin.json"],
+                                   cwd=root, text=True).strip() == ""
+    checked = verify_receipt(root, mode="enforce", check_current_tree=True)
+    assert checked["verdict"] == "PASS", checked
+
+
+def test_finish_receipt_off_blocks_without_completing_or_archiving(tmp_path):
+    root = make_clean_project(tmp_path)
+    _plan_and_dispatch(root, "T-OFF")
+    config = root / ".atlas/config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text('receipt_mode: "off"\n')
+    review = root / "product/reviews/2026-11-25-impl-review-T-OFF/review.json"
+    review.parent.mkdir(parents=True)
+    review.write_text(json.dumps({"status": "PASS", "checks": []}))
+    result = run(root, "finish", "--unit", "T-OFF", "--force", "--json")
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert json.loads(result.stdout)["paused_reason"] == "receipt_unverified"
+    task = json.loads((root / ".atlas/tasks/T-OFF/task.json").read_text())
+    assert task["status"] == "in_progress"
+    assert not (root / ".atlas/runs/workflow-receipt.json").exists()
+
+
+@pytest.mark.parametrize("module", ["incident", "docs"])
+def test_verify_runs_governed_reference_checks_before_review(tmp_path, monkeypatch, module):
+    from argparse import Namespace
+    from scripts import atlas_workflow
+    from _support import incident, docs_governance
+
+    root = _git_repo(tmp_path)
+    make_clean_project(root)
+    _commit_all(root, "base")
+    _plan_and_dispatch(root, "T-GVERIFY")
+    (root / "src").mkdir(exist_ok=True)
+    (root / "src/a.ts").write_text("export const a = 1\n")
+    subprocess.run(["git", "add", "src/a.ts"], cwd=root, check=True)
+    task_path = root / ".atlas/tasks/T-GVERIFY/task.json"
+    task = json.loads(task_path.read_text())
+    task["resolves_incidents" if module == "incident" else "doc_ids"] = [
+        "INC-20261125-001" if module == "incident" else "DOC-guide"]
+    task_path.write_text(json.dumps(task))
+    blocked = {"module": module, "verdict": "UNVERIFIED", "rc": 2,
+               "cause": None, "findings": [{"message": "governed evidence unavailable"}]}
+    monkeypatch.setattr(incident, "validate_task_incidents", lambda *_a, **_k: [blocked])
+    monkeypatch.setattr(docs_governance, "check_docs_for_ids", lambda *_a, **_k: blocked)
+    original_run = atlas_workflow.subprocess.run
+
+    def review_forbidden(command, *args, **kwargs):
+        if isinstance(command, list) and any(str(item).endswith("atlas_review.py") for item in command):
+            pytest.fail("review started before governance check")
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(atlas_workflow.subprocess, "run", review_forbidden)
+    rc = atlas_workflow.cmd_verify(Namespace(unit="T-GVERIFY", dry_run=False, json=True,
+                                             round=None, check_cmd=None, resolves=None), root)
+    assert rc == 2
+    assert not list((root / "product/reviews").rglob("review-request.md"))
+
+
+def test_finish_receipt_enforce_rejects_direct_review_without_workflow_origin(tmp_path):
+    root = make_clean_project(tmp_path)
+    _plan_and_dispatch(root, "T-DIRECT")
+    config = root / ".atlas/config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text('receipt_mode: "enforce"\n')
+    review = root / "product/reviews/2026-11-25-impl-review-T-DIRECT/review.json"
+    review.parent.mkdir(parents=True)
+    review.write_text(json.dumps({"status": "PASS", "ok": True, "checks": []}))
+    result = run(root, "finish", "--unit", "T-DIRECT")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "workflow verify" in result.stderr
+
+
+def test_finish_blocks_missing_or_abstain_task_classification_without_receipt(tmp_path):
+    from _support import workflow_finish
+    from _support.workflow_causes import exit_code_for
+    from _support.workflow_plan import load_tasks
+
+    root = make_clean_project(tmp_path)
+    _plan_and_dispatch(root, "T-CLASS")
+    task = load_tasks(root / ".atlas" / "tasks")[0]
+    task["classification_required"] = True
+    with pytest.raises(workflow_finish.FinishError) as caught:
+        workflow_finish.finish_task(root, task, force=True)
+    assert caught.value.cause == "calibration_unverified"
+    assert exit_code_for(caught.value.cause) == 2
+    result_path = root / ".atlas/runs/workflow-classification.json"
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text(json.dumps({"decision": "abstain", "verdict": "UNVERIFIED", "rc": 2}))
+    with pytest.raises(workflow_finish.FinishError) as caught:
+        workflow_finish.finish_task(root, task, force=True)
+    assert caught.value.cause == "calibration_unverified"
+
+
 def test_finish_scope_mismatch_blocks_stale_review(tmp_path: Path) -> None:
     sys.path.insert(0, str(PKG_ROOT))
     from _support import review_scope_core as scope_core

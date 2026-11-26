@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "atlas:governance-common:v1",
+  "title": "Atlas governance module result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "module", "mode", "verdict", "cause", "rc", "findings"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "module": {"enum": ["migration", "semantic", "incident", "docs", "topology", "receipt", "classification", "metrics"]},
+    "mode": {"enum": ["shadow", "enforce", "off"]},
+    "verdict": {"enum": ["PASS", "FAIL", "STALE", "UNVERIFIED", "WARN", "N/A"]},
+    "cause": {"enum": ["migration_unverified", "migration_integrity", "contract_stale", "contract_unverified", "incident_evidence_missing", "incident_not_resolved", "incident_unverified", "docs_stale", "docs_owner_missing", "docs_unverified", "topology_stale", "topology_unverified", "receipt_stale", "receipt_unverified", "calibration_unverified", null]},
+    "rc": {"type": "integer", "enum": [0, 1, 2, 3, 130]},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["cause", "message"],
+        "properties": {
+          "cause": {"enum": ["migration_unverified", "migration_integrity", "contract_stale", "contract_unverified", "incident_evidence_missing", "incident_not_resolved", "incident_unverified", "docs_stale", "docs_owner_missing", "docs_unverified", "topology_stale", "topology_unverified", "receipt_stale", "receipt_unverified", "calibration_unverified", "not_applicable", "observation"]}, "message": {"type": "string", "minLength": 1},
+          "path": {"type": "string"}, "line": {"type": "integer", "minimum": 1},
+          "evidence_ref": {"type": "string"}, "owner": {"type": "string", "minLength": 1},
+          "due": {"type": "string", "format": "date"}
+        }
+      }
+    },
+    "metrics": {"type": ["object", "null"]},
+    "generation": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "path": {"type": "string", "minLength": 1},
+    "decision": {"type": ["string", "null"]},
+    "eligible_for_enforce": {"type": "boolean"},
+    "sources": {"type": "object"},
+    "check_events": {"type": "object"},
+    "classification_calibration": {"type": "object"}
+  },
+  "allOf": [
+    {"if": {"properties": {"mode": {"const": "off"}}, "required": ["mode"]}, "then": {"properties": {"verdict": {"const": "UNVERIFIED"}, "cause": {"const": null}, "rc": {"const": 2}}}},
+    {"if": {"properties": {"mode": {"const": "shadow"}}, "required": ["mode"]}, "then": {"properties": {"verdict": {"enum": ["PASS", "FAIL", "STALE", "UNVERIFIED", "WARN", "N/A"]}, "rc": {"const": 0}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "cause": {"const": "migration_unverified"}}, "required": ["mode", "cause"]}, "then": {"properties": {"verdict": {"const": "UNVERIFIED"}, "rc": {"const": 2}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "cause": {"const": "migration_integrity"}}, "required": ["mode", "cause"]}, "then": {"properties": {"verdict": {"const": "FAIL"}, "rc": {"const": 1}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "module": {"const": "semantic"}, "cause": {"const": "contract_stale"}}, "required": ["mode", "module", "cause"]}, "then": {"properties": {"verdict": {"const": "FAIL"}, "rc": {"const": 1}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "cause": {"const": "contract_unverified"}}, "required": ["mode", "cause"]}, "then": {"properties": {"verdict": {"const": "UNVERIFIED"}, "rc": {"const": 2}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "cause": {"enum": ["incident_evidence_missing", "incident_not_resolved", "docs_stale", "docs_owner_missing", "topology_stale", "receipt_stale"]}}, "required": ["mode", "cause"]}, "then": {"properties": {"verdict": {"const": "FAIL"}, "rc": {"const": 1}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "cause": {"const": "topology_unverified"}}, "required": ["mode", "cause"]}, "then": {"properties": {"verdict": {"const": "UNVERIFIED"}, "rc": {"const": 2}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "cause": {"const": "incident_unverified"}}, "required": ["mode", "cause"]}, "then": {"properties": {"verdict": {"const": "UNVERIFIED"}, "rc": {"const": 2}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "cause": {"const": "docs_unverified"}}, "required": ["mode", "cause"]}, "then": {"properties": {"verdict": {"const": "UNVERIFIED"}, "rc": {"const": 2}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "cause": {"const": "receipt_unverified"}}, "required": ["mode", "cause"]}, "then": {"properties": {"verdict": {"const": "UNVERIFIED"}, "rc": {"const": 2}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "cause": {"const": "calibration_unverified"}}, "required": ["mode", "cause"]}, "then": {"properties": {"verdict": {"const": "UNVERIFIED"}, "rc": {"const": 2}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "verdict": {"enum": ["PASS", "WARN", "N/A"]}}, "required": ["mode", "verdict"]}, "then": {"properties": {"cause": {"const": null}, "rc": {"const": 0}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "verdict": {"const": "UNVERIFIED"}}, "required": ["mode", "verdict"]}, "then": {"properties": {"cause": {"enum": ["migration_unverified", "contract_unverified", "docs_unverified", "topology_unverified", "incident_unverified", "receipt_unverified", "calibration_unverified"]}, "rc": {"const": 2}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "verdict": {"enum": ["FAIL", "STALE"]}}, "required": ["mode", "verdict"]}, "then": {"properties": {"cause": {"enum": ["migration_integrity", "contract_stale", "incident_evidence_missing", "incident_not_resolved", "docs_stale", "docs_owner_missing", "topology_stale", "receipt_stale"]}, "rc": {"const": 1}}}},
+    {"if": {"properties": {"verdict": {"const": "N/A"}}, "required": ["verdict"]}, "then": {"properties": {"findings": {"minItems": 1, "items": {"required": ["owner", "due"]}}}}},
+    {"if": {"properties": {"verdict": {"const": "PASS"}}, "required": ["verdict"]}, "then": {"properties": {"findings": {"maxItems": 0}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "module": {"const": "semantic"}}, "required": ["mode", "module"]}, "then": {"properties": {"cause": {"enum": ["contract_stale", "contract_unverified", null]}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "module": {"const": "incident"}}, "required": ["mode", "module"]}, "then": {"properties": {"cause": {"enum": ["incident_evidence_missing", "incident_not_resolved", "incident_unverified", null]}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "module": {"const": "docs"}}, "required": ["mode", "module"]}, "then": {"properties": {"cause": {"enum": ["docs_stale", "docs_owner_missing", "docs_unverified", null]}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "module": {"const": "topology"}}, "required": ["mode", "module"]}, "then": {"properties": {"cause": {"enum": ["topology_stale", "topology_unverified", null]}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "module": {"const": "migration"}}, "required": ["mode", "module"]}, "then": {"properties": {"cause": {"enum": ["migration_unverified", "migration_integrity", "contract_stale", null]}}}},
+    {"if": {"properties": {"mode": {"const": "enforce"}, "module": {"const": "receipt"}}, "required": ["mode", "module"]}, "then": {"properties": {"cause": {"enum": ["receipt_stale", "receipt_unverified", null]}}}}
+  ]
+}

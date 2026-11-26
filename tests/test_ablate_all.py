@@ -90,11 +90,12 @@ def test_catalog_enumerates_full_surface_and_excludes_dispatcher():
     catalog = mod.build_catalog(PKG_ROOT)
     ids = {entry["id"] for entry in catalog["entries"]}
     assert "validate_adopt_facts" in ids
+    assert "validate_migration" in ids
     assert "check_generated" in ids
     assert "check_validators" not in ids
-    assert catalog["counts"]["validators"] == 14
+    assert catalog["counts"]["validators"] == 21
     assert catalog["counts"]["inline"] == 10
-    assert catalog["counts"]["total"] == 24
+    assert catalog["counts"]["total"] == 31
 
 
 def test_strip_rows_only_touches_target_function():

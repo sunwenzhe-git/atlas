@@ -65,6 +65,13 @@ VALIDATORS = (
     "validate_task_card",
     "validate_apply_record",
     "validate_adopt_facts",
+    "validate_migration",
+    "validate_incident",
+    "validate_docs_governance",
+    "validate_runtime_topology",
+    "validate_contracts",
+    "validate_receipt",
+    "validate_calibration",
     "validate_bug_ledger",
 )  # E1：validate_prototype 随原型环退役；§B120：stack_profile / structure 纳入；#182：design_exemptions 纳入；§5.8：e2e_mocks 纳入；B209-1（3507 BT）：validate_ac_alignment 纳入；2026-10-13：validate_adr 纳入（架构决策资产门）；2026-10-14：validate_ledger 随知识库/台账子系统退役（AC 号唯一判据归位 validate_prd）；2026-10-23：validate_walkthrough 纳入（M1 走查锁，RFC-20261022-01）；2026-11-12：task_card / apply_record 纳入（RFC-20261111-03 C 批）；2026-11-19：validate_adopt_facts 纳入（RFC-20261119-03 Phase 3a，静态事实 stale 门）；2026-11-25：validate_bug_ledger 纳入（canonical 缺陷台账与双落点守卫）
 
@@ -109,6 +116,27 @@ def _gate_preconditions(root: Path) -> dict[str, tuple[str, str]]:
         "validate_task_card": (
             ".atlas/tasks",
             "前置未声明（未就绪，非失败）：无 .atlas/tasks/（成员仓未接入任务卡）"),
+        "validate_migration": (
+            ".adapter-out/migration/manifest.json",
+            "前置未声明（未就绪，非失败）：无 .adapter-out/migration/manifest.json（未执行旧工具迁移）"),
+        "validate_incident": (
+            (lay.assets_root / "incidents").relative_to(root).as_posix(),
+            f"前置未声明（未就绪，非失败）：无 {lay.assets_root.relative_to(root).as_posix()}/incidents（未登记故障案例）"),
+        "validate_docs_governance": (
+            (lay.assets_root / "docs" / "governance.yaml").relative_to(root).as_posix(),
+            f"前置未声明（未就绪，非失败）：无 {lay.assets_root.relative_to(root).as_posix()}/docs/governance.yaml（未登记通用文档）"),
+        "validate_runtime_topology": (
+            ".adapter-out/topology.json",
+            "前置未声明（未就绪，非失败）：无 .adapter-out/topology.json（未声明或未刷新 Runtime Topology）"),
+        "validate_contracts": (
+            "contracts/manifest.json",
+            "前置未声明（未就绪，非失败）：无 contracts/manifest.json（未建立语义契约）"),
+        "validate_receipt": (
+            ".atlas/runs/workflow-receipt.json",
+            "前置未声明（未就绪，非失败）：无 workflow receipt（尚未生成完成凭据）"),
+        "validate_calibration": (
+            ".atlas/runs/governance-calibration.json",
+            "前置未声明（未就绪，非失败）：无 governance calibration 账本（尚未校准）"),
         # 封条归父仓：**不设前置**。无锁但有封条必须由 validator 自己报红
         # （`seal_anchor_path_unmapped`），有锁无封条由它自报 N/A——前置 SKIP 会把
         # 「删锁保留封条」整段跳过（B1 假绿）。
@@ -354,12 +382,58 @@ def check_validators(root: Path, rows: Row, py: str) -> None:
             rows.add(v, "SKIP", "校验器不存在")
             continue
         pre = _gate_preconditions(root).get(v)
+        if v == "validate_runtime_topology" and pre is not None and not (root / pre[0]).exists():
+            try:
+                profile = load_module("stack_profile").parse_profile(load_layout(root).stack_profile.read_text(encoding="utf-8"))
+                if (profile.get("adapters") or {}).get("topology"):
+                    pre = None
+            except (OSError, ValueError, LayoutError):
+                pass
+        if v == "validate_migration" and pre is not None and not (root / pre[0]).exists():
+            if (root / ".adapter-out/migration/generations").exists():
+                pre = None
+        if v == "validate_contracts" and pre is not None and not (root / pre[0]).exists():
+            if (root / "contracts").exists():
+                pre = None
         if pre is not None and not (root / pre[0]).exists():
             rows.add(v, "SKIP", pre[1])
             continue
         started = time.perf_counter()
-        code, out = run([py, str(script), "--root", "."], root)
+        command = [py, str(script), "--root", "."]
+        if v in {"validate_migration", "validate_incident", "validate_docs_governance", "validate_runtime_topology", "validate_contracts", "validate_receipt", "validate_calibration"}:
+            command.append("--json")
+        code, out = run(command, root)
         duration_ms = _elapsed_ms(started)
+        if v in {"validate_migration", "validate_incident", "validate_docs_governance", "validate_runtime_topology", "validate_contracts", "validate_receipt", "validate_calibration"}:
+            # Preserve the validator's atomic verdict/cause/rc. UNVERIFIED is
+            # FAIL in the overview (in-scope cannot pass) but remains rc2 in JSON.
+            try:
+                payload = json.loads(out)
+                verdict = payload["verdict"]
+                cause = payload.get("cause")
+                raw_rc = payload["rc"]
+                findings = payload.get("findings") or []
+                detail = "; ".join(str(item.get("message", "")) for item in findings) or verdict
+                if not isinstance(raw_rc, int) or raw_rc != code:
+                    raise ValueError("validator JSON rc 与进程退出码不一致")
+                status = "ok" if verdict == "PASS" and raw_rc == 0 else "WARN" if raw_rc == 0 else "FAIL"
+                rows.add(v, status, detail,
+                         command=f"{py} {script} --root . --json", full_output=out,
+                         code=raw_rc, duration_ms=duration_ms,
+                         extra={"verdict": verdict, "cause": cause, "rc": raw_rc})
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                fallback_cause = {"validate_migration": "migration_unverified",
+                                  "validate_incident": "incident_evidence_missing",
+                                  "validate_docs_governance": "docs_stale",
+                                  "validate_runtime_topology": "topology_unverified",
+                                  "validate_contracts": "contract_unverified",
+                                  "validate_receipt": "receipt_unverified",
+                                  "validate_calibration": "calibration_unverified"}[v]
+                rows.add(v, "FAIL", f"governance validator JSON 无效：{exc}",
+                         command=f"{py} {script} --root . --json", full_output=out,
+                         code=code, duration_ms=duration_ms,
+                         extra={"verdict": "UNVERIFIED", "cause": fallback_cause, "rc": 2})
+            continue
         last = [l.strip() for l in out.strip().splitlines() if l.strip()]
         status = "ok" if code == 0 else "FAIL"
         tail = last[-1] if last else ""

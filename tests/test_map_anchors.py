@@ -86,6 +86,8 @@ def _candidates(ctx: str, anchor_tok: str) -> list[str]:
         name = tok.rstrip("()")
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", name):
             out.append(name)
+    if out:
+        return list(dict.fromkeys(out))
     for name in re.findall(r"[A-Za-z_][A-Za-z0-9_]*\(\)", masked):
         out.append(name.rstrip("()"))
     head = re.match(r"^[\W_0-9]*([A-Za-z][A-Za-z0-9_]*)", masked)
@@ -106,7 +108,8 @@ def _candidates(ctx: str, anchor_tok: str) -> list[str]:
 def _sym_hit_lines(name: str, lines: list[str]) -> list[int]:
     """符号变体（点号全串 → 末段）在文件中的出现行（1 起）。"""
     for variant in (name, name.rsplit(".", 1)[-1]):
-        hits = [i for i, ln in enumerate(lines, 1) if variant in ln]
+        pattern = rf"(?<![A-Za-z0-9_]){re.escape(variant)}(?![A-Za-z0-9_])"
+        hits = [i for i, ln in enumerate(lines, 1) if re.search(pattern, ln)]
         if hits:
             return hits
     return []
@@ -388,6 +391,41 @@ def check_freshness(repo: Path) -> list[dict]:
 
 
 # ---------------- 出厂测试 ----------------
+
+def test_symbol_anchor_uses_whole_primary_symbol(tmp_path):
+    target = tmp_path / "scripts/atlas_check.py"
+    target.parent.mkdir(parents=True)
+    lines = ["remains\n", "E2E comment\n"] + ["\n"] * 7 + ["def main():\n", "    pass\n"]
+    target.write_text("".join(lines))
+    violation = check_anchor("scripts/atlas_check.py", 2, 2, "`main()` E2E", "fixture", tmp_path)
+    assert violation and violation["code"] == "symbol_drift"
+    assert violation["new"] == 10
+
+
+def test_map_docs_have_no_duplicate_rows_or_headings() -> None:
+    for path in (PKG_ROOT / "docs/map").glob("*.md"):
+        seen = set()
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            if not (stripped.startswith("| `") or stripped.startswith("## ")):
+                continue
+            assert stripped not in seen, f"{path.relative_to(PKG_ROOT)}:{number} duplicate: {stripped[:120]}"
+            assert not re.match(r"`[^`]+`\s+:\d+", stripped), f"{path.relative_to(PKG_ROOT)}:{number} unparsed anchor: {stripped[:120]}"
+
+
+def test_map_inline_script_has_valid_javascript_syntax() -> None:
+    import re
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node unavailable")
+    html = (PKG_ROOT / "docs/map/atlas-map.html").read_text(encoding="utf-8")
+    scripts = "\n".join(re.findall(r"<script>(.*?)</script>", html, re.S))
+    result = subprocess.run([node, "--check", "-"], input=scripts, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
 
 def test_docs_map_anchors_alive() -> None:
     vs = collect_docs(PKG_ROOT)

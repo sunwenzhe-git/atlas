@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "input": "RFC-20261125-01-P1-r6",
+  "algorithm": "SHA256(concat(path + NUL + bytes + NUL))",
+  "sha256": "79217f05434e4ccb58b5d559394175fc0e7698a2aab860b6af8cca2a8a90f11f",
+  "files": [
+    {
+      "path": "_support/governance_io.py",
+      "sha256": "87c25e6e5ec072481d540af36eead5ce44335bc3fad7bcb5cf59bfb9f263b98e"
+    },
+    {
+      "path": "_support/governance_schema.py",
+      "sha256": "59a90c02a8cdcebd35cc21343c27460df321dc7e91daeabea1f065267fd657b2"
+    },
+    {
+      "path": "_support/legacy_migration.py",
+      "sha256": "e4eabb7047a3d1a6e0f6f109c1e6ac9416241791eef6fe4edec760bb6a4989b4"
+    },
+    {
+      "path": "scripts/atlas_migrate.py",
+      "sha256": "537ef27a8e7b5633c8bd1630372ad2e988ff7b363d359460af2c6b920c355d0c"
+    },
+    {
+      "path": "validators/validate_migration.py",
+      "sha256": "e5479a5840ecb990dde537dee774846437c6b150b5a0f9460492cb94d5ba97f0"
+    },
+    {
+      "path": "tests/test_legacy_migration.py",
+      "sha256": "2a0f985cf5cc3f2592c7f60fb4be8c1fb60f7f87dd1b50b60d2cc188a6f77265"
+    },
+    {
+      "path": "bin/atlas.js",
+      "sha256": "97a6a001bd12821e9eb630cd0c0225942ecd7ed941f4931378c123a524a8cb80"
+    },
+    {
+      "path": "install.py",
+      "sha256": "411dafcf9c087aad74033b04f3e47746247a4a160e74b3a04986fb3b4fae50b8"
+    },
+    {
+      "path": "scripts/atlas_check.py",
+      "sha256": "514888ffb02691d30efb5c049db8dfc467d0d0ed9828d7f50b0c2ec2900d29aa"
+    },
+    {
+      "path": "shared/gates.md",
+      "sha256": "f43c98689413567f2a173e954f41198f18dcb9b296f048ace23ce22929e80d29"
+    },
+    {
+      "path": "shared/schemas/governance-common.json",
+      "sha256": "25030a331b13e118b9d9c5dcabc72808d5caa6d7907c748b569b3acb701827fb"
+    },
+    {
+      "path": "adapters/models.py",
+      "sha256": "42e21e6aef85ba70ff3edfd906828483255badd7fc48659dfad28842eb4ca283"
+    },
+    {
+      "path": "docs/map/adapters.md",
+      "sha256": "3e0e885c224c9cb88fc8643ccce96f169bd810cb7ada2d7c061017a133f187f9"
+    },
+    {
+      "path": "docs/map/atlas-map.html",
+      "sha256": "32c0c60a6ac4db7fa086edf706d7e574400fd4b44a7ef91a5cc18335f7def8a7"
+    },
+    {
+      "path": ".atlas/runs/mutation-proof/M245.txt",
+      "sha256": "29a8dc3aeba80c2b0ffc5defce2f2ac636a4566c2e6fc68dd117d99de72f42d1"
+    }
+  ]
+}

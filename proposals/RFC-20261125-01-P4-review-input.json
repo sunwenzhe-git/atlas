@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "input": "RFC-20261125-01-P4-r4",
+  "algorithm": "SHA256(concat(path + NUL + bytes + NUL))",
+  "sha256": "fe98e197707382aeb9408bb4e312dd47bc41830638943cc4c19eac0fdbecca6c",
+  "files": [
+    {
+      "path": "_support/semantic_contracts.py",
+      "sha256": "096aa533087a064bb8aca107f4d032304ee302d93e160c4b82d2fb2ad38dfba6"
+    },
+    {
+      "path": "_support/workflow_receipt.py",
+      "sha256": "09ebdf5d74178b65920cb1b2eb7bf3a2fbac787de09909fa5ab64964cf8b3178"
+    },
+    {
+      "path": "scripts/atlas_contracts.py",
+      "sha256": "fca81d68794a25bcf85fd0509039239dced9b348b15b46718e69ced414f7cff1"
+    },
+    {
+      "path": "scripts/verify_receipt.py",
+      "sha256": "c243f1642c76d4556faaff55e9b3a4363cbe13cc60bdd50d45e68dee58e2e315"
+    },
+    {
+      "path": "validators/validate_contracts.py",
+      "sha256": "f72c443c8accfc67b993c4588428de0c7e42898cc1026b80c0df63a683dfec81"
+    },
+    {
+      "path": "validators/validate_receipt.py",
+      "sha256": "0b6a2bc655771e3a0d774cd138ee1bef8350e8faee2b3982319cd9fd7b272599"
+    },
+    {
+      "path": "tests/test_semantic_contracts.py",
+      "sha256": "4d7414602e4126a396665be54f0042847b5d6b3471f5ae661ff31a7ff204cce3"
+    },
+    {
+      "path": "tests/test_workflow_receipt.py",
+      "sha256": "bf94250122cad74db1c88217024208a237dc98150c76fc1d264558a78e3a2edb"
+    },
+    {
+      "path": "tests/test_governance_wiring.py",
+      "sha256": "90828d5fee6d1cb00aac1df0d96d781642af24568d25c7742283a4cd3d58f016"
+    },
+    {
+      "path": "_support/workflow_finish.py",
+      "sha256": "29d6d82edd5852bafb2a753af563058112c4ca5effdeaf4dfbd9dadf836e8893"
+    },
+    {
+      "path": "scripts/atlas_check.py",
+      "sha256": "4d9a9fe3466147e1cd299df41bfb76aaf3e30115a270678de78d7a533d0b0b02"
+    },
+    {
+      "path": "bin/atlas.js",
+      "sha256": "b299dc12a80be535a8e675f70933ae2950ee40639505058b33da79aa1dd11d9f"
+    },
+    {
+      "path": "install.py",
+      "sha256": "6894cffb4af2fcace34c6fb01a3c79008cbb258ae28dc982160bef6a4be0a8ad"
+    },
+    {
+      "path": "shared/gates.md",
+      "sha256": "cb90ef3a2fcec0326744a083b8200b98df9bd54c1965f85fed8f040547f97958"
+    },
+    {
+      "path": "shared/schemas/governance-common.json",
+      "sha256": "c24282d423ee1eea7f8a77379f2b73fa200a4ddc06b00e40d959f96a30ddec65"
+    },
+    {
+      "path": "shared/schemas/workflow-receipt.json",
+      "sha256": "bcde21ea28ca896cbb384d0feae543e3c2d0977e11b36b8afcc1463d1a26ea79"
+    },
+    {
+      "path": "shared/schemas/semantic-expected.json",
+      "sha256": "d75c51a56adba6f852dc7c6a0f3b6077abbbdebb1709ae033b9f837fc6e66f11"
+    },
+    {
+      "path": "shared/schemas/semantic-observed.json",
+      "sha256": "14ac43c207788d108c113996e8ea1847c74c3249b188f38e25fa24e5f557c889"
+    },
+    {
+      "path": "shared/schemas/semantic-graph.json",
+      "sha256": "71aff154df98f2a45f4160278d8765b67dc461c0cd1a681667d72f9b21e43585"
+    },
+    {
+      "path": ".atlas/runs/mutation-proof/M249.txt",
+      "sha256": "d5f4507e87c13a225ab9e9c54a3d6868e3a631c59efcc1b088f7cd3cb9a6662e"
+    },
+    {
+      "path": ".atlas/runs/mutation-proof/M250.txt",
+      "sha256": "61fc26732d6b3909b777d3e98c226bd15ea8857f2ef2feaf434db44bd1eb5431"
+    }
+  ]
+}

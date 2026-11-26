@@ -1,0 +1,169 @@
+{
+  "schema_version": 1,
+  "base": "1477ca1c5130fe7e0cb89f83e011186d62925b31",
+  "canonical_digest": "c6187e157cf0cadfef0e2c66e6102ab2d2a03e3b27e1504a9bea034e28477e29",
+  "files": [
+    {
+      "path": "_support/governance_corpus.py",
+      "sha256": "7707bafceec1eba5425388951245bfd72979cc562405df420b5184a0616c90c7",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "_support/governance_schema.py",
+      "sha256": "59a90c02a8cdcebd35cc21343c27460df321dc7e91daeabea1f065267fd657b2",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "docs/map/adapters.md",
+      "sha256": "168ee45b80366732a75ee67d300c3498e300155b5e8ee9f4168008caecf36ffe",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "docs/map/atlas-map.html",
+      "sha256": "a07ac00003aa23b43024703ef0ca21479ef121c1c48a0082cf64565912ccc01c",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "docs/map/cli.md",
+      "sha256": "6915cbad0f18ef007f753b414cda18125749ec7caac8cb4d979ccdd678b26388",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "docs/map/index.md",
+      "sha256": "9e7abd42e05acb95a98b2166b0c3bb8435632cd873c9ad0f703a76115bf8d05a",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "install.py",
+      "sha256": "411dafcf9c087aad74033b04f3e47746247a4a160e74b3a04986fb3b4fae50b8",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "scripts/refresh_structure.py",
+      "sha256": "5258d130345ef79c3e576bf665cb984a8c3bb6bddea61da95b0f8d440770936c",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "shared/gates.md",
+      "sha256": "c17ebf0a647c21065bc30cf27daed44b14c5fddf11922201cc725ea945735533",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "shared/schemas/docs-governance-event.json",
+      "sha256": "915f42b52a75291673bef3ba3787f902eb5f352bdcb0ed51ad3a1ec0f3e0d066",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "shared/schemas/docs-governance.json",
+      "sha256": "431b5cf592d6d5be9be022622224db6f086f080944cf8abfc8f222c110576920",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "shared/schemas/governance-common.json",
+      "sha256": "b7791c50e291832f9e41ca02803c969f8c14e0a789d0dc63f7895aff42e8469d",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "shared/schemas/heldout-spec.json",
+      "sha256": "77ac0da783c9eeb6948053cbc79f15600bfe4ac14c792843271ef57ad93d6dd5",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "shared/schemas/incident-timeline-event.json",
+      "sha256": "47fd338f7cf2dca953d66d6cc4dc0496d2f8b24eb7cc39957eb855b7af5d944e",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "shared/schemas/incident.json",
+      "sha256": "5e0169f3411b1c55b083c761e0186eca50865b8187145f9bf0abad05889ff22e",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "shared/schemas/runtime-topology.json",
+      "sha256": "da731db3405ddc03f8a27b763c65d4d5396ec16923db759176f14eb71054199f",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "shared/schemas/semantic-contracts.json",
+      "sha256": "565407ba34e71b454f93ea55dc9d5328814abe894d2d75af7d3e7ed78fe95a67",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "shared/schemas/semantic-expected.json",
+      "sha256": "f28be452c99b2b289f85ee2643341740c876ce5d087f661013744f03441c2d85",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "shared/schemas/semantic-graph.json",
+      "sha256": "71aff154df98f2a45f4160278d8765b67dc461c0cd1a681667d72f9b21e43585",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "shared/schemas/semantic-observed.json",
+      "sha256": "3afd6bf493f5c3021cfdd300da66db994dbac3561b595f7bea517b814b10a52c",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "shared/schemas/workflow-receipt.json",
+      "sha256": "5567047b82c7231acaf453414730dfbe2384103a011cd362f88a269f4b1a199e",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "shared/stack-profile.md",
+      "sha256": "8a92262e45f7ed4bf907f87f804b8766f401427a777fc9c9edf4c608b9249565",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "templates/stack-profile.yaml",
+      "sha256": "d163c51b97dc3a94d37fbca13cc2dd2e82500105b2547da6a3c8731b5ab9ce2a",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "tests/fixtures/governance/corpus-manifest.json",
+      "sha256": "e6f231a1d9ef82a20dfec33713e822dcce6d2c2302256759936166fb69f45b59",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "tests/fixtures/governance/corpus.json",
+      "sha256": "d2fb78dd9964adbf72001e81fa37b264e2f2c5d472ca63fc6bc77cb9aa184fbb",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "tests/test_governance_contracts.py",
+      "sha256": "69f35dba7ef4ff865213c7163f944533df1dfe4db3b3bbcb62fcf4e08f55a93c",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    },
+    {
+      "path": "tests/test_refresh_facts.py",
+      "sha256": "b708949d9d70049cc7a518741ca13a127494b66eb4a6cad15b8679849b416ea3",
+      "tool": "atlas-p0",
+      "parse_status": "parsed"
+    }
+  ]
+}

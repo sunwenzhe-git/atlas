@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "atlas:semantic-graph:v1",
+  "title": "Semantic clause to observed fact graph",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "expected_digest", "observed_digest", "edges"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "expected_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "observed_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
+  },
+  "$defs": {
+    "revision": {"type": "object", "additionalProperties": false, "required": ["commit"], "properties": {"commit": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"}}},
+    "source": {"type": "object", "additionalProperties": false, "required": ["path", "line", "sha256"], "properties": {"path": {"type": "string", "minLength": 1}, "line": {"type": "integer", "minimum": 1}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}},
+    "edge": {"type": "object", "additionalProperties": false, "required": ["id", "base", "head", "from", "to", "kind", "source", "sha256", "adapter_version"], "properties": {"id": {"type": "string", "minLength": 1}, "base": {"$ref": "#/$defs/revision"}, "head": {"$ref": "#/$defs/revision"}, "from": {"type": "string", "minLength": 1}, "to": {"type": "string", "minLength": 1}, "kind": {"const": "clause_contract_observed"}, "source": {"$ref": "#/$defs/source"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "adapter_version": {"type": "string", "minLength": 1}}}
+  }
+}

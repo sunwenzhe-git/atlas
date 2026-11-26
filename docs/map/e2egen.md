@@ -35,13 +35,13 @@
 
 `APP_LOGIN_MODES`(`scripts/gen_e2e_scripts.py:91`)= real / fabricated / none;字段族 `APP_LOGIN_FIELDS`(`scripts/gen_e2e_scripts.py:90`)。none = 显式声明无门,不是降级。消费面分型:sessionStorage=会话 / storageState=auth / 查询串=参数。
 
-### 4. mock 外部协议(`MOCK_METHODS`,`scripts/gen_e2e_scripts.py:39`)
+### 4. mock 外部协议(`MOCK_METHODS`,`scripts/gen_e2e_scripts.py:105`)
 
 打桩声明(`parse_mock_line`,`scripts/gen_e2e_scripts.py:104`)编译为**单条** `context.route` 派发表:pathname+method 命中、query 免疫、前缀内未命中即红(`compile_mock_entries`,`scripts/gen_e2e_scripts.py:104`);fixture 文件随批落盘。
 
 ### 5. 双前置门:独立审查 + 就绪
 
-`review_gate`(`scripts/gen_e2e_scripts.py:1801`)读最新审查报告(`REVIEW_LEVELS`,`scripts/gen_e2e_scripts.py:1801`),有 Critical 拒绝写盘;`NOT_READY`(`scripts/gen_e2e_scripts.py:88`,exit 3)= 前置未声明的显式跳过,不是失败。
+`review_gate`(`scripts/gen_e2e_scripts.py:2050`)读最新审查报告(`REVIEW_LEVELS`,`scripts/gen_e2e_scripts.py:2050`),有 Critical 拒绝写盘;`NOT_READY`(`scripts/gen_e2e_scripts.py:88`,exit 3)= 前置未声明的显式跳过,不是失败。
 
 ### 6. 失败留证(D108/D142)
 
@@ -53,7 +53,7 @@ Playwright 配置层 `trace` / `screenshot` 两轨(`scripts/gen_e2e_scripts.py:1
 
 ### 8. 评审控制台(`scripts/e2e_console.py`)
 
-`snapshot`(`scripts/e2e_console.py:829`)聚合现场;`repo_provenance`(`scripts/e2e_console.py:564`)产评审指纹(应用内容指纹 + 逐文件脚本散列)防旧账本挂新执行;`Ledger`(`scripts/e2e_console.py:829`)落评审台账;`Runner`(`scripts/e2e_console.py:829`)做 500ms 慢动作回放 + 逐用例三值走查(pass/fail/skip),提交即解锁人工 Review;`resolve_pw`(`scripts/e2e_console.py:829`)复用运行器判据与全局兜底。
+`snapshot`(`scripts/e2e_console.py:829`)聚合现场;`repo_provenance`(`scripts/e2e_console.py:829`)产评审指纹(应用内容指纹 + 逐文件脚本散列)防旧账本挂新执行;`Ledger`(`scripts/e2e_console.py:829`)落评审台账;`Runner`(`scripts/e2e_console.py:829`)做 500ms 慢动作回放 + 逐用例三值走查(pass/fail/skip),提交即解锁人工 Review;`resolve_pw`(`scripts/e2e_console.py:829`)复用运行器判据与全局兜底。
 
 ## 对外接口(谁咬它)
 

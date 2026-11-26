@@ -34,7 +34,7 @@
 
 | # | 子系统 | 一句话职责 | 入口 | L1 页 |
 |---|---|---|---|---|
-| 0 | 共享内核 | 全包单源的解析/复用实现,禁止就地复制 | `_support/`(19 件) | — |
+| 0 | 共享内核 | 全包单源的解析/复用实现,禁止就地复制 | `_support/`(42 件) | — |
 | 1 | CLI 与装配 | 把 atlas 装进目标仓库并保持副本与源包对账 | `bin/atlas.js`、`install.py` | [cli.md](cli.md) |
 | 2 | 共享契约层 | 规则与执行期程序契约的单一落点(frontend-reuse 非门、非真相源) | `shared/`(9 份)、`templates/` | — |
 | 3 | 结构抽取适配器 | 从业务代码确定性抽取路由/API/模型/测试事实 | `adapters/`、`scripts/refresh_structure.py` | [adapters.md](adapters.md) |
@@ -42,7 +42,7 @@
 | 5 | 三环资产引擎 | structure / prd / e2e 三环的环内规程契约 | `rings/*/reference.md`、`skills/atlas-*` | — |
 | 6 | apply 跨环编排 | 唯一编排件:需求 → 资产增量的四模式 | `apply/reference.md` | [apply.md](apply.md) |
 | 7 | E2E 生成与控制台 | 用例分片 → Playwright 脚本 + 慢动作评审台 | `scripts/gen_e2e_scripts.py`、`scripts/e2e_console.py` | [e2egen.md](e2egen.md) |
-| 8 | 门禁与校验 | 〔数:校验器=14〕 校验器 + 编排器 + 门册 + 变异证明 | `scripts/atlas_check.py`、`validators/` | [gates.md](gates.md) |
+| 8 | 门禁与校验 | 〔数:校验器=21〕 校验器 + 编排器 + 门册 + 变异证明 | `scripts/atlas_check.py`、`validators/` | [gates.md](gates.md) |
 | 9 | 评审与收口 | 独立审查产物链 + 收口触发派生 | `shared/independent-review.md`、`scripts/closeout_derive.py` | [review.md](review.md) |
 | 10 | 运营面 | 每日巡检 / 自感知上报 / 发版 | `duty-review/`、`scripts/atlas_report.py` | — |
 | 11 | 执行层 | atlas workflow 全流程调度:plan/dispatch/verify/finish + 三类需求增量与机制文档机器面 | `bin/atlas.js workflow`、`scripts/atlas_workflow.py` | — |
@@ -55,8 +55,8 @@
 
 ### 1. CLI 与装配
 
-- `bin/atlas.js`(568 行):命令面 = `init / update / upgrade / check / workflow / bug / solution / review / eval / console / report / version`。`init` 直接调装配器(前置仅 Node.js + Python 3.10+);平台探测拆在 `bin/platform.js`(bash 只认 Git Bash 不回落 WSL 中继壳;Python 按平台探测 `py -3`/`python`/`python3` 并校验 3.10+)。
-- `install.py`(954 行):装配单源(`install.sh` 56 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`(RFC-20261114-01 起不含出厂测试目录,历史残留经 MANIFEST 基线闸清理),落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 77 条 `c()` 自检声明。
+- `bin/atlas.js`(676 行):命令面 = `init / update / upgrade / check / migrate / incident / docs / topology / contracts / receipt / classify / calibrate / metrics / workflow / bug / solution / review / eval / e2e / console / report / apply / version`。`init` 直接调装配器(前置仅 Node.js + Python 3.10+);平台探测拆在 `bin/platform.js`(bash 只认 Git Bash 不回落 WSL 中继壳;Python 按平台探测 `py -3`/`python`/`python3` 并校验 3.10+)。
+- `install.py`(997 行):装配单源(`install.sh` 56 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`(RFC-20261114-01 起不含出厂测试目录,历史残留经 MANIFEST 基线闸清理),落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 120 条 `c()` 自检声明。
 - `patches/`:`project-wiring`(AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.adapter-out/` / pi 扩展五触点)。锚点式版本化补丁,可重放;其余 3 族 workflow 补丁已随执行层退役删除。
 - 对账:`scripts/pkg_digest.py`(摘要算法单点)+ `scripts/backflow.py`(副本⇔源包三态回灌,SOURCE_ONLY 拒绝护栏)。
 
@@ -66,9 +66,9 @@
 
 ### 3. 结构抽取适配器 `adapters/` + `scripts/refresh_structure.py`
 
-- 适配器四件:`routes.py` / `api.py` / `models.py` / `tests.py`,由 `product/stack-profile.yaml` 的 `adapters` 段声明启用。统一契约:只读、幂等、失败非零且零部分产物、输出 JSON 形如 `{category, items, source_files, adapter_version}`,落 `.adapter-out/`(项目根,运行态不入库)。
+- 结构适配器:`routes.py` / `api.py` / `models.py` / `tests.py`；全局 `topology` category 固定输出 `.adapter-out/topology.json`,由 `product/stack-profile.yaml` 的 `adapters` 段声明启用。统一契约:只读、幂等、失败非零且零部分产物、输出 JSON 形如 `{category, items, source_files, adapter_version}`,落 `.adapter-out/`(项目根,运行态不入库)。
 - `_lib.py` / `_scaffold.py` 是共享件;`_graph.py` 不是适配器(归子系统 4)。
-- `scripts/refresh_structure.py`(831 行)把适配器产物渲染进 `.atlas/spec/structure/` 的 `atlas:facts` 标记区:键级单元格重写、语义列保留、键级增删落漂移标记 `.adapter-out/_drift.json`(由「结构漂移」门消费)。
+- `scripts/refresh_structure.py`(878 行)把适配器产物渲染进 `.atlas/spec/structure/` 的 `atlas:facts` 标记区:键级单元格重写、语义列保留、键级增删落漂移标记 `.adapter-out/_drift.json`(由「结构漂移」门消费)。
 
 ### 4. 语义透镜 → [graph.md](graph.md)
 
@@ -102,20 +102,20 @@
 
 ### 11. 执行层 `atlas workflow`
 
-自建全流程执行层(D205 收敛,移除 Trellis 宿主依赖):`plan`(写卡;`--requirement` 领取模式从需求落点 `requirements/<slug>/` 领取——requirement.md 确认稿 + items.md 条目唯一住址 + work/ 原文,状态机 候选→已确认→已拆→已收口,卡条目表=领取引用表不复制正文,RFC-20261122-03)/ `dispatch`(最小上下文派工)/ `context`(最小注入单源)/ `verify`(判据族:coverage_matrix 逐卡 AC 对账、requirement_root 跨卡落点对账、机制文档提示族;`--staged` 暂存区审查)/ `finish`(结构事实新鲜度门 + deferred 台账 + cause 分流退出码)/ `status · archive`。机制文档(`docs/architecture/<机制>.md` + frontmatter `mechanism-paths`)机器面:触及提示 / 疑似死 paths / 单星 glob 拒收(RFC-20261122-04);回收面硬化:预算门 + 失败记账 + causes 12 值域封闭 + 行级锚定六态 WARN(D209 / RFC-20261122-08)。
+自建全流程执行层(D205 收敛,移除 Trellis 宿主依赖):`plan`(写卡;`--requirement` 领取模式从需求落点 `requirements/<slug>/` 领取——requirement.md 确认稿 + items.md 条目唯一住址 + work/ 原文,状态机 候选→已确认→已拆→已收口,卡条目表=领取引用表不复制正文,RFC-20261122-03)/ `dispatch`(最小上下文派工)/ `context`(最小注入单源)/ `verify`(判据族:coverage_matrix 逐卡 AC 对账、requirement_root 跨卡落点对账、机制文档提示族;`--staged` 暂存区审查)/ `finish`(结构事实新鲜度门 + deferred 台账 + cause 分流退出码)/ `status · archive`。机制文档(`docs/architecture/<机制>.md` + frontmatter `mechanism-paths`)机器面:触及提示 / 疑似死 paths / 单星 glob 拒收(RFC-20261122-04);回收面硬化:预算门 + 失败记账 + causes 37 值域封闭 + 行级锚定六态 WARN(D209 / RFC-20261122-08)。
 
 ## 数字快照
 
 | 量 | 值 | 出处 |
 |---|---|---|
-| 校验器 | 〔数:校验器=14〕(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py:52` |
-| 编排门行 | 〔数:编排门行=10〕 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 / 消融残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:92`) |
-| 出厂测试文件 | 〔数:出厂测试文件=92〕 | `tests/` |
+| 校验器 | 〔数:校验器=21〕(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py:52` |
+| 编排门行 | 〔数:编排门行=10〕 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 / 消融残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:1201`) |
+| 出厂测试文件 | 〔数:出厂测试文件=101〕 | `tests/` |
 | skills | 〔数:skills=10〕(含 frontend-design) | `skills/` |
 | 环 | 〔数:环=3〕(structure / prd / e2e;原型环 E1 已退役) | `rings/` |
 | 共享契约 | 〔数:共享契约=9〕 份 | `shared/` |
-| 共享内核 | 〔数:共享内核=31〕 件 | `_support/` |
-| install.py 自检声明 | 〔数:自检声明=77〕 条 | `install.py` |
+| 共享内核 | 〔数:共享内核=42〕 件 | `_support/` |
+| install.py 自检声明 | 〔数:自检声明=120〕 条 | `install.py` |
 | 最大单件 | `〔数:最大单件文件=scripts/gen_e2e_scripts.py〕` 〔数:最大单件行数=3444〕 行 | — |
 
 ## L1 铺设计划(2026-10-25 定稿)

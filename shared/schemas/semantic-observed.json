@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "atlas:semantic-observed:v1",
+  "title": "Observed adapter facts only",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "base", "head", "adapter_version", "facts", "sources", "changed_paths", "coverage"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "base": {"$ref": "#/$defs/revision"}, "head": {"$ref": "#/$defs/revision"},
+    "adapter_version": {"type": "string", "minLength": 1},
+    "facts": {"type": "array", "items": {"$ref": "#/$defs/fact"}},
+    "changed_paths": {"type": "array", "items": {"type": "string"}},
+    "sources": {"type": "array", "items": {"$ref": "#/$defs/source"}},
+    "coverage": {"type": "object", "additionalProperties": false, "required": ["parsed", "unverified_fields", "parse_errors"], "properties": {"parsed": {"type": "integer", "minimum": 0}, "unverified_fields": {"type": "array", "items": {"type": "string"}}, "parse_errors": {"type": "array", "items": {"type": "string"}}}}
+  },
+  "$defs": {
+    "revision": {"type": "object", "additionalProperties": false, "required": ["commit", "digest"], "properties": {"commit": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"}, "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}},
+    "source": {"type": "object", "additionalProperties": false, "required": ["path", "line", "sha256"], "properties": {"path": {"type": "string", "minLength": 1}, "line": {"type": "integer", "minimum": 1}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}},
+    "fact": {"type": "object", "additionalProperties": false, "required": ["id", "kind", "value", "adapter_version", "source"], "properties": {"id": {"type": "string", "minLength": 1}, "kind": {"enum": ["route", "field", "enum", "testid", "ac", "tests", "error_code", "config", "cli", "state"]}, "value": {"type": "object"}, "adapter_version": {"type": "string", "minLength": 1}, "source": {"$ref": "#/$defs/source"}}}
+  }
+}

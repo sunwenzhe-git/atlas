@@ -32,6 +32,7 @@ adapters:
   api: null         # 接口清单
   models: null      # 数据模型清单
   tests: null       # 测试现状
+  topology: null    # 全局 Runtime Topology（Compose/Helm/Kong 静态事实）
 
 # 代码图谱后端（可选增强，2026-10-05 图谱批 1）。段缺失 / graph: null = 不用图谱（合法降级）。
 # 声明后：routes 适配器走图谱文件枚举（用前现刷）、apply 影响面推导先跑 impact_report。
