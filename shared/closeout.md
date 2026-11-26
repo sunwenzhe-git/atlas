@@ -17,7 +17,7 @@
 | 域实现完成（E2E 真跑前即可） | **10**（实例 ⑤ 实现代码独立审查） |
 | 独立审查报告落盘（①②④⑤ 任一实例） | 1（含 `validate_review_report --dir <报告目录>`，2026-10-06 起） |
 | 影响面报告已产出（`.atlas/tasks/<ID>/impact.json` 存在）的收口 | 1（含 `impact_reconcile --task <ID> --diff-base <ref>` 对账门：predicted vs 实际 diff 双向差集 ⇒ WARN，B191-1，2026-10-07 起） |
-| 缺陷修复类任务（bug fix） | **4（A 档）** → 1 → 7；canonical 缺陷另须 `atlas bug --from staged` → 暂存回推产物 → verify 的 `bug_backflow` 锚 → finish；无任务卡的重复/非缺陷/不修项走 `rings/prd/reference.md` §12.4 分诊关闭，不套本步骤 |
+| 需求变更/缺陷修复类任务 | **4（A 档）** → 1 → 7；verify 在评审前自动回推并暂存产物 → `change_backflow` 锚 → finish；finish 自动补跑后必须 reverify。无任务卡的重复/非缺陷/不修项走 `rings/prd/reference.md` §12.4 分诊关闭，不套本步骤 |
 | 实现类任务（feature / refactor，非 bug fix） | **4（B 档）** → 1 → 7（语义触发行，不自动派生；「实现类任务」= 落业务代码的 feature / refactor；bug fix 走上一行，纯文档 / 纯契约改动不算） |
 | 改动触及核心业务链路 / 权限 / CI / 依赖 / 契约 | **3**（变更风险定档与人工审批）→ 1 |
 | 域 / 里程碑收口且出现 ≥2 次同类纠偏（或用户点名复盘） | **11**（harness 复盘，按需） |

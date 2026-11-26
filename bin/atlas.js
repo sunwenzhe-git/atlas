@@ -36,7 +36,8 @@ Atlas — 践行 Project Harness 的全流程 AI 编程工作流治理引擎
   calibrate 以 calibration 选阈值、held-out 只评测
   metrics   只读治理指标与来源摘要
   workflow  自建全流程执行层调度（plan / dispatch / context / verify / finish / status / archive / run）
-  bug       缺陷 canonical 落点、diff 回推台账与反向查询
+  change    需求变更/缺陷 canonical 落点、自动 diff 回推台账与反向查询
+  bug       change 的缺陷兼容别名
   solution  多仓方案层：init / adopt / status / check / lock / task（Phase 1 仅 federated）
   review    实例⑤实现代码独立审查一键编排（preview → CLI review → scope → convert → validate → closure）
   eval      消融对照跑分器（run：两 commit 对照出 ledger；gate：回归判定）
@@ -91,6 +92,28 @@ function requirePython() {
 function runPython(scriptArgs, opts = {}) {
   const py = requirePython();
   return spawnSync(py.cmd, [...py.args, ...scriptArgs], { env: process.env, ...opts });
+}
+
+function hasAutoChangeMarker(file) {
+  try {
+    return fs.readFileSync(file, 'utf8').includes('ATLAS_CHANGE_AUTO_V1');
+  } catch (_) {
+    return false;
+  }
+}
+
+function hasAutoChangeKernel(targetDir) {
+  const atlasDir = path.join(targetDir, '.atlas');
+  return hasAutoChangeMarker(path.join(atlasDir, 'scripts', 'atlas_change.py'))
+    && hasAutoChangeMarker(path.join(atlasDir, 'scripts', 'atlas_bug.py'))
+    && hasAutoChangeMarker(path.join(atlasDir, '_support', 'bug_backflow.py'))
+    && hasAutoChangeMarker(path.join(atlasDir, '_support', 'bug_record.py'));
+}
+
+function hasAutoChangeBundle(targetDir) {
+  return hasAutoChangeKernel(targetDir)
+    && hasAutoChangeMarker(path.join(targetDir, '.atlas', 'scripts', 'atlas_workflow.py'))
+    && hasAutoChangeMarker(path.join(targetDir, '.atlas', 'scripts', 'atlas_review.py'));
 }
 
 function runInstaller(argv, extraEnv = {}) {
@@ -435,7 +458,7 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
     const targetDir = process.cwd();
     const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_workflow.py');
     const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_workflow.py');
-    const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
+    const runScript = hasAutoChangeBundle(targetDir) ? scriptPath : fallbackScript;
 
     const res = runPython([runScript, '--root', targetDir, ...passthroughArgs], {
       stdio: 'inherit',
@@ -526,14 +549,17 @@ Atlas upgrade — 自动拉取 npm 最新全局包升级全局 Atlas CLI
     break;
   }
 
+  case 'change':
   case 'bug': {
     const passthroughArgs = args.slice(1);
     const targetDir = process.cwd();
-    const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_bug.py');
-    const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_bug.py');
-    const runScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript;
+    const scriptPath = path.join(targetDir, '.atlas', 'scripts', 'atlas_change.py');
+    const fallbackScript = path.join(PKG_ROOT, 'scripts', 'atlas_change.py');
+    const runScript = hasAutoChangeKernel(targetDir) ? scriptPath : fallbackScript;
+    const kindArgs = command === 'bug' && !passthroughArgs.includes('--kind')
+      ? ['--kind', '缺陷'] : [];
 
-    const res = runPython([runScript, '--root', targetDir, ...passthroughArgs], {
+    const res = runPython([runScript, '--root', targetDir, ...kindArgs, ...passthroughArgs], {
       stdio: 'inherit',
     });
     exitWithResult(res, 'python');

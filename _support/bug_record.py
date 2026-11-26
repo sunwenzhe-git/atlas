@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Canonical defect backflow record schema, history, and atomic storage."""
+"""Canonical requirement-change/defect backflow record schema, history, and atomic storage."""
+# ATLAS_CHANGE_AUTO_V1
 from __future__ import annotations
 
 import hashlib
@@ -23,6 +24,7 @@ CONFLICT_STATUSES = ("open", "resolved")
 HISTORY_EVENTS = ("bootstrap", "analysis", "decision_applied", "validated", "linked")
 SOURCE_MODES = ("staged", "range")
 OBJECT_TYPES = ("blob", "symlink", "commit", "unknown")
+REPORT_PATHS = {"缺陷": "work/缺陷报告.md", "需求变更": "work/变更请求.md"}
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 MODE_RE = re.compile(r"^[0-7]{6}$")
@@ -62,6 +64,25 @@ def canonical_bytes(value: object) -> bytes:
 
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def dedupe_key_for(kind: str, report_path: str, related: str, report_sha256: str) -> str:
+    return f"{kind}:{report_path}:{related}:{report_sha256}"
+
+
+def dedupe_identity(key: object) -> tuple[str, str, str, str] | None:
+    if not isinstance(key, str):
+        return None
+    for kind, report_path in REPORT_PATHS.items():
+        prefix = f"{kind}:{report_path}:"
+        if key.startswith(prefix):
+            related, separator, digest = key[len(prefix):].rpartition(":")
+            if separator and related and SHA256_RE.fullmatch(digest):
+                return kind, report_path, related, digest
+    related, separator, digest = key.rpartition(":")
+    if separator and related and SHA256_RE.fullmatch(digest):
+        return "缺陷", REPORT_PATHS["缺陷"], related, digest
+    return None
 
 
 def record_content_hash(record: dict) -> str:
@@ -159,8 +180,8 @@ def _document_path_findings(root: Path | None, req_root: Path | None,
     if not any(candidate == base or base in candidate.parents for base in allowed):
         return [f"{label} 不在合法资产/spec 面"]
     req_rel = candidate.relative_to(req_root.resolve()).as_posix() if req_root.resolve() in candidate.parents else ""
-    if req_rel in (RECORD_FILE, "work/缺陷报告.md"):
-        return [f"{label} 不得指向台账或缺陷报告自身"]
+    if req_rel in (RECORD_FILE, *REPORT_PATHS.values()):
+        return [f"{label} 不得指向台账或变更/缺陷报告自身"]
     return []
 
 
@@ -205,36 +226,45 @@ def validate_record(record: object, *, requirement_root: Path | None = None,
             findings.append("content_sha256 与当前 record 内容不一致")
 
     report = record.get("report")
+    report_rel = ""
     if _keys(report, NESTED_KEYS["report"], "report", findings):
         assert isinstance(report, dict)
-        if report.get("path") != "work/缺陷报告.md":
-            findings.append("report.path 必须固定为 work/缺陷报告.md")
+        report_rel = report.get("path") if isinstance(report.get("path"), str) else ""
+        if report_rel not in REPORT_PATHS.values():
+            findings.append("report.path 必须为 work/缺陷报告.md 或 work/变更请求.md")
         _sha(report.get("sha256"), "report.sha256", findings)
 
     metadata = _requirement_metadata(requirement_root) if requirement_root is not None else {}
-    if requirement_root is not None and metadata.get("类型") == "缺陷":
+    kind = metadata.get("类型")
+    if requirement_root is not None and kind in REPORT_PATHS:
+        expected_report = REPORT_PATHS[kind]
+        if report_rel and report_rel != expected_report:
+            findings.append(f"{kind}的 report.path 必须为 {expected_report}")
         if not metadata.get("关联需求"):
-            findings.append("缺陷未关联既有需求：必须写 **关联需求**：<slug#R-NN>")
+            findings.append(f"{kind}未关联既有需求：必须写 **关联需求**：<slug#R-NN>")
         elif root is not None:
             try:
                 findings.extend(requirement_relation_findings(Path(root), Path(requirement_root)))
             except (LayoutError, OSError) as exc:
-                findings.append(f"缺陷关联需求无法校验：{exc}")
-    if requirement_root is not None and isinstance(report, dict):
-        report_path = requirement_root / "work" / "缺陷报告.md"
+                findings.append(f"{kind}关联需求无法校验：{exc}")
+    if requirement_root is not None and isinstance(report, dict) and report_rel:
+        report_path = requirement_root / report_rel
         if not report_path.is_file() or report_path.is_symlink():
-            findings.append("work/缺陷报告.md 缺失或为 symlink")
+            findings.append(f"{report_rel} 缺失或为 symlink")
         else:
             try:
                 actual = sha256_bytes(report_path.read_bytes())
             except OSError:
                 actual = ""
             if actual != report.get("sha256"):
-                findings.append("report.sha256 与 work/缺陷报告.md 当前内容不一致")
+                findings.append(f"report.sha256 与 {report_rel} 当前内容不一致")
         related = metadata.get("关联需求")
-        expected_dedupe = f"{related}:{report.get('sha256')}"
-        if related and record.get("dedupe_key") != expected_dedupe:
-            findings.append("dedupe_key 必须为 <关联需求>:<report.sha256>")
+        expected_dedupe = dedupe_key_for(kind or "缺陷", report_rel, related or "",
+                                         str(report.get("sha256") or ""))
+        legacy_dedupe = (kind == "缺陷" and related
+                         and record.get("dedupe_key") == f"{related}:{report.get('sha256')}")
+        if related and record.get("dedupe_key") != expected_dedupe and not legacy_dedupe:
+            findings.append("dedupe_key 必须绑定类型、报告路径、关联需求与报告哈希")
 
     impact = record.get("impact")
     conflicts = record.get("conflicts")
@@ -454,17 +484,21 @@ def validate_record(record: object, *, requirement_root: Path | None = None,
     return findings
 
 
-def new_record(slug: str, related: str, stage: str, report_sha256: str) -> dict:
+def new_record(slug: str, related: str, stage: str, report_sha256: str,
+               report_path: str = REPORT_PATHS["缺陷"]) -> dict:
     if stage not in STAGES:
         raise BugRecordError(f"非法 stage：{stage!r}")
+    if report_path not in REPORT_PATHS.values():
+        raise BugRecordError(f"非法 report.path：{report_path!r}")
+    kind = next(key for key, value in REPORT_PATHS.items() if value == report_path)
     now = utc_now()
     record = {
         "schema_version": SCHEMA_VERSION,
         "id": slug,
-        "dedupe_key": f"{related}:{report_sha256}",
+        "dedupe_key": dedupe_key_for(kind, report_path, related, report_sha256),
         "backflow_status": "pending",
         "stage": stage,
-        "report": {"path": "work/缺陷报告.md", "sha256": report_sha256},
+        "report": {"path": report_path, "sha256": report_sha256},
         "root_cause": "",
         "impact": [],
         "conflicts": [],

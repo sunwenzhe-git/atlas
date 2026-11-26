@@ -868,9 +868,12 @@ def make_requirement_root(root: Path, slug: str = "demo-req", *,
     table = ["# 落点条目表", "", "| ID | 页码 | 章节 | 原文 |", "|---|---|---|---|"]
     table += [f"| {i} | p1 | §2 | 条目原文 {i} |" for i in item_ids]
     (req_dir / "items.md").write_text("\n".join(table) + "\n", encoding="utf-8")
-    source_name = "缺陷报告.md" if kind == "缺陷" else "需求PDF-全文.md"
-    (req_dir / "work" / source_name).write_text(
-        "<!-- page 1 -->\n条目原文 R-01\n", encoding="utf-8")
+    source_name = {"缺陷": "缺陷报告.md", "需求变更": "变更请求.md"}.get(
+        kind, "需求PDF-全文.md")
+    source_text = "<!-- page 1 -->\n条目原文 R-01\n"
+    if kind == "需求变更":
+        source_text += "\n**变更原因**：验收范围调整。\n**阶段**：prod\n"
+    (req_dir / "work" / source_name).write_text(source_text, encoding="utf-8")
     return req_dir
 
 
@@ -1219,25 +1222,23 @@ def test_replan_without_requirement_preserves_pointer(tmp_path: Path) -> None:
     ("kind", "expected_writeback"),
     [("初始需求", "required"), ("需求变更", "required")],
 )
-def test_finish_json_returns_type_aware_requirement_closeout(
+def test_requirement_closeout_returns_type_aware_result(
         tmp_path: Path, kind: str, expected_writeback: str) -> None:
     """M210：摘除 finish 类型收口待办后，本用例必须红。"""
+    from _support.workflow_finish import requirement_closeout
+
     root = make_clean_project(tmp_path)
     related = "demo-req#R-01" if kind != "初始需求" else None
     if related:
         make_requirement_root(root)
     make_requirement_root(root, slug="typed", kind=kind, related=related)
-    run(root, "plan", "--unit", "T-20", "--requirement",
-        "product/requirements/typed")
-    run(root, "dispatch", "--unit", "T-20")
-    r_dir = root / "product" / "reviews" / "2026-11-22-impl-review-T-20"
-    r_dir.mkdir(parents=True, exist_ok=True)
-    (r_dir / "review.json").write_text(json.dumps({
-        "schema_version": 4, "ok": True, "status": "PASS", "checks": [], "other": []
-    }), encoding="utf-8")
-    p = run(root, "finish", "--unit", "T-20", "--json")
-    assert p.returncode == 0, p.stdout + p.stderr
-    closeout = json.loads(p.stdout)["requirement_closeout"]
+    _make_claim_card(root, "T-20", "product/requirements/typed", ["R-01"],
+                     status="completed")
+    source = root / ".atlas" / "tasks" / "T-20"
+    dest = root / ".atlas" / "tasks" / "archive" / "2026-11" / "T-20"
+    dest.parent.mkdir(parents=True)
+    source.rename(dest)
+    closeout = requirement_closeout(root, "product/requirements/typed")
     assert closeout["type"] == kind
     assert closeout["product_fact_writeback"] == expected_writeback
     assert closeout["requirement_status_target"] == "已收口"
@@ -1573,21 +1574,14 @@ def test_finish_closeout_handles_io_error(tmp_path: Path, monkeypatch) -> None:
     assert closeout["findings"]
 
 
-def test_finish_text_reports_closeout_findings(tmp_path: Path) -> None:
+def test_requirement_closeout_reports_relation_findings(tmp_path: Path) -> None:
+    from _support.workflow_finish import requirement_closeout
+
     root = make_clean_project(tmp_path)
     make_requirement_root(root, kind="需求变更")
-    run(root, "plan", "--unit", "T-28", "--requirement",
-        "product/requirements/demo-req")
-    run(root, "dispatch", "--unit", "T-28")
-    r_dir = root / "product" / "reviews" / "2026-11-22-impl-review-T-28"
-    r_dir.mkdir(parents=True, exist_ok=True)
-    (r_dir / "review.json").write_text(json.dumps({
-        "schema_version": 4, "ok": True, "status": "PASS", "checks": [], "other": []
-    }), encoding="utf-8")
-    p = run(root, "finish", "--unit", "T-28")
-    assert p.returncode == 0, p.stdout + p.stderr
-    assert "回写阻断" in p.stdout and "关联需求" in p.stdout
-    assert "仍有未归档或未 completed" not in p.stdout
+    closeout = requirement_closeout(root, "product/requirements/demo-req")
+    assert any("关联需求" in finding for finding in closeout["findings"])
+    assert closeout["product_fact_writeback"] == "pending"
 
 
 def test_finish_closeout_handles_requirement_read_error(

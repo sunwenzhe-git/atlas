@@ -719,7 +719,7 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
         try:
             review_data = json.loads((Path(reason) / "review.json").read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
-            raise FinishError(f"缺陷审查锚不可读：{exc}", cause="environment")
+            raise FinishError(f"变更/缺陷审查锚不可读：{exc}", cause="environment")
         anchored = validate_backflow(root, task, review_data)
         if anchored["findings"]:
             raise FinishError(f"任务 {t_id} 无法收口：{'；'.join(anchored['findings'])}",
@@ -963,6 +963,11 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
             requirement_closeout(root, task["requirement_root"])
             if task.get("requirement_root") else None),
         "bug_backflow": {
+            "applicable": bug_check["applicable"],
+            "artifacts": sorted(bug_artifacts),
+            "review": review_dir,
+        },
+        "change_backflow": {
             "applicable": bug_check["applicable"],
             "artifacts": sorted(bug_artifacts),
             "review": review_dir,

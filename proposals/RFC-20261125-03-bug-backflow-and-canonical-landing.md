@@ -72,6 +72,15 @@ finish 只比对该独立锚，不信任台账自哈希。staged review scope �
 - M252/M253 四段变异证明均通过：注入非零、逐字节还原、复绿。
 - 空目录安装探针 exit 0；文档构建 exit 0；`git diff --check` 通过。
 
+## 7. 2026-11-26 扩展：需求变更与自动触发（D213）
+
+1. `atlas change` 成为需求变更/缺陷统一入口，`atlas bug` 保留缺陷兼容别名；命令名不是触发前提。
+2. `workflow verify` 在独立评审前自动执行回推、运行校验器并暂存 exact 产物；`workflow finish` 对缺失/过期记录自动补跑，产物变化后强制 reverify。
+3. 需求变更使用 `work/变更请求.md`，缺陷使用 `work/缺陷报告.md`；record schema、dedupe、validator 与双落点守卫对称覆盖两类。
+4. 新审查锚为 `review.json.change_backflow`（`anchor_version=2`），覆盖 canonical 根、报告、record 与回推文档；旧 `bug_backflow` 只读兼容，双锚并存或新锚缺版本即失败。
+5. 自动回推不伪造根因/阶段：原因取报告显式字段，阶段按显式参数、报告字段、保守 prod 解析；冲突仍需签字决策。
+6. M255/M256 四段变异证明通过：摘 verify 自动触发、放宽 legacy 锚 canonical 产物守卫均实测转红，逐字节还原后复绿。
+
 ## 7. 留出验证
 
 本批为 issues #75/#76 的系统性修复，触发 (b) 契约/校验器/门判据改动。已构造的回归覆盖双落点、决策绑定、语义 hunk、归档/重分析、报告篡改、索引分叉与历史幂等；尚未取得满足三条独立性的真实采纳仓留出集，结论登记为 **未闭族**。后续真实采纳仓出现同类案例时补独立留出验证，不把合成夹具冒充闭族。

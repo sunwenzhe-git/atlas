@@ -132,6 +132,39 @@ class BugLedgerValidatorTests(unittest.TestCase):
             for item in duplicate.checks
         ), duplicate.checks)
 
+    def test_requirement_change_record_passes_and_missing_record_fails(self) -> None:
+        req_root = self.root / "product" / "requirements" / "change-one"
+        req_root.mkdir(parents=True)
+        (req_root / "requirement.md").write_text(
+            "# change\n\n**类型**：需求变更\n**关联需求**：baseline#R-01\n**状态**：已收口\n",
+            encoding="utf-8")
+        (req_root / "work").mkdir()
+        report = b"change request evidence\n"
+        (req_root / "work" / "变更请求.md").write_bytes(report)
+        missing = ledger.validate(self.root)
+        self.assertEqual(missing.status, "FAIL", missing.checks)
+        write_record(req_root, new_record(
+            "change-one", "baseline#R-01", "prod", hashlib.sha256(report).hexdigest(),
+            report_path="work/变更请求.md"))
+        valid = ledger.validate(self.root)
+        self.assertEqual(valid.status, "PASS", valid.checks)
+        record = json.loads((req_root / "record.json").read_text(encoding="utf-8"))
+        record["dedupe_key"] = f"baseline#R-01:{record['report']['sha256']}"
+        refresh_hashes(record)
+        (req_root / "record.json").write_text(json.dumps(record, ensure_ascii=False),
+                                               encoding="utf-8")
+        invalid = ledger.validate(self.root)
+        self.assertEqual(invalid.status, "FAIL", invalid.checks)
+
+    def test_legacy_and_typed_defect_keys_dedupe_semantically(self) -> None:
+        report_hash = hashlib.sha256(b"shared report evidence\n").hexdigest()
+        self._record("bug-one", f"baseline#R-01:{report_hash}")
+        self._record("bug-two", f"缺陷:work/缺陷报告.md:baseline#R-01:{report_hash}")
+        result = ledger.validate(self.root)
+        self.assertEqual(result.status, "FAIL", result.checks)
+        self.assertTrue(any("dedupe_key" in item["detail"] for item in result.checks
+                            if item["status"] == "FAIL"), result.checks)
+
     def test_valid_triage_without_record_passes_validator_cli(self) -> None:
         self._requirement("triage-duplicate", conclusion="重复", evidence="与 bug-one 重复")
         self.assertFalse((self.root / "product" / "requirements" / "triage-duplicate" / "record.json").exists())

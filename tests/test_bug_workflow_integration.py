@@ -7,6 +7,7 @@ the index.  Negative cases mutate one finish precondition at a time.
 """
 from __future__ import annotations
 
+import argparse
 import copy
 import json
 import subprocess
@@ -22,14 +23,17 @@ if str(PKG_ROOT) not in sys.path:
 
 from _support import review_scope_core as scope_core
 from _support.bug_backflow import (
-    artifact_paths, review_anchor, source_snapshot, validate_backflow,
+    artifact_paths, required_staged_paths, review_anchor, source_snapshot,
+    validate_backflow,
 )
 from _support.bug_record import (
     RECORD_FILE, append_history, canonical_bytes, new_record, read_record,
     refresh_hashes, sha256_bytes, write_record,
 )
-from _support.workflow_finish import check_task_review_passed
+from _support.workflow_causes import load_attempts
+from _support.workflow_finish import FinishError, check_task_review_passed, finish_task
 from _support.workflow_plan import load_tasks
+from scripts import atlas_workflow as workflow
 from scripts.atlas_review import seal_bug_anchor
 from test_atlas_workflow import (
     _make_claim_card, make_clean_project, make_requirement_root,
@@ -44,6 +48,8 @@ IMPL = "src/app.py"
 PRD = "product/prd/home-prd.md"
 BUG_REL = f"product/requirements/{BUG}"
 RECORD_REL = f"{BUG_REL}/{RECORD_FILE}"
+BUG_ARTIFACTS = {RECORD_REL, PRD, f"{BUG_REL}/requirement.md", f"{BUG_REL}/items.md",
+                 f"{BUG_REL}/work/缺陷报告.md"}
 REVIEW_REL = f"product/reviews/2026-11-26-impl-review-{UNIT}"
 
 
@@ -52,6 +58,7 @@ class BugFixture:
     root: Path
     req_root: Path
     record: dict
+    artifacts: set[str]
 
     @property
     def task(self) -> dict:
@@ -76,7 +83,8 @@ def _write_json(path: Path, data: dict) -> None:
                     encoding="utf-8")
 
 
-def _make_bug_fixture(tmp_path: Path, *, delete_impl: bool = False) -> BugFixture:
+def _make_bug_fixture(tmp_path: Path, *, delete_impl: bool = False,
+                      kind: str = "缺陷", slug: str = BUG) -> BugFixture:
     root = tmp_path
     init_repo(root)
     # Keep this downstream fixture schema-valid on Git versions whose default
@@ -84,19 +92,23 @@ def _make_bug_fixture(tmp_path: Path, *, delete_impl: bool = False) -> BugFixtur
     # covered separately by test_staged_source_snapshot_has_full_object_ids.
     git(root, "config", "core.abbrev", "40")
     make_clean_project(root)
+    (root / "product" / "stack-profile.yaml").write_text("origin: adopt\n", encoding="utf-8")
     make_requirement_root(root)
     (root / "src").mkdir()
     (root / IMPL).write_text("print('before')\n", encoding="utf-8")
     req_root = make_requirement_root(
-        root, slug=BUG, item_ids=("R-01",), kind="缺陷",
+        root, slug=slug, item_ids=("R-01",), kind=kind,
         related="demo-req#R-01")
-    report_bytes = (req_root / "work" / "缺陷报告.md").read_bytes()
+    req_rel = req_root.relative_to(root).as_posix()
+    record_rel = f"{req_rel}/{RECORD_FILE}"
+    report_rel = "work/缺陷报告.md" if kind == "缺陷" else "work/变更请求.md"
+    report_bytes = (req_root / report_rel).read_bytes()
     write_record(req_root, new_record(
-        BUG, "demo-req#R-01", "prod", sha256_bytes(report_bytes)))
+        slug, "demo-req#R-01", "prod", sha256_bytes(report_bytes), report_path=report_rel))
     git(root, "add", "-A")
-    git(root, "commit", "-qm", "bootstrap defect")
+    git(root, "commit", "-qm", f"bootstrap {kind}")
 
-    _make_claim_card(root, UNIT, BUG_REL, ["R-01"])
+    _make_claim_card(root, UNIT, req_rel, ["R-01"])
     if delete_impl:
         git(root, "rm", "--", IMPL)
     else:
@@ -106,13 +118,13 @@ def _make_bug_fixture(tmp_path: Path, *, delete_impl: bool = False) -> BugFixtur
     prd_path = root / PRD
     before_prd = _git_text(root, "show", f"HEAD:{PRD}").encode("utf-8")
     with prd_path.open("a", encoding="utf-8") as handle:
-        handle.write("\n缺陷回推确认：AC-HOME-001 的实现语义保持不变。\n")
+        handle.write("\n回推确认：AC-HOME-001 的实现语义保持不变。\n")
     after_prd = prd_path.read_bytes()
     git(root, "add", "--", PRD)
 
     record = read_record(req_root)
     assert record is not None
-    source = source_snapshot(root, "staged", None, {RECORD_REL, PRD})
+    source = source_snapshot(root, "staged", None, artifact_paths(root, req_root, record) | {PRD})
     record["source"] = source
     record["root_cause"] = "实现与既有验收契约的映射需要独立确认。"
     record["backflow_status"] = "applied"
@@ -132,15 +144,36 @@ def _make_bug_fixture(tmp_path: Path, *, delete_impl: bool = False) -> BugFixtur
                    document_sha256={PRD: sha256_bytes(after_prd)})
     write_record(req_root, record)
 
-    git(root, "add", "--", PRD, RECORD_REL)
-    fixture = BugFixture(root, req_root, record)
+    git(root, "add", "--", PRD, record_rel)
+    artifacts = artifact_paths(root, req_root, record)
+    fixture = BugFixture(root, req_root, record, artifacts)
     checked = validate_backflow(root, fixture.task)
     assert checked == {
         "applicable": True, "findings": [], "cause": "",
         "artifacts": checked["artifacts"],
     }
-    assert set(checked["artifacts"]) == {RECORD_REL, PRD}
+    assert set(checked["artifacts"]) == artifacts
     return fixture
+
+
+def _make_change_intake_fixture(tmp_path: Path) -> BugFixture:
+    root = tmp_path
+    init_repo(root)
+    git(root, "config", "core.abbrev", "40")
+    make_clean_project(root)
+    (root / "product" / "stack-profile.yaml").write_text("origin: adopt\n", encoding="utf-8")
+    make_requirement_root(root)
+    (root / "src").mkdir()
+    (root / IMPL).write_text("print('before')\n", encoding="utf-8")
+    req_root = make_requirement_root(
+        root, slug="change-75", item_ids=("R-01",), kind="需求变更",
+        related="demo-req#R-01")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "bootstrap requirement change")
+    _make_claim_card(root, UNIT, "product/requirements/change-75", ["R-01"])
+    (root / IMPL).write_text("print('before')\n# AC-HOME-001\n", encoding="utf-8")
+    git(root, "add", "--", IMPL)
+    return BugFixture(root, req_root, {}, set())
 
 
 def _write_review(fixture: BugFixture, *, with_anchor: bool = True,
@@ -157,8 +190,8 @@ def _write_review(fixture: BugFixture, *, with_anchor: bool = True,
         },
     }
     if with_anchor:
-        data["bug_backflow"] = (copy.deepcopy(anchor) if anchor is not None
-                                else review_anchor(root, fixture.req_root, fixture.record))
+        data["change_backflow"] = (copy.deepcopy(anchor) if anchor is not None
+                                   else review_anchor(root, fixture.req_root, fixture.record))
     _write_json(fixture.review_file, data)
     return data
 
@@ -202,18 +235,40 @@ def test_node_atlas_bug_help_and_route_to_project_script(tmp_path: Path) -> None
     top = subprocess.run(["node", str(ATLAS_BIN), "--help"], cwd=root,
                          capture_output=True, text=True, timeout=60)
     assert top.returncode == 0, top.stderr
-    assert "bug" in top.stdout and "缺陷" in top.stdout
+    assert "change" in top.stdout and "bug" in top.stdout and "缺陷" in top.stdout
 
     help_result = subprocess.run(["node", str(ATLAS_BIN), "bug", "--help"], cwd=root,
                                  capture_output=True, text=True, timeout=60)
     assert help_result.returncode == 0, help_result.stderr
-    assert "canonical defect" in help_result.stdout
+    assert "canonical requirement-change/defect" in help_result.stdout
     assert "--decision-file" in help_result.stdout
 
     routed = subprocess.run(["node", str(ATLAS_BIN), "bug", "list", "--json"], cwd=root,
                             capture_output=True, text=True, timeout=60)
     assert routed.returncode == 0, routed.stdout + routed.stderr
-    assert json.loads(routed.stdout) == {"status": "ok", "bugs": []}
+    assert json.loads(routed.stdout) == {"status": "ok", "changes": [], "bugs": []}
+    change_help = subprocess.run(["node", str(ATLAS_BIN), "change", "--help"], cwd=root,
+                                 capture_output=True, text=True, timeout=60)
+    assert change_help.returncode == 0, change_help.stderr
+    assert "--auto-stage" in change_help.stdout
+
+    old_workflow = root / ".atlas" / "scripts" / "atlas_workflow.py"
+    old_workflow.parent.mkdir(parents=True)
+    old_workflow.write_text("print('LOCAL_OLD_WORKFLOW')\n", encoding="utf-8")
+    workflow_help = subprocess.run(["node", str(ATLAS_BIN), "workflow", "--help"], cwd=root,
+                                   capture_output=True, text=True, timeout=60)
+    assert workflow_help.returncode == 0, workflow_help.stderr
+    assert "LOCAL_OLD_WORKFLOW" not in workflow_help.stdout
+
+    partial_change = root / ".atlas" / "scripts" / "atlas_change.py"
+    partial_change.write_text("# ATLAS_CHANGE_AUTO_V1\nprint('PARTIAL_CHANGE')\n",
+                              encoding="utf-8")
+    old_bug = root / ".atlas" / "scripts" / "atlas_bug.py"
+    old_bug.write_text("def main():\n    pass\n", encoding="utf-8")
+    change_help = subprocess.run(["node", str(ATLAS_BIN), "change", "--help"], cwd=root,
+                                 capture_output=True, text=True, timeout=60)
+    assert change_help.returncode == 0, change_help.stderr
+    assert "PARTIAL_CHANGE" not in change_help.stdout
 
 
 def test_finish_accepts_index_scope_and_exact_bug_artifact_extras(tmp_path: Path) -> None:
@@ -231,7 +286,7 @@ def test_finish_accepts_index_scope_and_exact_bug_artifact_extras(tmp_path: Path
     assert payload["status"] == "completed"
     assert payload["requirement_closeout"]["product_fact_writeback"] == "conditional"
     assert payload["bug_backflow"]["applicable"] is True
-    assert payload["bug_backflow"]["artifacts"] == sorted([PRD, RECORD_REL])
+    assert payload["bug_backflow"]["artifacts"] == sorted(BUG_ARTIFACTS)
 
 
 def test_finish_accepts_unchanged_confirmed_document_and_existing_stub(tmp_path: Path) -> None:
@@ -245,7 +300,8 @@ def test_finish_accepts_unchanged_confirmed_document_and_existing_stub(tmp_path:
     git(root, "commit", "-qm", "track testid stub", "--", stub.relative_to(root).as_posix())
     prd_bytes = (root / PRD).read_bytes()
     record = read_record(fixture.req_root)
-    record["source"] = source_snapshot(root, "staged", None, {RECORD_REL, PRD})
+    record["source"] = source_snapshot(
+        root, "staged", None, artifact_paths(root, fixture.req_root, record) | {PRD})
     record["documents"][0]["before_sha256"] = sha256_bytes(prd_bytes)
     record["documents"][0]["after_sha256"] = sha256_bytes(prd_bytes)
     refresh_hashes(record)
@@ -254,7 +310,7 @@ def test_finish_accepts_unchanged_confirmed_document_and_existing_stub(tmp_path:
     git(root, "add", "--", RECORD_REL)
     checked = validate_backflow(root, fixture.task)
     assert checked["findings"] == []
-    assert set(checked["artifacts"]) == {RECORD_REL, PRD}
+    assert set(checked["artifacts"]) == BUG_ARTIFACTS
     _write_review(fixture)
     result = _finish(fixture)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -324,8 +380,10 @@ def test_finish_blocks_invalid_backflow_even_with_force(
         git(root, "add", "--", RECORD_REL)
         cause, text = "bug_backflow_mode_not_finish_ready", "range 回推记录"
 
-    result = _finish(fixture, *(["--force"] if force else []))
-    _assert_blocked(result, cause, text)
+    with pytest.raises(FinishError) as raised:
+        finish_task(root, fixture.task, force=force)
+    assert getattr(raised.value, "cause", None) == cause
+    assert text in str(raised.value)
     meta = json.loads((root / ".atlas" / "tasks" / UNIT / "task.json").read_text(encoding="utf-8"))
     assert meta["status"] == "in_progress"
     assert not (root / ".atlas" / "tasks" / "archive").exists()
@@ -339,26 +397,26 @@ def test_review_verify_seals_and_rechecks_bug_backflow_anchor(tmp_path: Path) ->
     seal_bug_anchor(fixture.root, UNIT, review_file.parent)
 
     sealed = json.loads(review_file.read_text(encoding="utf-8"))
-    assert sealed["bug_backflow"] == expected
+    assert sealed["change_backflow"] == expected
     assert validate_backflow(fixture.root, fixture.task, sealed)["findings"] == []
 
     mutations = []
     missing = copy.deepcopy(sealed)
-    del missing["bug_backflow"]
+    del missing["change_backflow"]
     mutations.append(missing)
     for field in ("record_sha256", "artifacts", "history"):
         changed = copy.deepcopy(sealed)
         if field == "record_sha256":
-            changed["bug_backflow"][field] = "0" * 64
+            changed["change_backflow"][field] = "0" * 64
         elif field == "artifacts":
-            changed["bug_backflow"][field][0]["sha256"] = "0" * 64
+            changed["change_backflow"][field][0]["sha256"] = "0" * 64
         else:
-            changed["bug_backflow"][field][0]["event_sha256"] = "0" * 64
+            changed["change_backflow"][field][0]["event_sha256"] = "0" * 64
         mutations.append(changed)
 
     for data in mutations:
         findings = validate_backflow(fixture.root, fixture.task, data)["findings"]
-        assert any("bug_backflow" in finding for finding in findings), findings
+        assert any("change_backflow" in finding for finding in findings), findings
 
     result = _finish(fixture)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -375,11 +433,11 @@ def test_deleted_implementation_is_captured_in_bug_backflow_anchor(tmp_path: Pat
     _write_review(fixture, with_anchor=False)
     seal_bug_anchor(fixture.root, UNIT, fixture.review_file.parent)
     sealed = json.loads(fixture.review_file.read_text(encoding="utf-8"))
-    assert sealed["bug_backflow"]["deleted_files"] == anchor["deleted_files"]
+    assert sealed["change_backflow"]["deleted_files"] == anchor["deleted_files"]
     assert validate_backflow(fixture.root, fixture.task, sealed)["findings"] == []
 
     tampered = copy.deepcopy(sealed)
-    tampered["bug_backflow"]["deleted_files"] = []
+    tampered["change_backflow"]["deleted_files"] = []
     assert any("删除锚" in finding for finding in validate_backflow(
         fixture.root, fixture.task, tampered)["findings"])
 
@@ -421,3 +479,131 @@ def test_non_defect_finish_is_unaffected_and_needs_no_bug_anchor(tmp_path: Path)
     result = workflow_run(root, "finish", "--unit", "T-NORMAL", "--json")
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout)["bug_backflow"]["applicable"] is False
+
+
+def test_verify_automatically_backflows_requirement_change(tmp_path: Path) -> None:
+    fixture = _make_change_intake_fixture(tmp_path)
+    args = argparse.Namespace(unit=UNIT, dry_run=False, json=True)
+    task = fixture.task
+
+    assert workflow._verify_change_backflow(args, fixture.root, task) is None
+
+    record = read_record(fixture.req_root)
+    assert record is not None
+    assert record["backflow_status"] == "applied"
+    assert record["report"]["path"] == "work/变更请求.md"
+    assert record["root_cause"] == "验收范围调整。"
+    assert record["stage"] == "prod"
+    assert [item["path"] for item in record["source"]["implementation_files"]] == [IMPL]
+    staged = set(_git_text(fixture.root, "diff", "--cached", "--name-only").splitlines())
+    assert required_staged_paths(fixture.root, fixture.req_root, record) <= staged
+    assert validate_backflow(fixture.root, task)["findings"] == []
+
+
+def test_cmd_verify_runs_change_backflow_before_review(tmp_path: Path, monkeypatch) -> None:
+    """M255：摘除 verify 自动回推调用后，本用例必须红。"""
+    fixture = _make_change_intake_fixture(tmp_path)
+    real_run = subprocess.run
+    reviewed = []
+
+    def fake_review(argv, *args, **kwargs):
+        if any("atlas_review.py" in str(item) for item in argv):
+            reviewed.append(list(argv))
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(workflow.subprocess, "run", fake_review)
+    monkeypatch.setattr(workflow, "check_task_review_passed",
+                        lambda root, unit, **kwargs: (True, str(root / "product/reviews/fake"), ""))
+    monkeypatch.setattr(workflow, "create_workflow_origin", lambda *args, **kwargs: None)
+    args = argparse.Namespace(unit=UNIT, dry_run=False, json=True, check_cmd=None,
+                              resolves=None, round=None, staged=True)
+    assert workflow.cmd_verify(args, fixture.root) == 0
+    assert reviewed and read_record(fixture.req_root)["backflow_status"] == "applied"
+
+
+def test_verify_pending_backflow_is_uncharged(tmp_path: Path, monkeypatch,
+                                               capsys) -> None:
+    fixture = _make_change_intake_fixture(tmp_path)
+    report = fixture.req_root / "work" / "变更请求.md"
+    write_record(fixture.req_root, new_record(
+        "change-75", "demo-req#R-01", "prod", sha256_bytes(report.read_bytes()),
+        report_path="work/变更请求.md"))
+    git(fixture.root, "add", "--", "product/requirements/change-75/record.json")
+    monkeypatch.setattr(workflow, "_run_change_backflow",
+                        lambda root, task: (0, {"status": "ok"}, ""))
+    args = argparse.Namespace(unit=UNIT, dry_run=False, json=True)
+
+    assert workflow._verify_change_backflow(args, fixture.root, fixture.task) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["paused_reason"] == "bug_backflow_pending"
+    rows, bad = load_attempts(fixture.root / ".atlas" / "tasks", UNIT)
+    assert bad == 0 and rows[-1]["cause"] == "bug_backflow_pending"
+    assert rows[-1]["charged"] is False
+
+
+def test_finish_auto_backflow_requires_fresh_review(tmp_path: Path) -> None:
+    fixture = _make_bug_fixture(tmp_path, kind="需求变更", slug="change-75")
+    _write_review(fixture)
+    old_review = json.loads(fixture.review_file.read_text(encoding="utf-8"))
+    git(fixture.root, "commit", "-qm", "implementation", "--", IMPL)
+    (fixture.root / IMPL).write_text(
+        "AC_ID = 'AC-HOME-001'\nprint(AC_ID)\n# AC-HOME-001\n",
+        encoding="utf-8")
+    git(fixture.root, "add", "--", IMPL)
+    args = argparse.Namespace(unit=UNIT, dry_run=False, json=True)
+
+    rc = workflow._finish_change_backflow(args, fixture.root, fixture.task)
+
+    assert rc == 2
+    record = read_record(fixture.req_root)
+    assert record is not None and record["backflow_status"] == "applied"
+    assert record["source"]["sha256"] != fixture.record["source"]["sha256"]
+    assert validate_backflow(fixture.root, fixture.task, old_review)["findings"]
+    rows, _ = load_attempts(fixture.root / ".atlas" / "tasks", UNIT)
+    assert rows[-1]["cause"] == "change_backflow_reverify_required"
+    assert rows[-1]["charged"] is False
+
+
+def test_legacy_anchor_is_readable_and_ambiguous_anchors_fail(tmp_path: Path) -> None:
+    fixture = _make_bug_fixture(tmp_path)
+    data = _write_review(fixture, with_anchor=False)
+    data["bug_backflow"] = review_anchor(
+        fixture.root, fixture.req_root, fixture.record, legacy=True)
+    assert validate_backflow(fixture.root, fixture.task, data)["findings"] == []
+
+    ambiguous = copy.deepcopy(data)
+    ambiguous["change_backflow"] = review_anchor(
+        fixture.root, fixture.req_root, fixture.record)
+    assert any("同时含" in finding for finding in validate_backflow(
+        fixture.root, fixture.task, ambiguous)["findings"])
+
+    unversioned = _write_review(fixture)
+    del unversioned["change_backflow"]["anchor_version"]
+    assert any("anchor_version=2" in finding for finding in validate_backflow(
+        fixture.root, fixture.task, unversioned)["findings"])
+
+
+def test_legacy_source_fingerprint_and_anchor_cannot_hide_root_change(tmp_path: Path) -> None:
+    """M256：放宽 legacy 锚的 canonical 产物守卫后，本用例必须红。"""
+    fixture = _make_bug_fixture(tmp_path)
+    root = fixture.root
+    req_rel = fixture.req_root.relative_to(root).as_posix()
+    requirement_rel = f"{req_rel}/requirement.md"
+    requirement = root / requirement_rel
+    requirement.write_text(requirement.read_text(encoding="utf-8") + "\nchanged root\n",
+                           encoding="utf-8")
+    git(root, "add", "--", requirement_rel)
+    record = read_record(fixture.req_root)
+    record["source"] = source_snapshot(root, "staged", None, {RECORD_REL, PRD})
+    refresh_hashes(record)
+    write_record(fixture.req_root, record)
+    git(root, "add", "--", RECORD_REL)
+    fixture.record = record
+
+    assert validate_backflow(root, fixture.task)["findings"] == []
+    data = _write_review(fixture, with_anchor=False)
+    data["bug_backflow"] = review_anchor(root, fixture.req_root, record, legacy=True)
+    data["review_scope"]["files"].append({"path": requirement_rel})
+    findings = validate_backflow(root, fixture.task, data)["findings"]
+    assert any("legacy bug_backflow 未覆盖 canonical 产物" in finding for finding in findings)

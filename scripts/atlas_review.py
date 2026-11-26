@@ -22,6 +22,7 @@
 退出码：0 全步通过（WARN 不置红）；1 有 FAIL（converter/validator）；2 输入/前置错误
 （含会话执行器的「待审」）；子步非 0/1/2 的原退出码透传（如外部 CLI 的 7）。纯标准库。
 """
+# ATLAS_CHANGE_AUTO_V1
 from __future__ import annotations
 
 import argparse
@@ -309,10 +310,11 @@ def seal_bug_anchor(root: Path, unit: str, outdir: Path) -> None:
     req_root = resolve_defect_root(root, Path(str(task["requirement_root"])).name)
     record = read_record(req_root) if req_root is not None else None
     if req_root is None or record is None:
-        raise BackflowError("缺陷台账缺失", cause="bug_backflow_missing")
+        raise BackflowError("变更/缺陷台账缺失", cause="bug_backflow_missing")
     review_file = outdir / "review.json"
     data = json.loads(review_file.read_text(encoding="utf-8"))
-    data["bug_backflow"] = review_anchor(root, req_root, record)
+    data.pop("bug_backflow", None)
+    data["change_backflow"] = review_anchor(root, req_root, record)
     atomic_write_bytes(review_file, json.dumps(data, ensure_ascii=False, indent=2,
                                                sort_keys=True).encode("utf-8") + b"\n")
 
@@ -576,7 +578,7 @@ def main() -> int:
     if not args.dry_run:
         try:
             seal_bug_anchor(root, args.unit, outdir)
-            steps.append({"name": "bug_backflow_anchor", "status": "ok", "detail": "独立锚已封口"})
+            steps.append({"name": "change_backflow_anchor", "status": "ok", "detail": "独立锚已封口"})
         except BackflowError as exc:
             return die(str(exc), exit_code_for(exc.cause))
 

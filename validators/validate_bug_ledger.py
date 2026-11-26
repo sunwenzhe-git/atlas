@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate canonical defect records and reject legacy dual landing paths."""
+"""Validate canonical requirement-change/defect records and reject legacy dual landing paths."""
 from __future__ import annotations
 
 import argparse
@@ -16,7 +16,7 @@ from _support.bug_record import RECORD_FILE, read_record, validate_record
 from _support.layout import LayoutError, load_layout
 from _support.workflow_plan import PlanError, load_tasks, requirement_relation_findings
 
-LEGACY_VALUES = {"bug", "缺陷", "defect"}
+LEGACY_VALUES = {"bug", "缺陷", "defect", "change", "需求变更", "requirement-change"}
 
 
 class Result:
@@ -60,7 +60,7 @@ def _legacy_file(path: Path) -> bool:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    if re.search(r"^\*\*类型\*\*[：:]\s*缺陷\s*$", text, re.M):
+    if re.search(r"^\*\*类型\*\*[：:]\s*(?:缺陷|需求变更)\s*$", text, re.M):
         return True
     for match in re.finditer(r"^(?:type|kind)\s*[：:]\s*([^\s#]+)", text, re.M | re.I):
         if match.group(1).strip("\"'").casefold() in LEGACY_VALUES:
@@ -122,9 +122,9 @@ def validate(root: Path) -> Result:
                     legacy.append(str(path.relative_to(root)))
     if legacy:
         res.add("canonical_landing", "FAIL",
-                "发现第二缺陷落点（迁移到 requirements/<slug>/）：" + "、".join(sorted(set(legacy))))
+                "发现第二变更/缺陷落点（迁移到 requirements/<slug>/）：" + "、".join(sorted(set(legacy))))
     else:
-        res.add("canonical_landing", "PASS", "未发现 legacy 双缺陷落点")
+        res.add("canonical_landing", "PASS", "未发现 legacy 双变更/缺陷落点")
 
     record_paths = sorted(requirements.glob(f"*/{RECORD_FILE}")) if requirements.is_dir() else []
     archive = requirements / "archive"
@@ -154,8 +154,8 @@ def validate(root: Path) -> Result:
         findings.extend(dedupe_findings(root, record, req_root))
         fields, field_findings = strict_requirement_fields(req_root)
         findings.extend(field_findings)
-        if fields.get("类型") != "缺陷":
-            findings.append("record.json 存在但 requirement.md 类型不是缺陷")
+        if fields.get("类型") not in ("需求变更", "缺陷"):
+            findings.append("record.json 存在但 requirement.md 类型不是需求变更/缺陷")
         if record.get("backflow_status") == "not_applicable" and req_root.name in task_slugs:
             findings.append("not_applicable 不得被任务卡引用")
         key = record.get("dedupe_key")
@@ -180,9 +180,10 @@ def validate(root: Path) -> Result:
             if (req_root / RECORD_FILE).is_file():
                 continue
             fields, field_findings = strict_requirement_fields(req_root)
-            if fields.get("类型") != "缺陷":
+            if fields.get("类型") not in ("需求变更", "缺陷"):
                 continue
-            triage = (fields.get("结论") in ("重复", "非缺陷", "不修")
+            triage = (fields.get("类型") == "缺陷"
+                      and fields.get("结论") in ("重复", "非缺陷", "不修")
                       and bool(fields.get("证据")))
             try:
                 relation_findings = requirement_relation_findings(
@@ -192,13 +193,13 @@ def validate(root: Path) -> Result:
             if relation_findings or not triage:
                 record_check_count += 1
                 rel = str(req_root.relative_to(root))
-                detail = "；".join(field_findings + relation_findings) or "缺陷既非合法分诊关闭，也无 record.json"
+                detail = "；".join(field_findings + relation_findings) or "变更/缺陷既非合法分诊关闭，也无 record.json"
                 res.add(f"record:{rel}", "FAIL", detail)
     if record_check_count == 0:
         if not requirements.is_dir():
-            res.add("defect_records", "SKIP", "无 requirements/ 资产根（未走到缺陷台账）")
+            res.add("defect_records", "SKIP", "无 requirements/ 资产根（未走到变更/缺陷台账）")
         else:
-            res.add("defect_records", "PASS", "无缺陷台账记录")
+            res.add("defect_records", "PASS", "无变更/缺陷台账记录")
     return res
 
 

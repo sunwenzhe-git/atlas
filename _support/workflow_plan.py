@@ -410,6 +410,8 @@ def requirement_relation_findings(root: Path, req_root: Path, *,
     findings: list[str] = []
     if kind == "缺陷" and require_report and not (req_root / "work" / "缺陷报告.md").is_file():
         findings.append("缺陷类型缺 work/缺陷报告.md：先落现象、期望、实际、复现与环境证据")
+    if kind == "需求变更" and require_report and not (req_root / "work" / "变更请求.md").is_file():
+        findings.append("需求变更类型缺 work/变更请求.md：先落变更原因、范围与验收影响")
     related = fields.get("关联需求")
     if kind in ("需求变更", "缺陷") and not related:
         findings.append(f"{kind}的关联需求必填：指向既有需求落点")

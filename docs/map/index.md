@@ -55,8 +55,8 @@
 
 ### 1. CLI 与装配
 
-- `bin/atlas.js`(676 行):命令面 = `init / update / upgrade / check / migrate / incident / docs / topology / contracts / receipt / classify / calibrate / metrics / workflow / bug / solution / review / eval / e2e / console / report / apply / version`。`init` 直接调装配器(前置仅 Node.js + Python 3.10+);平台探测拆在 `bin/platform.js`(bash 只认 Git Bash 不回落 WSL 中继壳;Python 按平台探测 `py -3`/`python`/`python3` 并校验 3.10+)。
-- `install.py`(997 行):装配单源(`install.sh` 56 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`(RFC-20261114-01 起不含出厂测试目录,历史残留经 MANIFEST 基线闸清理),落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 120 条 `c()` 自检声明。
+- `bin/atlas.js`(702 行):命令面 = `init / update / upgrade / check / migrate / incident / docs / topology / contracts / receipt / classify / calibrate / metrics / workflow / change / bug / solution / review / eval / e2e / console / report / apply / version`。`init` 直接调装配器(前置仅 Node.js + Python 3.10+);平台探测拆在 `bin/platform.js`(bash 只认 Git Bash 不回落 WSL 中继壳;Python 按平台探测 `py -3`/`python`/`python3` 并校验 3.10+)。
+- `install.py`(998 行):装配单源(`install.sh` 56 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`(RFC-20261114-01 起不含出厂测试目录,历史残留经 MANIFEST 基线闸清理),落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 121 条 `c()` 自检声明。
 - `patches/`:`project-wiring`(AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.adapter-out/` / pi 扩展五触点)。锚点式版本化补丁,可重放;其余 3 族 workflow 补丁已随执行层退役删除。
 - 对账:`scripts/pkg_digest.py`(摘要算法单点)+ `scripts/backflow.py`(副本⇔源包三态回灌,SOURCE_ONLY 拒绝护栏)。
 
@@ -102,7 +102,7 @@
 
 ### 11. 执行层 `atlas workflow`
 
-自建全流程执行层(D205 收敛,移除 Trellis 宿主依赖):`plan`(写卡;`--requirement` 领取模式从需求落点 `requirements/<slug>/` 领取——requirement.md 确认稿 + items.md 条目唯一住址 + work/ 原文,状态机 候选→已确认→已拆→已收口,卡条目表=领取引用表不复制正文,RFC-20261122-03)/ `dispatch`(最小上下文派工)/ `context`(最小注入单源)/ `verify`(判据族:coverage_matrix 逐卡 AC 对账、requirement_root 跨卡落点对账、机制文档提示族;`--staged` 暂存区审查)/ `finish`(结构事实新鲜度门 + deferred 台账 + cause 分流退出码)/ `status · archive`。机制文档(`docs/architecture/<机制>.md` + frontmatter `mechanism-paths`)机器面:触及提示 / 疑似死 paths / 单星 glob 拒收(RFC-20261122-04);回收面硬化:预算门 + 失败记账 + causes 37 值域封闭 + 行级锚定六态 WARN(D209 / RFC-20261122-08)。
+自建全流程执行层(D205 收敛,移除 Trellis 宿主依赖):`plan`(写卡;`--requirement` 领取模式从需求落点 `requirements/<slug>/` 领取——requirement.md 确认稿 + items.md 条目唯一住址 + work/ 原文,状态机 候选→已确认→已拆→已收口,卡条目表=领取引用表不复制正文,RFC-20261122-03)/ `dispatch`(最小上下文派工)/ `context`(最小注入单源)/ `verify`(判据族:coverage_matrix 逐卡 AC 对账、requirement_root 跨卡落点对账、机制文档提示族;`--staged` 暂存区审查)/ `finish`(结构事实新鲜度门 + deferred 台账 + cause 分流退出码)/ `status · archive`。机制文档(`docs/architecture/<机制>.md` + frontmatter `mechanism-paths`)机器面:触及提示 / 疑似死 paths / 单星 glob 拒收(RFC-20261122-04);回收面硬化:预算门 + 失败记账 + causes 38 值域封闭 + 行级锚定六态 WARN(D209 / RFC-20261122-08)。
 
 ## 数字快照
 
@@ -115,7 +115,7 @@
 | 环 | 〔数:环=3〕(structure / prd / e2e;原型环 E1 已退役) | `rings/` |
 | 共享契约 | 〔数:共享契约=9〕 份 | `shared/` |
 | 共享内核 | 〔数:共享内核=42〕 件 | `_support/` |
-| install.py 自检声明 | 〔数:自检声明=120〕 条 | `install.py` |
+| install.py 自检声明 | 〔数:自检声明=121〕 条 | `install.py` |
 | 最大单件 | `〔数:最大单件文件=scripts/gen_e2e_scripts.py〕` 〔数:最大单件行数=3444〕 行 | — |
 
 ## L1 铺设计划(2026-10-25 定稿)

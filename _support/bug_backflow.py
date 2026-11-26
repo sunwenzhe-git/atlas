@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Defect diff analysis, canonical document backflow, and finish validation."""
+"""Requirement-change/defect diff analysis, canonical backflow, and finish validation."""
+# ATLAS_CHANGE_AUTO_V1
 from __future__ import annotations
 
 import hashlib
@@ -14,9 +15,9 @@ import uuid
 from pathlib import Path
 
 from _support.bug_record import (
-    BugRecordError, OBJECT_TYPES, RECORD_FILE, append_history, atomic_write_bytes,
-    canonical_bytes, new_record, read_record, refresh_hashes, sha256_bytes,
-    utc_now, validate_record, write_record,
+    BugRecordError, OBJECT_TYPES, RECORD_FILE, REPORT_PATHS, append_history,
+    atomic_write_bytes, canonical_bytes, dedupe_identity, new_record, read_record,
+    refresh_hashes, sha256_bytes, utc_now, validate_record, write_record,
 )
 from _support.layout import LayoutError, load_layout
 from _support.semver import parse as parse_semver
@@ -39,6 +40,7 @@ IDENTIFIER_RES = (
 )
 AUTHORITY_FIELDS = ("类型", "关联需求", "状态", "结论", "证据")
 REQUIREMENT_ROOT_ITEMS_FILE = "items.md"
+CHANGE_TYPES = ("需求变更", "缺陷")
 
 
 class BackflowError(ValueError):
@@ -103,7 +105,7 @@ def strict_requirement_fields(req_root: Path) -> tuple[dict[str, str], list[str]
 
 def defect_intent(req_root: Path) -> bool:
     return ((Path(req_root) / RECORD_FILE).is_file()
-            or (Path(req_root) / "work" / "缺陷报告.md").is_file())
+            or any((Path(req_root) / rel).is_file() for rel in REPORT_PATHS.values()))
 
 
 def _related_target(root: Path, related: str) -> tuple[Path, str]:
@@ -126,11 +128,13 @@ def _related_target(root: Path, related: str) -> tuple[Path, str]:
 
 
 def bootstrap_defect(root: Path, slug: str, related: str, report_text: str,
-                     stage: str) -> Path:
+                     stage: str, kind: str = "缺陷") -> Path:
+    if kind not in CHANGE_TYPES:
+        raise BackflowError(f"非法变更类型：{kind!r}", cause="bug_backflow_missing")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", slug):
-        raise BackflowError(f"非法 bug slug：{slug!r}", cause="bug_backflow_missing")
+        raise BackflowError(f"非法 slug：{slug!r}", cause="bug_backflow_missing")
     if resolve_defect_root(root, slug) is not None:
-        raise BackflowError(f"缺陷落点已存在：{slug}", cause="bug_backflow_invalid")
+        raise BackflowError(f"落点已存在：{slug}", cause="bug_backflow_invalid")
     target, item = _related_target(root, related)
     layout = load_layout(root)
     base = layout.assets_root / "requirements"
@@ -138,14 +142,15 @@ def bootstrap_defect(root: Path, slug: str, related: str, report_text: str,
         raise BackflowError("requirements 不得经 symlink 改道", cause="bug_backflow_invalid")
     base.mkdir(parents=True, exist_ok=True)
     temp = Path(tempfile.mkdtemp(prefix=f".{slug}.", dir=str(base)))
+    report_rel = REPORT_PATHS[kind]
     try:
         (temp / "work").mkdir()
         requirement = (
-            f"# 缺陷 {slug}\n\n"
-            "**类型**：缺陷\n"
+            f"# {kind} {slug}\n\n"
+            f"**类型**：{kind}\n"
             f"**关联需求**：{related}\n"
             "**状态**：候选\n\n"
-            "> 缺陷审计台账：`record.json`；证据正文唯一住址：`work/缺陷报告.md`。\n"
+            f"> 审计台账：`record.json`；证据正文唯一住址：`{report_rel}`。\n"
         )
         items = (
             "# 落点条目表\n\n"
@@ -155,8 +160,9 @@ def bootstrap_defect(root: Path, slug: str, related: str, report_text: str,
         report = report_text.rstrip() + "\n"
         (temp / REQUIREMENT_DOC_FILE).write_text(requirement, encoding="utf-8")
         (temp / REQUIREMENT_ROOT_ITEMS_FILE).write_text(items, encoding="utf-8")
-        (temp / "work" / "缺陷报告.md").write_text(report, encoding="utf-8")
-        record = new_record(slug, related, stage, sha256_bytes(report.encode("utf-8")))
+        (temp / report_rel).write_text(report, encoding="utf-8")
+        record = new_record(slug, related, stage, sha256_bytes(report.encode("utf-8")),
+                            report_path=report_rel)
         findings = validate_record(record)
         if findings:
             raise BackflowError("；".join(findings), cause="bug_backflow_invalid")
@@ -165,7 +171,7 @@ def bootstrap_defect(root: Path, slug: str, related: str, report_text: str,
                                       sort_keys=True).encode("utf-8") + b"\n")
         destination = base / slug
         if destination.exists() or destination.is_symlink():
-            raise BackflowError(f"缺陷落点已存在：{slug}", cause="bug_backflow_invalid")
+            raise BackflowError(f"落点已存在：{slug}", cause="bug_backflow_invalid")
         os.rename(temp, destination)
         return destination
     except Exception:
@@ -682,7 +688,9 @@ def run_validators(root: Path, *, include_structure: bool) -> list[dict]:
 
 
 def artifact_paths(root: Path, req_root: Path, record: dict) -> set[str]:
-    paths = {(Path(req_root) / RECORD_FILE).relative_to(root).as_posix()}
+    req_rel = Path(req_root).relative_to(root).as_posix()
+    paths = {f"{req_rel}/{RECORD_FILE}", f"{req_rel}/{REQUIREMENT_DOC_FILE}",
+             f"{req_rel}/{REQUIREMENT_ROOT_ITEMS_FILE}", f"{req_rel}/{record['report']['path']}"}
     for document in record.get("documents", []):
         paths.add(document["path"])
     return paths
@@ -693,47 +701,85 @@ def required_staged_paths(root: Path, req_root: Path, record: dict) -> set[str]:
     for document in record.get("documents", []):
         if document.get("before_sha256") != document.get("after_sha256"):
             paths.add(document["path"])
+    req_rel = Path(req_root).relative_to(root).as_posix()
+    for rel in (f"{req_rel}/{REQUIREMENT_DOC_FILE}", f"{req_rel}/{REQUIREMENT_ROOT_ITEMS_FILE}",
+                f"{req_rel}/{record['report']['path']}"):
+        tracked = _run(root, ["git", "ls-files", "--error-unmatch", "--", rel],
+                       check=False).returncode == 0
+        changed = _run(root, ["git", "diff", "--cached", "--quiet", "HEAD", "--", rel],
+                       check=False).returncode != 0
+        if not tracked or changed:
+            paths.add(rel)
     return paths
 
 
-def review_anchor(root: Path, req_root: Path, record: dict) -> dict:
+def _legacy_artifact_paths(root: Path, req_root: Path, record: dict) -> set[str]:
+    paths = {(Path(req_root) / RECORD_FILE).relative_to(root).as_posix()}
+    paths.update(item["path"] for item in record.get("documents", []))
+    return paths
+
+
+def review_anchor(root: Path, req_root: Path, record: dict, *, legacy: bool = False) -> dict:
+    paths = _legacy_artifact_paths(root, req_root, record) if legacy else artifact_paths(root, req_root, record)
     artifacts = []
-    for rel in sorted(artifact_paths(root, req_root, record)):
+    for rel in sorted(paths):
         path = root / rel
         artifacts.append({"path": rel, "sha256": sha256_bytes(path.read_bytes())})
     deleted = []
     for item in record.get("source", {}).get("implementation_files", []):
         if item["new_oid"] == "0" * len(item["new_oid"]):
             deleted.append({"path": item["path"], "old_oid": item["old_oid"]})
-    return {
+    anchor = {
         "record_sha256": record["content_sha256"],
         "artifacts": artifacts,
         "history": [{"seq": event["seq"], "event_sha256": event["event_sha256"]}
                     for event in record.get("history", [])],
         "deleted_files": deleted,
     }
+    return anchor if legacy else {"anchor_version": 2, **anchor}
 
 
 def validate_review_anchor(review_data: dict, root: Path, req_root: Path,
                            record: dict) -> list[str]:
-    anchor = review_data.get("bug_backflow")
-    if not isinstance(anchor, dict):
-        return ["review.json 缺 bug_backflow 独立锚"]
-    expected = review_anchor(root, req_root, record)
-    if anchor != expected:
-        return ["review.json.bug_backflow 与当前台账/产物/历史/删除锚不一致"]
+    current = review_data.get("change_backflow")
+    legacy = review_data.get("bug_backflow")
+    if current is not None and legacy is not None:
+        return ["review.json 同时含 change_backflow 与 bug_backflow，语义不唯一"]
+    if current is not None:
+        if not isinstance(current, dict) or current.get("anchor_version") != 2:
+            return ["review.json.change_backflow 缺 anchor_version=2"]
+        expected = review_anchor(root, req_root, record)
+        label = "change_backflow"
+    elif legacy is not None:
+        if not isinstance(legacy, dict):
+            return ["review.json.bug_backflow 不是 object"]
+        expected = review_anchor(root, req_root, record, legacy=True)
+        label = "bug_backflow"
+        legacy_paths = _legacy_artifact_paths(root, req_root, record)
+        uncovered = sorted(artifact_paths(root, req_root, record) - legacy_paths)
+        for rel in uncovered:
+            tracked = _run(root, ["git", "ls-files", "--error-unmatch", "--", rel],
+                           check=False).returncode == 0
+            changed = _run(root, ["git", "diff", "--cached", "--quiet", "HEAD", "--", rel],
+                           check=False).returncode != 0
+            if not tracked or changed:
+                return [f"legacy bug_backflow 未覆盖 canonical 产物且已变化：{rel}；必须 reverify"]
+    else:
+        return ["review.json 缺 change_backflow 独立锚"]
+    if (current if current is not None else legacy) != expected:
+        return [f"review.json.{label} 与当前台账/产物/历史/删除锚不一致"]
     scope = review_data.get("review_scope")
     if review_data.get("schema_version") != 4:
-        return ["bug finish 要求 schema_version=4 审查报告"]
+        return ["change finish 要求 schema_version=4 审查报告"]
     if not isinstance(scope, dict) or not isinstance(scope.get("sha256"), str) or not scope["sha256"]:
-        return ["bug finish 要求带 sha256 的 v4 review_scope"]
+        return ["change finish 要求带 sha256 的 v4 review_scope"]
     if not isinstance(scope.get("files"), list):
-        return ["bug finish 要求 v4 review_scope.files"]
+        return ["change finish 要求 v4 review_scope.files"]
     reviewed = {item.get("path") for item in scope["files"] if isinstance(item, dict)}
     missing = [item["path"] for item in record["source"]["implementation_files"]
                if item["new_oid"] != "0" * len(item["new_oid"]) and item["path"] not in reviewed]
     if missing:
-        return ["实现文件未进入实审集：" + "、".join(missing)]
+        return ["实现文件未进入实审集：" + "、".join(sorted(set(missing)))]
     return []
 
 
@@ -751,15 +797,15 @@ def validate_backflow(root: Path, task: dict, review_data: dict | None = None) -
     if declared and declared not in REQUIREMENT_TYPES:
         return {"applicable": True, "findings": [f"需求类型非法：{declared!r}"],
                 "cause": "bug_backflow_invalid", "artifacts": {}}
-    if declared != "缺陷":
+    if declared not in CHANGE_TYPES:
         if defect_intent(req_root):
-            return {"applicable": True, "findings": ["record/缺陷报告存在但类型不是缺陷"],
+            return {"applicable": True, "findings": ["record/变更或缺陷报告存在但类型不是需求变更/缺陷"],
                     "cause": "bug_backflow_invalid", "artifacts": {}}
         return {"applicable": False, "findings": [], "cause": "", "artifacts": {}}
     findings = list(field_findings)
     record = read_record(req_root)
     if record is None:
-        return {"applicable": True, "findings": ["缺陷未执行 atlas bug：缺 record.json"],
+        return {"applicable": True, "findings": [f"{declared}未执行 atlas change：缺 record.json"],
                 "cause": "bug_backflow_missing", "artifacts": {}}
     findings.extend(validate_record(record, requirement_root=req_root, root=root))
     findings.extend(dedupe_findings(root, record, req_root))
@@ -767,7 +813,7 @@ def validate_backflow(root: Path, task: dict, review_data: dict | None = None) -
         return {"applicable": True, "findings": findings, "cause": "bug_backflow_invalid",
                 "artifacts": {}}
     if record["backflow_status"] in ("pending", "needs_decision"):
-        return {"applicable": True, "findings": ["缺陷回推待完成或待签字"],
+        return {"applicable": True, "findings": [f"{declared}回推待完成或待签字"],
                 "cause": "bug_backflow_pending", "artifacts": {}}
     if record["backflow_status"] == "not_applicable":
         return {"applicable": True, "findings": ["not_applicable 不得用于任务卡收口"],
@@ -776,8 +822,13 @@ def validate_backflow(root: Path, task: dict, review_data: dict | None = None) -
         return {"applicable": True, "findings": ["range 回推记录不能用于 finish，请 --from staged 重跑"],
                 "cause": "bug_backflow_mode_not_finish_ready", "artifacts": {}}
     artifacts = artifact_paths(root, req_root, record)
+    legacy_implementation_artifacts = {
+        item["path"] for item in record["source"].get("implementation_files", [])
+        if item.get("path") in artifacts
+    }
     try:
-        snapshot = source_snapshot(root, "staged", None, artifacts)
+        snapshot = source_snapshot(root, "staged", None,
+                                   artifacts - legacy_implementation_artifacts)
     except BackflowError as exc:
         return {"applicable": True, "findings": [str(exc)], "cause": exc.cause,
                 "artifacts": {}}
@@ -812,8 +863,8 @@ def validate_backflow(root: Path, task: dict, review_data: dict | None = None) -
 
 
 def dedupe_findings(root: Path, record: dict, req_root: Path) -> list[str]:
-    key = record.get("dedupe_key")
-    if not key:
+    identity = dedupe_identity(record.get("dedupe_key"))
+    if identity is None:
         return []
     base = load_layout(root).assets_root / "requirements"
     duplicates: list[str] = []
@@ -821,12 +872,12 @@ def dedupe_findings(root: Path, record: dict, req_root: Path) -> list[str]:
         if candidate.parent == req_root:
             continue
         other = read_record(candidate.parent)
-        if other and other.get("dedupe_key") == key:
+        if other and dedupe_identity(other.get("dedupe_key")) == identity:
             duplicates.append(candidate.parent.name)
     for candidate in (base / "archive").glob("*/*/record.json") if (base / "archive").is_dir() else []:
         if candidate.parent == req_root:
             continue
         other = read_record(candidate.parent)
-        if other and other.get("dedupe_key") == key:
+        if other and dedupe_identity(other.get("dedupe_key")) == identity:
             duplicates.append(candidate.parent.parent.name + "/" + candidate.parent.name)
-    return [f"dedupe_key 与其它缺陷重复：{name}" for name in sorted(set(duplicates))]
+    return [f"dedupe_key 与其它变更/缺陷重复：{name}" for name in sorted(set(duplicates))]

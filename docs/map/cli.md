@@ -13,14 +13,14 @@
 
 | 文件 | 行数 | 角色 |
 |---|---|---|
-| `bin/atlas.js` | 676 | CLI 入口:命令面总表见 `printHelp`(`bin/atlas.js:18`)= init / update / upgrade / check / migrate / incident / docs / topology / contracts / receipt / classify / calibrate / metrics / workflow / bug / solution / review / eval / e2e / console / report / apply / version,分派在同文件 `switch (command)`;平台探测拆到 `bin/platform.js`(bash 只认 Git Bash、Python 按平台探测 3.10+) |
-| `install.py` | 997 | 装配单源:白名单拷贝 + 版本戳 + manifest + 120 条 `c()` 自检 + 图谱探测;叶子脚本(layout / apply-patches / apply-wiring / pkg_digest / ablation / evidence_archive)复用不重写 |
+| `bin/atlas.js` | 702 | CLI 入口:命令面总表见 `printHelp`(`bin/atlas.js:18`)= init / update / upgrade / check / migrate / incident / docs / topology / contracts / receipt / classify / calibrate / metrics / workflow / change / bug / solution / review / eval / e2e / console / report / apply / version,分派在同文件 `switch (command)`;平台探测拆到 `bin/platform.js`(bash 只认 Git Bash、Python 按平台探测 3.10+)；change/bug 共用新版脚本，workflow 本地旧脚本按 `ATLAS_CHANGE_AUTO_V1` 能力门回落包内新版 |
+| `install.py` | 998 | 装配单源:白名单拷贝 + 版本戳 + manifest + 78 条 `c()` 自检 + 图谱探测;叶子脚本(layout / apply-patches / apply-wiring / pkg_digest / ablation / evidence_archive)复用不重写 |
 | `install.sh` | 56 | 薄 wrapper:头部用法说明 + `exec python3 install.py`(装配逻辑零残留,自检门守) |
-| `scripts/atlas_workflow.py` | 889 | 执行层调度:plan / dispatch / context / verify / finish / status / progress / archive / run;任务账本 `.atlas/tasks`(收口后归档到 `tasks/archive/<YYYY-MM>/`,`status --all` 可查),`--paths`(最小注入) / `--round` / `--resolves` 透传;`context` 为只读查询(不写盘、不改状态);`progress` 为只读进度探针(RFC-20261122-02,聚合派工/暂存/审查轮次/覆盖矩阵四格;命中=路径级存在性非内容级证据,AC 结论只认 verify);verify 末尾跑需求条目覆盖对账(逐卡 WARN,`_support/workflow_verify.py`)+需求落点跨卡对账(漏领/幽灵引用/状态机 WARN,RFC-20261122-03)+机制文档提示族残部(疑似死 paths/词表点名/死测试锚/申报死行 WARN,RFC-20261122-04)+**机制文档触及申报判决门**(前置判定带,触及未跟改未申报⇒FAIL rc1 扣预算 `mechanism_undeclared`/词表两档非法⇒`mechanism_paths_invalid`,申报面=卡目录 `mech-declares.md`,触及提示 WARN 同日退役,RFC-20261123-01);plan 支持需求落点模式(`--requirement` 指向落点,卡持领取引用行、正文指针化,初始需求/需求变更/缺陷三类增量与基线关联检查,重跑保持指针,RFC-20261122-03/20261124-01);finish 硬校验结构事实新鲜度(baseline≡HEAD ∧ 无非豁免未暂存/未跟踪改动,跳过刷新⇒FAIL 带修复命令,空转态经 --advance-baseline 重锚,RFC-20261122-05),关联卡全归档且 completed 后按类型返回/提醒产品事实回写(D211);回收面(RFC-20261122-07):失败双轨记账(attempts.jsonl,cause 封闭词表单源 _support/workflow_causes.py)+verify 尝试预算门(charged≥上限⇒rc3 拒绝+budget_exceeded 留痕)+退出码封闭(0/1/2/3/130,:332 按 cause 分流)+deferred 存量缺陷台账(门判定前提取,fingerprint 幂等)+status 聚合(attempts/坏行/deferred 开放,含归档卡) |
-| `scripts/atlas_bug.py` | 373 | 缺陷 canonical 落点与回推 CLI：bootstrap / staged-range diff 影响面 / 签字决策事务 / `record.json` / show-list-link；finish 只认 staged 实现指纹与独立审查锚 |
-| `_support/bug_backflow.py` | 832 | 缺陷回推内核：OID 指纹、影响面分析、精确写入集、claim+rollback 事务、校验器编排、review/finish 锚 |
-| `_support/bug_record.py` | 543 | 缺陷台账 schema 运行时校验、canonical JSON 哈希、append-only history 与原子存储 |
-| `validators/validate_bug_ledger.py` | 223 | canonical 缺陷根/record schema/dedupe/history 与 legacy 双落点守卫 |
+| `scripts/atlas_workflow.py` | 1011 | 执行层调度:plan / dispatch / context / verify / finish / status / progress / archive / run;任务账本 `.atlas/tasks`(收口后归档到 `tasks/archive/<YYYY-MM>/`,`status --all` 可查),`--paths`(最小注入) / `--round` / `--resolves` 透传;`context` 为只读查询(不写盘、不改状态);`progress` 为只读进度探针(RFC-20261122-02,聚合派工/暂存/审查轮次/覆盖矩阵四格;命中=路径级存在性非内容级证据,AC 结论只认 verify);verify 末尾跑需求条目覆盖对账(逐卡 WARN,`_support/workflow_verify.py`)+需求落点跨卡对账(漏领/幽灵引用/状态机 WARN,RFC-20261122-03)+机制文档提示族残部(疑似死 paths/词表点名/死测试锚/申报死行 WARN,RFC-20261122-04)+**机制文档触及申报判决门**(前置判定带,触及未跟改未申报⇒FAIL rc1 扣预算 `mechanism_undeclared`/词表两档非法⇒`mechanism_paths_invalid`,申报面=卡目录 `mech-declares.md`,触及提示 WARN 同日退役,RFC-20261123-01);plan 支持需求落点模式(`--requirement` 指向落点,卡持领取引用行、正文指针化,初始需求/需求变更/缺陷三类增量与基线关联检查,重跑保持指针,RFC-20261122-03/20261124-01);verify 对需求变更/缺陷在评审前自动回推并暂存 exact 产物，finish 缺失/过期自动补跑且变化后强制 reverify；finish 硬校验结构事实新鲜度(baseline≡HEAD ∧ 无非豁免未暂存/未跟踪改动,跳过刷新⇒FAIL 带修复命令,空转态经 --advance-baseline 重锚,RFC-20261122-05),关联卡全归档且 completed 后按类型返回/提醒产品事实回写(D211);回收面(RFC-20261122-07):失败双轨记账(attempts.jsonl,cause 封闭词表单源 _support/workflow_causes.py)+verify 尝试预算门(charged≥上限⇒rc3 拒绝+budget_exceeded 留痕)+退出码封闭(0/1/2/3/130,:332 按 cause 分流)+deferred 存量缺陷台账(门判定前提取,fingerprint 幂等)+status 聚合(attempts/坏行/deferred 开放,含归档卡) |
+| `scripts/atlas_change.py` | 21 | 需求变更/缺陷统一入口；`atlas_bug.py` 保留实现与缺陷别名 |
+| `_support/bug_backflow.py` | 883 | 变更/缺陷回推内核：OID 指纹、影响面分析、精确写入集、claim+rollback 事务、校验器编排、v2 review/finish 锚 |
+| `_support/bug_record.py` | 577 | 变更/缺陷台账 schema 运行时校验、typed/legacy dedupe、canonical JSON 哈希、append-only history 与原子存储 |
+| `validators/validate_bug_ledger.py` | 224 | canonical 变更/缺陷根/record schema/dedupe/history 与 legacy 双落点守卫 |
 | `scripts/pkg_digest.py` | — | 内容摘要算法单点(`ASSEMBLY_COVER_DIRS`,`scripts/pkg_digest.py:52`):装配版本门两侧共用,防双端漂移 |
 | `scripts/backflow.py` | — | 副本 ⇄ 源包三态回灌(`diff_trees`,`scripts/backflow.py:60`;`apply`,`scripts/backflow.py:97`) |
 | `patches/`(1 族) | — | 项目接线补丁:project-wiring(AGENTS.md 指针 / 测试配置 / pi 扩展 / .gitignore) |
@@ -29,7 +29,7 @@
 
 ### 1. 装配四步(`install.py`;`install.sh` 薄 wrapper)
 
-`[1/4]` 整包 → `.atlas/`(`atlas_dest`,`install.py:544`,白名单目录拷贝,不整目录删,保住 `.atlas/runs/` 运行态)→ `[2/4]` skill 瘦桩(引用契约不复制正文)→ `[3/4]` 骨架 → `[4/4]` 项目接线(AGENTS.md 指针 / 测试配置 / `.gitignore` / pi 扩展)→ 图谱后端探测(可选)→ 自检段(`say("自检")`,`install.py:785`,120 条 `c()` 声明)。`--dry-run`(F54)零落盘、双摘要可见化;`--update` 刷新已装配副本。
+`[1/4]` 整包 → `.atlas/`(`atlas_dest`,`install.py:544`,白名单目录拷贝,不整目录删,保住 `.atlas/runs/` 运行态)→ `[2/4]` skill 瘦桩(引用契约不复制正文)→ `[3/4]` 骨架 → `[4/4]` 项目接线(AGENTS.md 指针 / 测试配置 / `.gitignore` / pi 扩展)→ 图谱后端探测(可选)→ 自检段(`say("自检")`,`install.py:785`,121 条 `c()` 声明)。`--dry-run`(F54)零落盘、双摘要可见化;`--update` 刷新已装配副本。
 
 ### 2. 装配基线三件(D145/D146/D147)
 
@@ -52,13 +52,13 @@ AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.ada
 | 消费方 | 触点 |
 |---|---|
 | atlas_check 装配版本门 | VERSION 戳 + MANIFEST 基线 ⇔ 源包重算 |
-| test_install_selfcheck | 自检引用必须存在:120 条 `c()` 声明指向的文件必须真落下 |
+| test_install_selfcheck | 自检引用必须存在:121 条 `c()` 声明指向的文件必须真落下 |
 | test_backflow | 三态语义 + SOURCE_ONLY 护栏钉 |
 | 执行层 | `atlas workflow` 把 apply / 工作流步骤写进 `.atlas/tasks` 任务卡与派工单 |
 
-### 6. 缺陷回推链（issues #75/#76）
+### 6. 需求变更/缺陷自动回推链（issues #75/#76）
 
-实现暂存 → `atlas bug --from staged` → 暂存 `record.json`/回推文档 → `atlas review` 封存 `bug_backflow` 独立锚 → `atlas workflow finish` 复算实现 OID、产物哈希与 history/delete 锚。语义冲突必须签字；legacy 双落点由 `validate_bug_ledger` 拒绝。
+实现暂存 → `atlas workflow verify` 在评审前自动回推并暂存 exact 产物 → `atlas review` 封存 v2 `change_backflow` 独立锚 → `atlas workflow finish` 复算实现 OID、canonical 产物哈希与 history/delete 锚。finish 自动补跑后必须 reverify；语义冲突必须签字；legacy 双落点由 `validate_bug_ledger` 拒绝。
 
 ## 显式盲区
 

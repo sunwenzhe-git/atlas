@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from _support import bug_record as records
@@ -32,6 +33,7 @@ def test_schema_and_runtime_key_sets_match() -> None:
 
 def test_schema_and_runtime_enums_match() -> None:
     props = SCHEMA["properties"]
+    assert set(props["report"]["properties"]["path"]["enum"]) == set(records.REPORT_PATHS.values())
     assert tuple(props["backflow_status"]["enum"]) == records.BACKFLOW_STATUSES
     assert tuple(props["stage"]["enum"]) == records.STAGES
     assert tuple(props["impact"]["items"]["properties"]["kind"]["enum"]) == records.IMPACT_KINDS
@@ -40,6 +42,42 @@ def test_schema_and_runtime_enums_match() -> None:
     assert tuple(props["history"]["items"]["properties"]["event"]["enum"]) == records.HISTORY_EVENTS
     assert tuple(props["source"]["properties"]["mode"]["enum"]) == records.SOURCE_MODES
     assert tuple(props["source"]["properties"]["implementation_files"]["items"]["properties"]["obj_type"]["enum"]) == records.OBJECT_TYPES
+
+
+def test_schema_dedupe_key_shape_matches_runtime() -> None:
+    pattern = re.compile(SCHEMA["properties"]["dedupe_key"]["pattern"])
+    digest = "a" * 64
+    assert pattern.fullmatch(f"需求变更:work/变更请求.md:base#R-01:{digest}")
+    assert pattern.fullmatch(f"缺陷:work/缺陷报告.md:base#R-01:{digest}")
+    assert pattern.fullmatch(f"base#R-01:{digest}")
+    assert not pattern.fullmatch("x")
+
+
+def test_schema_dedupe_prefix_is_bound_to_report_path() -> None:
+    rules = [item for item in SCHEMA["allOf"]
+             if item.get("if", {}).get("properties", {}).get("report")]
+    change = next(item for item in rules
+                  if item["if"]["properties"]["report"]["properties"]["path"]["const"]
+                  == "work/变更请求.md")
+    defect = next(item for item in rules
+                  if item["if"]["properties"]["report"]["properties"]["path"]["const"]
+                  == "work/缺陷报告.md")
+    digest = "a" * 64
+    assert re.fullmatch(change["then"]["properties"]["dedupe_key"]["pattern"],
+                        f"需求变更:work/变更请求.md:base#R-01:{digest}")
+    assert not re.fullmatch(change["then"]["properties"]["dedupe_key"]["pattern"],
+                            f"base#R-01:{digest}")
+    assert re.fullmatch(defect["then"]["properties"]["dedupe_key"]["pattern"],
+                        f"base#R-01:{digest}")
+
+
+def test_requirement_change_record_uses_typed_report_and_dedupe() -> None:
+    digest = "a" * 64
+    record = records.new_record("change-1", "base#R-01", "prod", digest,
+                                report_path="work/变更请求.md")
+    assert record["report"] == {"path": "work/变更请求.md", "sha256": digest}
+    assert record["dedupe_key"] == f"需求变更:work/变更请求.md:base#R-01:{digest}"
+    assert records.validate_record(record) == []
 
 
 def test_schema_ready_requires_implementation_and_resolved_state() -> None:

@@ -258,7 +258,8 @@ class BugBackflowTests(unittest.TestCase):
         report = (req_root / "work" / "缺陷报告.md").read_bytes()
         record = records.read_record(req_root)
         self.assertEqual(record["report"]["sha256"], hashlib.sha256(report).hexdigest())
-        self.assertEqual(record["dedupe_key"], f"{RELATED}:{record['report']['sha256']}")
+        self.assertEqual(record["dedupe_key"],
+                         f"缺陷:work/缺陷报告.md:{RELATED}:{record['report']['sha256']}")
         self.assertEqual(records.validate_record(record, requirement_root=req_root), [])
 
     def test_bootstrap_rejects_missing_related_baseline(self) -> None:
@@ -379,7 +380,7 @@ class BugBackflowTests(unittest.TestCase):
 
     def test_decision_with_wrong_bug_writes_nothing(self) -> None:
         self._assert_rejected_decision_writes_nothing(
-            lambda payload: payload.update(bug="other-bug"), "bug 与当前缺陷不一致",
+            lambda payload: payload.update(bug="other-bug"), "unit 与当前变更/缺陷不一致",
         )
 
     def test_decision_with_wrong_source_writes_nothing(self) -> None:
@@ -449,6 +450,8 @@ class BugBackflowTests(unittest.TestCase):
         )
         first, _first_output = self._run_bug(*args)
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        record = records.read_record(req_root)
+        git(self.root, "add", "--", *sorted(backflow.artifact_paths(self.root, req_root, record)))
         before = file_state(self.root)
         second, second_output = self._run_bug(*args)
         self.assertEqual(file_state(self.root), before, "rerun changed document or record")

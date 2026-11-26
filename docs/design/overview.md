@@ -77,9 +77,9 @@ Atlas 的核心结构是**两层正交**（也常被称作**双线束模型**：
    ↓   任一环失败 / 影响面定不下来 ⇒ 停在 planning，不得进入实现
    ↓
 ② 执行层实现（按 `atlas workflow dispatch` 派工单；写码动作由宿主 agent 执行，Atlas 不产需要创造判断的业务实现；实现期机器面三分见 `global-rules.md` §18〔D210〕：内容面契约 + check 行为者 / 过程门 / lint 归项目）
-   ↓   缺陷：`atlas bug --from staged` 回推 PRD/AC/E2E/spec 并写 `record.json` → 暂存回推产物
+   ↓   需求变更/缺陷：`workflow verify` 在评审前自动回推 PRD/AC/E2E/spec、写 `record.json` 并暂存 exact 产物
    ↓
-③ 收口：实例 ⑤ 实现代码审查（缺陷同时封存 `review.json.bug_backflow`）→ E2E red → green → 验收走查门
+③ 收口：实例 ⑤ 实现代码审查（统一封存 `review.json.change_backflow`）→ E2E red → green → 验收走查门；finish 自动补跑后必须 reverify
    → 运行态报错现场留底与结构化证据链快照
    → 收口 impact 预测对账（对账 impact.json vs 实际 git diff）
    → 显式回写 current/ 结构事实（`refresh_structure.py --chain`）

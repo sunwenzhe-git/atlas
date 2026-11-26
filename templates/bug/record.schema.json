@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas.local/schemas/bug-record-v1.json",
-  "title": "Atlas canonical defect backflow record",
+  "title": "Atlas canonical requirement-change and defect backflow record",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -24,7 +24,10 @@
   "properties": {
     "schema_version": {"const": 1},
     "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
-    "dedupe_key": {"type": "string", "minLength": 1},
+    "dedupe_key": {
+      "type": "string",
+      "pattern": "^(?:(?:需求变更:work/变更请求\\.md|缺陷:work/缺陷报告\\.md):)?[A-Za-z0-9][A-Za-z0-9._-]{0,63}#R-\\d{2,3}:[0-9a-f]{64}$"
+    },
     "backflow_status": {"enum": ["pending", "needs_decision", "ready", "applied", "not_applicable"]},
     "stage": {"enum": ["prod", "integration", "test"]},
     "report": {
@@ -32,7 +35,7 @@
       "additionalProperties": false,
       "required": ["path", "sha256"],
       "properties": {
-        "path": {"const": "work/缺陷报告.md"},
+        "path": {"enum": ["work/缺陷报告.md", "work/变更请求.md"]},
         "sha256": {"$ref": "#/$defs/sha256"}
       }
     },
@@ -173,6 +176,14 @@
     "content_sha256": {"$ref": "#/$defs/sha256"}
   },
   "allOf": [
+    {
+      "if": {"properties": {"report": {"properties": {"path": {"const": "work/变更请求.md"}}, "required": ["path"]}}, "required": ["report"]},
+      "then": {"properties": {"dedupe_key": {"pattern": "^需求变更:work/变更请求\\.md:[A-Za-z0-9][A-Za-z0-9._-]{0,63}#R-\\d{2,3}:[0-9a-f]{64}$"}}}
+    },
+    {
+      "if": {"properties": {"report": {"properties": {"path": {"const": "work/缺陷报告.md"}}, "required": ["path"]}}, "required": ["report"]},
+      "then": {"properties": {"dedupe_key": {"pattern": "^(?:缺陷:work/缺陷报告\\.md:)?[A-Za-z0-9][A-Za-z0-9._-]{0,63}#R-\\d{2,3}:[0-9a-f]{64}$"}}}
+    },
     {
       "if": {"properties": {"history": {"prefixItems": [{"properties": {"seq": {"const": 1}}, "required": ["seq"]}]}}},
       "then": {"properties": {"history": {"prefixItems": [{"properties": {"prev_content_sha256": {"const": null}}}]}}}

@@ -21,6 +21,7 @@
   finish 的门红（review 未过/封口红/新鲜度/E2E red）⇒ 1，其 no_review_report/
   environment 类 ⇒ 2。纯标准库。
 """
+# ATLAS_CHANGE_AUTO_V1
 from __future__ import annotations
 
 import argparse
@@ -40,6 +41,9 @@ if str(HERE.parent) not in sys.path:
     sys.path.insert(0, str(HERE.parent))
 
 from _support.layout import LayoutError, load_layout  # noqa: E402
+from _support.bug_backflow import (  # noqa: E402
+    CHANGE_TYPES, resolve_defect_root, strict_requirement_fields, validate_backflow,
+)
 from _support.workflow_plan import (  # noqa: E402
     decompose_requirement, write_task_card, load_tasks, PlanError,
     ARCHIVE_DIR, REQUIREMENT_ITEMS_FILE, REQUIREMENT_DOC_FILE, detect_requirement_root,
@@ -372,6 +376,84 @@ def _check_staged_topology(root: Path, mode: str) -> dict:
             return {"rc": 2, "cause": "topology_unverified",
                     "findings": [{"message": "staged index 不可物化：" + checked_out.stderr.strip()}]}
         return check_topology(root, mode=mode, source_root=source_root)
+def _change_task(root: Path, unit: str) -> dict | None:
+    try:
+        tasks = load_tasks(_read_tasks_root(root), include_archived=True)
+    except PlanError:
+        return None
+    return next((item for item in tasks if item.get("id") == unit), None)
+
+
+def _change_kind(root: Path, task: dict | None) -> str | None:
+    if not task or not task.get("requirement_root"):
+        return None
+    req_root = resolve_defect_root(root, Path(str(task["requirement_root"])).name)
+    if req_root is None:
+        return None
+    fields, findings = strict_requirement_fields(req_root)
+    if findings:
+        return None
+    kind = fields.get("类型")
+    return kind if kind in CHANGE_TYPES else None
+
+
+def _run_change_backflow(root: Path, task: dict) -> tuple[int, dict, str]:
+    cmd = [sys.executable, str(HERE / "atlas_change.py"), "--root", str(root),
+           "run", "--unit", task["id"], "--from", "staged", "--auto-stage", "--json"]
+    try:
+        result = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True,
+                                errors="replace", timeout=180)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 2, {"status": "error", "cause": "environment",
+                   "message": f"自动回推无法启动：{exc}"}, ""
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        payload = {"status": "error", "cause": "environment",
+                   "message": (result.stderr or result.stdout or "自动回推无 JSON 输出").strip()}
+    if not isinstance(payload, dict):
+        payload = {"status": "error", "cause": "environment",
+                   "message": "自动回推输出不是 object"}
+    return result.returncode, payload, (result.stderr or "").strip()
+
+
+def _change_pause(args: argparse.Namespace, tasks_root: Path, unit: str, *,
+                  cmd: str, cause: str, message: str, code: int | None = None) -> int:
+    record_attempt(tasks_root, unit, cmd=cmd, cause=cause)
+    if args.json:
+        print(json.dumps({"unit": unit, "status": "paused", "paused_reason": cause,
+                          "message": message}, ensure_ascii=False, indent=2))
+    rc = exit_code_for(cause) if code is None else code
+    return die(message, code=rc)
+
+
+def _verify_change_backflow(args: argparse.Namespace, root: Path, task: dict | None) -> int | None:
+    if args.dry_run or _change_kind(root, task) is None:
+        return None
+    assert task is not None
+    if not args.json:
+        print(f"atlas workflow verify @ {args.unit} 自动执行变更/缺陷回推...")
+    rc, payload, stderr = _run_change_backflow(root, task)
+    if rc != 0:
+        cause = str(payload.get("cause") or "bug_backflow_invalid")
+        conflicts = payload.get("conflicts") if isinstance(payload.get("conflicts"), list) else []
+        message = str(payload.get("message") or stderr or "自动回推失败")
+        if conflicts:
+            message = "回推存在未签字冲突：" + "、".join(
+                str(item.get("id") or item.get("path") or "?")
+                for item in conflicts if isinstance(item, dict))
+        return _change_pause(args, _read_tasks_root(root), args.unit, cmd="verify",
+                             cause=cause, message=message, code=rc if rc in (1, 2) else None)
+    checked = validate_backflow(root, task)
+    if checked["findings"]:
+        cause = checked["cause"] or "bug_backflow_pending"
+        message = "；".join(checked["findings"])
+        return _change_pause(args, _read_tasks_root(root), args.unit, cmd="verify",
+                             cause=cause, message=message)
+    if not args.json:
+        print(f"  自动回推通过：stage={payload.get('stage', '?')}，"
+              f"source={payload.get('source_sha256', '-')}")
+    return None
 
 
 def cmd_verify(args: argparse.Namespace, root: Path) -> int:
@@ -385,6 +467,10 @@ def cmd_verify(args: argparse.Namespace, root: Path) -> int:
         record_attempt(tasks_root, args.unit, cmd="verify", cause="staged_empty")
         return _verify_paused(args, args.unit, "staged_empty",
                               "暂存区为空：请先实现并 `git add`，再运行 verify")
+    change_task = _change_task(root, args.unit)
+    change_rc = _verify_change_backflow(args, root, change_task)
+    if change_rc is not None:
+        return change_rc
     # 尝试预算门（RFC-20261122-07 §3.1.1；gates.md §2.1 同名行）：charged ≥ 上限
     # ⇒ 拒绝继续该单元（退出码 3 + budget_exceeded 留痕行），停下要求人工——不是放行。
     if not args.dry_run:
@@ -544,6 +630,37 @@ def _verify_paused(args: argparse.Namespace, unit: str, cause: str, msg: str) ->
     return die(msg, code=exit_code_for(cause))
 
 
+def _finish_change_backflow(args: argparse.Namespace, root: Path,
+                            task: dict) -> int | None:
+    if _change_kind(root, task) is None:
+        return None
+    checked = validate_backflow(root, task)
+    if not checked["findings"]:
+        return None
+    if not args.json:
+        print(f"atlas workflow finish @ {args.unit} 检测到回推缺失/过期，自动补跑...")
+    rc, payload, stderr = _run_change_backflow(root, task)
+    if rc != 0:
+        cause = str(payload.get("cause") or "bug_backflow_invalid")
+        conflicts = payload.get("conflicts") if isinstance(payload.get("conflicts"), list) else []
+        message = str(payload.get("message") or stderr or "自动回推失败")
+        if conflicts:
+            message = "回推存在未签字冲突：" + "、".join(
+                str(item.get("id") or item.get("path") or "?")
+                for item in conflicts if isinstance(item, dict))
+        return _change_pause(args, _read_tasks_root(root), args.unit, cmd="finish",
+                             cause=cause, message=message, code=rc if rc in (1, 2) else None)
+    checked = validate_backflow(root, task)
+    if checked["findings"]:
+        cause = checked["cause"] or "bug_backflow_pending"
+        return _change_pause(args, _read_tasks_root(root), args.unit, cmd="finish",
+                             cause=cause, message="；".join(checked["findings"]))
+    return _change_pause(
+        args, _read_tasks_root(root), args.unit, cmd="finish",
+        cause="change_backflow_reverify_required",
+        message="自动回推已生成或更新产物；请重跑 verify 生成新鲜审查锚后再 finish")
+
+
 def cmd_finish(args: argparse.Namespace, root: Path) -> int:
     if not args.unit:
         return die("finish 步骤必须指定 --unit <ID>")
@@ -558,6 +675,10 @@ def cmd_finish(args: argparse.Namespace, root: Path) -> int:
         print(f"$ # 校验 {args.unit} 的 review.json + E2E 前置 + 结构事实新鲜度，流转 completed 并归档 (dry-run)")
         return 0
 
+    change_rc = _finish_change_backflow(args, root, target_task)
+    if change_rc is not None:
+        return change_rc
+
     try:
         res = finish_task(root, target_task, force=args.force)
     except FinishError as exc:
@@ -571,6 +692,7 @@ def cmd_finish(args: argparse.Namespace, root: Path) -> int:
                               "paused_reason": cause}, ensure_ascii=False, indent=2))
         return die(str(exc), code=rc)
 
+    res["change_backflow"] = res.get("bug_backflow")
     if args.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))
     else:
@@ -585,9 +707,9 @@ def cmd_finish(args: argparse.Namespace, root: Path) -> int:
         arch = res.get("archived") or {}
         if arch:
             print(f"  归档：{arch.get('status')} -> {arch.get('path')}")
-        bug = res.get("bug_backflow") or {}
-        if bug.get("applicable"):
-            print(f"  缺陷回推：{len(bug.get('artifacts') or [])} 个封印产物；审查锚 {bug.get('review')}")
+        change = res.get("change_backflow") or {}
+        if change.get("applicable"):
+            print(f"  变更/缺陷回推：{len(change.get('artifacts') or [])} 个封印产物；审查锚 {change.get('review')}")
         req_root = target_task.get("requirement_root")
         closeout = res.get("requirement_closeout")
         if req_root and closeout:

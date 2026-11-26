@@ -74,6 +74,7 @@ CAUSES: dict[str, bool] = {
     "bug_backflow_worktree_diverged": False,  # finish：index 与工作树分叉
     "bug_backflow_unsupported_object_type": False,  # bug/finish：symlink/gitlink/type-change
     "bug_backflow_mode_not_finish_ready": False,    # finish：range 记录改 staged 重跑
+    "change_backflow_reverify_required": False,     # finish：自动回推改写后必须重跑 verify
     "no_task_card": False,           # 对账本外 / 非法 / 越界任务收口或派发
     "state_transition": False,       # 流程顺序错（未 completed 先归档、归档目标已存在等）
     "no_review_report": False,       # 审查报告缺失 / 会话待审 PENDING（流程顺序）

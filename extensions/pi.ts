@@ -127,7 +127,8 @@ export default function (pi: ExtensionAPI) {
         { value: "console", label: "console", description: "打开可视化 E2E 走查控制台" },
         { value: "init", label: "init", description: "在当前项目装配 Atlas 工作流" },
         { value: "report", label: "report", description: "上报流水线设计缺陷或规则冲突" },
-        { value: "bug", label: "bug", description: "缺陷落点、diff 回推台账与查询" },
+        { value: "change", label: "change", description: "需求变更/缺陷落点、diff 回推台账与查询" },
+        { value: "bug", label: "bug", description: "change 的缺陷兼容别名" },
       ];
       return subcommands.filter((s) => s.value.startsWith(prefix));
     },
@@ -217,21 +218,22 @@ export default function (pi: ExtensionAPI) {
           break;
         }
 
+        case "change":
         case "bug": {
-          const bugArgs = args.trim().split(/\s+/).slice(1);
+          const changeArgs = args.trim().split(/\s+/).slice(1);
           try {
-            const res = await pi.exec("atlas", ["bug", ...bugArgs], { timeout: 120_000 });
+            const res = await pi.exec("atlas", [sub, ...changeArgs], { timeout: 120_000 });
             const output = (res.stdout || res.stderr || "").trim();
-            ctx.ui.notify(output || `atlas bug 退出码 ${res.code}`, res.code === 0 ? "info" : "warning");
+            ctx.ui.notify(output || `atlas ${sub} 退出码 ${res.code}`, res.code === 0 ? "info" : "warning");
           } catch (e: any) {
-            ctx.ui.notify(`执行 atlas bug 失败: ${e.message}`, "warning");
+            ctx.ui.notify(`执行 atlas ${sub} 失败: ${e.message}`, "warning");
           }
           break;
         }
 
         default: {
           ctx.ui.notify(
-            `未知子命令 "${sub}"。可用选项: status, check, init, console, report, bug`,
+            `未知子命令 "${sub}"。可用选项: status, check, init, console, report, change, bug`,
             "warning",
           );
         }
