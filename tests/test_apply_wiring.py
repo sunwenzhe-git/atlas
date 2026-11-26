@@ -2,14 +2,14 @@
 """atlas 项目接线（apply-wiring）回归测试。
 
 覆盖：
-  1. AGENTS.md atlas 指针块写入与幂等更新；
-  2. .atlas/config.yaml after_archive hook 登记、幂等与 after_finish 迁移；
-  3. Python 工程探测与 pytest 配置兜底（R6.2 对账定稿：pyproject.toml 优先承载、
+  1. Python 工程探测与 pytest 配置兜底（R6.2 对账定稿：pyproject.toml 优先承载、
      既有 ini 只补 marker、pythonpath 环境补丁随 F23 退役不再注入、非 Python 跳过）。
      探测**只认声明**：出厂模板的 `backend_test:` 是注释示例，按 raw 文本匹配会把纯前端
      项目判成 Python（2026-10-15 存量事故）⇒ 回归夹具 = `templates/stack-profile.yaml`
      逐字节；误建的 ini 走退役对称清理（内容逐字节相等才删）。
-  4. `.gitignore` 第 5 触点（2026-10-15，issue #8 后所有接线项目都需要）：
+  2. pi 宿主扩展登记（往 `extensions[]` 只插一行、JSON 合法、幂等；非 pi 项目不建
+     `.pi/`）与扩展本体行为（开户态提示 / `--fast` 闸 / 失败签名去重）。
+  3. `.gitignore` 触点（2026-10-15，issue #8 后所有接线项目都需要）：
      已有文件才追加 `.adapter-out/`、`.adapter-out` 子串幂等、`!.adapter-out` 负模式
      不打架、无文件不首创。**无退役对称**（单向追加），由测试钉住这一不对称语义。
 """

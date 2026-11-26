@@ -293,10 +293,10 @@
 | 通道 | 谁跑 | 何时 | 覆盖 |
 |---|---|---|---|
 | **语义** | 结构环语义区（AI）/ 人工 | Finish 原生步骤 | 经验 / 规范 / 坑（标记外） |
-| **事实** | **刷新脚本**（`--chain`：读适配器 → 填 `atlas:facts` 区 → L2 指针单遍化；F26 基线自进——`--chain` 无漂移且四前置满足时自动推进 `_meta.json.baseline`，漂移冻结待终审，显式 `--apply` 零变化承诺永不推进，`--advance-baseline` 显式越过） | **`after_archive` hook**（`.atlas/config.yaml.hooks.after_archive`，D159：归档才是收口，`after_finish` 只清指针；R7 原位迁移为 `--chain`）或手动 | 表 / 字段 / 路由 / 接口 / token（标记内） |
+| **事实** | **刷新脚本**（`--chain`：读适配器 → 填 `atlas:facts` 区 → L2 指针单遍化；F26 基线自进——`--chain` 无漂移且四前置满足时自动推进 `_meta.json.baseline`，漂移冻结待终审，显式 `--apply` 零变化承诺永不推进，`--advance-baseline` 显式越过） | 显式 **`refresh_structure.py --chain`**（收口后 / CI；D205 退役 `after_archive` 钩子——supersedes D159，钩子机制随 Trellis 移除；没刷的收口被 finish 新鲜度门 `RFC-20261122-05` 拒收）或手动 | 表 / 字段 / 路由 / 接口 / token（标记内） |
 
-- 事实刷新是**纯脚本**，适合 shell hook；hook 失败只告警、不阻塞任务。
-- hook 用**单行登记**（官方扩展点），不改 `workflow.md` 结构——执行层 升级时冲突最小。
+- 事实刷新是**纯脚本**，由执行层 / 人在收口后显式调用；刷新缺失不再告警放行——finish 新鲜度门（`RFC-20261122-05`）直接拒收。
+- 刷新是**显式命令**，不进 finish 编排（finish 只拒绝、不代跑），执行层升级时无接线冲突。
 - **适配器失败语义（F25 拍板，2026-10-15）**：`--chain` 下任一适配器非零退出 / 解析不到脚本 ⇒ 中止链条、不进 refresh、exit 2；中止前已落盘适配器产物 = 上一轮一致态，残留无害。
 - **history 与 baseline 正交**：`_drift-history.jsonl` 记漂移**事件流**（追溯），`baseline.commit` 记快照**锚点**（对账位），两者不互相背负，无需互斥设计。
 - 刷新脚本实现依赖适配器（未决 B1）；未接适配器的类别由 AI 维持。**D 类指针形态豁免（F33，R8）**：`global/apis-shared.md` 真相源行命中 app 名 ⇒ 该域 `apis.md` 缺失合规（覆盖判据内建），免手写域级指针文件。`tests` 适配器产物存在时，`tour.md` 项目概况渲染其 `run_command`（F29 消费披露）。

@@ -41,7 +41,7 @@ atlas init --assets-root docs
 1. **整包镜像**：把契约、环文档、校验器、模板、适配器整包复制到项目 `.atlas/`（日后所有规则与机器校验的唯一正本；skill 与文档都指回这里，不存第二份）；
 2. **下发专用 Skills 瘦桩**：按探测到的平台目录（`.agents/skills/`、`.claude/skills/`、`.codex/skills/`）各装一份轻量入口——`atlas-structure`、`atlas-prd`、`atlas-e2e`、`atlas-apply`、`atlas-grill`、`atlas-design-review`、`atlas-ablate`、`frontend-design`。桩本身不装规则，第一步就指回 `.atlas/`；
 3. **建立执行层骨架**：`.atlas/tasks`、`.atlas/spec/structure`、`.atlas/spec/conventions`；并做项目接线（`AGENTS.md` 指针 / 测试配置 / `.gitignore` / pi 扩展，幂等）；
-4. **三处接线 + 只读审查 Agent**：`.atlas/config.yaml` 加 `after_archive` hook（每次任务收口后自动刷新结构事实）、项目 `AGENTS.md` 加一段指针、*（pi 宿主）*`.pi/` 下落地并登记 `/atlas` 控制台扩展（`/atlas status` 报**开户态**——「装配 ≠ 开户」，非 pi 项目不创建 `.pi/`），并下发 `atlas-reviewer` 只读审查者配置（工具集不含写文件与 bash）。
+4. **只读审查 Agent**：*（pi 宿主）*`.pi/` 下落地并登记 `/atlas` 控制台扩展（`/atlas status` 报**开户态**——「装配 ≠ 开户」，非 pi 项目不创建 `.pi/`），并下发 `atlas-reviewer` 只读审查者配置（工具集不含写文件与 bash）。结构事实刷新**无钩子**（D205 退役 `after_archive`）：收口后显式跑 `refresh_structure.py --chain`，finish 新鲜度门拒收没刷的收口。
 
 **两步卫生件**：清理历史遗留 / 已退役的 skill；建资产根骨架（默认 `product/`；由 `atlas.config.yaml` 解析，已有内容永不覆盖）。
 
@@ -140,7 +140,7 @@ Agent 全量串行初始化 `structure → prd → e2e`。
 ### 场景 C：日常迭代提需求（100% 自动无感）
 你**无需敲任何 Atlas 命令**，像往常一样在 执行层 中创建任务（如 `atlas workflow plan 优化配音列表`）：
 * 工作流在 Phase 1.6 **自动调度 Agent 执行** `atlas-apply <需求ID>` 技能完成应然资产编译；
-* 需求写完收口时，自动触发钩子刷新最新代码事实。
+* 需求写完收口时，显式跑 `refresh_structure.py --chain` 刷新最新代码事实（无钩子，finish 新鲜度门拒收没刷的收口）。
 
 任务做到一半想看进度，跑 `atlas workflow progress --unit <任务ID>`（只读探针：聚合派工 / 暂存改动 / 审查轮次 / 覆盖矩阵四格，不写盘不改状态）。注意「命中」只是路径级存在性而非内容级证据，验收结论仍以 `verify` 与审查报告为准。
 
