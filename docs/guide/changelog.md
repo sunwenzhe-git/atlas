@@ -8,6 +8,10 @@
 
 - feat(governance): 落地 RFC-20261125-01 P0–P5 治理能力吸收——版本化 schema/黄金语料、OpenSpec/Trellis/legacy 代码优先迁移、Incident 与 Docs Governance、Compose/Helm/Kong Runtime Topology、Semantic expected/observed/graph 对账、base+staged binary patch+tree receipt 重放、分类置信度/校准/治理度量；全链路 shadow/enforce/off、UNVERIFIED/rc2、原子代际与回滚，M245–M251 假绿变异证明，双评审修后通过；默认保持 shadow，未获得真实项目域校准证据前不宣称 enforce。
 
+## [v0.4.0-beta.13] - 2026-11-26
+
+- feat(workflow): 需求变更/缺陷统一 `atlas change` 入口并自动触发回推——verify 在独立评审前自动分析、校验与暂存 exact 产物；finish 缺失/过期自动补跑，产物变化强制 reverify；新增 v2 `change_backflow` 审查锚与旧 `bug_backflow` 只读兼容；`atlas bug` 保留缺陷别名，workflow 本地旧脚本按能力门回落包内新版。
+
 ## [v0.4.0-beta.11] - 2026-11-26
 
 - fix(workflow): 缺陷落点强制关联既有需求条款，校验器与 finish 拒绝已存在的 standalone 缺陷，避免 bug 被单独建成需求。
