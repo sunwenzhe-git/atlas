@@ -4,6 +4,11 @@
 
 ---
 
+## [v0.4.0-beta.14] - 2026-11-26
+
+- fix(workflow): finish 结构事实新鲜度门死锁解除（issues #78，`RFC-20261126-01` 双评审修后通过）——新旋钮 `.atlas/config.yaml` 的 `structure.local_dirty_paths`（常驻永不入库本地面申报；`/` 结尾=前缀、否则精确匹配，判据单源 `refresh_structure.load_local_dirty_paths`，非法条目 fail-soft 跳过）；finish 脏面三分诊：半暂存（暂存∩脏）恒 FAIL、未申报 FAIL 文案带申报片段、申报面 PASS 且 reason 逐条留痕（人审点=归档 task.json 入库可审）；`--advance-baseline` 扩越脏树拒进（loud log 列被忽略面，facts=人工背书的 worktree 态）；advance 侧 porcelain 补 `-c core.quotePath=false` 与 finish 同口径；`freshness_fail` 充值、`--force` 不绕、自动 `--chain` 对未申报面仍拒均不变。
+- fix(wiring): 无父级缺陷直填路由 + AGENTS.md 指针块置顶注入（issues #77，`RFC-20261126-02` 双评审修后通过）——`atlas bug/change` 无落点报错改双通道（有父级 `--requirement` 建落点；无父级走 `atlas workflow plan --unit <任务卡ID>` 直填，`--unit` 记号区分落点 slug 与任务卡 ID；台账必须锚定需求立场不变）；`atlas-change` 技能与 agent 指针段各加路由入口；指针块改**置顶注入**三态幂等（无块⇒头部前置、尾部旧块⇒迁移置顶内容逐字节不变、头部⇒原位替换；头部=BOM+YAML front-matter 之后；标记计数 ≠1 报错不改），存量仓 `install.sh --update` 自动迁移（`audit`/`adopt` 档 `--no-wiring` 需手动跑 apply-wiring）。
+
 ## [v0.4.0-beta.12] - 2026-11-26
 
 - feat(governance): 落地 RFC-20261125-01 P0–P5 治理能力吸收——版本化 schema/黄金语料、OpenSpec/Trellis/legacy 代码优先迁移、Incident 与 Docs Governance、Compose/Helm/Kong Runtime Topology、Semantic expected/observed/graph 对账、base+staged binary patch+tree receipt 重放、分类置信度/校准/治理度量；全链路 shadow/enforce/off、UNVERIFIED/rc2、原子代际与回滚，M245–M251 假绿变异证明，双评审修后通过；默认保持 shadow，未获得真实项目域校准证据前不宣称 enforce。
