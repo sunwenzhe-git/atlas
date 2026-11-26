@@ -4,7 +4,7 @@
 
 ---
 
-## [Unreleased]
+## [v0.4.0-beta.11] - 2026-11-26
 
 - fix(workflow): 缺陷落点强制关联既有需求条款，校验器与 finish 拒绝已存在的 standalone 缺陷，避免 bug 被单独建成需求。
 
