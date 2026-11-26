@@ -14,7 +14,7 @@ if str(Path(__file__).resolve().parents[1]) not in sys.path:
 from _support.bug_backflow import dedupe_findings, strict_requirement_fields
 from _support.bug_record import RECORD_FILE, read_record, validate_record
 from _support.layout import LayoutError, load_layout
-from _support.workflow_plan import PlanError, load_tasks
+from _support.workflow_plan import PlanError, load_tasks, requirement_relation_findings
 
 LEGACY_VALUES = {"bug", "缺陷", "defect"}
 
@@ -131,14 +131,8 @@ def validate(root: Path) -> Result:
     if archive.is_dir() and not archive.is_symlink():
         record_paths.extend(sorted(archive.glob(f"*/{RECORD_FILE}")))
         record_paths.extend(sorted(archive.glob(f"*/*/{RECORD_FILE}")))
-    if not record_paths and not legacy:
-        if not requirements.is_dir():
-            res.add("defect_records", "SKIP", "无 requirements/ 资产根（未走到缺陷台账）")
-        else:
-            res.add("defect_records", "PASS", "无缺陷台账记录")
-        return res
-
     seen_keys: dict[str, str] = {}
+    record_check_count = 0
     task_slugs: set[str] = set()
     tasks_root = root / ".atlas" / "tasks"
     if tasks_root.is_dir():
@@ -149,6 +143,7 @@ def validate(root: Path) -> Result:
         except (PlanError, OSError) as exc:
             res.add("task_references", "FAIL", f"任务账本不可读：{exc}")
     for path in record_paths:
+        record_check_count += 1
         req_root = path.parent
         rel = str(path.relative_to(root))
         record = read_record(req_root)
@@ -189,10 +184,21 @@ def validate(root: Path) -> Result:
                 continue
             triage = (fields.get("结论") in ("重复", "非缺陷", "不修")
                       and bool(fields.get("证据")))
-            if not triage:
+            try:
+                relation_findings = requirement_relation_findings(
+                    root, req_root, require_report=False)
+            except (LayoutError, OSError) as exc:
+                relation_findings = [f"关联需求无法校验：{exc}"]
+            if relation_findings or not triage:
+                record_check_count += 1
                 rel = str(req_root.relative_to(root))
-                detail = "；".join(field_findings) or "缺陷既非合法分诊关闭，也无 record.json"
+                detail = "；".join(field_findings + relation_findings) or "缺陷既非合法分诊关闭，也无 record.json"
                 res.add(f"record:{rel}", "FAIL", detail)
+    if record_check_count == 0:
+        if not requirements.is_dir():
+            res.add("defect_records", "SKIP", "无 requirements/ 资产根（未走到缺陷台账）")
+        else:
+            res.add("defect_records", "PASS", "无缺陷台账记录")
     return res
 
 

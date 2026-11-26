@@ -398,7 +398,8 @@ def logical_requirement_root_ref(root: Path, req_root: Path) -> str:
     return (base / slug).relative_to(root).as_posix()
 
 
-def requirement_relation_findings(root: Path, req_root: Path) -> list[str]:
+def requirement_relation_findings(root: Path, req_root: Path, *,
+                                  require_report: bool = True) -> list[str]:
     """需求变更/缺陷的基线关联检查，返回 WARN 文案。"""
     req_root = Path(req_root).resolve()
     fields = read_requirement_fields(req_root)
@@ -407,7 +408,7 @@ def requirement_relation_findings(root: Path, req_root: Path) -> list[str]:
         return [f"需求类型非法：{declared_type!r}（允许：{'/'.join(REQUIREMENT_TYPES)}）"]
     kind = declared_type or "初始需求"
     findings: list[str] = []
-    if kind == "缺陷" and not (req_root / "work" / "缺陷报告.md").is_file():
+    if kind == "缺陷" and require_report and not (req_root / "work" / "缺陷报告.md").is_file():
         findings.append("缺陷类型缺 work/缺陷报告.md：先落现象、期望、实际、复现与环境证据")
     related = fields.get("关联需求")
     if kind in ("需求变更", "缺陷") and not related:

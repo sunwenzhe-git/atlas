@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from _support.layout import LayoutError, load_layout
+from _support.workflow_plan import requirement_relation_findings
 
 RECORD_FILE = "record.json"
 SCHEMA_VERSION = 1
@@ -211,6 +212,14 @@ def validate_record(record: object, *, requirement_root: Path | None = None,
         _sha(report.get("sha256"), "report.sha256", findings)
 
     metadata = _requirement_metadata(requirement_root) if requirement_root is not None else {}
+    if requirement_root is not None and metadata.get("类型") == "缺陷":
+        if not metadata.get("关联需求"):
+            findings.append("缺陷未关联既有需求：必须写 **关联需求**：<slug#R-NN>")
+        elif root is not None:
+            try:
+                findings.extend(requirement_relation_findings(Path(root), Path(requirement_root)))
+            except (LayoutError, OSError) as exc:
+                findings.append(f"缺陷关联需求无法校验：{exc}")
     if requirement_root is not None and isinstance(report, dict):
         report_path = requirement_root / "work" / "缺陷报告.md"
         if not report_path.is_file() or report_path.is_symlink():

@@ -631,6 +631,19 @@ class BugBackflowTests(unittest.TestCase):
         self.assertTrue(any("adapter" in item["reason"] for item in record["conflicts"]))
         self.assertFalse(any(item["action"] == "confirmed" for item in record["impact"]))
 
+    def test_existing_standalone_defect_is_rejected(self) -> None:
+        req_root = self._prepare_bug()
+        requirement = req_root / "requirement.md"
+        requirement.write_text(requirement.read_text(encoding="utf-8").replace(
+            f"**关联需求**：{RELATED}\n", ""), encoding="utf-8")
+        record = records.read_record(req_root)
+        findings = records.validate_record(record, requirement_root=req_root, root=self.root)
+        self.assertTrue(any("未关联既有需求" in item for item in findings), findings)
+        result, output = self._run_bug("run", "--unit", BUG_ID, "--from", "staged")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(output["cause"], "bug_backflow_invalid")
+        self.assertIn("未关联既有需求", output["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

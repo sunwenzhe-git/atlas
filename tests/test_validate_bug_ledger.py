@@ -37,6 +37,11 @@ class BugLedgerValidatorTests(unittest.TestCase):
         self.root.mkdir()
         git(self.root, "init", "-q")
         self._write("product/stack-profile.yaml", "origin: adopt\n")
+        self._write("product/requirements/baseline/requirement.md",
+                    "# baseline\n\n**类型**：初始需求\n**状态**：已确认\n")
+        self._write("product/requirements/baseline/items.md",
+                    "| ID | 页码 | 章节 | 原文 |\n|---|---|---|---|\n"
+                    "| R-01 | p1 | behavior | baseline behavior |\n")
         git(self.root, "add", "-A")
         git(self.root, "commit", "-qm", "baseline")
 
@@ -176,6 +181,16 @@ class BugLedgerValidatorTests(unittest.TestCase):
         result = ledger.validate(self.root)
         self.assertEqual(result.status, "FAIL", result.checks)
         self.assertTrue(any("not_applicable 不得被任务卡引用" in item["detail"]
+                            for item in result.checks if item["status"] == "FAIL"), result.checks)
+
+    def test_rejects_standalone_defect_without_related_requirement(self) -> None:
+        """M254：缺陷缺关联需求时必须被拒绝。"""
+        req = self._requirement("standalone")
+        req.write_text(req.read_text(encoding="utf-8").replace(
+            "**关联需求**：baseline#R-01\n", ""), encoding="utf-8")
+        result = ledger.validate(self.root)
+        self.assertEqual(result.status, "FAIL", result.checks)
+        self.assertTrue(any("关联需求" in item["detail"]
                             for item in result.checks if item["status"] == "FAIL"), result.checks)
 
 
