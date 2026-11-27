@@ -141,7 +141,7 @@ def _clean_batches(root: Path) -> None:
 
 
 def _run(root: Path, *extra: str) -> subprocess.CompletedProcess:
-    # 外层预算（issue #63，2026-11-13 提值，随对齐门预算 900→1800 同批上报待追认）：
+    # 外层预算（issue #63，2026-11-13 提值，随对齐门预算 900→1800 同批上报；已追认 2026-11-27 维护者拍 A，QUEUE 案 11）：
     # 整链 = pre + check（对齐门 ≤1800s + E2E 真跑）+ backfill。旧外层 900s 曾**小于**
     # 门内预算：负载日对齐门装不进 900s，外层先杀——issue #63「900s 无输出不退出」
     # 的第二层根因（真跑门未触达的直接原因）。外层必须 ≥ 门内上限 + E2E 段，取 2400s。
