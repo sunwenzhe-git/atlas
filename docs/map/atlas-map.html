@@ -241,9 +241,9 @@ overview: {
     {from:'adapt',to:'graph',route:'vUp',tip:'结构事实区的两级语义行(cognition.fras)喂给语义透镜做反向一跳'},
     {from:'gates',to:'review',label:'全绿才收口',tip:'全部机器门绿了才允许进入评审与收口'},
     {from:'apply',to:'flow',route:'v',label:'写卡派工',tip:'apply 的产出经 plan 写进执行层任务卡,再由 dispatch 派工执行'},
-    {from:'flow',to:'review',route:'hv',sy:232,mx:730,tx:857,label:'回写',tip:'finish 收口回写任务卡与登记,并触发收口对账'},
+    {from:'flow',to:'review',route:'bhv',sx:430,oy:236,mx:730,tx:857,label:'回写',tip:'finish 收口回写任务卡与登记,并触发收口对账'},
     {from:'flow',to:'e2egen',tip:'执行层接卡实现后按用例跑验收:Playwright 真跑与控制台慢动作回放都在这一面(回放供人审)'},
-    {from:'flow',to:'gates',route:'hv',sy:245,mx:744,tx:857,tip:'verify 与 finish 触发全链门禁(atlas_check,含 E2E 真跑门),门红 ⇒ 收口阻断'},
+    {from:'flow',to:'gates',route:'bhv',sx:398,oy:246,mx:744,tx:857,tip:'verify 与 finish 触发全链门禁(atlas_check,含 E2E 真跑门),门红 ⇒ 收口阻断'},
     {from:'kernel',to:'adapt',route:'hvb',mx:373,dash:1},
   ],
 },
@@ -517,12 +517,12 @@ review: {
   ],
 },
 workflow: {
-  title:'执行层 atlas workflow · 内部结构', vb:[0,23,1000,400],
+  title:'执行层 atlas workflow · 内部结构', vb:[0,23,1000,493],
   zones:[
-    {x:18,y:60,w:210,h:330,label:'输入与落点'},
-    {x:248,y:60,w:240,h:330,label:'执行调度'},
-    {x:508,y:60,w:240,h:330,label:'验收与判据'},
-    {x:768,y:60,w:214,h:330,label:'收口回写'},
+    {x:18,y:60,w:210,h:430,label:'输入与落点'},
+    {x:248,y:60,w:240,h:430,label:'执行调度'},
+    {x:508,y:60,w:240,h:430,label:'验收与判据'},
+    {x:768,y:60,w:214,h:430,label:'收口回写'},
   ],
   nodes:[
     {id:'w-req',x:40,y:100,kind:'asset', title:'需求增量 <slug>/',
@@ -553,9 +553,9 @@ workflow: {
     {from:'w-mech',to:'w-verify',route:'ring',rx:714,ty:103},
     {from:'w-plan',to:'w-dispatch',route:'v'},
     {from:'w-dispatch',to:'w-ctx',route:'v',dash:1},
-    {from:'w-dispatch',to:'w-verify'},
-    {from:'w-dispatch',to:'w-bug',label:'缺陷',dash:1},
-    {from:'w-bug',to:'w-verify'},
+    {from:'w-dispatch',to:'w-verify',sy:186},
+    {from:'w-dispatch',to:'w-bug',sy:208,label:'缺陷',dash:1},
+    {from:'w-bug',to:'w-verify',route:'hv',mx:726},
     {from:'w-verify',to:'w-budget',route:'v'},
     {from:'w-budget',to:'w-finish'},
     {from:'w-finish',to:'w-status',route:'v'},
@@ -572,8 +572,8 @@ req: {sum:'需求落点 requirements/<slug>/ 是需求层唯一住址;执行层�
   files:[['.atlas/tasks/<ID>/prd.md','任务卡本体:plan 从落点领取生成,apply 只读它'],
          ['shared/layout.md','需求落点登记:<assets_root>/requirements/ 目录形态与状态机'],
          ['shared/single-source.md §4','权威源五层排序与条目覆盖纪律']],blind:null},
-flow: {sum:'自建执行层(atlas workflow):把 apply 的编排产出落成任务卡、派工执行、判据验收、收口回写;需求落点与机制文档两个机器面挂在这里(D205 移除 Trellis 宿主依赖)。',
-  points:['四命令族:plan 写卡(--requirement 领取模式)/ dispatch 最小上下文派工 / context 最小注入单源 / verify+finish 收口;bin/atlas.js workflow 八命令(plan/dispatch/context/verify/finish/status/archive/run)','需求增量 requirements/<slug>/ 唯一住址:初始需求/需求变更/缺陷共用确认稿+条目表+来源材料;类型缺省初始需求,变更/缺陷必须关联 <slug>#R-NN;四态状态机(RFC-20261122-03/20261124-01)','机制文档机器面(RFC-20261122-04):docs/architecture/<机制>.md 单主题指南+frontmatter mechanism-paths 全仓发现;verify 提示族三判据:触及提示/疑似死 paths/单星 glob 拒收;永不入 .atlas/spec/(防注入截断)','verify 判据族分两族:缺口族 coverage_matrix 逐卡 AC 对账+requirement_root_findings 跨卡(漏领/幽灵/状态机/归档回落/跨根冒领 WARN);提示族 mechanism_doc(与缺口族分族防误升格)','回收面硬化(D209):verify 预算门(charged≥上限 ⇒ rc3 留痕不计数)+失败记账(rc1 扣/rc2 PENDING 不扣)+workflow_causes 38 值域封闭+deferred 台账门判定前提取','需求变更/缺陷自动回推(D213):实现暂存→verify 评审前自动回推并暂存 exact 产物→封存 review.json.change_backflow v2→finish 复算 OID/canonical 产物/history/delete 锚;缺失/过期自动补跑后必须 reverify,语义冲突签字,legacy 双落点拒绝','治理收口(RFC-20261125-01):receipt base+patch+tree 重建、in-scope validator 重放、模块 enforce 门槛;off/shadow 不冒充完成','finish 结构事实新鲜度门(RFC-20261122-05):baseline≡HEAD ∧ 无未暂存脏 ⇒ PASS,没刷 spec 拒收;关联卡全归档且 completed 后按需求类型提醒产品事实回写(D211);行级锚定(RFC-20261122-08):existing_code 逐字锚+滑窗复算六态 WARN'],
+flow: {sum:'自建执行层(atlas workflow):apply 编排完的需求在这里变成任务卡,派工、实现、验收、收口一条龙跑完;需求落点和机制文档两个机器面也挂在这里,全链不再依赖外部编排器。',
+  points:['命令族八条(bin/atlas.js workflow):plan 写卡、dispatch 派工、context 管最小注入、verify+finish 收口,加 status/archive/run 三个查询运维;plan 支持 --requirement 从需求落点领卡,卡里存路径引用,正文不复制','需求增量住 requirements/<slug>/:初始需求、需求变更、缺陷共用一套「确认稿+条目表+来源材料」;变更和缺陷必须关联到 <slug>#R-NN 条目,走四态状态机(候选→已确认→已拆→已收口)','机制文档(docs/architecture/<机制>.md)也是机器面:frontmatter 声明 mechanism-paths 全仓可发现;verify 会提醒三件事——文档动了没申报、paths 疑似失效、glob 写法过宽;这类文档永不进 .atlas/spec/,防注入截断','verify 判据分两族:缺口族真拦停——coverage_matrix 逐卡对 AC,requirement_root 跨卡查漏领/幽灵/状态机违规;提示族只提醒不加码——机制文档提醒归这族;两族分开是防提醒被误升成门槛','预算与记账:这轮花的 token 超上限,记「超支」停手(rc3),不算失败账;真失败才扣预算(rc1);没跑完挂起的不扣(rc2);退出码封闭不开放;每轮欠的账进 deferred 台账,判定前先提取','缺陷和需求变更自动回推:实现一进暂存区,verify 评审前就把影响面、签字、record.json 这些回推产物备好并一起暂存;finish 收口时复算指纹,少一件或过期就自动补跑,补完必须重新 verify','收口有治理凭证:receipt 按 base+patch+tree 三段随时可重建,in-scope 的校验器会重放验证;模块治理开关只认 enforce,off/shadow 都不算完成','finish 还查新鲜度:spec 必须刚刷过(baseline 就是 HEAD,且没有未提交的脏改动),否则拒收;关联卡全部归档且完成后,提醒把产品事实回写;行级锚定用逐字锚+滑窗复算,锚得准不准出 WARN 统计,不拦停'],
   files:[['scripts/atlas_workflow.py','编排入口:命令族调度/预算门/记账/status 聚合'],
          ['_support/workflow_plan.py','plan 684 行:卡条目表=领取引用表/类型关联/重跑指针'],
          ['_support/workflow_verify.py','verify 707 行:缺口族+提示族判据(coverage/requirement_root/mechanism_doc)'],
@@ -620,9 +620,9 @@ e2egen: {sum:'用例分片(中文 DSL)编译为 Playwright 脚本 + 纯标准库
          ['scripts/gen_testid_stub.py','testid 实然盘点薄桩生成器:adopt 开户交尾件,缺失由 validate_testids 自愈'],
          ['_support/pw_runner.py','运行器单源内核:可解析性判据 / 全局兜底修复 / 浏览器就绪探针']],
   blind:'登录态本身不可覆盖(D103);生成器不判「用例是否值得测」;控制台单机单用户假设',doc:'e2egen.md',sub:'e2egen'},
-gates: {sum:'「每道机器门都要真的会咬」的执行体系:编排器只聚合不改判;判据在 21 个校验器;门册总账 + 变异证明保证可信。',
-  points:['门册三律:不在 gates.md 登记 = 不存在;每门必配「喂坏输入必红」证明;静默继续 = 门失效','四态纪律:ok / FAIL(硬阻断 exit 1)/ WARN(不置红)/ SKIP(未就绪,必须带原因,永不当绿灯放行)','21 校验器各有对账平面:testids 应然⇔实然双向集合、PRD 链路、e2e 索引、AC 对账、走查确认行、stack-profile 形态等','编排门行 11 类:校验器聚合/对齐测试/生成物最新/审查报告形态/执行串行/结构漂移/装配版本(MANIFEST 逐文件基线)/写面残留/消融残留/E2E 真跑(TCP 探活+reset+浏览器就绪)','变异证明四段:注入坏输入⇒必红⇒还原逐字节一致⇒复绿;报告须含注入 diff(M 编号已至 M200 以上,以门册为准)','每轮门事件追加 check-events.jsonl,观测面,不参与判定'],
-  files:[['scripts/atlas_check.py','统一检查入口 1298 行:编排 21 器 + 11 门行,一门一行,只聚合不改判据'],
+gates: {sum:'收口前要跑的整套机器检查:一个编排器把 21 个校验器和 10 组编排门挨个跑一遍,自己只记账不改判据;每道门的判据都登记在门册里,还都得有「喂坏输入必须变红」的证明。',
+  points:['门册(gates.md)三条铁律:没登记的门不存在;每道门必须配「喂坏输入必红」的变异证明;门坏了却静默放行,等于没有这道门','每道门只有四种结果:ok 通过;FAIL 直接拦停(退出码 1);WARN 提醒但不拦;SKIP 是还没就绪,必须写明原因,不许拿来当绿灯','21 个校验器各管一本账:testids 资产和真实代码互相对、AC 和用例对、走查确认行对——每器守一个平面,互不越界','编排器还按固定顺序跑 10 组门行(门册 §2.2 逐行登记):校验器聚合、对齐测试、生成物新鲜度、审查报告形态、执行串行、结构漂移、装配版本、写面残留、消融残留、E2E 真跑(真起浏览器点一遍)','变异证明四步:注入坏输入,门必须变红;移除注入,文件一字不差还原;再跑一遍回到绿;报告里附注入的 diff(钉子编号以门册为准,一直在增加)','每轮检查每道门的结果都追加进 check-events.jsonl——纯观测记录,不参与判定'],
+  files:[['scripts/atlas_check.py','统一检查入口 1298 行:编排 21 器 + 10 门行,一门一行,只聚合不改判据'],
          ['validators/','判据本体目录:21 个 validate_*.py,每器守一个对账平面'],
          ['shared/gates.md','门册总账 209 行:六列登记 + 取证五档;不在表 = 不存在'],
          ['scripts/mutation_proof.py','变异证明工具:注入 → 必红 → 逐字节还原 → 复绿,报告含注入 diff']],
@@ -703,6 +703,9 @@ function edgePath(v,e){
     const ry=Math.max(...v.zones.map(z=>z.y+z.h))+18;
     /* rx=回边右转道(缺省贴目标右侧),ty=入目标右缘的锚高(缺省中线)——拆与邻边的共道/共锚 */
     return `M${a.x},${ay} H${a.x-14} V${ry} H${e.rx||b.x+b.w+14} V${e.ty||by} H${b.x+b.w}`;}
+/* bhv = 底缘出线(sx=底缘出口x,oy=下行走廊y):目标在右同排、右缘出锚会被迫压到卡外的边改从卡底出,先竖降进走廊再右行 */
+  if(e.route==='bhv'){const ax=e.sx!=null?e.sx:a.x+a.w/2, oy=e.oy!=null?e.oy:a.y+a.h+14;
+    return `M${ax},${a.y+a.h} V${oy} H${e.mx} V${b.y-12} H${e.tx||b.x+b.w/2} V${b.y}`;}
 /**
  * 合线高维两种路由:hvb = 源右缘出、目标底缘入(竖直上行);
  * sy = 源右缘出口锚高(共源边拆锚用);缺省中线。—— 拆共道/共锚/共口
@@ -932,8 +935,8 @@ const TOUR=[
  {focus:['req','apply'],edges:[['req','apply']],text:'需求过三问门,决定拉起哪些环;apply 只编排不越界'},
  {focus:['apply','rings'],edges:[['apply','rings']],text:'需求落成 PRD 六件套,AC 分解为 E2E 用例分片'},
  {focus:['rings','e2egen'],edges:[['rings','e2egen']],text:'中文分片编译成 Playwright 脚本,动词值域封闭、陌生即中止'},
- {focus:['apply','flow','e2egen'],edges:[['apply','flow'],['flow','e2egen']],text:'apply 的产出写卡派工:执行层接卡实现,按用例跑验收(真跑+控制台回放),verify 判据族把关'},
- {focus:['e2egen','gates','flow'],edges:[['e2egen','gates'],['flow','gates']],text:'21 校验器加十类编排门:收口跑全链门禁(含 E2E 真跑),全绿是收口的硬前置'},
+ {focus:['apply','flow','e2egen'],edges:[['apply','flow'],['flow','e2egen']],text:'apply 写好任务卡派给执行层:实现完按用例真跑验收,也能在控制台慢动作回放给人看;verify 判据族最后把关'},
+ {focus:['e2egen','gates','flow'],edges:[['e2egen','gates'],['flow','gates']],text:'收口前把 21 个校验器和 10 组编排门全部跑一遍,E2E 真跑也在里面;有一道红,就收不了口'},
  {focus:['gates','review','flow'],edges:[['gates','review'],['flow','review']],text:'执行层 finish 回写触发收口:独立审查 N/M 对账,影响面预测也要被 reconcile 审计'},
  {focus:['shared','kernel','cli'],edges:[],text:'契约真相源、单源内核、装配对账——服务全链'},
 ];
