@@ -4,6 +4,10 @@
 
 ---
 
+## [v0.4.0-beta.16] - 2026-11-27
+
+- fix(workflow): 需求落点判据改按台账事实 + 报告路径扁平等价（issues #79，`D217`）——`validate_bug_ledger` 不再因 `requirements/<slug>/bugs/` 非空判 FAIL，`bugs/`、`changes/` 作来源材料放行；落点内任意嵌套（含 `work/bugs/`、大小写、symlink）第二份 `record.json` 新增 `canonical_ledger` FAIL（同名但不像台账的证据 JSON 不误伤）；报告路径允许 `work/` 与落点根扁平二选一（同类型并存判歧义，默认写路径仍 `work/`），`record.schema.json` 四路径与 dedupe 条件同步；`requirements/archive` 降为可选镜像，任务归档仍以 `.atlas/tasks/archive/` 为准。
+
 ## [v0.4.0-beta.15] - 2026-11-27
 
 - feat(workflow)+fix(workflow): Guarded Continuation **P1 只读链**落刀（GDR PoC：经 Pi 原生嵌套工具的只读续跑链，`tmp/guarded-continuation-p1` worktree 验证后回 main；playground 真模型 RPC 烟测 + bun 假宿主全环绿）；同线双评审修后收敛（`af0776e`）：Critical 三钉全修——F1 失败链误签 `SUCCEEDED` 伪成功、F2 `RECORDED` 治理关闭面、F3-B `turn_end` 碰撞门，另收 F4 早退 `ISOLATED` / F5 证据双向 / F7 approve 守卫；配套 `tests/test_guarded_continuation.py`（v16 `M1`–`M3` 钉，pytest 9 用例）与计数锚回写（全量 2501 绿）；四臂实验 3×4：D-A 省 1 请求、token 减 63%+，对 C 打平=治理面价值（D2 拍板）。P2 业务写链见下条。

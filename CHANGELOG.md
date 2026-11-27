@@ -4,7 +4,7 @@
 
 ---
 
-## [Unreleased]
+## [v0.4.0-beta.16] - 2026-11-27
 
 - fix(workflow): 需求落点判据改按台账事实 + 报告路径扁平等价（issues #79，`D217`）——`validate_bug_ledger` 不再因 `requirements/<slug>/bugs/` 非空判 FAIL，`bugs/`、`changes/` 作来源材料放行；落点内任意嵌套（含 `work/bugs/`、大小写、symlink）第二份 `record.json` 新增 `canonical_ledger` FAIL（同名但不像台账的证据 JSON 不误伤）；报告路径允许 `work/` 与落点根扁平二选一（同类型并存判歧义，默认写路径仍 `work/`），`record.schema.json` 四路径与 dedupe 条件同步；`requirements/archive` 降为可选镜像，任务归档仍以 `.atlas/tasks/archive/` 为准。
 
