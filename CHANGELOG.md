@@ -4,7 +4,7 @@
 
 ---
 
-## [Unreleased]
+## [v0.4.0-beta.15] - 2026-11-27
 
 - feat(workflow)+fix(workflow): Guarded Continuation **P1 只读链**落刀（GDR PoC：经 Pi 原生嵌套工具的只读续跑链，`tmp/guarded-continuation-p1` worktree 验证后回 main；playground 真模型 RPC 烟测 + bun 假宿主全环绿）；同线双评审修后收敛（`af0776e`）：Critical 三钉全修——F1 失败链误签 `SUCCEEDED` 伪成功、F2 `RECORDED` 治理关闭面、F3-B `turn_end` 碰撞门，另收 F4 早退 `ISOLATED` / F5 证据双向 / F7 approve 守卫；配套 `tests/test_guarded_continuation.py`（v16 `M1`–`M3` 钉，pytest 9 用例）与计数锚回写（全量 2501 绿）；四臂实验 3×4：D-A 省 1 请求、token 减 63%+，对 C 打平=治理面价值（D2 拍板）。P2 业务写链见下条。
 - fix(map): 交互图几何修复与讲述文案大白话样张批——① 全景第 9 步 `flow→gates`/`flow→review` 出线锚悬空（11-23 执行层入图时 `sy:232/245` 被迫压到卡外，左端悬空不可考）：新增 `bhv` 底缘出线路由，两边改从卡底竖降进走廊再右行，右半段竖道/入点不变；② workflow 子图 5 处断言违例清零（`w-bug→w-verify` 竖道纵穿「预算门+记账」「line_anchor 锚定」两卡改走右缘 x=726、dispatch 共源出线 `sy:186/208` 拆锚、w-bug 卡 vb/分区扩到完整入画）；③ 门禁/执行层详情页与 TOUR 第 8/9 步文案改大白话样张（RFC/D 编号撤出正文、`⇒≡∧` 符号换词、黑话人话在前原文括号在后），「编排 21 器 + 11 门行」散 prose 同步门册 §2.2 口径改 10；改后 `atlas-map.check.js` 九视图七项断言全过、锚门全绿。
