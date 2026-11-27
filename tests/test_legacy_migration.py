@@ -785,7 +785,7 @@ def test_atlas_check_does_not_skip_orphaned_generation_assets(tmp_path, module, 
     support = tmp_path / ".atlas/_support"
     support.mkdir()
     shutil.copy(PKG_ROOT / "validators" / f"{module}.py", installed)
-    for name in ("governance_io.py", "governance_schema.py", "legacy_migration.py", "semantic_contracts.py"):
+    for name in ("governance_io.py", "governance_schema.py", "legacy_migration.py", "semantic_contracts.py", "argv_split.py"):
         shutil.copy(PKG_ROOT / "_support" / name, support)
     rows = atlas_check.Row()
     atlas_check.check_validators(tmp_path, rows, sys.executable)
@@ -802,7 +802,7 @@ def test_atlas_check_shadow_stale_is_warn_not_hard_fail(tmp_path):
     (installed / "validators").mkdir(parents=True)
     (installed / "_support").mkdir()
     shutil.copy(PKG_ROOT / "validators/validate_migration.py", installed / "validators")
-    for name in ("governance_io.py", "governance_schema.py", "legacy_migration.py"):
+    for name in ("governance_io.py", "governance_schema.py", "legacy_migration.py", "argv_split.py"):
         shutil.copy(PKG_ROOT / "_support" / name, installed / "_support")
     rows = atlas_check.Row()
     atlas_check.check_validators(tmp_path, rows, sys.executable)
@@ -871,7 +871,7 @@ def test_atlas_check_preserves_raw_migration_verdict_cause_and_rc(tmp_path):
     (installed / "validators").mkdir(parents=True)
     (installed / "_support").mkdir()
     shutil.copy(PKG_ROOT / "validators/validate_migration.py", installed / "validators")
-    for name in ("governance_io.py", "governance_schema.py", "legacy_migration.py"):
+    for name in ("governance_io.py", "governance_schema.py", "legacy_migration.py", "argv_split.py"):
         shutil.copy(PKG_ROOT / "_support" / name, installed / "_support")
     rows = atlas_check.Row()
     atlas_check.check_validators(tmp_path, rows, sys.executable)

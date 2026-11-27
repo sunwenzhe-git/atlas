@@ -5,7 +5,8 @@
 本模块负责：
 - P1+P2 计划 schema 校验（只读枚举 + P2 finish 四切面枚举，禁 force/任意 argv）；
 - 规范哈希（与 extensions/pi.ts 的 gcStable 逐字节镜像，哈希不进被哈希对象）；
-- 长生命周期写锁 WriteLock（POSIX fcntl.flock LOCK_EX|LOCK_NB，O_CREAT|O_RDWR|O_NOFOLLOW，
+- 长生命周期写锁 WriteLock（跨平台排他锁：POSIX fcntl.flock / Windows msvcrt.locking，
+  经 `_support/filelock.py` 单源；O_CREAT|O_RDWR|O_NOFOLLOW，
   禁 O_TRUNC、释放禁 unlink，支持租约校验，杜绝一次性 CLI O_EXCL 模拟锁）；
 - 目录 fsync（fsync_dir）与 O_NOFOLLOW 安全建目录（safe_mkdir_nofollow）；
 - 逐动作 intent/WAL（wal.jsonl）与 UNKNOWN 崩溃诊断（禁止自动重放）；
@@ -18,13 +19,21 @@
 """
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
 import re
 import secrets
 import time
+
+# 跨平台文件锁单源（POSIX fcntl.flock ⇄ Windows msvcrt.locking）。
+# Windows 无 fcntl：此前本模块在 import 阶段即 ModuleNotFoundError，致 atlas workflow
+# 整条需求级执行链起不来。锁原语缺失时本模块 fail-closed，不静默放行。
+from _support.filelock import unlock as _unlock_file
+from _support.filelock import lock_exclusive_nonblocking as _lock_exclusive_nonblocking
+# 跨平台进程探活单源：`os.kill(pid, 0)` 在 Windows 上是**杀进程**而非探活（实测
+# `TerminateProcess(handle, 0)`，不抛异常），租约核验会把持锁进程杀掉。
+from _support.process_probe import pid_exists
 from pathlib import Path
 from typing import Any
 
@@ -76,26 +85,65 @@ def fsync_dir(path: Path) -> None:
 
 
 def assert_no_symlink_components(base: Path, target: Path) -> None:
-    """校验 base 到 target 之间没有任何符号链接或越界（防 symlink TOCTOU）。"""
+    """校验 base 到 target 之间没有任何链接（symlink / Windows junction）或越界。"""
     base_abs = base.absolute()
-    if base_abs.is_symlink():
+    if _is_link_like(base_abs):
         raise PlanError(f"项目根不得为 symlink：{base_abs}")
     resolved_base = base_abs.resolve()
     rel = target.absolute().relative_to(base_abs)
     cur = base_abs
     for part in rel.parts:
         cur = cur / part
-        if cur.is_symlink():
+        if _is_link_like(cur):
             raise PlanError(f"路径含 symlink，拒绝：{cur}")
     if target.exists() and target.resolve() != target.absolute() and not target.resolve().is_relative_to(resolved_base):
         raise PlanError(f"路径逃逸项目根：{target}")
 
 
+def _is_link_like(path: Path) -> bool:
+    """判断路径是否为 symlink **或 Windows 重解析点（junction / mount point）**。
+
+    POSIX 只需 `is_symlink()`；Windows 上目录 junction（`mklink /J`）与挂载点
+    **不是** symlink —— `Path.is_symlink()` / `os.path.islink()` / `lstat().st_mode`
+    三者一律返回 False（实测），但内核层同样会重定向路径，绕过 symlink 守卫。
+    故 Windows 侧额外读 `st_reparse_tag`：非 0 即重解析点，按链接处置（fail-closed）。
+    """
+    try:
+        if path.is_symlink():
+            return True
+    except OSError:
+        return True
+    if os.name == "nt":
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return True
+        if getattr(st, "st_reparse_tag", 0):
+            return True
+    return False
+
+
 def safe_mkdir_nofollow(root: Path, rel_parts: tuple[str, ...]) -> Path:
-    """经 dirfd/O_NOFOLLOW 逐级安全建目录并验证非 symlink。"""
+    """逐级安全建目录并验证非链接。
+
+    POSIX：经 `dir_fd` + `O_DIRECTORY|O_NOFOLLOW` 逐级建与验证（保持原实现，
+    该路径下 symlink 在 open 时即被内核拒绝，无 TOCTOU 窗口）。
+
+    Windows：不支持 `dir_fd`，且 `os.open()` 无法打开目录（`O_DIRECTORY` 不存在，
+    实测 `PermissionError 13`）。改走 lstat 逐级校验 + 逐级 `mkdir`：每一段在**建之前
+    与建之后**都过 `_is_link_like`（含 junction），最后整体复算 `resolve()` 是否仍在
+    根内。安全性来自「逐段拒绝链接 + 终态越界复算」而非内核级 dirfd 原子性，故额外
+    要求根路径本身为真实目录（下方已校验）。
+    """
     root_abs = root.absolute()
-    if root_abs.is_symlink() or not root_abs.is_dir():
+    if _is_link_like(root_abs) or not root_abs.is_dir():
         raise PlanError(f"项目根非法或为 symlink：{root_abs}")
+
+    if os.name == "nt":
+        return _safe_mkdir_nofollow_windows(root_abs, rel_parts)
+
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     cur_path = root_abs
     cur_fd = os.open(cur_path, flags)
@@ -124,18 +172,51 @@ def safe_mkdir_nofollow(root: Path, rel_parts: tuple[str, ...]) -> Path:
     return cur_path
 
 
+def _safe_mkdir_nofollow_windows(root_abs: Path, rel_parts: tuple[str, ...]) -> Path:
+    """Windows 分支：无 dir_fd / 无法 open 目录，改走 lstat 逐段校验（含 junction）。
+
+    每段在建前、建后各判一次链接；末尾复算 `resolve()` 必须仍落在根内，
+    防止中途被替换为 junction 后逃逸。
+    """
+    cur_path = root_abs
+    resolved_root = root_abs.resolve()
+    for part in rel_parts:
+        if not part or part in (".", "..") or "/" in part or "\\" in part:
+            raise PlanError(f"非法目录段：{part!r}")
+        next_path = cur_path / part
+        # 建前：已存在则必须是真实目录（拒绝 symlink / junction / 普通文件）
+        if next_path.exists() or _is_link_like(next_path):
+            if _is_link_like(next_path):
+                raise PlanError(f"路径含链接（symlink/junction），拒绝：{next_path}")
+            if not next_path.is_dir():
+                raise PlanError(f"路径非普通目录：{next_path}")
+        else:
+            try:
+                next_path.mkdir()
+            except FileExistsError:  # 并发建出，交给下面复查
+                pass
+        # 建后复查：防「建的过程中被替换」
+        if _is_link_like(next_path) or not next_path.is_dir():
+            raise PlanError(f"路径非普通目录：{next_path}")
+        resolved_next = next_path.resolve()
+        if not resolved_next.is_relative_to(resolved_root):
+            raise PlanError(f"路径逃逸项目根：{next_path}")
+        cur_path = next_path
+    return cur_path
+
+
 # ────────────────────────────────────────────────────────────────── 共享长生命周期写锁
 def write_lock_path(root: Path) -> Path:
     return root / WRITE_LOCK_REL
 
 
 class WriteLock:
-    """跨进程共享长生命周期写锁（fcntl.flock LOCK_EX|LOCK_NB）。
+    """跨进程共享长生命周期写锁（非阻塞排他锁，POSIX fcntl.flock / Windows msvcrt.locking）。
 
     纪律：
     - 仅以 O_CREAT|O_RDWR|O_NOFOLLOW 打开（严禁 O_TRUNC，防竞态清掉在途持锁元数据）；
-    - 仅在 flock 成功后才 ftruncate(0)+写入所有者元数据+fsync+dir_fsync；
-    - 释放时 flock(LOCK_UN)+close，严禁 unlink 锁文件（防 POSIX 多 inode 击穿互斥）。
+    - 仅在加锁成功后才 ftruncate(0)+写入所有者元数据+fsync+dir_fsync；
+    - 释放时解锁+close，严禁 unlink 锁文件（防 POSIX 多 inode 击穿互斥）。
     """
 
     def __init__(self, root: Path, *, holder: str, unit: str = "", run_id: str = "",
@@ -155,7 +236,7 @@ class WriteLock:
         fd = os.open(self.lock_file, flags, 0o644)
         try:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _lock_exclusive_nonblocking(fd)
             except BlockingIOError as exc:
                 owner = self._read_owner_unlocked(fd)
                 os.close(fd)
@@ -203,7 +284,7 @@ class WriteLock:
             fd = self.fd
             self.fd = None
             try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                _unlock_file(fd)
             except OSError:
                 pass
             try:
@@ -232,9 +313,9 @@ def verify_write_lock_lease(root: Path, run_id: str, unit: str, token: str) -> d
     fd = os.open(lp, flags)
     try:
         try:
-            # 非阻塞探测：如果还能拿到 LOCK_EX，说明没有活跃持锁者！立即释放并拒绝。
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            # 非阻塞探测：如果还能拿到排他锁，说明没有活跃持锁者！立即释放并拒绝。
+            _lock_exclusive_nonblocking(fd)
+            _unlock_file(fd)
             raise WriteLockError("写锁当前无人持有（lock-hold 已退出或失效）")
         except BlockingIOError:
             pass
@@ -245,10 +326,12 @@ def verify_write_lock_lease(root: Path, run_id: str, unit: str, token: str) -> d
     holder_pid = meta.get("pid")
     if not isinstance(holder_pid, int) or holder_pid <= 0:
         raise WriteLockError("写锁 holder_pid 非法")
-    try:
-        os.kill(holder_pid, 0)
-    except OSError as exc:
-        raise WriteLockError(f"写锁持有进程 {holder_pid} 不存活") from exc
+    # 探活走 `_support/process_probe.py` 单源：POSIX 仍是 `os.kill(pid, 0)`（逐字节
+    # 不变），Windows 改只读 `OpenProcess`+`GetExitCodeProcess`。**不能**直接
+    # `os.kill(pid, 0)`：Windows 上那是 `TerminateProcess`，核验一次就把持锁进程杀了
+    # （实测进程以 3221225794 退出且不抛异常），随后必然误报「不存活」。
+    if not pid_exists(holder_pid):
+        raise WriteLockError(f"写锁持有进程 {holder_pid} 不存活")
     if meta.get("run_id") != run_id or meta.get("unit") != unit:
         raise WriteLockError("写锁绑定 run_id/unit 不匹配")
     expected_sha = sha256_hex(token.encode("utf-8"))
@@ -527,7 +610,11 @@ def write_exclusive(path: Path, text: str) -> None:
         raise PlanError(f"父目录不得为 symlink：{path.parent}")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(path, flags, 0o644)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+    # newline="" 禁用换行转换：Windows 上文本模式会把 "\n" 写成 "\r\n"，导致落盘字节
+    # 与调用方随后计算的 sha256（基于未转换的理想字节）不一致——写读回对账恒判篡改
+    # （实测 raw_receipt_tampered 假阳性）。本函数承诺「落盘字节 == 传入 text」，故必须
+    # 显式关闭转换。
+    with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
         fh.write(text)
         fh.flush()
         os.fsync(fh.fileno())
@@ -551,7 +638,7 @@ def atomic_write_json_durable(path: Path, payload: dict) -> str:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(tmp, flags, 0o644)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())

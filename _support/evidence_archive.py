@@ -33,6 +33,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from _support.filelock import lock_exclusive as _lock_exclusive, unlock as _unlock_file
+
 SCHEMA = "atlas-evidence-manifest-v1"
 INDEX_SCHEMA = "atlas-evidence-index-v1"
 EVIDENCE_DIRNAME = ".atlas-evidence"
@@ -229,16 +231,14 @@ def _index_lock(evidence: Path):
     fh = lock.open("a+")
     try:
         try:
-            import fcntl
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-        except (ImportError, OSError):  # Windows / 只读 FS：退化为尽力而为
+            _lock_exclusive(fh.fileno())
+        except OSError:  # 只读 FS / 无锁原语：退化为尽力而为
             pass
         yield
     finally:
         try:
-            import fcntl
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-        except (ImportError, OSError):
+            _unlock_file(fh.fileno())
+        except OSError:
             pass
         fh.close()
 

@@ -21,7 +21,7 @@
     atlas eval gate --ledger <file> [--out <file>]
 
 隔离 = `git worktree add --detach`（run 前先 `worktree prune`，跨双仓统一最外层
-`try...finally` 清理，部分失败自动回滚已建项）；case 命令 `shlex.split` + `shell=False`
+`try...finally` 清理，部分失败自动回滚已建项）；case 命令跨平台 `split_command` + `shell=False`
 （与 `ablation.py run` 同口径），cwd = 各自 worktree 项目根，逐 case 独立 timeout。
 `host` 模式默认**启用** skills 与接线装配（写进隔离 `<host_wt>`，不触碰用户 `~/`），
 保证 `skills/` 与 `agent-pointer.md` 变更真正进入被测面（M258）；`WORKTREE` 模式
@@ -42,6 +42,13 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
+
+# 随包内核引导（`_support/`）：跨平台 argv 拆分单源。此前直用 `shlex.split`，
+# 其默认 posix=True 在 Windows 上把反斜杠当转义符吃掉（`C:\a\b.py` → `C:ab.py`）；
+# POSIX（macOS/Linux）侧行为不变，故此处替换对 macOS 无影响。
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.argv_split import split_command as _split_command  # noqa: E402
 
 SCHEMA_VERSION = 1
 PKG_ROOT = Path(__file__).resolve().parents[1]
@@ -183,7 +190,7 @@ def check_anchor(anchor: str, cwd: Path, timeout: int,
 
 def run_case(command: str, cwd: Path, timeout: int) -> tuple[str, int, str]:
     try:
-        argv = shlex.split(command)
+        argv = _split_command(command)
     except ValueError as exc:
         return "error", 0, f"命令解析失败：{exc}"
     started = time.perf_counter()
@@ -211,7 +218,7 @@ def measure_gate(command: str | None, base_dir: Path, cand_dir: Path,
     warn = None
     for label, d in (("base", base_dir), ("candidate", cand_dir)):
         try:
-            pr = subprocess.run(shlex.split(command), cwd=str(d), capture_output=True,
+            pr = subprocess.run(_split_command(command), cwd=str(d), capture_output=True,
                                 text=True, timeout=timeout, shell=False)
         except (FileNotFoundError, ValueError) as exc:
             warn = f"gate_command 不可执行/解析失败：{exc}"
@@ -233,7 +240,7 @@ def measure_gate(command: str | None, base_dir: Path, cand_dir: Path,
 
 def _execute_case_loop(registry: dict, base_dir: Path, cand_dir: Path,
                        timeout: int, retries: int) -> tuple[list[dict], dict]:
-    collector = shlex.split(str(registry["anchor_collector"])) if registry.get("anchor_collector") else None
+    collector = _split_command(str(registry["anchor_collector"])) if registry.get("anchor_collector") else None
     cases_out: list[dict] = []
     for case in registry["cases"]:
         a_ok, a_detail = check_anchor(case["anchor"], cand_dir, timeout, collector)

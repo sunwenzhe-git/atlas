@@ -97,6 +97,8 @@ from _support.siblings import load_module  # noqa: E402
 from _support.manual_block import parse_manual  # noqa: E402
 from _support.layout import LayoutError, load_layout  # noqa: E402
 from _support.solution import load_manifest  # noqa: E402
+# 跨平台进程探活：`os.kill(pid, 0)` 在 Windows 上会杀进程（见 `_pid_alive`）。
+from _support.process_probe import pid_exists  # noqa: E402
 
 # 用例 ID 文法体单源（正文归 rings/e2e/reference.md §5.3）；锚点在使用处自留。
 case_id = load_module("case_id")
@@ -1313,13 +1315,13 @@ class MemberConsoles:
 
     @staticmethod
     def _pid_alive(pid: int) -> bool:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        return True
+        """成员控制台进程是否存活（跨平台单源，见 `_support/process_probe.py`）。
+
+        **不得**用 `os.kill(pid, 0)`：Windows 上它落到 `TerminateProcess(handle, 0)`，
+        既杀了成员控制台、又不抛 `ProcessLookupError`/`PermissionError`（实测），
+        于是本函数永远返回 True，同时把进程杀掉 —— 探活变行凶。
+        """
+        return pid_exists(pid)
 
     @staticmethod
     def _probe(port: int, host: str = "127.0.0.1") -> str:

@@ -6,7 +6,6 @@ existing testid extractor; this module only reconciles and anchors them.
 """
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -17,6 +16,7 @@ import tempfile
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
+from _support.filelock import lock_exclusive as _lock_exclusive, unlock as _unlock_file
 from _support.governance_io import GovernancePathError, atomic_write_bytes, atomic_write_json, load_json, safe_path
 from _support.governance_schema import canonical_bytes, canonical_digest, load_schema, validate
 from _support.layout import load_layout
@@ -549,10 +549,10 @@ def _publication_lock(root: Path):
     lock_path = safe_path(root, "contracts/.semantic-publish.lock")
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        _lock_exclusive(fd)
         yield
     finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        _unlock_file(fd)
         os.close(fd)
 
 

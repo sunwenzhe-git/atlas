@@ -12,7 +12,6 @@ import hashlib
 import os
 import platform
 import re
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -21,6 +20,7 @@ from pathlib import Path
 
 from _support.governance_io import GenerationStore, GovernancePathError, load_json, safe_path
 from _support.governance_schema import canonical_digest, validate
+from _support.argv_split import join_command, split_command
 
 PKG_ROOT = Path(__file__).resolve().parent.parent
 ARTIFACTS = (
@@ -399,11 +399,84 @@ def _head_paths(root: Path) -> set[str]:
 
 
 def _index_hash(root: Path, rel: str) -> str | None:
+    """索引中 `rel` 的 **blob sha256**（`sha256(git show :rel)`）。
+
+    ⚠️ **不要**拿它与 `_inventory` 记录的 `sha256` 直接比较：后者是**工作区原始
+    字节**的哈希，而索引 blob 已过 clean filter（`core.autocrlf` / `eol`）。Windows 上
+    `core.autocrlf=true` 时工作区 CRLF、索引 LF，两侧**永不相等** ⇒ 每个源文件都判
+    `source_stale`（实测：迁移功能整条不可用）。
+
+    「工作区 vs 索引是否一致」请用 `_index_object_id` ⇄ `_worktree_object_id`
+    （两者都是 git 对象 ID，同算法、同归一规则）。
+    """
     try:
         result = subprocess.run(["git", "show", f":{rel}"], cwd=root, capture_output=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return _sha(result.stdout) if result.returncode == 0 else None
+
+
+def index_matches_worktree(root: Path, rel: str) -> bool | None:
+    """`rel` 的工作区内容是否与索引一致（跨平台正确口径）。
+
+    比较两侧的 **git 对象 ID**：`git rev-parse :rel`（索引）对
+    `git hash-object --path=<rel> -- <rel>`（工作区，按同一 `.gitattributes` 归一）。
+
+    返回 `None` = 无法判定（非 git 仓库 / git 不可用），调用方应按「不适用」处理，
+    **不得**当成 False。
+
+    ⚠️ 不要用 `_index_hash(root, rel) != item["sha256"]` 判这件事：那是「索引 blob 的
+    sha256」对「工作区原始字节的 sha256」，在 `core.autocrlf=true` 的 Windows 上
+    恒不相等（实测该 bug 使迁移与 `validate_migration` 全部误报 `source_stale`）。
+    """
+    index_id = _index_object_id(root, rel)
+    worktree_id = _worktree_object_id(root, rel)
+    if index_id is None or worktree_id is None:
+        return None
+    return index_id == worktree_id
+
+
+def _index_object_id(root: Path, rel: str) -> str | None:
+    """索引中 `rel` 的 **git 对象 ID**（SHA-1），即 `git rev-parse :rel`。"""
+    try:
+        result = subprocess.run(["git", "rev-parse", f":{rel}"], cwd=root,
+                                capture_output=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.decode("ascii", "ignore").strip() or None
+
+
+def _worktree_object_id(root: Path, rel: str) -> str | None:
+    """工作区文件的 **git 对象 ID**，按 `rel` 的 `.gitattributes` / `core.autocrlf` 归一。
+
+    **为什么不能用 `path.read_bytes()` 的 sha256 去和索引比**：
+    `_inventory` 记录的是工作区原始字节的哈希。而索引里的 blob 已过 clean filter
+    （`eol` 规则 / `core.autocrlf`）。Windows 上 `core.autocrlf=true` 时工作区是
+    CRLF、索引是 LF，两者**永远不相等**：
+
+        工作区 a.txt  bytes: 6C 69 6E 65 31 0D 0A ...  → 8561d5d6...（sha256）
+        索引   :a.txt bytes: 6C 69 6E 65 31 0A ...      → c0d0fb45...（git blob）
+
+    结果：`migrate` 对**每一个**源文件都报 `source_stale`，Windows 上迁移功能整条
+    不可用（实测该文件 48 个测试因此失败）。
+
+    修法：两侧都用 **git 对象 ID**——`git rev-parse :rel`（索引）对
+    `git hash-object --path=<rel> -- <rel>`（工作区，按同一路径规则归一）。
+    `--path=` 不可省：缺了它 `.gitattributes` 不生效，又会退回 CRLF vs LF。
+
+    无 git 时返回 None（调用方已在 `_commit(root) is None` 时跳过本检查）。
+    """
+    try:
+        result = subprocess.run(
+            ["git", "hash-object", f"--path={rel}", "--", rel],
+            cwd=root, capture_output=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.decode("ascii", "ignore").strip() or None
 
 
 def _tree_hash(root: Path) -> str | None:
@@ -503,7 +576,7 @@ def _test_evidence(root: Path, discovered: list[str], command: list[str] | None,
         return evidence
     executed = list(command) if isinstance(command, list) else []
     evidence = {"schema_version": 1, "ran": False, "verified": False,
-                "command": shlex.join(executed) if executed else "", "nodes": nodes, "commit": _commit(root),
+                "command": join_command(executed) if executed else "", "nodes": nodes, "commit": _commit(root),
                 "tree_hash": _tree_hash(root), "environment_digest": _environment_digest(),
                 "environment": {"python": platform.python_version(), "platform": platform.platform(),
                                 "cwd": ".", "executable": sys.executable},
@@ -544,7 +617,7 @@ def _test_evidence(root: Path, discovered: list[str], command: list[str] | None,
         return evidence
     with tempfile.TemporaryDirectory(prefix="atlas-migration-junit-") as temporary:
         junit = Path(temporary) / "results.xml"
-        evidence["command"] = shlex.join(executed + [f"--junitxml={junit}"]).replace(str(junit), "<junit>")
+        evidence["command"] = join_command(executed + [f"--junitxml={junit}"]).replace(str(junit), "<junit>")
         try:
             result = subprocess.run(executed + [f"--junitxml={junit}"], cwd=root,
                                     capture_output=True, text=True, timeout=300)
@@ -606,11 +679,20 @@ def migrate(root: str | Path, test_command: list[str] | str | None = None,
                 "verdict": "UNVERIFIED", "cause": "migration_unverified", "rc": 2,
                 "findings": [{"cause": "migration_unverified", "message": str(exc)}]}
     if isinstance(test_command, str):
-        test_command = shlex.split(test_command)
+        try:
+            test_command = split_command(test_command)
+        except ValueError as exc:
+            return {"schema_version": 1, "module": "migration", "mode": mode,
+                    "verdict": "UNVERIFIED", "cause": "migration_unverified", "rc": 2,
+                    "findings": [{"cause": "migration_unverified",
+                                  "message": f"test_command 解析失败（引号未闭合？）：{exc}"}]}
     source_manifest, errors, texts = _inventory(root)
     if git_repo:
         for row in source_manifest["sources"]:
-            if _index_hash(root, row["path"]) != row["sha256"]:
+            # 两侧统一用 **git 对象 ID** 比较（索引 :rel vs 工作区按同路径规则归一）。
+            # 直接用工作区原始字节的 sha256 与索引 blob 比，在 core.autocrlf=true 的
+            # Windows 上必然不等 ⇒ 每个文件都误报 source_stale（实测）。
+            if _index_object_id(root, row["path"]) != _worktree_object_id(root, row["path"]):
                 errors.append({"kind": "source_stale", "path": row["path"],
                                "message": "源文件与 staged index 不一致，拒绝生成迁移证据"})
         recorded_paths = {row["path"] for row in source_manifest["sources"]}

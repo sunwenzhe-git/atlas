@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """外部 AC extractor 运行器（通用协议，不含任何具体框架知识）。
 
-协议：`extractor_command` 是 argv 字符串（`shlex.split`，禁止 shell），Atlas 追加
-`--root <项目根> --test-dir <扫描根> --json`，命令向 stdout 输出：
+协议：`extractor_command` 是 argv 字符串（跨平台 `split_command`，禁止 shell），
+Atlas 追加 `--root <项目根> --test-dir <扫描根> --json`，命令向 stdout 输出：
 
 ```json
 {
@@ -20,11 +20,16 @@
 from __future__ import annotations
 
 import json
-import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 from . import ExtractResult
+
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+from _support.argv_split import split_command  # noqa: E402
 
 TIMEOUT_SECONDS = 120
 MAX_OUTPUT_BYTES = 10_000_000
@@ -40,7 +45,10 @@ def _tail(text: str, n: int = 3) -> str:
 
 
 def run(command: str, root: Path, test_dir: Path, timeout: int = TIMEOUT_SECONDS) -> ExtractResult:
-    argv = shlex.split(command)
+    try:
+        argv = split_command(command)
+    except ValueError as exc:
+        raise ExtractError(f"extractor_command 解析失败（引号未闭合？）：{exc}") from exc
     if not argv:
         raise ExtractError("extractor_command 为空")
     argv = argv + ["--root", str(root), "--test-dir", str(test_dir), "--json"]

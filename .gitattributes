@@ -1,0 +1,53 @@
+# 换行符与编码纪律（跨平台：macOS / Linux / Windows）
+#
+# 背景：Git 的 `core.autocrlf` 在 Windows 上默认可为 `true`，checkout 时把文本文件
+# 转成 CRLF。对纯 Python / Markdown 无碍，但对**要被解释器按行读取的脚本**是致命破坏：
+#
+#   $ bash install.sh --help
+#   install.sh: line 31: $'\r': command not found
+#   install.sh: line 35: set: pipefail
+#   : invalid option name
+#
+# ⇒ Windows 上源码直装整条路不可用（本仓 `install.sh` 56 行全 CRLF 时实测）。
+#
+# 纪律：shell 脚本与「按行解析」的脚本一律强制 LF 入库/检出，不随平台漂移。
+# 可执行位（mode 100755）在 Windows 上无意义，由 install.py / bin/atlas.js 侧按需处理。
+
+# ── shell 脚本：必须 LF ──────────────────────────────────────────────
+*.sh            text eol=lf
+*.bash          text eol=lf
+*.zsh           text eol=lf
+*.ksh           text eol=lf
+*.ps1           text eol=crlf
+*.cmd           text eol=crlf
+*.bat           text eol=crlf
+
+# ── Python / Node / 配置：必须 LF（Windows 上 Python 能读 CRLF，但保持单源）──
+*.py            text eol=lf
+*.pyi           text eol=lf
+*.js            text eol=lf
+*.mjs           text eol=lf
+*.cjs           text eol=lf
+*.ts            text eol=lf
+*.tsx           text eol=lf
+*.json          text eol=lf
+*.jsonl         text eol=lf
+*.yaml          text eol=lf
+*.yml           text eol=lf
+*.toml          text eol=lf
+*.md            text eol=lf
+
+# ── 二进制：不做任何转换 ────────────────────────────────────────────
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.webp          binary
+*.ico           binary
+*.pdf           binary
+*.zip           binary
+*.gz            binary
+*.tgz           binary
+*.woff          binary
+*.woff2         binary
+*.ttf           binary
