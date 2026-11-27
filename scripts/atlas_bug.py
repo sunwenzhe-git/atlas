@@ -19,8 +19,9 @@ from _support.bug_backflow import (
     strict_requirement_fields, validate_backflow,
 )
 from _support.bug_record import (
-    RECORD_FILE, REPORT_PATHS, append_history, dedupe_key_for, new_record, read_record,
-    refresh_hashes, sha256_bytes, utc_now, validate_record, write_record,
+    BugRecordError, RECORD_FILE, REPORT_PATH_CHOICES, append_history, dedupe_key_for, new_record,
+    read_record, refresh_hashes, resolve_report_path, sha256_bytes, utc_now, validate_record,
+    write_record,
 )
 from _support.layout import LayoutError, load_layout
 from _support.workflow_causes import exit_code_for
@@ -210,13 +211,16 @@ def run(args: argparse.Namespace, root: Path) -> int:
 
     fields, field_findings = strict_requirement_fields(req_root)
     declared = fields.get("类型")
-    if field_findings or declared not in REPORT_PATHS:
+    if field_findings or declared not in REPORT_PATH_CHOICES:
         raise BackflowError("；".join(field_findings or ["requirement.md 类型必须为需求变更或缺陷"]),
                             cause="bug_backflow_invalid")
     if args.requirement and fields.get("关联需求") != args.requirement:
         raise BackflowError("--requirement 与 requirement.md 关联需求不一致",
                             cause="bug_backflow_invalid")
-    report_rel = REPORT_PATHS[declared]
+    try:
+        report_rel = resolve_report_path(req_root, declared)
+    except BugRecordError as exc:
+        raise BackflowError(str(exc), cause="bug_backflow_invalid") from exc
     report_path = req_root / report_rel
     if not report_path.is_file() or report_path.is_symlink():
         raise BackflowError(f"{report_rel} 缺失或为 symlink", cause="bug_backflow_missing")

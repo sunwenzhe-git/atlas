@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 
 from _support.bug_record import (
-    BugRecordError, OBJECT_TYPES, RECORD_FILE, REPORT_PATHS, append_history,
+    ALL_REPORT_PATHS, BugRecordError, OBJECT_TYPES, RECORD_FILE, REPORT_PATHS, append_history,
     atomic_write_bytes, canonical_bytes, dedupe_identity, new_record, read_record,
     refresh_hashes, sha256_bytes, utc_now, validate_record, write_record,
 )
@@ -105,7 +105,7 @@ def strict_requirement_fields(req_root: Path) -> tuple[dict[str, str], list[str]
 
 def defect_intent(req_root: Path) -> bool:
     return ((Path(req_root) / RECORD_FILE).is_file()
-            or any((Path(req_root) / rel).is_file() for rel in REPORT_PATHS.values()))
+            or any((Path(req_root) / rel).is_file() for rel in ALL_REPORT_PATHS))
 
 
 def _related_target(root: Path, related: str) -> tuple[Path, str]:
@@ -862,22 +862,35 @@ def validate_backflow(root: Path, task: dict, review_data: dict | None = None) -
             "artifacts": {rel: sha256_bytes((root / rel).read_bytes()) for rel in sorted(artifacts)}}
 
 
+def _dedupe_fingerprint(identity: tuple[str, str, str, str]) -> tuple[str, str, str, str]:
+    """报告路径归一为文件名：work/ 与落点根扁平是同一份证据，不得各记一条。"""
+    kind, report_path, related, digest = identity
+    return kind, Path(report_path).name, related, digest
+
+
 def dedupe_findings(root: Path, record: dict, req_root: Path) -> list[str]:
     identity = dedupe_identity(record.get("dedupe_key"))
     if identity is None:
         return []
+    fingerprint = _dedupe_fingerprint(identity)
+
+    def same(other: dict | None) -> bool:
+        other_identity = dedupe_identity(other.get("dedupe_key")) if other else None
+        if other_identity is None:
+            return False
+        return (other_identity == identity
+                or _dedupe_fingerprint(other_identity) == fingerprint)
+
     base = load_layout(root).assets_root / "requirements"
     duplicates: list[str] = []
     for candidate in base.glob("*/record.json") if base.is_dir() else []:
         if candidate.parent == req_root:
             continue
-        other = read_record(candidate.parent)
-        if other and dedupe_identity(other.get("dedupe_key")) == identity:
+        if same(read_record(candidate.parent)):
             duplicates.append(candidate.parent.name)
     for candidate in (base / "archive").glob("*/*/record.json") if (base / "archive").is_dir() else []:
         if candidate.parent == req_root:
             continue
-        other = read_record(candidate.parent)
-        if other and dedupe_identity(other.get("dedupe_key")) == identity:
+        if same(read_record(candidate.parent)):
             duplicates.append(candidate.parent.parent.name + "/" + candidate.parent.name)
     return [f"dedupe_key 与其它变更/缺陷重复：{name}" for name in sorted(set(duplicates))]

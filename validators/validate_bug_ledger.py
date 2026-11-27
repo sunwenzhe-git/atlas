@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -12,7 +13,7 @@ if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from _support.bug_backflow import dedupe_findings, strict_requirement_fields
-from _support.bug_record import RECORD_FILE, read_record, validate_record
+from _support.bug_record import RECORD_FILE, read_record, report_ambiguities, validate_record
 from _support.layout import LayoutError, load_layout
 from _support.workflow_plan import PlanError, load_tasks, requirement_relation_findings
 
@@ -91,6 +92,51 @@ def _casefold_children(path: Path, name: str) -> list[Path]:
     return [item for item in path.iterdir() if item.name.casefold() == name.casefold()]
 
 
+def _ledger_like(path: Path) -> bool:
+    """嵌套 record.json 是否真是机器台账：看内容形态，避免同名称证据文件误伤。"""
+    if path.is_symlink():
+        return True
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    markers = {"dedupe_key", "backflow_status", "schema_version"} & set(payload)
+    return len(markers) >= 2
+
+
+def _nested_ledgers(req_root: Path) -> list[Path]:
+    """req_root 根级以外的机器台账（大小写变体；symlink 目录只看目标顶层，防遍历逃逸）。"""
+    found: list[Path] = []
+    for current, dirs, files in os.walk(req_root, followlinks=False,
+                                       onerror=lambda _exc: None):
+        cur = Path(current)
+        for name in dirs:
+            link = cur / name
+            if not link.is_symlink():
+                continue
+            try:
+                entries = list(os.scandir(link))
+            except OSError:
+                continue
+            for entry in entries:
+                if entry.name.casefold() != RECORD_FILE.casefold():
+                    continue
+                candidate = link / entry.name
+                if _ledger_like(candidate):
+                    found.append(candidate)
+        if cur == req_root:
+            continue
+        for name in files:
+            if name.casefold() != RECORD_FILE.casefold():
+                continue
+            path = cur / name
+            if _ledger_like(path):
+                found.append(path)
+    return sorted(found)
+
+
 def validate(root: Path) -> Result:
     res = Result()
     try:
@@ -108,6 +154,7 @@ def validate(root: Path) -> Result:
     for path in _casefold_children(layout.assets_root, "bugs"):
         if _legacy_bugs_dir(path):
             legacy.append(str(path.relative_to(root)))
+    roots: list[Path] = []
     if requirements.is_dir() and not requirements.is_symlink():
         roots = [item for item in requirements.iterdir()
                  if item.is_dir() and item.name != "archive"]
@@ -116,15 +163,21 @@ def validate(root: Path) -> Result:
             for month in archive.iterdir():
                 if month.is_dir() and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month.name):
                     roots.extend(item for item in month.iterdir() if item.is_dir())
-        for req_root in roots:
-            for path in _casefold_children(req_root, "bugs"):
-                if _nonempty_dir(path):
-                    legacy.append(str(path.relative_to(root)))
     if legacy:
         res.add("canonical_landing", "FAIL",
                 "发现第二变更/缺陷落点（迁移到 requirements/<slug>/）：" + "、".join(sorted(set(legacy))))
     else:
         res.add("canonical_landing", "PASS", "未发现 legacy 双变更/缺陷落点")
+
+    nested: list[str] = []
+    for req_root in roots:
+        nested.extend(str(path.relative_to(root)) for path in _nested_ledgers(req_root))
+    if nested:
+        res.add("canonical_ledger", "FAIL",
+                "发现需求目录内的第二份机器台账（只允许 <req_root>/record.json）："
+                + "、".join(sorted(set(nested))))
+    else:
+        res.add("canonical_ledger", "PASS", "未发现嵌套机器台账")
 
     record_paths = sorted(requirements.glob(f"*/{RECORD_FILE}")) if requirements.is_dir() else []
     archive = requirements / "archive"
@@ -169,32 +222,28 @@ def validate(root: Path) -> Result:
         else:
             res.add(f"record:{rel}", "PASS", f"{record.get('backflow_status')} / {record.get('id')}")
 
-    if requirements.is_dir() and not requirements.is_symlink():
-        roots = [item for item in requirements.iterdir()
-                 if item.is_dir() and item.name != "archive"]
-        if archive.is_dir() and not archive.is_symlink():
-            for month in archive.iterdir():
-                if month.is_dir() and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month.name):
-                    roots.extend(item for item in month.iterdir() if item.is_dir())
-        for req_root in roots:
-            if (req_root / RECORD_FILE).is_file():
-                continue
-            fields, field_findings = strict_requirement_fields(req_root)
-            if fields.get("类型") not in ("需求变更", "缺陷"):
-                continue
-            triage = (fields.get("类型") == "缺陷"
-                      and fields.get("结论") in ("重复", "非缺陷", "不修")
-                      and bool(fields.get("证据")))
-            try:
-                relation_findings = requirement_relation_findings(
-                    root, req_root, require_report=False)
-            except (LayoutError, OSError) as exc:
-                relation_findings = [f"关联需求无法校验：{exc}"]
-            if relation_findings or not triage:
-                record_check_count += 1
-                rel = str(req_root.relative_to(root))
-                detail = "；".join(field_findings + relation_findings) or "变更/缺陷既非合法分诊关闭，也无 record.json"
-                res.add(f"record:{rel}", "FAIL", detail)
+    for req_root in roots:
+        if (req_root / RECORD_FILE).is_file():
+            continue
+        fields, field_findings = strict_requirement_fields(req_root)
+        kind = fields.get("类型")
+        if kind not in ("需求变更", "缺陷"):
+            continue
+        ambiguity = report_ambiguities(req_root, kind)
+        triage = (kind == "缺陷"
+                  and fields.get("结论") in ("重复", "非缺陷", "不修")
+                  and bool(fields.get("证据")))
+        try:
+            relation_findings = requirement_relation_findings(
+                root, req_root, require_report=False)
+        except (LayoutError, OSError) as exc:
+            relation_findings = [f"关联需求无法校验：{exc}"]
+        if relation_findings or ambiguity or not triage:
+            record_check_count += 1
+            rel = str(req_root.relative_to(root))
+            detail = ("；".join(field_findings + relation_findings + ambiguity)
+                      or "变更/缺陷既非合法分诊关闭，也无 record.json")
+            res.add(f"record:{rel}", "FAIL", detail)
     if record_check_count == 0:
         if not requirements.is_dir():
             res.add("defect_records", "SKIP", "无 requirements/ 资产根（未走到变更/缺陷台账）")

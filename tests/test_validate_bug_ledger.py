@@ -94,9 +94,50 @@ class BugLedgerValidatorTests(unittest.TestCase):
                         self._write(f"product/bugs/report.{suffix}", text)
                         self._assert_landing_failure("product/bugs")
 
-    def test_rejects_requirement_local_bugs_directory(self) -> None:
-        self._write("product/requirements/bug-login/Bugs/report.md", "# Second landing\n")
-        self._assert_landing_failure("product/requirements/bug-login/Bugs")
+    def test_allows_requirement_local_material_dirs(self) -> None:
+        """#79：bugs/、changes/ 只是来源材料目录，不再按目录名判第二落点。"""
+        self._write("product/requirements/bug-login/requirement.md",
+                    "# bug-login\n\n**类型**：初始需求\n")
+        self._write("product/requirements/bug-login/bugs/report.md", "# 现场材料\n")
+        self._write("product/requirements/bug-login/Bugs/BUG-001.md",
+                    "**类型**：缺陷\n\n历史报告正文\n")
+        self._write("product/requirements/bug-login/changes/CHG-01/request.md",
+                    "# 变更记录\n")
+        result = ledger.validate(self.root)
+        self.assertNotEqual(result.status, "FAIL", result.checks)
+        self.assertTrue(any(item["check"] == "canonical_ledger" and item["status"] == "PASS"
+                            for item in result.checks), result.checks)
+
+    def test_rejects_nested_record_json(self) -> None:
+        """机器台账只允许 req_root/record.json；任意嵌套、大小写、symlink 均拒。"""
+        self._write("product/requirements/bug-login/requirement.md",
+                    "# bug-login\n\n**类型**：初始需求\n")
+        for rel in ("Bugs/Record.json", "work/bugs/record.json",
+                    "changes/CHG-01/record.json"):
+            self._write(f"product/requirements/bug-login/{rel}",
+                        '{"schema_version": 1, "dedupe_key": "x"}\n')
+        outside = Path(self.temp.name) / "outside"
+        outside.mkdir()
+        (outside / "record.json").write_text(
+            '{"schema_version": 1, "backflow_status": "pending"}\n', encoding="utf-8")
+        (self.root / "product" / "requirements" / "bug-login" / "linked").symlink_to(
+            outside, target_is_directory=True)
+        result = ledger.validate(self.root)
+        self.assertEqual(result.status, "FAIL", result.checks)
+        failures = [item for item in result.checks
+                    if item["status"] == "FAIL" and item["check"] == "canonical_ledger"]
+        self.assertTrue(failures, result.checks)
+        for rel in ("Bugs/Record.json", "work/bugs/record.json",
+                    "changes/CHG-01/record.json", "linked/record.json"):
+            self.assertIn(rel, failures[0]["detail"], failures)
+
+    def test_same_name_evidence_json_is_not_a_ledger(self) -> None:
+        self._write("product/requirements/bug-login/requirement.md",
+                    "# bug-login\n\n**类型**：初始需求\n")
+        self._write("product/requirements/bug-login/bugs/record.json",
+                    '{"schema_version": 1, "note": "现场抓包夹具"}\n')
+        result = ledger.validate(self.root)
+        self.assertEqual(result.status, "PASS", result.checks)
 
     def test_rejects_symlinked_legacy_bugs_directory(self) -> None:
         outside = Path(self.temp.name) / "outside"
@@ -225,6 +266,48 @@ class BugLedgerValidatorTests(unittest.TestCase):
         self.assertEqual(result.status, "FAIL", result.checks)
         self.assertTrue(any("关联需求" in item["detail"]
                             for item in result.checks if item["status"] == "FAIL"), result.checks)
+
+
+    def test_flat_and_work_report_shapes_share_dedupe(self) -> None:
+        """同一证据换路径形态仍是重复：work/ 与扁平按文件名归一。"""
+        report = b"same evidence\n"
+        digest = hashlib.sha256(report).hexdigest()
+        for slug, report_rel in (("bug-work", "work/缺陷报告.md"),
+                                 ("bug-flat", "缺陷报告.md")):
+            self._requirement(slug)
+            req_root = self.root / "product" / "requirements" / slug
+            path = req_root / report_rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(report)
+            record = new_record(slug, "baseline#R-01", "test", digest,
+                                report_path=report_rel)
+            write_record(req_root, record)
+        result = ledger.validate(self.root)
+        self.assertEqual(result.status, "FAIL", result.checks)
+        self.assertTrue(any("dedupe_key" in item["detail"] for item in result.checks
+                            if item["status"] == "FAIL"), result.checks)
+
+    def test_flat_report_path_and_ambiguity(self) -> None:
+        """#79：扁平报告与 work/ 等价；两份并存 ⇒ 歧义（有无 record 都拦）。"""
+        req_root = self.root / "product" / "requirements" / "bug-flat"
+        req_root.mkdir(parents=True)
+        (req_root / "requirement.md").write_text(
+            "# bug\n\n**类型**：缺陷\n**关联需求**：baseline#R-01\n**状态**：已收口\n",
+            encoding="utf-8")
+        report = b"flat report evidence\n"
+        (req_root / "缺陷报告.md").write_bytes(report)
+        (req_root / "work").mkdir()
+        (req_root / "work" / "缺陷报告.md").write_bytes(report)
+        ambiguous = ledger.validate(self.root)
+        self.assertEqual(ambiguous.status, "FAIL", ambiguous.checks)
+        self.assertTrue(any("歧义" in item["detail"] for item in ambiguous.checks
+                            if item["status"] == "FAIL"), ambiguous.checks)
+        (req_root / "work" / "缺陷报告.md").unlink()
+        write_record(req_root, new_record(
+            "bug-flat", "baseline#R-01", "test", hashlib.sha256(report).hexdigest(),
+            report_path="缺陷报告.md"))
+        flat = ledger.validate(self.root)
+        self.assertEqual(flat.status, "PASS", flat.checks)
 
 
 if __name__ == "__main__":

@@ -408,10 +408,17 @@ def requirement_relation_findings(root: Path, req_root: Path, *,
         return [f"需求类型非法：{declared_type!r}（允许：{'/'.join(REQUIREMENT_TYPES)}）"]
     kind = declared_type or "初始需求"
     findings: list[str] = []
-    if kind == "缺陷" and require_report and not (req_root / "work" / "缺陷报告.md").is_file():
-        findings.append("缺陷类型缺 work/缺陷报告.md：先落现象、期望、实际、复现与环境证据")
-    if kind == "需求变更" and require_report and not (req_root / "work" / "变更请求.md").is_file():
-        findings.append("需求变更类型缺 work/变更请求.md：先落变更原因、范围与验收影响")
+    if kind in ("缺陷", "需求变更") and require_report:
+        # 报告路径单源在 bug_record（本模块被其顶层引用，故惰性导入防循环）。
+        from _support.bug_record import REPORT_PATH_CHOICES
+        choices = REPORT_PATH_CHOICES[kind]
+        if not any((req_root / rel).is_file() for rel in choices):
+            if kind == "缺陷":
+                findings.append(
+                    f"缺陷类型缺 {' 或 '.join(choices)}：先落现象、期望、实际、复现与环境证据")
+            else:
+                findings.append(
+                    f"需求变更类型缺 {' 或 '.join(choices)}：先落变更原因、范围与验收影响")
     related = fields.get("关联需求")
     if kind in ("需求变更", "缺陷") and not related:
         findings.append(f"{kind}的关联需求必填：指向既有需求落点")
@@ -471,7 +478,8 @@ def requirement_pointer_text(requirement_root_rel: str) -> str:
     """落点模式卡的 §1 正文指针：需求正文唯一住址在落点，本卡不复制正文。"""
     return (
         f"> 需求正文唯一住址：`{requirement_root_rel}`"
-        "（requirement.md 确认稿 + work/ 来源材料；RFC-20261122-03，本卡不复制正文）。\n"
+        "（requirement.md 确认稿 + 来源材料（`work/` 或落点根报告）；"
+        "RFC-20261122-03，本卡不复制正文）。\n"
         f"> 本卡领取条目见本卡 `requirement-items.md` 领取引用表"
         "（来源 = `<落点路径>#<落点ID>`）；按权威源排序"
         "（需求原文 > 需求 PRD > 任务 PRD > 设计文档 > 代码惯例）回查落点。")

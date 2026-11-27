@@ -6,6 +6,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from _support import bug_record as records
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +35,7 @@ def test_schema_and_runtime_key_sets_match() -> None:
 
 def test_schema_and_runtime_enums_match() -> None:
     props = SCHEMA["properties"]
-    assert set(props["report"]["properties"]["path"]["enum"]) == set(records.REPORT_PATHS.values())
+    assert set(props["report"]["properties"]["path"]["enum"]) == set(records.ALL_REPORT_PATHS)
     assert tuple(props["backflow_status"]["enum"]) == records.BACKFLOW_STATUSES
     assert tuple(props["stage"]["enum"]) == records.STAGES
     assert tuple(props["impact"]["items"]["properties"]["kind"]["enum"]) == records.IMPACT_KINDS
@@ -48,27 +50,59 @@ def test_schema_dedupe_key_shape_matches_runtime() -> None:
     pattern = re.compile(SCHEMA["properties"]["dedupe_key"]["pattern"])
     digest = "a" * 64
     assert pattern.fullmatch(f"需求变更:work/变更请求.md:base#R-01:{digest}")
+    assert pattern.fullmatch(f"需求变更:变更请求.md:base#R-01:{digest}")
     assert pattern.fullmatch(f"缺陷:work/缺陷报告.md:base#R-01:{digest}")
+    assert pattern.fullmatch(f"缺陷:缺陷报告.md:base#R-01:{digest}")
     assert pattern.fullmatch(f"base#R-01:{digest}")
+    assert not pattern.fullmatch(f"需求变更:缺陷报告.md:base#R-01:{digest}")
+    assert not pattern.fullmatch(f"缺陷:变更请求.md:base#R-01:{digest}")
     assert not pattern.fullmatch("x")
 
 
-def test_schema_dedupe_prefix_is_bound_to_report_path() -> None:
+def _report_rule(path: str) -> dict:
     rules = [item for item in SCHEMA["allOf"]
              if item.get("if", {}).get("properties", {}).get("report")]
-    change = next(item for item in rules
-                  if item["if"]["properties"]["report"]["properties"]["path"]["const"]
-                  == "work/变更请求.md")
-    defect = next(item for item in rules
-                  if item["if"]["properties"]["report"]["properties"]["path"]["const"]
-                  == "work/缺陷报告.md")
+    return next(item for item in rules
+                if item["if"]["properties"]["report"]["properties"]["path"]["const"] == path)
+
+
+def test_schema_dedupe_prefix_is_bound_to_report_path() -> None:
     digest = "a" * 64
-    assert re.fullmatch(change["then"]["properties"]["dedupe_key"]["pattern"],
-                        f"需求变更:work/变更请求.md:base#R-01:{digest}")
-    assert not re.fullmatch(change["then"]["properties"]["dedupe_key"]["pattern"],
-                            f"base#R-01:{digest}")
-    assert re.fullmatch(defect["then"]["properties"]["dedupe_key"]["pattern"],
-                        f"base#R-01:{digest}")
+    work_change = _report_rule("work/变更请求.md")["then"]["properties"]["dedupe_key"]["pattern"]
+    flat_change = _report_rule("变更请求.md")["then"]["properties"]["dedupe_key"]["pattern"]
+    work_defect = _report_rule("work/缺陷报告.md")["then"]["properties"]["dedupe_key"]["pattern"]
+    flat_defect = _report_rule("缺陷报告.md")["then"]["properties"]["dedupe_key"]["pattern"]
+    assert re.fullmatch(work_change, f"需求变更:work/变更请求.md:base#R-01:{digest}")
+    assert re.fullmatch(flat_change, f"需求变更:变更请求.md:base#R-01:{digest}")
+    assert not re.fullmatch(flat_change, f"需求变更:work/变更请求.md:base#R-01:{digest}")
+    assert not re.fullmatch(work_change, f"base#R-01:{digest}")
+    assert re.fullmatch(work_defect, f"缺陷:work/缺陷报告.md:base#R-01:{digest}")
+    assert re.fullmatch(work_defect, f"base#R-01:{digest}")
+    assert re.fullmatch(flat_defect, f"缺陷:缺陷报告.md:base#R-01:{digest}")
+    assert re.fullmatch(flat_defect, f"base#R-01:{digest}")
+    assert not re.fullmatch(flat_defect, f"需求变更:变更请求.md:base#R-01:{digest}")
+
+
+def test_resolve_report_path_tristate(tmp_path: Path) -> None:
+    req = tmp_path / "req"
+    req.mkdir()
+    assert records.resolve_report_path(req, "缺陷") == "work/缺陷报告.md"
+    (req / "缺陷报告.md").write_text("evidence\n", encoding="utf-8")
+    assert records.resolve_report_path(req, "缺陷") == "缺陷报告.md"
+    (req / "work").mkdir()
+    (req / "work" / "缺陷报告.md").write_text("evidence\n", encoding="utf-8")
+    with pytest.raises(records.BugRecordError):
+        records.resolve_report_path(req, "缺陷")
+
+
+def test_flat_report_record_roundtrip() -> None:
+    digest = "a" * 64
+    record = records.new_record("bug-flat", "base#R-01", "prod", digest,
+                                report_path="缺陷报告.md")
+    assert record["report"] == {"path": "缺陷报告.md", "sha256": digest}
+    assert record["dedupe_key"] == f"缺陷:缺陷报告.md:base#R-01:{digest}"
+    assert records.validate_record(record) == []
+    assert records.dedupe_identity(record["dedupe_key"])[:2] == ("缺陷", "缺陷报告.md")
 
 
 def test_requirement_change_record_uses_typed_report_and_dedupe() -> None:

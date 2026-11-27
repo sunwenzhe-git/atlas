@@ -35,7 +35,7 @@ layout:
 - **模板**：`templates/stack-profile.yaml` 的 e2e 三路径用 `{{ASSETS_ROOT}}` 占位，由 `install.sh` 首装渲染，避免自定义根回落 `product/`。
 
 - `.atlas/` 是包在本项目的唯一副本；平台 skill 目录里只放瘦桩 `SKILL.md`，指回 `.atlas/`。
-- **`<assets_root>/requirements/`（需求落点，2026-11-22 登记 `RFC-20261122-03`；2026-11-24 扩三类 `RFC-20261124-01`）**：需求增量唯一住址——初始需求、需求变更、缺陷共用 `<slug>/`：`requirement.md`（确认稿 + 类型 + 关联需求 + 状态行）+ `items.md`（条目正文唯一住址）+ `work/`（初始需求 `需求PDF-全文.md` / 变更 `变更请求.md` / 缺陷 `缺陷报告.md`）；状态机 候选→已确认→已拆→已收口，收口后移 `requirements/archive/<YYYY-MM>/`；关联用稳定 `<slug>#R-NN`，slug 不复用。登记 = `requirements/_index.md`（派生导航视图，非真相源、不作判据输入）。执行层 `plan --requirement` 落点模式从这里领取（卡持引用、正文不复制）；域级/全局产品事实（原称域级/项目 PRD）是长期应然登记，与需求增量分层。细则见 `rings/prd/reference.md` §12。
+- **`<assets_root>/requirements/`（需求落点，2026-11-22 登记 `RFC-20261122-03`；2026-11-24 扩三类 `RFC-20261124-01`）**：需求增量唯一住址——初始需求、需求变更、缺陷共用 `<slug>/`：`requirement.md`（确认稿 + 类型 + 关联需求 + 状态行）+ `items.md`（条目正文唯一住址）+ `work/`（可选：初始需求 `需求PDF-全文.md` / 变更 `变更请求.md` / 缺陷 `缺陷报告.md`；变更/缺陷报告也可平放落点根，等价、并存判歧义）；状态机 候选→已确认→已拆→已收口，`requirements/archive/<YYYY-MM>/` 为可选归档镜像（不强制，任务归档以 `.atlas/tasks/archive/` 为准）；机器台账只允许落点根一份 `record.json`（任意嵌套 FAIL），`bugs/`、`changes/` 可作来源材料子目录、不按目录名判落点；关联用稳定 `<slug>#R-NN`，slug 不复用。登记 = `requirements/_index.md`（派生导航视图，非真相源、不作判据输入）。执行层 `plan --requirement` 落点模式从这里领取（卡持引用、正文不复制）；域级/全局产品事实（原称域级/项目 PRD）是长期应然登记，与需求增量分层。细则见 `rings/prd/reference.md` §12。
 - **`product/adr/`（架构决策记录，2026-10-13 登记）**：项目级长效架构裁决，默认落点为 `product/adr/NNNN-<slug>.md`；可由 `layout.adr` 覆盖。按需落笔，永不覆盖。跨需求长效架构决策归此；需求内微观取舍归域级 PRD。
 - **`product/design.md`（视觉设计档案，2026-10-08 登记 `#182`）**：写者 = frontend-design skill（design read / 旋钮 / 设计系统 / 强调色 / detect 豁免），atlas 不生产不覆盖；只读触点两个——走查单确认门前对照视觉方向（`rings/prd/reference.md` §4·八）+ detect 豁免 ⇔ `.impeccable/config.json` `detector.ignoreRules` 双向对账（`validators/validate_design_exemptions.py`）。
 - **结构事实落 `.atlas/spec/structure/`**：既是项目级事实，又能被 执行层 任务**原生注入**消费。仅 `tour.md`（`paths: ['**']`）与 `domains/<domain>.md`（域 globs）带 `paths:`；其余事实文档无 `paths`、按需 Read。
@@ -70,7 +70,7 @@ layout:
 ├── .impeccable/                    # impeccable detect 配置（可选外部工具；config.json 的 detector.ignoreRules 须与 product/design.md 的 detect 豁免双向一致）
 └── product/                        # atlas 项目级文档
     ├── adr/                        # NNNN-<slug>.md（项目级长效架构决策记录，按需落笔，永不覆盖）
-    ├── requirements/               # 需求增量（RFC-20261122-03/20261124-01）：<slug>/（requirement.md + items.md + work/；缺陷另有 record.json）+ archive/<YYYY-MM>/
+    ├── requirements/               # 需求增量（RFC-20261122-03/20261124-01）：<slug>/（requirement.md + items.md + 可选 work/ 或落点根报告；缺陷另有根级 record.json）+ 可选 archive/<YYYY-MM>/
     ├── stack-profile.yaml          # 技术栈画像（字段契约见 stack-profile.md）
     ├── design.md                   # 视觉设计档案（frontend-design skill 写；atlas 只读——走查对照 + 豁免对账）
     ├── reviews/                    # <日期>-<主题>/（人工缺口清单 + plans/）+ calibration.jsonl（审查校准账本，append-only）

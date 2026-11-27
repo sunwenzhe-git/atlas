@@ -10,7 +10,7 @@ description: 需求变更或缺陷实现后自动执行 canonical 落点、diff 
 1. **确认 canonical 落点**
    - 已有任务卡：读取 `task.json.requirement_root`，确认 `requirement.md` 类型为 `需求变更` 或 `缺陷`。
    - 新建落点：运行 `atlas change --unit <slug> --requirement <base#R-NN> --report <报告.md> --stage prod|integration|test`。
-   - `需求变更` 证据住 `work/变更请求.md`；`缺陷` 证据住 `work/缺陷报告.md`；两者都必须有 `record.json`。
+   - `需求变更` 证据住 `work/变更请求.md` 或落点根 `变更请求.md`；`缺陷` 证据住 `work/缺陷报告.md` 或落点根 `缺陷报告.md`（同类型二选一，并存判歧义）；两者都必须有根级 `record.json`。
 
 2. **实现并暂存**
    - 按任务卡实现，先暂存实现文件。
@@ -46,6 +46,6 @@ description: 需求变更或缺陷实现后自动执行 canonical 落点、diff 
 
 ## 权威边界
 
-- 类型、关联需求与状态以 `requirement.md` 为准；证据以对应 `work/` 报告为准；审计元数据以 `record.json` 为准。
+- 类型、关联需求与状态以 `requirement.md` 为准；证据以对应报告（`work/` 或落点根）为准；审计元数据以 `record.json` 为准。
 - 语义冲突只报告，不替用户选边；精确改写必须来自签字决策文件。
 - 双落点规则与字段契约见 `.atlas/shared/single-source.md`、`.atlas/rings/prd/reference.md`、`.atlas/templates/bug/record.schema.json`。

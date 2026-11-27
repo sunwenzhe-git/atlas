@@ -24,7 +24,13 @@ CONFLICT_STATUSES = ("open", "resolved")
 HISTORY_EVENTS = ("bootstrap", "analysis", "decision_applied", "validated", "linked")
 SOURCE_MODES = ("staged", "range")
 OBJECT_TYPES = ("blob", "symlink", "commit", "unknown")
-REPORT_PATHS = {"缺陷": "work/缺陷报告.md", "需求变更": "work/变更请求.md"}
+REPORT_PATH_CHOICES = {
+    "缺陷": ("work/缺陷报告.md", "缺陷报告.md"),
+    "需求变更": ("work/变更请求.md", "变更请求.md"),
+}
+REPORT_PATHS = {kind: choices[0] for kind, choices in REPORT_PATH_CHOICES.items()}
+ALL_REPORT_PATHS = tuple(dict.fromkeys(
+    path for choices in REPORT_PATH_CHOICES.values() for path in choices))
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 MODE_RE = re.compile(r"^[0-7]{6}$")
@@ -73,16 +79,43 @@ def dedupe_key_for(kind: str, report_path: str, related: str, report_sha256: str
 def dedupe_identity(key: object) -> tuple[str, str, str, str] | None:
     if not isinstance(key, str):
         return None
-    for kind, report_path in REPORT_PATHS.items():
-        prefix = f"{kind}:{report_path}:"
-        if key.startswith(prefix):
-            related, separator, digest = key[len(prefix):].rpartition(":")
-            if separator and related and SHA256_RE.fullmatch(digest):
-                return kind, report_path, related, digest
+    for kind, choices in REPORT_PATH_CHOICES.items():
+        for report_path in choices:
+            prefix = f"{kind}:{report_path}:"
+            if key.startswith(prefix):
+                related, separator, digest = key[len(prefix):].rpartition(":")
+                if separator and related and SHA256_RE.fullmatch(digest):
+                    return kind, report_path, related, digest
     related, separator, digest = key.rpartition(":")
     if separator and related and SHA256_RE.fullmatch(digest):
         return "缺陷", REPORT_PATHS["缺陷"], related, digest
     return None
+
+
+def report_ambiguities(requirement_root: Path, kind: str | None = None) -> list[str]:
+    """同一落点同一类型的报告候选多于一处 ⇒ 返回文案（只回调用于判 FAIL）。"""
+    req_root = Path(requirement_root)
+    kinds = [kind] if kind in REPORT_PATH_CHOICES else list(REPORT_PATH_CHOICES)
+    findings: list[str] = []
+    for name in kinds:
+        existing = [rel for rel in REPORT_PATH_CHOICES[name]
+                    if (req_root / rel).is_file() and not (req_root / rel).is_symlink()]
+        if len(existing) > 1:
+            findings.append(f"{name}报告路径歧义（只保留一处）：" + "、".join(existing))
+    return findings
+
+
+def resolve_report_path(requirement_root: Path, kind: str) -> str:
+    """已存在报告 ⇔ 唯一候选；无报告 ⇒ 默认 work/ 路径；双份 ⇒ 歧义。"""
+    if kind not in REPORT_PATH_CHOICES:
+        raise BugRecordError(f"非法变更/缺陷类型：{kind!r}")
+    req_root = Path(requirement_root)
+    choices = REPORT_PATH_CHOICES[kind]
+    existing = [rel for rel in choices
+                if (req_root / rel).is_file() and not (req_root / rel).is_symlink()]
+    if len(existing) > 1:
+        raise BugRecordError(f"{kind}报告路径歧义（只保留一处）：" + "、".join(existing))
+    return existing[0] if existing else REPORT_PATHS[kind]
 
 
 def record_content_hash(record: dict) -> str:
@@ -180,7 +213,7 @@ def _document_path_findings(root: Path | None, req_root: Path | None,
     if not any(candidate == base or base in candidate.parents for base in allowed):
         return [f"{label} 不在合法资产/spec 面"]
     req_rel = candidate.relative_to(req_root.resolve()).as_posix() if req_root.resolve() in candidate.parents else ""
-    if req_rel in (RECORD_FILE, *REPORT_PATHS.values()):
+    if req_rel in (RECORD_FILE, *ALL_REPORT_PATHS):
         return [f"{label} 不得指向台账或变更/缺陷报告自身"]
     return []
 
@@ -230,16 +263,16 @@ def validate_record(record: object, *, requirement_root: Path | None = None,
     if _keys(report, NESTED_KEYS["report"], "report", findings):
         assert isinstance(report, dict)
         report_rel = report.get("path") if isinstance(report.get("path"), str) else ""
-        if report_rel not in REPORT_PATHS.values():
-            findings.append("report.path 必须为 work/缺陷报告.md 或 work/变更请求.md")
+        if report_rel not in ALL_REPORT_PATHS:
+            findings.append("report.path 必须为 " + " / ".join(ALL_REPORT_PATHS))
         _sha(report.get("sha256"), "report.sha256", findings)
 
     metadata = _requirement_metadata(requirement_root) if requirement_root is not None else {}
     kind = metadata.get("类型")
-    if requirement_root is not None and kind in REPORT_PATHS:
-        expected_report = REPORT_PATHS[kind]
-        if report_rel and report_rel != expected_report:
-            findings.append(f"{kind}的 report.path 必须为 {expected_report}")
+    if requirement_root is not None and kind in REPORT_PATH_CHOICES:
+        choices = REPORT_PATH_CHOICES[kind]
+        if report_rel and report_rel not in choices:
+            findings.append(f"{kind}的 report.path 必须为 " + " 或 ".join(choices))
         if not metadata.get("关联需求"):
             findings.append(f"{kind}未关联既有需求：必须写 **关联需求**：<slug#R-NN>")
         elif root is not None:
@@ -247,6 +280,9 @@ def validate_record(record: object, *, requirement_root: Path | None = None,
                 findings.extend(requirement_relation_findings(Path(root), Path(requirement_root)))
             except (LayoutError, OSError) as exc:
                 findings.append(f"{kind}关联需求无法校验：{exc}")
+    if requirement_root is not None:
+        findings.extend(report_ambiguities(
+            Path(requirement_root), kind if kind in REPORT_PATH_CHOICES else None))
     if requirement_root is not None and isinstance(report, dict) and report_rel:
         report_path = requirement_root / report_rel
         if not report_path.is_file() or report_path.is_symlink():
@@ -488,9 +524,9 @@ def new_record(slug: str, related: str, stage: str, report_sha256: str,
                report_path: str = REPORT_PATHS["缺陷"]) -> dict:
     if stage not in STAGES:
         raise BugRecordError(f"非法 stage：{stage!r}")
-    if report_path not in REPORT_PATHS.values():
+    if report_path not in ALL_REPORT_PATHS:
         raise BugRecordError(f"非法 report.path：{report_path!r}")
-    kind = next(key for key, value in REPORT_PATHS.items() if value == report_path)
+    kind = next(key for key, values in REPORT_PATH_CHOICES.items() if report_path in values)
     now = utc_now()
     record = {
         "schema_version": SCHEMA_VERSION,

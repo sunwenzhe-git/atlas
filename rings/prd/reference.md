@@ -511,9 +511,11 @@ product/prd/
 |---|---|---|
 | `requirement.md` | 确认稿 = **需求 PRD**；首部 `**类型**：初始需求/需求变更/缺陷`（缺省 = 初始需求）+ `**状态**：候选/已确认/已拆/已收口` | 确认门产物：聊清楚的范围 / 口径 / 边界 / AC 草案 |
 | `items.md` | **落点条目表** `ID \| 页码 \| 章节 \| 原文（逐字）` | **条目正文唯一住址**（#71 口径：逐字不改写、限定语保留、表行数 = 声明总数） |
-| `work/` | 初始需求 `需求PDF-全文.md`；需求变更 `变更请求.md`；缺陷 `缺陷报告.md` | 来源材料唯一住址；缺陷报告存现象、期望、实际、复现与环境证据，不复制进 `items.md` |
-| `archive/<YYYY-MM>/` | 收口后目录移入 | 镜像 `.atlas/tasks/archive` 语义 |
-| `record.json`（仅缺陷） | 回推状态、影响面、文档前后哈希、签字决策、append-only 历史、diff 来源与 commit/PR | 机器台账；schema 见 `templates/bug/record.schema.json`，不复制需求/证据正文 |
+| `work/`（可选） | 初始需求 `需求PDF-全文.md`；需求变更 `变更请求.md`；缺陷 `缺陷报告.md` | 来源材料住址；需求变更/缺陷可改用落点根扁平报告（`变更请求.md` / `缺陷报告.md`）等价替代，二者并存判歧义。缺陷报告存现象、期望、实际、复现与环境证据，不复制进 `items.md` |
+| `archive/<YYYY-MM>/` | 可选归档镜像（搬入后仍可解析） | 不强制；任务归档以 `.atlas/tasks/archive/` 为准 |
+| `record.json`（仅缺陷） | 回推状态、影响面、文档前后哈希、签字决策、append-only 历史、diff 来源与 commit/PR | 机器台账；schema 见 `templates/bug/record.schema.json`，不复制需求/证据正文。**只允许落点根一份**，任意嵌套（含 `bugs/`、`changes/`、`work/bugs/`）即 FAIL |
+
+来源材料可再分子目录（如 `bugs/`、`changes/`）；**目录名不构成第二落点判据**——只按机器台账事实判（`.atlas/bugs/`、资产根 `bugs/` 仍是并行落点，见 §12.5 第 7 条）。
 
 登记 = `requirements/_index.md`（需求 slug / 类型 / 状态 / 关联需求 / 关联卡），**派生导航视图，非真相源、不作判据输入**；不进 `product/prd/README.md` 追溯总表——追溯总表行形态受参数 4⑥ 行形态硬约束（已覆盖 / 未覆盖二值），需求登记行两态都不像。
 
@@ -546,5 +548,5 @@ product/prd/
 3. **finish 补跑**：finish 发现记录缺失/过期会自动补跑；若产物变化，返回 `change_backflow_reverify_required`，必须重跑 verify，旧锚不得复用。
 4. **语义冲突**：可执行 hunk 默认待签字；只有注释/空白等价或注册 language adapter 的等价证明可自动确认。签字决策绑定 unit、source 摘要、conflict、文档摘要、签字人与时间。
 5. **finish 强制门**：需求变更/缺陷任务必须有 `record.json`、staged 实现指纹、index/worktree 一致、变化产物已暂存，以及 v4 审查锚；缺记录/待决策/过期/未暂存/分叉/range 模式均阻断，`--force` 不绕。
-6. **报告与类型守恒**：需求变更只认 `work/变更请求.md`，缺陷只认 `work/缺陷报告.md`；dedupe key 绑定类型、报告路径、关联需求与报告哈希。旧缺陷 key/锚只读兼容，新旧锚并存或新锚缺版本即拒绝。
-7. **双落点拒绝**：`.atlas/bugs/`、资产根 bugs 目录与 `requirements/<slug>/bugs/` 由 `validate_bug_ledger` 对称拒绝；历史文件不自动删除或搬迁。
+6. **报告与类型守恒**：需求变更认 `work/变更请求.md` 或落点根 `变更请求.md`，缺陷认 `work/缺陷报告.md` 或落点根 `缺陷报告.md`（同类型二选一，并存判歧义）；dedupe key 绑定类型、报告路径、关联需求与报告哈希。旧缺陷 key/锚只读兼容，新旧锚并存或新锚缺版本即拒绝。
+7. **双落点拒绝**：`.atlas/bugs/` 与资产根 bugs 目录由 `validate_bug_ledger` 拒绝；`requirements/<slug>/bugs/`、`changes/` 作来源材料放行，但落点内嵌套 `record.json`（第二份机器台账）FAIL。历史文件不自动删除或搬迁。

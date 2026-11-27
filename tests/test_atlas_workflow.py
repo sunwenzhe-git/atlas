@@ -1639,7 +1639,7 @@ def test_requirement_pointer_uses_generic_source_for_bug(tmp_path: Path) -> None
     run(root, "plan", "--unit", "T-29", "--requirement",
         "product/requirements/demo-req")
     prd = (root / ".atlas" / "tasks" / "T-29" / "prd.md").read_text(encoding="utf-8")
-    assert "work/ 来源材料" in prd
+    assert "来源材料（`work/` 或落点根报告）" in prd
     assert "work/需求PDF-全文.md" not in prd
 
 
