@@ -271,6 +271,25 @@ def test_pi_extension_carries_onboarding_state() -> None:
     assert not missing, f"宿主扩展缺「开户态」判据片段：{missing}"
 
 
+def test_pi_extension_carries_gc_p2_surface() -> None:
+    """**弱判据（形态）**：宿主扩展必须含 P2 写链桩面与安全不变量。"""
+    src = (PKG_ROOT / "extensions" / "pi.ts").read_text(encoding="utf-8")
+    required = (
+        'new Set(["SUCCEEDED", "CLOSED_FAILED", "REVOKED"])',
+        "ATLAS_GC_WRITE_LAUNCHER",
+        "atlas_workflow_finish_preflight",
+        "atlas_workflow_finish_deferred",
+        "atlas_workflow_finish_commit",
+        "atlas_workflow_finish_archive",
+        "gcAcquireLockHold",
+        "wal-commit",
+        "wal-mark-unknown",
+        "diagnose-unknown",
+    )
+    missing = [tok for tok in required if tok not in src]
+    assert not missing, f"宿主扩展缺 P2 治理链声明片段：{missing}"
+
+
 _PI_DRIVER = r'''
 // 由 test_pi_extension_onboarding_behaviour 生成：假宿主 + 真扩展，把两个钩子与 /atlas status
 // 的输出来出来。只依赖 node builtins 与扩展自身。

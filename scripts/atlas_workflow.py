@@ -69,6 +69,7 @@ from _support.workflow_causes import (  # noqa: E402
 )
 from _support.workflow_context import select_specs, render_specs  # noqa: E402
 from _support.workflow_progress import progress_snapshot, render_progress  # noqa: E402
+from _support.guarded_continuation import WriteLock, WriteLockError  # noqa: E402
 
 
 def die(msg: str, code: int = 2) -> int:
@@ -679,8 +680,9 @@ def cmd_finish(args: argparse.Namespace, root: Path) -> int:
     if change_rc is not None:
         return change_rc
 
+    lock_held = getattr(args, "_lock_held", False)
     try:
-        res = finish_task(root, target_task, force=args.force)
+        res = finish_task(root, target_task, force=args.force, _lock_held=lock_held)
     except FinishError as exc:
         # 失败按 cause 双轨记账 + 分流退出码（RFC-20261122-07 §3.1.2：同一位点
         # 不同 cause 不同码——门红/扣预算 ⇒ 1；前置/顺序/环境 ⇒ 2）。
@@ -763,7 +765,8 @@ def cmd_archive(args: argparse.Namespace, root: Path) -> int:
             print(f"跳过 {t['id']}：status={t.get('status')}（只归档 completed）")
             continue
         try:
-            info = archive_task(root, tasks_dir, Path(t["_dir"]), t["id"])
+            info = archive_task(root, tasks_dir, Path(t["_dir"]), t["id"],
+                                _lock_held=getattr(args, "_lock_held", False))
         except FinishError as exc:
             # 归档类异常全为不扣预算类（state_transition/environment/no_task_card）⇒ 2
             return die(str(exc),
@@ -862,9 +865,11 @@ def _staged_files(root: Path) -> list[str]:
     return [item for item in pr.stdout.split("\0") if item]
 
 
-def _with_unit(args: argparse.Namespace, unit: str) -> argparse.Namespace:
+def _with_unit(args: argparse.Namespace, unit: str, *, lock_held: bool | None = None) -> argparse.Namespace:
     ns = argparse.Namespace(**vars(args))
     ns.unit = unit
+    if lock_held is not None:
+        ns._lock_held = lock_held
     return ns
 
 
@@ -877,13 +882,14 @@ def cmd_run(args: argparse.Namespace, root: Path) -> int:
     if args.dry_run:
         print("$ # run dry-run：plan → dispatch → verify → finish（不写盘、不改状态）")
         return 0
+    sub_args = _with_unit(args, args.unit, lock_held=True)
     print(f"=== [1/4] 执行 Plan 规划阶段 ===")
-    rc = cmd_plan(args, root)
+    rc = cmd_plan(sub_args, root)
     if rc != 0:
         return rc
 
     print(f"\n=== [2/4] 执行 Dispatch 分发派单 ===")
-    rc = cmd_dispatch(args, root)
+    rc = cmd_dispatch(sub_args, root)
     if rc != 0:
         return rc
 
@@ -902,13 +908,13 @@ def cmd_run(args: argparse.Namespace, root: Path) -> int:
         return 2
 
     print(f"\n=== [3/4] 执行 Verify 独立审查验收 ===")
-    rc = cmd_verify(_with_unit(args, run_unit), root)
+    rc = cmd_verify(_with_unit(sub_args, run_unit, lock_held=True), root)
     if rc != 0:
         print(f"Verify 未通过，工作流终止在当前单元。修复后可重试 verify。")
         return rc
 
     print(f"\n=== [4/4] 执行 Finish 确认收口 ===")
-    return cmd_finish(_with_unit(args, run_unit), root)
+    return cmd_finish(_with_unit(sub_args, run_unit, lock_held=True), root)
 
 
 def main() -> int:
@@ -1002,7 +1008,14 @@ def main() -> int:
     if not handler:
         return die(f"未知子命令：{args.subcommand}")
     try:
+        mutating = args.subcommand in ("plan", "dispatch", "verify", "finish", "archive", "run")
+        if mutating and not getattr(args, "dry_run", False):
+            with WriteLock(root, holder=f"workflow-{args.subcommand}", unit=getattr(args, "unit", None) or ""):
+                args._lock_held = True
+                return handler(args, root)
         return handler(args, root)
+    except WriteLockError as exc:
+        return die(f"写链互斥锁冲突：{exc}", code=2)
     except PlanError as exc:
         return die(str(exc))
 

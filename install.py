@@ -879,6 +879,8 @@ def main() -> None:
     c("回灌助手", f"{atlas_dest}/scripts/backflow.py")
     c("收口派生器", f"{atlas_dest}/scripts/closeout_derive.py")
     c("写面 claim 仲裁", f"{atlas_dest}/scripts/write_claim.py")
+    c("Guarded Continuation CLI", f"{atlas_dest}/scripts/atlas_continue.py")
+    c("共享内核（Guarded Continuation）", f"{atlas_dest}/_support/guarded_continuation.py")
     c("共享内核（模块加载器）", f"{atlas_dest}/_support/siblings.py")
     c("共享内核（profile 解析）", f"{atlas_dest}/_support/stack_profile.py")
     c("共享内核（用例块解析）", f"{atlas_dest}/_support/case_block.py")

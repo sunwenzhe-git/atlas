@@ -1,44 +1,260 @@
 #!/usr/bin/env python3
-"""Guarded Continuation —— 计划契约、封闭参数、回执与证书（RFC：GDR PoC P1）。
+"""Guarded Continuation —— 计划契约、封闭参数、长生命周期锁、WAL、回执与证书（P1+P2）。
 
 纯标准库；不执行任何父动作链（动作由 Pi 父工具经 ctx.executeTool 真实嵌套发起）。
-本模块只负责：计划 schema 校验、规范哈希、guard 重放、运行目录、回执与证书 IO。
+本模块负责：
+- P1+P2 计划 schema 校验（只读枚举 + P2 finish 四切面枚举，禁 force/任意 argv）；
+- 规范哈希（与 extensions/pi.ts 的 gcStable 逐字节镜像，哈希不进被哈希对象）；
+- 长生命周期写锁 WriteLock（POSIX fcntl.flock LOCK_EX|LOCK_NB，O_CREAT|O_RDWR|O_NOFOLLOW，
+  禁 O_TRUNC、释放禁 unlink，支持租约校验，杜绝一次性 CLI O_EXCL 模拟锁）；
+- 目录 fsync（fsync_dir）与 O_NOFOLLOW 安全建目录（safe_mkdir_nofollow）；
+- 逐动作 intent/WAL（wal.jsonl）与 UNKNOWN 崩溃诊断（禁止自动重放）；
+- P2 写集精确对账、归档后路径解析与文件内容守恒核验；
+- 两阶段回执与证书构建。
 
-口径纪律（与 extensions/pi.ts 的 TS 侧镜像约束，双侧必须逐字节一致）：
-- 规范哈希 = 对 {"content","details","structuredContent","isError"} 做稳定序列化后 sha256；
-  稳定序列化 = 键排序 + 丢弃 None/undefined 值 + json.dumps(separators=(",",":"),
-  ensure_ascii=False)。字符串/整数/布尔/null/数组/对象之外（浮点）不进哈希面。
-- 哈希不得进入被哈希对象（P0 实测坑：子工具返回值内嵌自身哈希导致父重算必不等）。
-- nestedCalls 不保存结果，只能证明名称/参数/状态/耗时 ⇒ 最终证书必须绑定
-  「宿主 nestedCalls + raw-receipts（权威）+ supplemental evidence + 追加封印」两层对账。
-
-状态机（§4.4）：
-  DRAFT -> APPROVED/ARMED -> FROZEN -> RUNNING -> RECORDED -> AUDITING
-            -> SUCCEEDED | AUDIT_FAILED | CLOSED_FAILED；异常分支 ISOLATED。
+状态机（§4.4 + P2）：
+  DRAFT -> APPROVED/ARMED -> FROZEN -> RUNNING -> WRITING -> RECORDED -> AUDITING
+            -> SUCCEEDED | AUDIT_FAILED | CLOSED_FAILED；异常分支 ISOLATED / UNKNOWN。
 """
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
+import re
+import secrets
+import time
 from pathlib import Path
 from typing import Any
 
 # ────────────────────────────────────────────────────────────────────────── 常量
 SCHEMA_VERSION = 1
-# 封闭动作枚举（首版只读面；check_fast/finish/gen_* 一律拒绝）
-ALLOWED_TOOLS = ("atlas_workflow_progress", "atlas_workflow_status")
+READONLY_TOOLS = ("atlas_workflow_progress", "atlas_workflow_status")
+WRITE_TOOLS = (
+    "atlas_workflow_finish_preflight",
+    "atlas_workflow_finish_deferred",
+    "atlas_workflow_finish_commit",
+    "atlas_workflow_finish_archive",
+)
+# P2 封闭动作枚举：P1 只读 + P2 finish 四切面；check_fast/gen_*/任意 shell/原始 finish 一律拒绝
+ALLOWED_TOOLS = READONLY_TOOLS + WRITE_TOOLS
 MAX_ACTIONS = 8
 MAX_CANONICAL_ARGS_BYTES = 16 * 1024
 GUARD_FACT_KEYS = ("exit_code", "json_ok")
+UNIT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 CONTINUATIONS_DIRNAME = os.path.join(".atlas", "runs", "continuations")
 ISOLATED_DIRNAME = os.path.join(CONTINUATIONS_DIRNAME, "isolated")
+LOCKS_DIRNAME = os.path.join(CONTINUATIONS_DIRNAME, "locks")
+WRITE_LOCK_REL = os.path.join(LOCKS_DIRNAME, "write.lock")
 RUN_ARTIFACTS = ("raw-receipts", "evidence")
 
 
 class PlanError(Exception):
     """计划契约违例（fail-closed：任何 schema/路径/guard 问题都停在这）。"""
+
+
+class WriteLockError(RuntimeError):
+    """共享长生命周期写锁冲突 / 非法路径 / 租约验证失败。"""
+
+
+# ────────────────────────────────────────────────────────────────── 目录 fsync / O_NOFOLLOW
+def fsync_dir(path: Path) -> None:
+    """对目录 fd 执行 os.fsync，确保 rename/unlink/创建对崩溃持久化（POSIX）。"""
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def assert_no_symlink_components(base: Path, target: Path) -> None:
+    """校验 base 到 target 之间没有任何符号链接或越界（防 symlink TOCTOU）。"""
+    base_abs = base.absolute()
+    if base_abs.is_symlink():
+        raise PlanError(f"项目根不得为 symlink：{base_abs}")
+    resolved_base = base_abs.resolve()
+    rel = target.absolute().relative_to(base_abs)
+    cur = base_abs
+    for part in rel.parts:
+        cur = cur / part
+        if cur.is_symlink():
+            raise PlanError(f"路径含 symlink，拒绝：{cur}")
+    if target.exists() and target.resolve() != target.absolute() and not target.resolve().is_relative_to(resolved_base):
+        raise PlanError(f"路径逃逸项目根：{target}")
+
+
+def safe_mkdir_nofollow(root: Path, rel_parts: tuple[str, ...]) -> Path:
+    """经 dirfd/O_NOFOLLOW 逐级安全建目录并验证非 symlink。"""
+    root_abs = root.absolute()
+    if root_abs.is_symlink() or not root_abs.is_dir():
+        raise PlanError(f"项目根非法或为 symlink：{root_abs}")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    cur_path = root_abs
+    cur_fd = os.open(cur_path, flags)
+    try:
+        for part in rel_parts:
+            if not part or part in (".", "..") or "/" in part or "\\" in part:
+                raise PlanError(f"非法目录段：{part!r}")
+            try:
+                os.mkdir(part, 0o755, dir_fd=cur_fd)
+                os.fsync(cur_fd)
+            except FileExistsError:
+                pass
+            next_fd = os.open(part, flags, dir_fd=cur_fd)
+            st = os.fstat(next_fd)
+            if not os.path.stat.S_ISDIR(st.st_mode):
+                os.close(next_fd)
+                raise PlanError(f"路径非普通目录：{cur_path / part}")
+            os.close(cur_fd)
+            cur_fd = next_fd
+            cur_path = cur_path / part
+    finally:
+        try:
+            os.close(cur_fd)
+        except OSError:
+            pass
+    return cur_path
+
+
+# ────────────────────────────────────────────────────────────────── 共享长生命周期写锁
+def write_lock_path(root: Path) -> Path:
+    return root / WRITE_LOCK_REL
+
+
+class WriteLock:
+    """跨进程共享长生命周期写锁（fcntl.flock LOCK_EX|LOCK_NB）。
+
+    纪律：
+    - 仅以 O_CREAT|O_RDWR|O_NOFOLLOW 打开（严禁 O_TRUNC，防竞态清掉在途持锁元数据）；
+    - 仅在 flock 成功后才 ftruncate(0)+写入所有者元数据+fsync+dir_fsync；
+    - 释放时 flock(LOCK_UN)+close，严禁 unlink 锁文件（防 POSIX 多 inode 击穿互斥）。
+    """
+
+    def __init__(self, root: Path, *, holder: str, unit: str = "", run_id: str = "",
+                 token: str | None = None) -> None:
+        self.root = Path(root).resolve()
+        self.holder = holder
+        self.unit = unit
+        self.run_id = run_id
+        self.token = token or secrets.token_hex(16)
+        self.fd: int | None = None
+        self.lock_file = write_lock_path(self.root)
+
+    def acquire(self) -> dict[str, Any]:
+        safe_mkdir_nofollow(self.root, (".atlas", "runs", "continuations", "locks"))
+        assert_no_symlink_components(self.root, self.lock_file)
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(self.lock_file, flags, 0o644)
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                owner = self._read_owner_unlocked(fd)
+                os.close(fd)
+                raise WriteLockError(
+                    f"写锁已被占用（holder={owner.get('holder', '?')} "
+                    f"pid={owner.get('pid', '?')} unit={owner.get('unit', '?')} "
+                    f"run_id={owner.get('run_id', '?')}）"
+                ) from exc
+            meta = {
+                "schema": SCHEMA_VERSION,
+                "pid": os.getpid(),
+                "holder": self.holder,
+                "unit": self.unit,
+                "run_id": self.run_id,
+                "token_sha256": sha256_hex(self.token.encode("utf-8")),
+                "acquired_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+            payload = (json.dumps(meta, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.ftruncate(fd, 0)
+            os.write(fd, payload)
+            os.fsync(fd)
+            fsync_dir(self.lock_file.parent)
+            self.fd = fd
+            return meta
+        except Exception:
+            if self.fd is None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            raise
+
+    @staticmethod
+    def _read_owner_unlocked(fd: int) -> dict[str, Any]:
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            raw = os.read(fd, 4096).decode("utf-8", errors="replace").strip()
+            return json.loads(raw) if raw else {}
+        except Exception:
+            return {}
+
+    def release(self) -> None:
+        if self.fd is not None:
+            fd = self.fd
+            self.fd = None
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    def __enter__(self) -> "WriteLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, _exc_type, _exc, _tb) -> None:
+        self.release()
+
+
+def verify_write_lock_lease(root: Path, run_id: str, unit: str, token: str) -> dict[str, Any]:
+    """受控 P2 写子工具租约核验：确认锁确实被活着的 lock-hold 持有且 token/run_id/unit 匹配。"""
+    if not token:
+        raise WriteLockError("缺少写锁租约 token（stdin 未传入）")
+    root = Path(root).resolve()
+    lp = write_lock_path(root)
+    assert_no_symlink_components(root, lp)
+    if not lp.is_file():
+        raise WriteLockError("写锁文件不存在（未启动长生命周期持锁）")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(lp, flags)
+    try:
+        try:
+            # 非阻塞探测：如果还能拿到 LOCK_EX，说明没有活跃持锁者！立即释放并拒绝。
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            raise WriteLockError("写锁当前无人持有（lock-hold 已退出或失效）")
+        except BlockingIOError:
+            pass
+        raw = lp.read_text(encoding="utf-8")
+        meta = json.loads(raw)
+    finally:
+        os.close(fd)
+    holder_pid = meta.get("pid")
+    if not isinstance(holder_pid, int) or holder_pid <= 0:
+        raise WriteLockError("写锁 holder_pid 非法")
+    try:
+        os.kill(holder_pid, 0)
+    except OSError as exc:
+        raise WriteLockError(f"写锁持有进程 {holder_pid} 不存活") from exc
+    if meta.get("run_id") != run_id or meta.get("unit") != unit:
+        raise WriteLockError("写锁绑定 run_id/unit 不匹配")
+    expected_sha = sha256_hex(token.encode("utf-8"))
+    if meta.get("token_sha256") != expected_sha:
+        raise WriteLockError("写锁租约 token 校验失败")
+    return meta
 
 
 # ────────────────────────────────────────────────────────────────── 规范哈希
@@ -53,7 +269,7 @@ def _drop_none(v: Any) -> Any:
 def canonical_json(value: Any) -> str:
     """稳定序列化：键排序、丢 None、紧凑分隔符、不转义非 ASCII。
 
-    与 pi.ts 侧 `stable()`（P0 已实测双侧一致）逐字节镜像；浮点不进哈希面。
+    与 pi.ts 侧 `gcStable()`（P0 已实测双侧一致）逐字节镜像；浮点不进哈希面。
     """
     return json.dumps(_drop_none(value), sort_keys=True,
                       ensure_ascii=False, separators=(",", ":"))
@@ -79,15 +295,64 @@ def file_sha256(path: Path) -> str:
 
 
 # ────────────────────────────────────────────────────────────────── 计划契约
-def plan_path(root: Path, unit: str) -> Path:
-    if not unit or unit != Path(unit).name or unit in (".", ".."):
+def is_write_plan(plan: dict) -> bool:
+    """计划是否包含任一 P2 写链工具（只读 preflight 亦归 P2 写链装配面，但仅写动作启用写保护）。"""
+    return any(a.get("tool") in WRITE_TOOLS for a in (plan.get("actions") or []))
+
+
+def has_mutating_write_actions(plan: dict) -> bool:
+    """计划是否包含会实际写盘的 P2 动作（deferred / commit / archive）。"""
+    mutating = {
+        "atlas_workflow_finish_deferred",
+        "atlas_workflow_finish_commit",
+        "atlas_workflow_finish_archive",
+    }
+    return any(a.get("tool") in mutating for a in (plan.get("actions") or []))
+
+
+def resolve_task_dir(root: Path, unit: str, archived_task_dir: str | None = None) -> tuple[Path, bool]:
+    """解析任务卡目录（活跃区或 wal 记录的归档路径）；返回 (path, is_archived)。"""
+    if not unit or not UNIT_RE.fullmatch(unit):
         raise PlanError(f"非法 unit：{unit!r}")
-    return root / ".atlas" / "tasks" / unit / "continuation.json"
+    root_abs = root.resolve()
+    tasks_root = root_abs / ".atlas" / "tasks"
+    active = tasks_root / unit
+    if archived_task_dir:
+        cand = Path(archived_task_dir)
+        if not cand.is_absolute():
+            cand = root_abs / cand
+        cand_resolved = cand.resolve()
+        archive_root = (tasks_root / "archive").resolve()
+        if archive_root not in cand_resolved.parents or cand_resolved.name != unit:
+            raise PlanError(f"非法归档任务目录：{archived_task_dir}")
+        assert_no_symlink_components(root_abs, cand)
+        return cand_resolved, True
+    if active.is_dir():
+        assert_no_symlink_components(root_abs, active)
+        return active, False
+    # 兜底仅按 archive/<YYYY-MM>/<unit> 精确查找（不按 date.today() 猜月）
+    archive_root = tasks_root / "archive"
+    if archive_root.is_dir():
+        matches = sorted(
+            p for p in archive_root.glob(f"*/{unit}")
+            if p.is_dir() and not p.is_symlink()
+        )
+        if len(matches) == 1:
+            assert_no_symlink_components(root_abs, matches[0])
+            return matches[0].resolve(), True
+        if len(matches) > 1:
+            raise PlanError(f"发现多个归档目录 {matches}")
+    return active, False
 
 
-def load_plan(root: Path, unit: str) -> dict:
+def plan_path(root: Path, unit: str, archived_task_dir: str | None = None) -> Path:
+    t_dir, _ = resolve_task_dir(root, unit, archived_task_dir=archived_task_dir)
+    return t_dir / "continuation.json"
+
+
+def load_plan(root: Path, unit: str, archived_task_dir: str | None = None) -> dict:
     """读计划并做全量 schema 校验（fail-closed）；返回附带 plan_sha256 的 dict。"""
-    path = plan_path(root, unit)
+    path = plan_path(root, unit, archived_task_dir=archived_task_dir)
     if path.is_symlink() or not path.is_file():
         raise PlanError(f"计划不存在或为 symlink：{path}")
     raw = path.read_bytes()
@@ -115,12 +380,16 @@ def _validate_plan(plan: dict, unit: str) -> None:
     if plan.get("author") != "human":
         # author 只是说明字段，不是授权（授权唯一来自人类 approve 命令票据）
         _reject(plan, "author 必须为 \"human\"（说明字段，非授权）")
+    if "force" in plan:
+        _reject(plan, "计划顶层禁止 force 字段")
     actions = plan.get("actions")
     if not isinstance(actions, list) or not (1 <= len(actions) <= MAX_ACTIONS):
         _reject(plan, f"actions 必须为 1..{MAX_ACTIONS} 个")
     seen_ids: set[str] = set()
     defined_ids: set[str] = set()
     total_args_bytes = 0
+    seen_write_order: list[str] = []
+    write_rank = {name: idx for idx, name in enumerate(WRITE_TOOLS)}
     for idx, action in enumerate(actions):
         if not isinstance(action, dict):
             _reject(plan, f"actions[{idx}] 必须为对象")
@@ -131,9 +400,18 @@ def _validate_plan(plan: dict, unit: str) -> None:
         tool = action.get("tool")
         if tool not in ALLOWED_TOOLS:
             _reject(plan, f"actions[{idx}].tool {tool!r} 不在封闭枚举 {ALLOWED_TOOLS}")
+        if tool in write_rank:
+            # P2 写动作严格保序且不能出现两次（不可先归档再提交/不可无预检直接提交）
+            if tool in seen_write_order:
+                _reject(plan, f"P2 写链动作 {tool!r} 不允许重复出现")
+            if seen_write_order and write_rank[tool] <= write_rank[seen_write_order[-1]]:
+                _reject(plan, f"P2 写链动作顺序非法：{seen_write_order[-1]} 后不能接 {tool}")
+            if tool != "atlas_workflow_finish_preflight" and "atlas_workflow_finish_preflight" not in seen_write_order:
+                _reject(plan, f"P2 写动作 {tool!r} 之前必须先有 atlas_workflow_finish_preflight")
+            seen_write_order.append(tool)
         args = action.get("args")
         if not isinstance(args, dict) or set(args) != {"unit"} or args["unit"] != unit:
-            _reject(plan, f"actions[{idx}].args 只允许 {{unit: <与本任务一致的 unit>}}")
+            _reject(plan, f"actions[{idx}].args 只允许 {{unit: <与本任务一致的 unit>}}（禁止 force/cmd）")
         encoded = json.dumps(args, sort_keys=True, ensure_ascii=False,
                              separators=(",", ":")).encode("utf-8")
         total_args_bytes += len(encoded)
@@ -141,7 +419,6 @@ def _validate_plan(plan: dict, unit: str) -> None:
             _reject(plan, f"规范参数总量超过 {MAX_CANONICAL_ARGS_BYTES} 字节")
         _validate_guard(action.get("guard"), idx, defined_ids, plan)
         defined_ids.add(aid)
-    # 计划不跨任务复用：run 目录/票据绑定在执行期由调用方持有，这里只锁契约。
 
 
 def _validate_guard(guard: Any, idx: int, defined_ids: set[str], plan: dict) -> None:
@@ -180,10 +457,7 @@ def observed_facts(observation: dict) -> dict:
 
 
 def evaluate_guard(guard: dict, observations: dict[str, dict]) -> tuple[bool, list[str]]:
-    """求值当前动作 guard；只消费已观察回执（不消费模型预测）。
-
-    返回 (通过?, 引用事实值列表)。exit_code 谓词固定 ==0；json_ok = 可解析 JSON。
-    """
+    """求值当前动作 guard；只消费已观察回执（不消费模型预测）。"""
     if guard.get("kind") == "always":
         return True, []
     values: list[str] = []
@@ -201,11 +475,7 @@ def evaluate_guard(guard: dict, observations: dict[str, dict]) -> tuple[bool, li
 
 def replay_guards(plan: dict, observations: dict[str, dict],
                   host_call_names: list[str]) -> dict:
-    """审计重放：逐动作重算 guard，断言「guard=false 后零宿主调用、失败后零后续调用」。
-
-    host_call_names = 宿主 nestedCalls 的顺序动作名序列（来自 session 宿主记录）。
-    返回 {ok, detail}；任何违例 ok=False。
-    """
+    """审计重放：逐动作重算 guard，断言「guard=false 后零宿主调用、失败后零后续调用」。"""
     executed: dict[str, dict] = {}
     expected_calls: list[str] = []
     stopped = False
@@ -216,7 +486,6 @@ def replay_guards(plan: dict, observations: dict[str, dict],
             stopped = True
             continue
         expected_calls.append(action["tool"])
-        # 观察回执里该动作必须成功（失败即停，不允许后继）
         obs = observations.get(aid)
         if obs is None or not obs.get("ok"):
             stopped = True
@@ -238,28 +507,59 @@ def run_dir(root: Path, run_id: str) -> Path:
     safe = "".join(c for c in run_id if c.isalnum() or c in "-_")
     if not safe or safe != run_id or len(run_id) > 80:
         raise PlanError(f"非法 run_id：{run_id!r}")
-    base = root / CONTINUATIONS_DIRNAME / run_id
+    root_abs = root.resolve()
+    base = safe_mkdir_nofollow(root_abs, (".atlas", "runs", "continuations", run_id))
     for sub in ("raw-receipts", "evidence"):
-        (base / sub).mkdir(parents=True, exist_ok=True)
+        safe_mkdir_nofollow(base, (sub,))
     return base
 
 
 def isolated_marker_path(root: Path, unit: str) -> Path:
+    if not unit or not UNIT_RE.fullmatch(unit):
+        raise PlanError(f"非法 unit：{unit!r}")
     return root / ISOLATED_DIRNAME / f"{unit}.json"
 
 
 def write_exclusive(path: Path, text: str) -> None:
-    """O_EXCL 不可变写：已存在即失败（防并发运行互相覆盖 / 防覆盖前序回执）。"""
+    """O_EXCL 不可变写 + fsync + dir_fsync（已存在即失败）。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    if path.parent.is_symlink():
+        raise PlanError(f"父目录不得为 symlink：{path.parent}")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o644)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+    fsync_dir(path.parent)
 
 
 def write_json_exclusive(path: Path, payload: dict) -> str:
-    """O_EXCL 写 JSON（追加换行）；返回**落盘字节的** sha256（含换行，与 file_sha256 对账面一致）。"""
+    """O_EXCL 写 JSON（追加换行）；返回落盘字节 sha256。"""
     text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     write_exclusive(path, text)
+    return sha256_hex(text.encode("utf-8"))
+
+
+def atomic_write_json_durable(path: Path, payload: dict) -> str:
+    """临时文件 fsync + os.replace + dir_fsync；返回落盘字节 sha256。"""
+    if path.parent.is_symlink():
+        raise PlanError(f"父目录不得为 symlink：{path.parent}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(tmp, flags, 0o644)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        fsync_dir(path.parent)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
     return sha256_hex(text.encode("utf-8"))
 
 
@@ -272,11 +572,7 @@ def raw_receipt_path(run: Path, action_index: int, child_hash: str) -> Path:
 
 
 def write_raw_receipt(run: Path, action_index: int, result: dict, meta: dict) -> tuple[str, str]:
-    """权威原始回执（子工具 execute 在最终结果确定后、返回前写；O_EXCL）。
-
-    返回 (result_sha256, raw_receipt_sha256)：前者 = 结果规范哈希（语义面），
-    后者 = 回执文件字节哈希（完整性面）；证书 substitutions 两个字段分列。
-    """
+    """权威原始回执（O_EXCL + fsync + dir_fsync）。"""
     h = canonical_result_hash(result)
     payload = {"canonical_hash": h, "result": result, **meta}
     file_sha = write_json_exclusive(raw_receipt_path(run, action_index, h[:16]), payload)
@@ -284,21 +580,265 @@ def write_raw_receipt(run: Path, action_index: int, result: dict, meta: dict) ->
 
 
 def manifest_hash(run: Path, subdir: str) -> str:
-    """目录内逐文件摘要清单的规范哈希（raw-receipts / git-calls / evidence 通用）。"""
+    """目录内逐文件摘要清单的规范哈希（raw-receipts / git-calls / wal / evidence 通用）。"""
     entries = []
     base = run / subdir
     if base.is_dir():
         for p in sorted(base.rglob("*")):
             if p.is_file():
                 entries.append({"path": str(p.relative_to(run)), "sha256": file_sha256(p)})
-    elif subdir == "git-calls.jsonl":
+    elif subdir in ("git-calls.jsonl", "wal.jsonl"):
         p = run / subdir
         if p.is_file():
             entries.append({"path": subdir, "sha256": file_sha256(p)})
     return sha256_hex(canonical_json(entries).encode("utf-8"))
 
 
-# ────────────────────────────────────────────────────────────────── 证书 v1
+# ────────────────────────────────────────────────────────────────── WAL / INTENT / UNKNOWN
+def wal_path(run: Path) -> Path:
+    return run / "wal.jsonl"
+
+
+def append_wal(run: Path, entry: dict) -> dict:
+    """向 wal.jsonl 追加一行并 fsync + dir_fsync。"""
+    p = wal_path(run)
+    if p.is_symlink() or p.parent.is_symlink():
+        raise PlanError(f"WAL 路径含 symlink：{p}")
+    existing, truncated = read_wal(run)
+    if truncated:
+        raise PlanError("WAL 存在未闭合尾部半行，禁止继续追加写（须人工诊断）")
+    seq = len(existing) + 1
+    record = {
+        "seq": seq,
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        **entry,
+    }
+    line = json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(p, flags, 0o644)
+    with os.fdopen(fd, "a", encoding="utf-8") as fh:
+        fh.write(line)
+        fh.flush()
+        os.fsync(fh.fileno())
+    fsync_dir(p.parent)
+    return record
+
+
+def read_wal(run: Path) -> tuple[list[dict], bool]:
+    """容错读取 wal.jsonl；尾部半行/坏 JSON 记 has_truncated_tail=True（不抛异常）。"""
+    p = wal_path(run)
+    if not p.is_file():
+        return [], False
+    entries: list[dict] = []
+    lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+    has_truncated_tail = False
+    for idx, raw in enumerate(lines):
+        s = raw.strip()
+        if not s:
+            continue
+        try:
+            obj = json.loads(s)
+            if not isinstance(obj, dict):
+                raise ValueError("not dict")
+            entries.append(obj)
+        except ValueError:
+            if idx == len(lines) - 1:
+                has_truncated_tail = True
+            else:
+                has_truncated_tail = True
+                break
+    return entries, has_truncated_tail
+
+
+def wal_state_summary(entries: list[dict], has_truncated_tail: bool) -> dict[str, Any]:
+    """从 WAL 条目汇总已 COMMITTED 动作、悬空 INTENT、UNKNOWN 与归档路径。"""
+    committed: list[dict] = []
+    intents: dict[int, dict] = {}
+    committed_idx: set[int] = set()
+    unknown_entries: list[dict] = []
+    archived_task_dir: str | None = None
+    pre_archive_files: dict[str, str] | None = None
+    expected_task_sha256: str | None = None
+    expected_plan_sha256: str | None = None
+    head_before: str | None = None
+    deferred_meta: dict[str, Any] = {}
+
+    for e in entries:
+        phase = e.get("phase")
+        aidx = e.get("action_index")
+        if phase == "INTENT" and isinstance(aidx, int):
+            intents[aidx] = e
+            if e.get("head_before") and head_before is None:
+                head_before = e.get("head_before")
+            if e.get("tool") == "atlas_workflow_finish_archive":
+                if isinstance(e.get("pre_archive_files"), dict):
+                    pre_archive_files = e["pre_archive_files"]
+                if e.get("expected_archive_dir"):
+                    archived_task_dir = e["expected_archive_dir"]
+                if e.get("expected_task_sha256"):
+                    expected_task_sha256 = e["expected_task_sha256"]
+                if e.get("expected_plan_sha256"):
+                    expected_plan_sha256 = e["expected_plan_sha256"]
+        elif phase == "COMMITTED" and isinstance(aidx, int):
+            committed_idx.add(aidx)
+            committed.append(e)
+            if e.get("tool") == "atlas_workflow_finish_deferred":
+                deferred_meta = dict(e.get("meta") or {})
+            if e.get("tool") == "atlas_workflow_finish_commit" and e.get("actual_task_sha256"):
+                expected_task_sha256 = e["actual_task_sha256"]
+            if e.get("tool") == "atlas_workflow_finish_archive":
+                if e.get("archived_task_dir"):
+                    archived_task_dir = e["archived_task_dir"]
+        elif phase == "UNKNOWN":
+            unknown_entries.append(e)
+
+    dangling_intents = [intents[i] for i in sorted(intents) if i not in committed_idx]
+    is_unknown = bool(unknown_entries or dangling_intents or has_truncated_tail)
+    committed_tools = [str(c.get("tool") or "") for c in committed]
+    return {
+        "committed": committed,
+        "committed_tools": committed_tools,
+        "dangling_intents": dangling_intents,
+        "unknown_entries": unknown_entries,
+        "has_truncated_tail": has_truncated_tail,
+        "is_unknown": is_unknown,
+        "archived_task_dir": archived_task_dir if "atlas_workflow_finish_archive" in committed_tools else None,
+        "candidate_archive_dir": archived_task_dir,
+        "pre_archive_files": pre_archive_files,
+        "expected_task_sha256": expected_task_sha256,
+        "expected_plan_sha256": expected_plan_sha256,
+        "head_before": head_before,
+        "deferred_meta": deferred_meta,
+    }
+
+
+def diagnose_unknown(root: Path, run: Path, unit: str) -> dict[str, Any]:
+    """崩溃恢复只读诊断：比对 WAL 与磁盘/git 现态，严禁重放任何写动作。"""
+    import subprocess
+    root_abs = Path(root).resolve()
+    entries, truncated = read_wal(run)
+    summary = wal_state_summary(entries, truncated)
+    active_dir = root_abs / ".atlas" / "tasks" / unit
+    cand_arch = summary.get("candidate_archive_dir")
+    arch_exists = bool(cand_arch and (root_abs / cand_arch).is_dir())
+    head_now = ""
+    try:
+        pr = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(root_abs),
+                            capture_output=True, text=True, timeout=15)
+        if pr.returncode == 0:
+            head_now = pr.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        head_now = ""
+    return {
+        "unit": unit,
+        "run_id": run.name,
+        "wal_entries": len(entries),
+        "has_truncated_tail": truncated,
+        "committed_tools": summary["committed_tools"],
+        "dangling_intents": [
+            {"action_index": d.get("action_index"), "action_id": d.get("action_id"),
+             "tool": d.get("tool"), "target_paths": d.get("target_paths")}
+            for d in summary["dangling_intents"]
+        ],
+        "unknown_entries": summary["unknown_entries"],
+        "active_task_exists": active_dir.is_dir(),
+        "archive_dir": cand_arch,
+        "archive_exists": arch_exists,
+        "head_before": summary.get("head_before"),
+        "head_now": head_now,
+        "auto_replay_allowed": False,
+    }
+
+
+def authorized_write_set(root: Path, unit: str, committed_tools: list[str], *,
+                         deferred_meta: dict[str, Any] | None = None,
+                         archived_task_dir: str | None = None,
+                         pre_archive_files: dict[str, str] | None = None) -> set[str]:
+    """根据已 COMMITTED 的 P2 动作集合推导允许变更的项目根相对路径精确集合。"""
+    allowed: set[str] = set()
+    active_rel = f".atlas/tasks/{unit}"
+    meta = deferred_meta or {}
+    if "atlas_workflow_finish_deferred" in committed_tools:
+        if meta.get("deferred_written", True):
+            allowed.add(f"{active_rel}/deferred.md")
+        if meta.get("receipt_written"):
+            allowed.add(".atlas/runs/workflow-receipt.json")
+            allowed.add(".atlas/runs/workflow-review-origin.json")
+            for p in meta.get("receipt_files") or []:
+                allowed.add(str(p))
+            allowed.add(".atlas/runs/workflow-receipt/*")
+        if meta.get("topology_written"):
+            for p in meta.get("topology_files") or []:
+                allowed.add(str(p))
+            allowed.add(".adapter-out/topology*")
+            allowed.add(".atlas/spec/structure/global/runtime-topology.md")
+    if "atlas_workflow_finish_commit" in committed_tools:
+        allowed.add(f"{active_rel}/task.json")
+    if "atlas_workflow_finish_archive" in committed_tools and archived_task_dir:
+        # 归档迁出：活跃区原全部文件（包含随卡文件）+ 归档目标区对应文件
+        if pre_archive_files:
+            for rel_name in pre_archive_files:
+                allowed.add(f"{active_rel}/{rel_name}")
+                allowed.add(f"{archived_task_dir}/{rel_name}")
+        allowed.add(f"{active_rel}/*")
+        allowed.add(f"{archived_task_dir}/*")
+        # 归档前可能刚写入的 deferred.md / task.json
+        allowed.add(f"{active_rel}/deferred.md")
+        allowed.add(f"{active_rel}/task.json")
+        allowed.add(f"{archived_task_dir}/deferred.md")
+        allowed.add(f"{archived_task_dir}/task.json")
+    return allowed
+
+
+def path_in_authorized_set(rel: str, allowed: set[str]) -> bool:
+    rel = rel.replace("\\", "/")
+    if rel in allowed:
+        return True
+    for pat in allowed:
+        if pat.endswith("/*") and rel.startswith(pat[:-1]):
+            return True
+        if pat.endswith("*") and not pat.endswith("/*") and rel.startswith(pat[:-1]):
+            return True
+    return False
+
+
+def verify_archive_conservation(root: Path, unit: str, archived_task_dir: str,
+                                pre_archive_files: dict[str, str],
+                                expected_task_sha256: str | None,
+                                expected_plan_sha256: str | None) -> tuple[bool, str]:
+    """核验归档迁出与逐文件 SHA256 守恒：源目录消失、目标存在、非改动文件逐字节一致。"""
+    root_abs = root.resolve()
+    active_dir = root_abs / ".atlas" / "tasks" / unit
+    if active_dir.exists() or active_dir.is_symlink():
+        return False, f"归档后原活跃任务目录仍存在：{active_dir}"
+    dest_dir = root_abs / archived_task_dir
+    if not dest_dir.is_dir() or dest_dir.is_symlink():
+        return False, f"归档目标目录不存在或为 symlink：{archived_task_dir}"
+    for rel_name, old_sha in pre_archive_files.items():
+        dest_file = dest_dir / rel_name
+        if not dest_file.is_file() or dest_file.is_symlink():
+            return False, f"归档后缺失文件：{archived_task_dir}/{rel_name}"
+        if file_sha256(dest_file) != old_sha:
+            return False, f"归档后文件内容漂移：{archived_task_dir}/{rel_name}"
+    task_file = dest_dir / "task.json"
+    if not task_file.is_file():
+        return False, "归档后缺失 task.json"
+    if expected_task_sha256 and file_sha256(task_file) != expected_task_sha256:
+        return False, "归档后 task.json 指纹与提交期不一致"
+    try:
+        task_obj = read_json(task_file)
+    except Exception as exc:
+        return False, f"归档后 task.json 不可解析：{exc}"
+    if task_obj.get("status") != "completed":
+        return False, f"归档后 task.status 须为 completed，got {task_obj.get('status')!r}"
+    plan_file = dest_dir / "continuation.json"
+    if expected_plan_sha256:
+        if not plan_file.is_file() or file_sha256(plan_file) != expected_plan_sha256:
+            return False, "归档后 continuation.json 缺失或哈希漂移"
+    return True, ""
+
+
+# ────────────────────────────────────────────────────────────────── 证书 v1（P1+P2）
 def certificate_payload(*, run_id: str, unit: str, plan_sha256: str,
                         atlas_version: str, session_id: str,
                         parent_tool_call_id: str, parent_tool_name: str,
@@ -309,10 +849,13 @@ def certificate_payload(*, run_id: str, unit: str, plan_sha256: str,
                         input_manifest_sha256: str,
                         raw_receipts_manifest_sha256: str,
                         git_calls_manifest_sha256: str,
-                        substitutions: list[dict], status: str) -> dict:
-    """证书字段面（§6.2）。certificate 只证明「一个父工具内发生了 N 次嵌套动作，
-    扩观测了结果，session 宿主记录与回执对账通过」；token 归因不在证书内。"""
-    return {
+                        substitutions: list[dict], status: str,
+                        wal_manifest_sha256: str | None = None,
+                        archived_task_dir: str | None = None,
+                        plan_path_after_archive: str | None = None,
+                        certificate_path: str | None = None) -> dict:
+    """证书字段面（§6.2 + P2 归档/WAL 扩展，None 值经 canonical_json 自动忽略以兼容 P1）。"""
+    payload = {
         "schema": SCHEMA_VERSION,
         "run_id": run_id,
         "unit": unit,
@@ -334,6 +877,15 @@ def certificate_payload(*, run_id: str, unit: str, plan_sha256: str,
         "substitutions": substitutions,
         "status": status,
     }
+    if wal_manifest_sha256 is not None:
+        payload["wal_manifest_sha256"] = wal_manifest_sha256
+    if archived_task_dir is not None:
+        payload["archived_task_dir"] = archived_task_dir
+    if plan_path_after_archive is not None:
+        payload["plan_path_after_archive"] = plan_path_after_archive
+    if certificate_path is not None:
+        payload["certificate_path"] = certificate_path
+    return payload
 
 
 def audit_failure_payload(run: Path, reason: str, detail: dict) -> dict:

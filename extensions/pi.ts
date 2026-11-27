@@ -14,10 +14,28 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { spawnSync } from "node:child_process";
+import {
+  accessSync,
+  closeSync,
+  constants,
+  existsSync,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
+import { tmpdir } from "node:os";
 import { Type } from "typebox";
 
 const EXTENSION_NAME = "atlasharness";
@@ -31,6 +49,30 @@ const EXTENSION_NAME = "atlasharness";
 // 票据只存扩展内存；持久面仅 .atlas/runs/continuations/{<run_id>/,isolated/<unit>.json}。
 // ═══════════════════════════════════════════════════════════════════════════
 
+const GC_UNIT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const GC_WRITE_TOOLS = new Set([
+  "atlas_workflow_finish_preflight",
+  "atlas_workflow_finish_deferred",
+  "atlas_workflow_finish_commit",
+  "atlas_workflow_finish_archive",
+]);
+const GC_MUTATING_WRITE_TOOLS = new Set([
+  "atlas_workflow_finish_deferred",
+  "atlas_workflow_finish_commit",
+  "atlas_workflow_finish_archive",
+]);
+const GC_ALLOWED_TOOLS = new Set([
+  "atlas_workflow_progress",
+  "atlas_workflow_status",
+  ...GC_WRITE_TOOLS,
+]);
+const GC_WRITE_RANK: Record<string, number> = {
+  atlas_workflow_finish_preflight: 0,
+  atlas_workflow_finish_deferred: 1,
+  atlas_workflow_finish_commit: 2,
+  atlas_workflow_finish_archive: 3,
+};
+
 type GcTicket = {
   unit: string;
   planSha256: string;
@@ -38,6 +80,9 @@ type GcTicket = {
   nonce: string;
   expiryMs: number;
   consumed: boolean;
+  runId?: string;
+  isWrite?: boolean;
+  irreversibleAck?: boolean;
 };
 
 type GcObservation = {
@@ -64,10 +109,21 @@ type GcRun = {
   parentToolCallId: string;
   planSha256: string;
   phase: "CLAIMED_NO_RUN" | "RUNNING" | "RECORDED";
+  isWrite: boolean;
+  writeStarted: boolean;
+  isUnknown: boolean;
+  lockToken?: string;
   observations: GcObservation[];
   // 一次性能力标记：仅父工具即将调用的动作存在（tool_call 授权 + 子 execute 复核）
   nextAction: { index: number; id: string; tool: string; argsHash: string } | null;
 };
+
+type GcLockHandle = {
+  lockToken: string;
+  release: () => Promise<void>;
+};
+
+const gcActiveLocks = new Map<string, GcLockHandle>();
 
 // 父私有 raw 回执台账：子工具 execute 在返回前预提交；后续钩子改值不可触及（P0 实证）。
 const gcRawCommits = new Map<string, { resultSha256: string; fileSha256: string; receiptPath: string }>();
@@ -119,28 +175,119 @@ function gcResultHash(result: {
   });
 }
 
+function gcFsyncDir(dirPath: string): void {
+  try {
+    const fd = openSync(dirPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    // 非 POSIX dir_fsync 文件系统尽最大努力
+  }
+}
+
+function gcAssertNotSymlink(targetPath: string): void {
+  if (!existsSync(targetPath)) return;
+  const st = lstatSync(targetPath);
+  if (st.isSymbolicLink()) {
+    throw new Error(`禁止 symlink 路径：${targetPath}`);
+  }
+}
+
+function gcAtomicWriteText(targetPath: string, text: string): void {
+  const dir = dirname(targetPath);
+  mkdirSync(dir, { recursive: true });
+  gcAssertNotSymlink(dir);
+  gcAssertNotSymlink(targetPath);
+  const tmp = `${targetPath}.tmp-${randomBytes(4).toString("hex")}`;
+  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
+  const fd = openSync(tmp, flags, 0o644);
+  try {
+    writeFileSync(fd, text, "utf8");
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  renameSync(tmp, targetPath);
+  gcFsyncDir(dir);
+}
+
+function gcWriteExclusiveText(targetPath: string, text: string): void {
+  const dir = dirname(targetPath);
+  mkdirSync(dir, { recursive: true });
+  gcAssertNotSymlink(dir);
+  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
+  const fd = openSync(targetPath, flags, 0o644);
+  try {
+    writeFileSync(fd, text, "utf8");
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  gcFsyncDir(dir);
+}
+
+function gcReadMarker(cwd: string, unit: string): Record<string, unknown> | null {
+  const p = gcMarkerPath(cwd, unit);
+  if (!existsSync(p)) return null;
+  gcAssertNotSymlink(p);
+  return JSON.parse(readFileSync(p, "utf-8")) as Record<string, unknown>;
+}
+
+function gcMarkerIsUnknown(cwd: string, unit: string): boolean {
+  try {
+    const mk = gcReadMarker(cwd, unit);
+    return mk?.state === "UNKNOWN";
+  } catch {
+    return false;
+  }
+}
+
 function gcMarkerPath(cwd: string, unit: string): string {
+  if (!GC_UNIT_RE.test(unit)) throw new Error(`非法 unit：${unit}`);
   return join(cwd, ".atlas", "runs", "continuations", "isolated", `${unit}.json`);
 }
 
-function gcWriteMarker(cwd: string, unit: string, payload: Record<string, unknown>): void {
-  const dir = join(cwd, ".atlas", "runs", "continuations", "isolated");
-  mkdirSync(dir, { recursive: true });
+function gcWriteMarker(cwd: string, unit: string, payload: Record<string, unknown>, opts?: { allowOverwriteUnknown?: boolean }): void {
   const p = gcMarkerPath(cwd, unit);
-  const tmp = `${p}.tmp-${randomBytes(4).toString("hex")}`;
-  writeFileSync(tmp, JSON.stringify({ unit, ...payload }, null, 2) + "\n");
-  renameSync(tmp, p);
+  if (!opts?.allowOverwriteUnknown && gcMarkerIsUnknown(cwd, unit) && payload.state !== "UNKNOWN") {
+    throw new Error(`禁止覆写 ${unit} 的 UNKNOWN 治理封锁标记`);
+  }
+  gcAtomicWriteText(p, JSON.stringify({ unit, ...payload }, null, 2) + "\n");
 }
 
-const GC_TERMINAL_STATES = new Set(["SUCCEEDED", "AUDIT_FAILED", "CLOSED_FAILED", "REVOKED"]);
+const GC_TERMINAL_STATES = new Set(["SUCCEEDED", "CLOSED_FAILED", "REVOKED"]);
 
 function gcRunDir(cwd: string, runId: string): string {
   const safe = /^[A-Za-z0-9_-]{1,80}$/.test(runId) ? runId : "";
   if (!safe) throw new Error(`非法 run_id：${runId}`);
-  const dir = join(cwd, ".atlas", "runs", "continuations", safe);
-  mkdirSync(join(dir, "raw-receipts"), { recursive: true });
-  mkdirSync(join(dir, "evidence"), { recursive: true });
+  const contDir = join(cwd, ".atlas", "runs", "continuations");
+  mkdirSync(contDir, { recursive: true });
+  gcAssertNotSymlink(contDir);
+  const dir = join(contDir, safe);
+  mkdirSync(dir, { recursive: true });
+  gcAssertNotSymlink(dir);
+  for (const sub of ["raw-receipts", "evidence"]) {
+    const subDir = join(dir, sub);
+    mkdirSync(subDir, { recursive: true });
+    gcAssertNotSymlink(subDir);
+    gcFsyncDir(subDir);
+  }
+  gcFsyncDir(dir);
   return dir;
+}
+
+function gcHasLauncher(envName: "ATLAS_GC_LAUNCHER" | "ATLAS_GC_WRITE_LAUNCHER"): boolean {
+  const launcher = process.env[envName];
+  if (!launcher || !existsSync(launcher)) return false;
+  try {
+    accessSync(launcher, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** 净化启动器调用（env -i + python -I -B + 只读 git 包装器）。launcher 未冻结 ⇒ fail-closed。 */
@@ -161,6 +308,189 @@ function gcLauncher(
     timeout: timeoutMs,
   });
   return { code: res.status ?? 126, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
+}
+
+/** 异步净化启动器（支持 write launcher、stdin 租约 token 与 AbortSignal 终止）。 */
+function gcLauncherAsync(
+  cwd: string,
+  launcherEnv: "ATLAS_GC_LAUNCHER" | "ATLAS_GC_WRITE_LAUNCHER",
+  gcLog: string,
+  scriptPath: string,
+  args: string[],
+  timeoutMs: number,
+  opts?: { input?: string; signal?: AbortSignal },
+): Promise<{ code: number; stdout: string; stderr: string; aborted: boolean }> {
+  const launcher = process.env[launcherEnv];
+  if (!launcher) {
+    return Promise.resolve({
+      code: 126,
+      stdout: "",
+      stderr: `${launcherEnv} 未冻结：须先冻结净化启动器`,
+      aborted: false,
+    });
+  }
+  return new Promise((resolve) => {
+    const child = spawn(launcher, [gcLog, scriptPath, ...args], {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let aborted = false;
+    let killTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const triggerKill = (reason: string) => {
+      aborted = true;
+      stderr += `\n${reason}`;
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // ignore
+      }
+      if (!killTimer) {
+        killTimer = setTimeout(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // ignore
+          }
+        }, 2000);
+      }
+    };
+
+    const timeoutTimer = setTimeout(() => triggerKill("timeout"), timeoutMs);
+    const onAbort = () => triggerKill("aborted");
+    if (opts?.signal) {
+      if (opts.signal.aborted) {
+        triggerKill("aborted");
+      } else {
+        opts.signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
+
+    child.stdout?.on("data", (d) => {
+      stdout += d.toString();
+    });
+    child.stderr?.on("data", (d) => {
+      stderr += d.toString();
+    });
+
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutTimer);
+      if (killTimer) clearTimeout(killTimer);
+      if (opts?.signal) opts.signal.removeEventListener("abort", onAbort);
+      resolve({ code: aborted ? 124 : (code ?? 126), stdout, stderr, aborted });
+    });
+
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutTimer);
+      if (killTimer) clearTimeout(killTimer);
+      if (opts?.signal) opts.signal.removeEventListener("abort", onAbort);
+      resolve({ code: 126, stdout, stderr: `${stderr}\n${err.message}`, aborted });
+    });
+
+    try {
+      if (opts?.input !== undefined) {
+        child.stdin?.write(opts.input);
+      }
+      child.stdin?.end();
+    } catch {
+      // ignore EPIPE
+    }
+  });
+}
+
+/** 抢占共享长生命周期 OS WriteLock（在 claim 与写动作之前；EOF 自动释放）。 */
+function gcAcquireLockHold(cwd: string, unit: string, runId: string): Promise<GcLockHandle> {
+  const launcher = process.env.ATLAS_GC_WRITE_LAUNCHER || process.env.ATLAS_GC_LAUNCHER;
+  const continueScript = join(cwd, ".atlas", "scripts", "atlas_continue.py");
+  if (!launcher) {
+    return Promise.reject(new Error("未配置净化启动器，无法启动 lock-hold"));
+  }
+  if (!existsSync(continueScript)) {
+    return Promise.reject(new Error("缺 atlas_continue.py，无法启动 lock-hold"));
+  }
+  const lockToken = randomBytes(16).toString("hex");
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      launcher,
+      ["/dev/null", continueScript, "lock-hold", "--root", cwd, "--unit", unit, "--run-dir", runId],
+      { cwd, stdio: ["pipe", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    let ready = false;
+    let exited = false;
+    let exitPromiseResolve: (() => void) | null = null;
+    const exitPromise = new Promise<void>((res) => {
+      exitPromiseResolve = res;
+    });
+
+    const timer = setTimeout(() => {
+      if (!ready) {
+        try { child.kill("SIGTERM"); } catch { /* ignore */ }
+        reject(new Error(`lock-hold 超时：${stderr.slice(0, 160)}`));
+      }
+    }, 10_000);
+
+    const release = async (): Promise<void> => {
+      if (exited) return;
+      try {
+        child.stdin?.end();
+      } catch {
+        // ignore
+      }
+      const killFallback = setTimeout(() => {
+        if (!exited) {
+          try { child.kill("SIGTERM"); } catch { /* ignore */ }
+        }
+      }, 1000);
+      await Promise.race([
+        exitPromise,
+        new Promise<void>((res) => setTimeout(res, 2000)),
+      ]);
+      clearTimeout(killFallback);
+    };
+
+    child.stdout?.on("data", (d) => {
+      stdout += d.toString();
+      if (!ready && stdout.includes("LOCKED\n")) {
+        ready = true;
+        clearTimeout(timer);
+        resolve({ lockToken, release });
+      }
+    });
+    child.stderr?.on("data", (d) => {
+      stderr += d.toString();
+    });
+    child.on("close", (code) => {
+      exited = true;
+      exitPromiseResolve?.();
+      if (!ready) {
+        clearTimeout(timer);
+        reject(new Error(`写锁抢占失败（rc=${code}）：${(stderr || stdout).trim().slice(0, 200)}`));
+      }
+    });
+    child.on("error", (err) => {
+      exited = true;
+      exitPromiseResolve?.();
+      if (!ready) {
+        clearTimeout(timer);
+        reject(new Error(`lock-hold 启动失败：${err.message}`));
+      }
+    });
+    try {
+      child.stdin?.write(JSON.stringify({ token: lockToken }) + "\n");
+    } catch (err: any) {
+      clearTimeout(timer);
+      reject(new Error(`lock-hold stdin 写入失败：${err?.message ?? err}`));
+    }
+  });
 }
 
 function gcPlanBytes(cwd: string, unit: string): { bytes: Buffer; sha256: string } | null {
@@ -226,7 +556,7 @@ function layoutValue(cwd: string, key: string, absolute: boolean): string | null
   const script = join(cwd, ".atlas", "_support", "layout.py");
   if (!existsSync(script)) return null;
   const flag = absolute ? "--print-abs" : "--print";
-  const res = spawnSync(PYTHON, [script, "--root", cwd, flag, key], { encoding: "utf8" });
+  const res = spawnSync(PYTHON, ["-B", script, "--root", cwd, flag, key], { encoding: "utf8" });
   if (res.status !== 0) return null;
   const out = (res.stdout || "").trim();
   return out || null;
@@ -401,15 +731,14 @@ export default function (pi: ExtensionAPI) {
 
         case "approve-continuation": {
           // 人类专用命令；模型无入口。先同步检查信任/装配态，失败仅提示不写盘。
-          // v16 M3 门校准：只读链（progress/status）的 read-set 不消费结构事实，
-          // 开户门收窄为「已装配」；结构基线未就绪降级为 approve 提示（写链 P2 须全开户）。
+          // v16 M3 门校准：只读链（progress/status）收窄为已装配；P2 写链强制要求全开户 + 双启动器 + 两段确认。
           if (!status.isAtlasProject) {
             ctx.ui.notify("Guarded Continuation：项目未装配 Atlas，拒绝签发票据", "warning");
             return;
           }
           const unit = args.trim().split(/\s+/)[1];
-          if (!unit) {
-            ctx.ui.notify("用法：/atlas approve-continuation <unit>", "warning");
+          if (!unit || !GC_UNIT_RE.test(unit)) {
+            ctx.ui.notify("用法：/atlas approve-continuation <unit>（合法任务标识）", "warning");
             return;
           }
           const plan = gcPlanBytes(ctx.cwd, unit);
@@ -419,74 +748,185 @@ export default function (pi: ExtensionAPI) {
           }
           let planActions: Array<{ id: string; tool: string; args: Record<string, string> }> = [];
           try {
-            const parsed = JSON.parse(plan.bytes.toString("utf8")) as { schema: number; unit: string; actions: typeof planActions };
+            const parsed = JSON.parse(plan.bytes.toString("utf8")) as {
+              schema: number;
+              unit: string;
+              actions: typeof planActions;
+            };
             if (parsed.schema !== 1 || parsed.unit !== unit) throw new Error("schema/unit 不一致");
-            const allowed = new Set(["atlas_workflow_progress", "atlas_workflow_status"]);
+            const seenWriteTools: string[] = [];
             for (const a of parsed.actions) {
-              if (!allowed.has(a.tool)) throw new Error(`非法动作 ${a.tool}`);
-              if (!a.args || a.args.unit !== unit) throw new Error("args 只允许 {unit}");
+              if (!GC_ALLOWED_TOOLS.has(a.tool)) throw new Error(`非法动作 ${a.tool}`);
+              if (!a.args || a.args.unit !== unit || Object.keys(a.args).length !== 1) {
+                throw new Error("args 只允许 {unit}");
+              }
+              if (a.tool in GC_WRITE_RANK) {
+                if (seenWriteTools.includes(a.tool)) throw new Error(`写动作不允许重复：${a.tool}`);
+                const last = seenWriteTools[seenWriteTools.length - 1];
+                if (last && GC_WRITE_RANK[a.tool] <= GC_WRITE_RANK[last]) {
+                  throw new Error(`P2 写链动作顺序非法：${last} -> ${a.tool}`);
+                }
+                if (a.tool !== "atlas_workflow_finish_preflight" && !seenWriteTools.includes("atlas_workflow_finish_preflight")) {
+                  throw new Error(`P2 写动作 ${a.tool} 前必须先有 preflight`);
+                }
+                seenWriteTools.push(a.tool);
+              }
               planActions.push(a);
             }
           } catch (e: any) {
             ctx.ui.notify(`计划契约校验失败：${e.message}`, "warning");
             return;
           }
+          const isWritePlan = planActions.some((a) => GC_WRITE_TOOLS.has(a.tool));
+          const hasMutatingWrite = planActions.some((a) => GC_MUTATING_WRITE_TOOLS.has(a.tool));
+          if (isWritePlan) {
+            if (status.onboarding !== "done") {
+              ctx.ui.notify(
+                `Guarded Continuation P2 写链要求完整开户（当前：${ONBOARDING_LABEL[status.onboarding]}），先补齐 PRD 与 _meta.json`,
+                "warning",
+              );
+              return;
+            }
+            if (!gcHasLauncher("ATLAS_GC_LAUNCHER") || !gcHasLauncher("ATLAS_GC_WRITE_LAUNCHER")) {
+              ctx.ui.notify("Guarded Continuation P2 写链要求 ATLAS_GC_LAUNCHER 与 ATLAS_GC_WRITE_LAUNCHER 均已冻结且可执行", "warning");
+              return;
+            }
+          }
           if (gcTickets.has(unit) || gcActive?.unit === unit) {
-            ctx.ui.notify(`unit ${unit} 已有治理态，先 revoke`, "warning");
+            ctx.ui.notify(`unit ${unit} 已有治理态，先 revoke 或 recover`, "warning");
             return;
           }
-          // F7（评审 B）：ISOLATED/非终态标记存在时禁止再 ARMED（防旧 run 永不审计）
           if (gcIsolatedUnits.has(unit)) {
-            ctx.ui.notify(`unit ${unit} 处于 ISOLATED，先 /atlas recover-continuation ${unit} 重试审计`, "warning");
+            ctx.ui.notify(`unit ${unit} 处于隔离/封锁状态，先 /atlas recover-continuation ${unit}`, "warning");
             return;
           }
           const existingMarker = gcMarkerPath(ctx.cwd, unit);
           if (existsSync(existingMarker)) {
             const mk = JSON.parse(readFileSync(existingMarker, "utf-8")) as { state?: string };
             if (mk.state && !GC_TERMINAL_STATES.has(mk.state)) {
-              ctx.ui.notify(`unit ${unit} 有非终态标记（${mk.state}），先 recover 或 revoke`, "warning");
+              ctx.ui.notify(`unit ${unit} 有非终态标记（${mk.state}），先 /atlas recover-continuation ${unit}`, "warning");
               return;
+            }
+          }
+          const runId = `gc-${Date.now()}-${randomBytes(4).toString("hex")}`;
+          let preflightNote = "";
+          if (isWritePlan) {
+            const continueScript = join(ctx.cwd, ".atlas", "scripts", "atlas_continue.py");
+            if (!existsSync(continueScript)) {
+              ctx.ui.notify("采纳仓缺 .atlas/scripts/atlas_continue.py，无法运行 P2 预检", "warning");
+              return;
+            }
+            const tmpLogDir = mkdtempSync(join(tmpdir(), "atlas-gc-preflight-"));
+            try {
+              const pre = gcLauncher(
+                ctx.cwd,
+                join(tmpLogDir, "git-calls.jsonl"),
+                continueScript,
+                ["preflight", "--root", ctx.cwd, "--unit", unit],
+                60_000,
+              );
+              if (pre.code !== 0) {
+                let reason = (pre.stderr || pre.stdout).trim();
+                try {
+                  const parsed = JSON.parse(pre.stdout.trim().split("\n").pop() || "{}") as { detail?: string; cause?: string };
+                  reason = `${parsed.cause ?? "preflight_failed"}: ${parsed.detail ?? reason}`;
+                } catch { /* keep raw */ }
+                ctx.ui.notify(`P2 纯只读预检未通过，拒绝签发票据：${reason.slice(0, 300)}`, "warning");
+                return;
+              }
+              try {
+                const preObj = JSON.parse(pre.stdout.trim().split("\n").pop() || "{}") as {
+                  head_commit?: string;
+                  staged_files?: string[];
+                  archive_dest?: string;
+                };
+                preflightNote =
+                  `\n预检 HEAD=${(preObj.head_commit ?? "").slice(0, 12)}，` +
+                  `暂存文件 ${(preObj.staged_files ?? []).length} 个，归档目标 ${preObj.archive_dest ?? "?"}`;
+              } catch { /* optional */ }
+            } finally {
+              try { rmSync(tmpLogDir, { recursive: true, force: true }); } catch { /* ignore */ }
             }
           }
           const listing = planActions
             .map((a, i) => `  ${i + 1}. ${a.id}: ${a.tool}({unit:"${a.args.unit}"})`)
             .join("\n");
-          const onboardingNote = status.onboarding !== "done"
+          const onboardingNote = !isWritePlan && status.onboarding !== "done"
             ? `\n⚠️ 结构基线未就绪（${ONBOARDING_LABEL[status.onboarding]}）：只读链不受影响；写链（P2）必须先补开户。`
             : "";
-          const okConfirm = await ctx.ui.confirm(
+          const okConfirm1 = await ctx.ui.confirm(
             `批准 continuation 计划 ${unit}？`,
-            `计划哈希 ${plan.sha256.slice(0, 16)}…\n动作链（封闭枚举，只读）：\n${listing}\n票据 5 分钟内有效、一次消费；ARMED 期间默认拒绝所有模型工具。${onboardingNote}`,
+            `run_id: ${runId}\n计划哈希: ${plan.sha256.slice(0, 16)}…\n动作链（${isWritePlan ? "P2 写链" : "P1 只读链"}）：\n${listing}\n票据 5 分钟内有效、一次消费；ARMED 期间默认拒绝所有模型工具。${preflightNote}${onboardingNote}`,
           );
-          if (!okConfirm) {
+          if (!okConfirm1) {
             ctx.ui.notify("已取消：未签发票据", "info");
             return;
           }
+          let irreversibleAck = false;
+          if (isWritePlan) {
+            const okConfirm2 = await ctx.ui.confirm(
+              `二次确认：不可逆业务写链 ${unit}（${runId}）`,
+              hasMutatingWrite
+                ? `本次动作将真实写入 deferred.md / task.json(completed) / git commit / archive 迁出。\n写启动后若发生非零、中断或三方校验不确定将立即转入 UNKNOWN 并持久封锁，严格禁止自动重放。确认显式授权执行？`
+                : `本次 P2 计划仅含预检（无不可逆写动作），仍将绑定 run_id=${runId} 并在双路径审计。确认继续？`,
+            );
+            if (!okConfirm2) {
+              ctx.ui.notify("已取消二次确认：未签发票据（仓库零写盘）", "info");
+              return;
+            }
+            irreversibleAck = true;
+          }
           gcWriteMarker(ctx.cwd, unit, {
-            state: "ARMED", plan_sha256: plan.sha256,
+            state: "ARMED",
+            mode: isWritePlan ? "write" : "read",
+            run_id: runId,
+            plan_sha256: plan.sha256,
             session_id: ctx.sessionManager.getSessionId(),
             armed_at: new Date().toISOString(),
           });
           gcTickets.set(unit, {
-            unit, planSha256: plan.sha256,
+            unit,
+            planSha256: plan.sha256,
             sessionId: ctx.sessionManager.getSessionId(),
             nonce: randomBytes(8).toString("hex"),
             expiryMs: Date.now() + 5 * 60_000,
             consumed: false,
+            runId,
+            isWrite: isWritePlan,
+            irreversibleAck,
           });
-          ctx.ui.notify(`✅ ${unit} 已 ARMED（票据 5 分钟有效、一次消费）。模型现在只能调用 atlas_continue。`, "info");
+          ctx.ui.notify(`✅ ${unit} 已 ARMED（run_id=${runId}，票据 5 分钟有效、一次消费）。模型现在只能调用 atlas_continue。`, "info");
           break;
         }
 
         case "revoke-continuation": {
           const unit = args.trim().split(/\s+/)[1];
-          if (!unit) {
+          if (!unit || !GC_UNIT_RE.test(unit)) {
             ctx.ui.notify("用法：/atlas revoke-continuation <unit>", "warning");
             return;
           }
+          const existingMarkerPath = gcMarkerPath(ctx.cwd, unit);
+          if (existsSync(existingMarkerPath)) {
+            let mk: { state?: string; run_id?: string } = {};
+            try {
+              mk = JSON.parse(readFileSync(existingMarkerPath, "utf-8")) as { state?: string; run_id?: string };
+            } catch {
+              ctx.ui.notify(`标记损坏，禁止直接 revoke；请走 /atlas recover-continuation ${unit}`, "warning");
+              return;
+            }
+            const protectedStates = new Set(["UNKNOWN", "ISOLATED", "WRITING", "RUNNING", "RECORDED", "AUDIT_FAILED"]);
+            if ((mk.state && protectedStates.has(mk.state)) || (mk.run_id && !GC_TERMINAL_STATES.has(mk.state ?? ""))) {
+              ctx.ui.notify(
+                `拒绝撤销：${unit} 当前处于 ${mk.state}（run_id=${mk.run_id ?? "-"}），请先走 /atlas recover-continuation ${unit}（严禁洗白 UNKNOWN/未审计态）`,
+                "warning",
+              );
+              return;
+            }
+          }
           gcTickets.delete(unit);
           if (gcActive?.unit === unit) {
-            ctx.ui.notify(`unit ${unit} 有活跃 run（${gcActive.runId}），标记撤销；审计仍将执行`, "warning");
+            ctx.ui.notify(`unit ${unit} 有活跃 run（${gcActive.runId}），拒绝覆盖；等待审计结束`, "warning");
+            return;
           }
           gcWriteMarker(ctx.cwd, unit, { state: "REVOKED", revoked_at: new Date().toISOString() });
           ctx.ui.notify(`✅ ${unit} 票据已撤销`, "info");
@@ -494,9 +934,9 @@ export default function (pi: ExtensionAPI) {
         }
 
         case "recover-continuation": {
-          // 只重试审计；不重跑动作链。
+          // P1 重试审计（不重跑动作）；P2 UNKNOWN/崩溃只读诊断后经人类确认仅写 CLOSED_FAILED（严禁自动重放）。
           const unit = args.trim().split(/\s+/)[1];
-          if (!unit) {
+          if (!unit || !GC_UNIT_RE.test(unit)) {
             ctx.ui.notify("用法：/atlas recover-continuation <unit>", "warning");
             return;
           }
@@ -505,17 +945,74 @@ export default function (pi: ExtensionAPI) {
             ctx.ui.notify(`无治理标记：${markerPath}`, "warning");
             return;
           }
-          const marker = JSON.parse(readFileSync(markerPath, "utf-8")) as { state: string; run_id?: string; parent_tool_call_id?: string; expected_parent_result_sha256?: string };
+          const marker = JSON.parse(readFileSync(markerPath, "utf-8")) as {
+            state: string;
+            run_id?: string;
+            parent_tool_call_id?: string;
+            expected_parent_result_sha256?: string;
+          };
           if (GC_TERMINAL_STATES.has(marker.state)) {
             ctx.ui.notify(`unit ${unit} 已是终态 ${marker.state}，无需 recover`, "info");
             return;
           }
+          const continueScript = join(ctx.cwd, ".atlas", "scripts", "atlas_continue.py");
+          const runDirForWal = marker.run_id ? join(ctx.cwd, ".atlas", "runs", "continuations", marker.run_id) : "";
+          const hasWal = Boolean(runDirForWal && existsSync(join(runDirForWal, "wal.jsonl")));
+          const missingReceipt = Boolean(runDirForWal && !existsSync(join(runDirForWal, "execution-receipt.json")));
+          if (marker.state === "UNKNOWN" || marker.state === "WRITING" || hasWal || (marker.run_id && missingReceipt && marker.state !== "ARMED")) {
+            let diagText = `marker.state=${marker.state}, run_id=${marker.run_id ?? "-"}`;
+            if (marker.run_id && existsSync(continueScript) && gcHasLauncher("ATLAS_GC_LAUNCHER")) {
+              const tmpDir = mkdtempSync(join(tmpdir(), "atlas-gc-diag-"));
+              try {
+                const diagRes = gcLauncher(
+                  ctx.cwd,
+                  join(tmpDir, "git-calls.jsonl"),
+                  continueScript,
+                  ["diagnose-unknown", "--root", ctx.cwd, "--unit", unit, "--run-dir", marker.run_id],
+                  30_000,
+                );
+                if (diagRes.code === 0 && diagRes.stdout.trim()) {
+                  diagText = diagRes.stdout.trim();
+                }
+              } finally {
+                try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+              }
+            }
+            const okResolve = await ctx.ui.confirm(
+              `崩溃/UNKNOWN 恢复确认（零自动重放）：${unit}`,
+              `只读诊断结果：\n${diagText.slice(0, 700)}\n\n严禁自动重放任何写动作。确认人工已核对现态并将其关闭为 CLOSED_FAILED？`,
+            );
+            if (!okResolve) {
+              ctx.ui.notify("已取消恢复：保持封锁状态，等待人工检查", "info");
+              return;
+            }
+            gcIsolatedUnits.delete(unit);
+            gcWriteMarker(
+              ctx.cwd,
+              unit,
+              {
+                state: "CLOSED_FAILED",
+                resolved_from_unknown: true,
+                previous_state: marker.state,
+                run_id: marker.run_id ?? null,
+                resolved_at: new Date().toISOString(),
+              },
+              { allowOverwriteUnknown: true },
+            );
+            ctx.ui.notify(`✅ ${unit} 已人工关闭为 CLOSED_FAILED（零自动重放）`, "info");
+            return;
+          }
           if (!marker.run_id || !marker.parent_tool_call_id || !marker.expected_parent_result_sha256) {
-            ctx.ui.notify(`标记缺 run 上下文（claimed_no_run 窗口？）：需人工确认零子调用后手工关闭`, "warning");
+            ctx.ui.notify(`标记缺 run 上下文（${marker.state}）：需人工核对后处置`, "warning");
             return;
           }
           gcIsolatedUnits.delete(unit);
-          gcPendingAudit.push({ unit, runId: marker.run_id, parentToolCallId: marker.parent_tool_call_id, expectedHash: marker.expected_parent_result_sha256 });
+          gcPendingAudit.push({
+            unit,
+            runId: marker.run_id,
+            parentToolCallId: marker.parent_tool_call_id,
+            expectedHash: marker.expected_parent_result_sha256,
+          });
           await gcRunAudit(pi, ctx as unknown as ExtensionContext, unit);
           break;
         }
@@ -620,7 +1117,7 @@ export default function (pi: ExtensionAPI) {
     //   * 失败集合不变 ⇒ 静默；集合收缩 ⇒ 静默但回写基线（修复后复发才能再提醒一次）；
     //   * `--json` 输出不可解析 ⇒ 静默且不动基线（执行异常不得伪装成门禁回归）。
     try {
-      const res = await pi.exec(PYTHON, [checkScript, "--root", ctx.cwd, "--fast", "--json"], {
+      const res = await pi.exec(PYTHON, ["-B", checkScript, "--root", ctx.cwd, "--fast", "--json"], {
         timeout: 10_000,
       });
       let payload: any;
@@ -856,7 +1353,7 @@ export default function (pi: ExtensionAPI) {
         };
         // raw 回执：返回前 O_EXCL 写盘 + 预提交父私有台账（设计边界：哈希不进被哈希对象）
         const resultSha = gcResultHash(result);
-        const receiptPath = join(runDirPath, "raw-receipts", `${run.observations.length + 1}-${resultSha.slice(0, 16)}.json`);
+        const rawPath = join(runDirPath, "raw-receipts", `${run.observations.length + 1}-${resultSha.slice(0, 16)}.json`);
         const receiptText = JSON.stringify({
           canonical_hash: resultSha,
           result,
@@ -864,11 +1361,128 @@ export default function (pi: ExtensionAPI) {
           args: { unit: params.unit },
           written_at: new Date().toISOString(),
         }, null, 2) + "\n";
-        writeFileSync(receiptPath, receiptText, { flag: "wx" });
+        gcWriteExclusiveText(rawPath, receiptText);
         gcRawCommits.set(toolCallId, {
           resultSha256: resultSha,
           fileSha256: createHash("sha256").update(receiptText).digest("hex"),
-          receiptPath,
+          receiptPath: rawPath,
+        });
+        return result;
+      },
+    };
+  }
+
+  function gcMakeP2Child(
+    toolName: string,
+    subcommand: "preflight" | "write-deferred" | "write-commit" | "write-archive",
+    opts: { mutating: boolean; destructive: boolean; timeoutMs: number },
+  ) {
+    return {
+      name: toolName,
+      label: toolName,
+      description: `Atlas P2 写链动作 ${subcommand}（Guarded Continuation 内部子工具，仅由 atlas_continue 嵌套调用）`,
+      exposure: "codemode" as const,
+      annotations: { readOnlyHint: !opts.mutating, destructiveHint: opts.destructive, openWorldHint: false },
+      parameters: Type.Object({ unit: Type.String({ description: "任务单元 ID" }) }),
+      async execute(toolCallId: string, params: { unit: string }, signal: AbortSignal, _onUpdate: unknown, childCtx: ExtensionContext) {
+        const cwd = childCtx.cwd;
+        const cap = gcCapAuth.get(toolCallId);
+        gcCapAuth.delete(toolCallId);
+        const argsHash = gcSha({ unit: params.unit });
+        if (!cap || cap.tool !== toolName || cap.argsHash !== argsHash) {
+          return {
+            content: [{ type: "text" as const, text: `${toolName}: 未获父能力授权或参数不匹配` }],
+            details: { tool: toolName, unit: params.unit, exit_code: -1, json_ok: false, authorized: false },
+            isError: true,
+          };
+        }
+        const run = gcActive;
+        if (!run || run.phase !== "RUNNING" || !run.nextAction) {
+          return {
+            content: [{ type: "text" as const, text: `${toolName}: 无 RUNNING 治理窗口或动作序号缺失` }],
+            details: { tool: toolName, unit: params.unit, exit_code: -1, json_ok: false, authorized: true },
+            isError: true,
+          };
+        }
+        const runDirPath = join(cwd, ".atlas", "runs", "continuations", run.runId);
+        const gcLog = join(runDirPath, "git-calls.jsonl");
+        const continueScript = join(cwd, ".atlas", "scripts", "atlas_continue.py");
+        const gcOffset = gcGitLogOffsets.get(gcLog) ?? 0;
+        const gcSizeBefore = existsSync(gcLog) ? statSync(gcLog).size : 0;
+        const t0 = Date.now();
+        const cliArgs = opts.mutating
+          ? [subcommand, "--root", cwd, "--unit", params.unit, "--run-dir", run.runId,
+             "--action-index", String(run.nextAction.index), "--action-id", run.nextAction.id]
+          : [subcommand, "--root", cwd, "--unit", params.unit];
+        const launcherEnv = opts.mutating ? "ATLAS_GC_WRITE_LAUNCHER" : "ATLAS_GC_LAUNCHER";
+        const stdinInput = opts.mutating ? JSON.stringify({ lock_token: run.lockToken ?? "" }) : undefined;
+        const res = await gcLauncherAsync(cwd, launcherEnv, gcLog, continueScript, cliArgs, opts.timeoutMs, {
+          input: stdinInput,
+          signal,
+        });
+        const cliDurationMs = Date.now() - t0;
+        const exitCode = res.code;
+        let jsonOk = false;
+        let parsedOut: Record<string, unknown> = {};
+        try {
+          const line = res.stdout.trim().split("\n").filter(Boolean).pop() ?? "";
+          parsedOut = JSON.parse(line) as Record<string, unknown>;
+          jsonOk = true;
+        } catch {
+          jsonOk = false;
+        }
+        let gitCallsOk = true;
+        try {
+          if (gcSizeBefore > gcOffset) gitCallsOk = false;
+          const sizeAfter = existsSync(gcLog) ? statSync(gcLog).size : gcSizeBefore;
+          if (sizeAfter > gcOffset) {
+            const chunk = readFileSync(gcLog, "utf-8").slice(gcOffset);
+            for (const ln of chunk.split("\n")) {
+              if (!ln.trim()) continue;
+              const rec = JSON.parse(ln) as { rc: number; cmd?: string[] };
+              // allow rev-parse/git calls recorded cleanly; rc!=0 only allowed if caller expects? In P2 all allowed git calls must exit 0.
+              if (rec.rc !== 0) gitCallsOk = false;
+            }
+            gcGitLogOffsets.set(gcLog, sizeAfter);
+          }
+        } catch {
+          gitCallsOk = false;
+        }
+        const isError = exitCode !== 0 || !jsonOk || !gitCallsOk || res.aborted;
+        const result = {
+          content: [{
+            type: "text" as const,
+            text: isError
+              ? `${toolName} FAILED unit=${params.unit} (exit=${exitCode} json_ok=${jsonOk} git_ok=${gitCallsOk} aborted=${res.aborted})`
+              : `${toolName} ok unit=${params.unit}`,
+          }],
+          details: {
+            tool: toolName,
+            unit: params.unit,
+            exit_code: exitCode,
+            json_ok: jsonOk,
+            git_calls_ok: gitCallsOk,
+            aborted: res.aborted,
+            stdout_bytes: res.stdout.length,
+            cli_duration_ms: cliDurationMs,
+            wal_commit_payload: parsedOut.wal_commit_payload ?? null,
+          },
+          isError,
+        };
+        const resultSha = gcResultHash(result);
+        const rawPath = join(runDirPath, "raw-receipts", `${run.observations.length + 1}-${resultSha.slice(0, 16)}.json`);
+        const receiptText = JSON.stringify({
+          canonical_hash: resultSha,
+          result,
+          toolCallId, toolName,
+          args: { unit: params.unit },
+          written_at: new Date().toISOString(),
+        }, null, 2) + "\n";
+        gcWriteExclusiveText(rawPath, receiptText);
+        gcRawCommits.set(toolCallId, {
+          resultSha256: resultSha,
+          fileSha256: createHash("sha256").update(receiptText).digest("hex"),
+          receiptPath: rawPath,
         });
         return result;
       },
@@ -877,17 +1491,21 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool(gcMakeChild("atlas_workflow_progress", "progress"));
   pi.registerTool(gcMakeChild("atlas_workflow_status", "status"));
+  pi.registerTool(gcMakeP2Child("atlas_workflow_finish_preflight", "preflight", { mutating: false, destructive: false, timeoutMs: 60_000 }));
+  pi.registerTool(gcMakeP2Child("atlas_workflow_finish_deferred", "write-deferred", { mutating: true, destructive: false, timeoutMs: 60_000 }));
+  pi.registerTool(gcMakeP2Child("atlas_workflow_finish_commit", "write-commit", { mutating: true, destructive: true, timeoutMs: 60_000 }));
+  pi.registerTool(gcMakeP2Child("atlas_workflow_finish_archive", "write-archive", { mutating: true, destructive: true, timeoutMs: 60_000 }));
 
-  // — 父工具：模型只见它；execute 首个同步操作 = 原子 claim 票据 —
+  // — 父工具：模型只见它；execute 先前检查 + P2 抢锁 → 原子 claim 票据 —
   pi.registerTool({
     name: "atlas_continue",
     label: "atlas_continue",
     description:
-      "Run the human-approved read-only continuation chain for a unit (frozen plan: progress -> status). " +
+      "Run the human-approved continuation chain for a unit (P1 read-only or P2 governed write chain). " +
       "Requires the human to have approved via /atlas approve-continuation first. Args: {unit} only.",
     exposure: "model-only",
     executionMode: "sequential", // §5.3：父工具串行化声明（PoC 单槽 gcActive）
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     parameters: Type.Object({ unit: Type.String({ description: "任务单元 ID，与已批准计划一致" }) }),
     async execute(toolCallId: string, params: { unit: string }, signal: AbortSignal, _onUpdate, ctx) {
       const cwd = ctx.cwd;
@@ -896,200 +1514,330 @@ export default function (pi: ExtensionAPI) {
         details: { unit: params.unit, actions_ok: false, fail_reason: reason },
         isError: true,
       });
-      // 1) 同步复查项目信任/装配态（失败仅内存拒绝，不 claim、不写盘；v16 M3 收窄口径与 approve 一致）
+      if (!GC_UNIT_RE.test(params.unit)) return fail("非法 unit 标识");
       const st = detectAtlasStatus(cwd);
       if (!st.isAtlasProject) return fail("项目未装配 Atlas");
-      // 2) 原子 claim 票据（任何 await 之前；双父并发只有一方成功）
-      const ticket = gcTickets.get(params.unit);
-      if (!ticket || ticket.consumed) return fail("无有效票据（先由人类 /atlas approve-continuation 签发）");
-      if (ticket.expiryMs < Date.now()) { gcTickets.delete(params.unit); return fail("票据已过期"); }
-      if (ticket.sessionId !== ctx.sessionManager.getSessionId()) return fail("票据绑定其他 session");
-      if (ticket.planSha256 !== (gcPlanBytes(cwd, params.unit)?.sha256 ?? "")) return fail("计划哈希与票据不一致（计划被改）");
-      ticket.consumed = true;
-      gcTickets.delete(params.unit);
-      // 3) 持久 CLAIMED_NO_RUN → 建 run 目录 → RUNNING
-      const runId = `gc-${Date.now()}-${randomBytes(4).toString("hex")}`;
-      gcWriteMarker(cwd, params.unit, {
-        state: "CLAIMED_NO_RUN", run_id: runId,
-        parent_tool_call_id: toolCallId, plan_sha256: ticket.planSha256,
-        session_id: ctx.sessionManager.getSessionId(),
-        claimed_at: new Date().toISOString(),
-      });
-      const runDirPath = gcRunDir(cwd, runId);
-      if (!existsSync(join(runDirPath, "raw-receipts"))) return fail("run 目录建立失败");
-      gcActive = {
-        unit: params.unit, runId, sessionId: ctx.sessionManager.getSessionId(),
-        parentToolCallId: toolCallId, planSha256: ticket.planSha256,
-        phase: "RUNNING", observations: [], nextAction: null,
-      };
-      gcWriteMarker(cwd, params.unit, {
-        state: "RUNNING", run_id: runId, parent_tool_call_id: toolCallId,
-        plan_sha256: ticket.planSha256, claimed_at: new Date().toISOString(),
-      });
-      const gcLog = join(runDirPath, "git-calls.jsonl");
-      const continueScript = join(cwd, ".atlas", "scripts", "atlas_continue.py");
-      const workflowScript = join(cwd, ".atlas", "scripts", "atlas_workflow.py");
-      if (!existsSync(continueScript) || !existsSync(workflowScript)) {
-        gcActive = null;
-        gcWriteMarker(cwd, params.unit, { state: "ISOLATED", run_id: runId, parent_tool_call_id: toolCallId, reason: "缺审计/动作脚本（零前缀窗口）" });
-        gcIsolatedUnits.add(params.unit);
-        return fail("采纳仓缺 atlas_continue.py / atlas_workflow.py（P1 未部署）");
+      const peek = gcTickets.get(params.unit);
+      if (!peek || peek.consumed) return fail("无有效票据（先由人类 /atlas approve-continuation 签发）");
+      if (peek.expiryMs < Date.now()) { gcTickets.delete(params.unit); return fail("票据已过期"); }
+      if (peek.sessionId !== ctx.sessionManager.getSessionId()) return fail("票据绑定其他 session");
+      const peekPlan = gcPlanBytes(cwd, params.unit);
+      if (!peekPlan || peek.planSha256 !== peekPlan.sha256) return fail("计划哈希与票据不一致（计划被改）");
+      const isWritePlan = Boolean(peek.isWrite);
+      const runId = peek.runId ?? `gc-${Date.now()}-${randomBytes(4).toString("hex")}`;
+      if (isWritePlan) {
+        if (st.onboarding !== "done") return fail("P2 写链要求项目完整开户");
+        if (!gcHasLauncher("ATLAS_GC_LAUNCHER") || !gcHasLauncher("ATLAS_GC_WRITE_LAUNCHER")) {
+          return fail("P2 写链要求 ATLAS_GC_LAUNCHER 与 ATLAS_GC_WRITE_LAUNCHER 均已冻结");
+        }
+        if (!peek.irreversibleAck || !peek.runId) {
+          return fail("P2 写链票据缺少 runId 或二次不可逆确认");
+        }
       }
+
+      // P2：claim 之前先抢占共享长生命周期 WriteLock；失败零落盘且保留票据
+      let lockHandle: GcLockHandle | null = null;
+      let handedToAudit = false;
       try {
-        // 4) prepare：契约校验 + 输入闭集快照
-        const prep = gcLauncher(cwd, gcLog, continueScript,
-          ["prepare", "--root", cwd, "--unit", params.unit, "--run-dir", runId], 30_000);
-        let inputManifestSha = "";
-        if (prep.code !== 0) {
-          gcWriteMarker(cwd, params.unit, { state: "ISOLATED", run_id: runId, parent_tool_call_id: toolCallId, reason: `prepare 失败（零前缀窗口）: ${(prep.stderr || prep.stdout).slice(0, 120)}` });
-          gcIsolatedUnits.add(params.unit);
-          return fail(`prepare 失败: ${(prep.stderr || prep.stdout).slice(0, 200)}`);
-        }
-        try { inputManifestSha = (JSON.parse(prep.stdout) as { input_manifest_sha256?: string }).input_manifest_sha256 ?? ""; } catch { /* keep empty */ }
-        const plan = gcPlanBytes(cwd, params.unit)!;
-        const planDoc = JSON.parse(plan.bytes.toString("utf8")) as {
-          actions: Array<{ id: string; tool: string; args: { unit: string }; guard: { kind: string; refs?: string[] } }>;
-        };
-        // 5) 逐动作：verify → guard 前移 → 能力标记 → 真实嵌套 → 三方可账
-        const obsMap = new Map<string, GcObservation>();
-        let terminalReason = "chain_ok";
-        for (let i = 0; i < planDoc.actions.length; i++) {
-          const action = planDoc.actions[i];
-          const verr = gcLauncher(cwd, gcLog, continueScript,
-            ["verify", "--root", cwd, "--unit", params.unit, "--run-dir", runId, "--phase", `pre-action-${i + 1}`], 30_000);
-          if (verr.code !== 0) { terminalReason = `verify 失败(动作${i + 1})`; break; }
-          const guardOk = gcGuardOk(action.guard, obsMap);
-          if (!guardOk) { terminalReason = `FALLBACK_REQUIRED: guard false @${action.id}`; break; }
-          const argsHash = gcSha(action.args);
-          gcActive.nextAction = { index: i + 1, id: action.id, tool: action.tool, argsHash };
-          const outcome = await ctx.executeTool(action.tool, action.args, { signal }) as {
-            toolCall: { id: string; name: string; arguments: unknown };
-            result: { content?: unknown; details?: Record<string, unknown> };
-            isError: boolean;
-            durationMs?: number;
-          };
-          gcActive.nextAction = null; // 能力一次性消费
-          const childToolCallId = outcome.toolCall?.id ?? "";
-          const committed = gcRawCommits.get(childToolCallId);
-          const recomputed = gcResultHash({
-            content: outcome.result?.content,
-            details: outcome.result?.details,
-            isError: outcome.isError,
-          });
-          let receiptBodySha: string | null = null;
-          let receiptFileSha: string | null = null;
-          if (committed) {
-            try {
-              const raw = readFileSync(committed.receiptPath);
-              receiptFileSha = createHash("sha256").update(raw).digest("hex");
-              receiptBodySha = (JSON.parse(raw.toString("utf8")) as { canonical_hash: string }).canonical_hash;
-            } catch { receiptBodySha = null; }
-          }
-          const threeWayOk =
-            !!committed &&
-            committed.resultSha256 === receiptBodySha &&
-            committed.resultSha256 === recomputed &&
-            committed.fileSha256 === receiptFileSha;
-          const d = (outcome.result?.details ?? {}) as { exit_code?: number; json_ok?: boolean };
-          const observation: GcObservation = {
-            action_index: i + 1, action_id: action.id, tool: action.tool,
-            child_tool_call_id: childToolCallId,
-            guard_result: true, guard_refs: action.guard?.refs ?? [],
-            exit_code: Number(d.exit_code ?? -1), json_ok: d.json_ok === true,
-            ok: !outcome.isError && threeWayOk,
-            cli_duration_ms: Number(d.cli_duration_ms ?? 0),
-            host_duration_ms: outcome.durationMs ?? gcHostDurations.get(childToolCallId) ?? null,
-            result_sha256: committed?.resultSha256 ?? recomputed,
-            raw_receipt_sha256: committed?.fileSha256 ?? receiptFileSha ?? "",
-            raw_receipt_path: committed?.receiptPath ?? "",
-          };
-          gcActive.observations.push(observation);
-          obsMap.set(action.id, observation);
-          if (outcome.isError || !threeWayOk) {
-            terminalReason = threeWayOk
-              ? `action ${action.id} isError`
-              : `action ${action.id} 三方可账失败（raw 回执与最终值不一致）`;
-            break;
+        if (isWritePlan) {
+          try {
+            lockHandle = await gcAcquireLockHold(cwd, params.unit, runId);
+          } catch (lockErr: any) {
+            return fail(`共享写锁抢占失败：${lockErr?.message ?? lockErr}`);
           }
         }
-        // 6) record：原子写执行回执（RECORDED）→ 追加封印 →（治理态保持到 settle）
-        const parentResult = {
-          content: [{
-            type: "text" as const,
-            text: terminalReason === "chain_ok"
-              ? `atlas_continue ok unit=${params.unit}: ${gcActive.observations.length} actions, no intermediate model requests`
-              : `atlas_continue FAILED unit=${params.unit}: ${terminalReason}`,
-          }],
-          details: {
-            unit: params.unit, actions_ok: terminalReason === "chain_ok",
-            fail_reason: terminalReason === "chain_ok" ? null : terminalReason,
-            observations: gcActive.observations.map((o) => ({
-              action_id: o.action_id, tool: o.tool, exit_code: o.exit_code,
-              json_ok: o.json_ok, result_sha256: o.result_sha256,
-            })),
-          },
-          isError: terminalReason !== "chain_ok",
-        };
-        const expectedParentHash = gcResultHash(parentResult);
-        const payloadPath = join(runDirPath, "receipt-payload.json");
-        writeFileSync(payloadPath, JSON.stringify({
-          run_id: runId, unit: params.unit, plan_sha256: ticket.planSha256,
-          status: "RECORDED", terminal_reason: terminalReason,
+        // 原子 claim 票据（复核与消费）
+        const ticket = gcTickets.get(params.unit);
+        if (!ticket || ticket.consumed || ticket.expiryMs < Date.now()) {
+          return fail("票据在锁抢占期间失效");
+        }
+        if (ticket.sessionId !== ctx.sessionManager.getSessionId() || ticket.planSha256 !== (gcPlanBytes(cwd, params.unit)?.sha256 ?? "")) {
+          return fail("票据上下文在 claim 前变化");
+        }
+        ticket.consumed = true;
+        gcTickets.delete(params.unit);
+        if (lockHandle) {
+          gcActiveLocks.set(runId, lockHandle);
+        }
+
+        gcWriteMarker(cwd, params.unit, {
+          state: "CLAIMED_NO_RUN", run_id: runId,
+          parent_tool_call_id: toolCallId, plan_sha256: ticket.planSha256,
           session_id: ctx.sessionManager.getSessionId(),
-          parent_tool_call_id: toolCallId, parent_tool_name: "atlas_continue",
-          expected_parent_result_sha256: expectedParentHash,
-          input_manifest_sha256: inputManifestSha,
-          actions: gcActive.observations,
-        }, null, 2) + "\n");
-        const rec = gcLauncher(cwd, gcLog, continueScript,
-          ["record", "--root", cwd, "--unit", params.unit, "--run-dir", runId, "--receipt-json", payloadPath], 30_000);
-        if (rec.code !== 0) {
-          gcWriteMarker(cwd, params.unit, { state: "ISOLATED", run_id: runId, parent_tool_call_id: toolCallId, reason: "record 失败" });
-          gcIsolatedUnits.add(params.unit);
-          return fail(`record 失败: ${(rec.stderr || rec.stdout).slice(0, 200)}`);
-        }
-        gcActive.phase = "RECORDED";
-        gcWriteMarker(cwd, params.unit, {
-          state: "RECORDED", run_id: runId, parent_tool_call_id: toolCallId,
-          plan_sha256: ticket.planSha256,
-          expected_parent_result_sha256: expectedParentHash,
-          terminal_reason: terminalReason,
-          recorded_at: new Date().toISOString(),
+          claimed_at: new Date().toISOString(),
         });
-        pi.appendEntry("atlas-continuation-seal", {
-          runId, unit: params.unit,
-          sessionId: ctx.sessionManager.getSessionId(),
-          parentToolCallId: toolCallId, parentToolName: "atlas_continue",
-          expectedParentResultHash: expectedParentHash,
-          expectedActions: planDoc.actions.map((a) => ({ index: a.id, tool: a.tool })),
-          sealedAt: new Date().toISOString(),
-        });
-        gcPendingAudit.push({ unit: params.unit, runId, parentToolCallId: toolCallId, expectedHash: expectedParentHash });
-        return {
-          content: parentResult.content,
-          details: parentResult.details,
-          isError: parentResult.isError,
+        const runDirPath = gcRunDir(cwd, runId);
+        if (!existsSync(join(runDirPath, "raw-receipts"))) return fail("run 目录建立失败");
+        gcActive = {
+          unit: params.unit, runId, sessionId: ctx.sessionManager.getSessionId(),
+          parentToolCallId: toolCallId, planSha256: ticket.planSha256,
+          phase: "RUNNING",
+          isWrite: isWritePlan,
+          writeStarted: false,
+          isUnknown: false,
+          lockToken: lockHandle?.lockToken,
+          observations: [], nextAction: null,
         };
-      } catch (e: any) {
-        const state = gcActive?.phase === "CLAIMED_NO_RUN" ? "CLAIMED_NO_RUN" : "ISOLATED";
         gcWriteMarker(cwd, params.unit, {
-          state, run_id: runId, parent_tool_call_id: toolCallId,
-          reason: String(e?.message ?? e),
+          state: "RUNNING", run_id: runId, parent_tool_call_id: toolCallId,
+          plan_sha256: ticket.planSha256, claimed_at: new Date().toISOString(),
         });
-        if (state === "ISOLATED") gcIsolatedUnits.add(params.unit);
-        return fail(String(e?.message ?? e));
+        const gcLog = join(runDirPath, "git-calls.jsonl");
+        const continueScript = join(cwd, ".atlas", "scripts", "atlas_continue.py");
+        const workflowScript = join(cwd, ".atlas", "scripts", "atlas_workflow.py");
+        if (!existsSync(continueScript) || !existsSync(workflowScript)) {
+          gcWriteMarker(cwd, params.unit, { state: "ISOLATED", run_id: runId, parent_tool_call_id: toolCallId, reason: "缺审计/动作脚本（零前缀窗口）" });
+          gcIsolatedUnits.add(params.unit);
+          return fail("采纳仓缺 atlas_continue.py / atlas_workflow.py（P1/P2 未部署）");
+        }
+        try {
+          // 4) prepare：契约校验 + 输入闭集快照
+          const prep = gcLauncher(cwd, gcLog, continueScript,
+            ["prepare", "--root", cwd, "--unit", params.unit, "--run-dir", runId], 30_000);
+          let inputManifestSha = "";
+          if (prep.code !== 0) {
+            gcWriteMarker(cwd, params.unit, { state: "ISOLATED", run_id: runId, parent_tool_call_id: toolCallId, reason: `prepare 失败（零前缀窗口）: ${(prep.stderr || prep.stdout).slice(0, 120)}` });
+            gcIsolatedUnits.add(params.unit);
+            return fail(`prepare 失败: ${(prep.stderr || prep.stdout).slice(0, 200)}`);
+          }
+          try { inputManifestSha = (JSON.parse(prep.stdout) as { input_manifest_sha256?: string }).input_manifest_sha256 ?? ""; } catch { /* keep empty */ }
+          const plan = gcPlanBytes(cwd, params.unit)!;
+          const planDoc = JSON.parse(plan.bytes.toString("utf8")) as {
+            actions: Array<{ id: string; tool: string; args: { unit: string }; guard: { kind: string; refs?: string[] } }>;
+          };
+          // 5) 逐动作：verify → guard 前移 → 能力标记 → 真实嵌套 → 三方可账 → (P2 WAL 提交/UNKNOWN)
+          const obsMap = new Map<string, GcObservation>();
+          let terminalReason = "chain_ok";
+          for (let i = 0; i < planDoc.actions.length; i++) {
+            const action = planDoc.actions[i];
+            const verr = gcLauncher(cwd, gcLog, continueScript,
+              ["verify", "--root", cwd, "--unit", params.unit, "--run-dir", runId, "--phase", `pre-action-${i + 1}`], 30_000);
+            if (verr.code !== 0) {
+              if (gcActive.writeStarted) {
+                gcActive.isUnknown = true;
+                gcLauncher(cwd, gcLog, continueScript,
+                  ["wal-mark-unknown", "--root", cwd, "--unit", params.unit, "--run-dir", runId,
+                   "--action-index", String(i + 1), "--action-id", action.id, "--tool", action.tool,
+                   "--reason", `verify 失败(动作${i + 1}): ${(verr.stderr || verr.stdout).slice(0, 120)}`], 15_000);
+                gcWriteMarker(cwd, params.unit, {
+                  state: "UNKNOWN", run_id: runId, parent_tool_call_id: toolCallId,
+                  action_index: i + 1, action_id: action.id, tool: action.tool,
+                  reason: `verify 失败(动作${i + 1})`,
+                });
+                gcIsolatedUnits.add(params.unit);
+                terminalReason = "UNKNOWN";
+              } else {
+                terminalReason = `verify 失败(动作${i + 1})`;
+              }
+              break;
+            }
+            const guardOk = gcGuardOk(action.guard, obsMap);
+            if (!guardOk) { terminalReason = `FALLBACK_REQUIRED: guard false @${action.id}`; break; }
+            const isMutatingAction = GC_MUTATING_WRITE_TOOLS.has(action.tool);
+            if (isMutatingAction) {
+              gcActive.writeStarted = true;
+              gcWriteMarker(cwd, params.unit, {
+                state: "WRITING", run_id: runId, parent_tool_call_id: toolCallId,
+                action_index: i + 1, action_id: action.id, tool: action.tool,
+              });
+            }
+            const argsHash = gcSha(action.args);
+            gcActive.nextAction = { index: i + 1, id: action.id, tool: action.tool, argsHash };
+            const outcome = await ctx.executeTool(action.tool, action.args, { signal }) as {
+              toolCall: { id: string; name: string; arguments: unknown };
+              result: { content?: unknown; details?: Record<string, unknown> };
+              isError: boolean;
+              durationMs?: number;
+            };
+            gcActive.nextAction = null; // 能力一次性消费
+            const childToolCallId = outcome.toolCall?.id ?? "";
+            const committed = gcRawCommits.get(childToolCallId);
+            const recomputed = gcResultHash({
+              content: outcome.result?.content,
+              details: outcome.result?.details,
+              isError: outcome.isError,
+            });
+            let receiptBodySha: string | null = null;
+            let receiptFileSha: string | null = null;
+            if (committed) {
+              try {
+                const raw = readFileSync(committed.receiptPath);
+                receiptFileSha = createHash("sha256").update(raw).digest("hex");
+                receiptBodySha = (JSON.parse(raw.toString("utf8")) as { canonical_hash: string }).canonical_hash;
+              } catch { receiptBodySha = null; }
+            }
+            const threeWayOk =
+              !!committed &&
+              committed.resultSha256 === receiptBodySha &&
+              committed.resultSha256 === recomputed &&
+              committed.fileSha256 === receiptFileSha;
+            const d = (outcome.result?.details ?? {}) as {
+              exit_code?: number;
+              json_ok?: boolean;
+              wal_commit_payload?: Record<string, unknown> | null;
+            };
+            const observation: GcObservation = {
+              action_index: i + 1, action_id: action.id, tool: action.tool,
+              child_tool_call_id: childToolCallId,
+              guard_result: true, guard_refs: action.guard?.refs ?? [],
+              exit_code: Number(d.exit_code ?? -1), json_ok: d.json_ok === true,
+              ok: !outcome.isError && threeWayOk,
+              cli_duration_ms: Number(d.cli_duration_ms ?? 0),
+              host_duration_ms: outcome.durationMs ?? gcHostDurations.get(childToolCallId) ?? null,
+              result_sha256: committed?.resultSha256 ?? recomputed,
+              raw_receipt_sha256: committed?.fileSha256 ?? receiptFileSha ?? "",
+              raw_receipt_path: committed?.receiptPath ?? "",
+            };
+            gcActive.observations.push(observation);
+            obsMap.set(action.id, observation);
+            if (outcome.isError || !threeWayOk) {
+              const reason = threeWayOk
+                ? `action ${action.id} isError`
+                : `action ${action.id} 三方可账失败（raw 回执与最终值不一致）`;
+              if (gcActive.writeStarted) {
+                gcActive.isUnknown = true;
+                gcLauncher(cwd, gcLog, continueScript,
+                  ["wal-mark-unknown", "--root", cwd, "--unit", params.unit, "--run-dir", runId,
+                   "--action-index", String(i + 1), "--action-id", action.id, "--tool", action.tool,
+                   "--reason", reason], 15_000);
+                gcWriteMarker(cwd, params.unit, {
+                  state: "UNKNOWN", run_id: runId, parent_tool_call_id: toolCallId,
+                  action_index: i + 1, action_id: action.id, tool: action.tool, reason,
+                });
+                gcIsolatedUnits.add(params.unit);
+                terminalReason = "UNKNOWN";
+              } else {
+                terminalReason = reason;
+              }
+              break;
+            }
+            if (isMutatingAction) {
+              const wc = gcLauncher(cwd, gcLog, continueScript,
+                ["wal-commit", "--root", cwd, "--unit", params.unit, "--run-dir", runId,
+                 "--action-index", String(i + 1), "--action-id", action.id, "--tool", action.tool,
+                 "--detail-json", JSON.stringify(d.wal_commit_payload ?? {})], 15_000);
+              if (wc.code !== 0) {
+                const reason = `wal-commit 失败: ${(wc.stderr || wc.stdout).slice(0, 160)}`;
+                gcActive.isUnknown = true;
+                gcLauncher(cwd, gcLog, continueScript,
+                  ["wal-mark-unknown", "--root", cwd, "--unit", params.unit, "--run-dir", runId,
+                   "--action-index", String(i + 1), "--action-id", action.id, "--tool", action.tool,
+                   "--reason", reason], 15_000);
+                gcWriteMarker(cwd, params.unit, {
+                  state: "UNKNOWN", run_id: runId, parent_tool_call_id: toolCallId,
+                  action_index: i + 1, action_id: action.id, tool: action.tool, reason,
+                });
+                gcIsolatedUnits.add(params.unit);
+                terminalReason = "UNKNOWN";
+                break;
+              }
+            }
+          }
+          // 6) record：原子写执行回执（RECORDED）→ 追加封印 →（若未进 UNKNOWN 才更新 marker 为 RECORDED）
+          const parentResult = {
+            content: [{
+              type: "text" as const,
+              text: terminalReason === "chain_ok"
+                ? `atlas_continue ok unit=${params.unit}: ${gcActive.observations.length} actions, no intermediate model requests`
+                : `atlas_continue FAILED unit=${params.unit}: ${terminalReason}`,
+            }],
+            details: {
+              unit: params.unit, actions_ok: terminalReason === "chain_ok",
+              fail_reason: terminalReason === "chain_ok" ? null : terminalReason,
+              observations: gcActive.observations.map((o) => ({
+                action_id: o.action_id, tool: o.tool, exit_code: o.exit_code,
+                json_ok: o.json_ok, result_sha256: o.result_sha256,
+              })),
+            },
+            isError: terminalReason !== "chain_ok",
+          };
+          const expectedParentHash = gcResultHash(parentResult);
+          const payloadPath = join(runDirPath, "receipt-payload.json");
+          gcAtomicWriteText(payloadPath, JSON.stringify({
+            run_id: runId, unit: params.unit, plan_sha256: ticket.planSha256,
+            status: gcActive.isUnknown ? "UNKNOWN" : "RECORDED",
+            terminal_reason: terminalReason,
+            session_id: ctx.sessionManager.getSessionId(),
+            parent_tool_call_id: toolCallId, parent_tool_name: "atlas_continue",
+            expected_parent_result_sha256: expectedParentHash,
+            input_manifest_sha256: inputManifestSha,
+            actions: gcActive.observations,
+          }, null, 2) + "\n");
+          const rec = gcLauncher(cwd, gcLog, continueScript,
+            ["record", "--root", cwd, "--unit", params.unit, "--run-dir", runId, "--receipt-json", payloadPath], 30_000);
+          if (rec.code !== 0) {
+            if (!gcActive.isUnknown && !gcMarkerIsUnknown(cwd, params.unit)) {
+              gcWriteMarker(cwd, params.unit, { state: "ISOLATED", run_id: runId, parent_tool_call_id: toolCallId, reason: "record 失败" });
+            }
+            gcIsolatedUnits.add(params.unit);
+            return fail(`record 失败: ${(rec.stderr || rec.stdout).slice(0, 200)}`);
+          }
+          gcActive.phase = "RECORDED";
+          if (!gcActive.isUnknown && !gcMarkerIsUnknown(cwd, params.unit)) {
+            gcWriteMarker(cwd, params.unit, {
+              state: "RECORDED", run_id: runId, parent_tool_call_id: toolCallId,
+              plan_sha256: ticket.planSha256,
+              expected_parent_result_sha256: expectedParentHash,
+              terminal_reason: terminalReason,
+              recorded_at: new Date().toISOString(),
+            });
+          }
+          pi.appendEntry("atlas-continuation-seal", {
+            runId, unit: params.unit,
+            sessionId: ctx.sessionManager.getSessionId(),
+            parentToolCallId: toolCallId, parentToolName: "atlas_continue",
+            expectedParentResultHash: expectedParentHash,
+            expectedActions: planDoc.actions.map((a) => ({ index: a.id, tool: a.tool })),
+            sealedAt: new Date().toISOString(),
+          });
+          gcPendingAudit.push({ unit: params.unit, runId, parentToolCallId: toolCallId, expectedHash: expectedParentHash });
+          handedToAudit = true;
+          return {
+            content: parentResult.content,
+            details: parentResult.details,
+            isError: parentResult.isError,
+          };
+        } catch (e: any) {
+          if (gcActive?.writeStarted) {
+            gcActive.isUnknown = true;
+            try {
+              gcLauncher(cwd, gcLog, continueScript,
+                ["wal-mark-unknown", "--root", cwd, "--unit", params.unit, "--run-dir", runId,
+                 "--reason", String(e?.message ?? e)], 15_000);
+            } catch { /* ignore */ }
+            gcWriteMarker(cwd, params.unit, {
+              state: "UNKNOWN", run_id: runId, parent_tool_call_id: toolCallId,
+              reason: String(e?.message ?? e),
+            });
+            gcIsolatedUnits.add(params.unit);
+          } else if (!gcMarkerIsUnknown(cwd, params.unit)) {
+            const state = gcActive?.phase === "CLAIMED_NO_RUN" ? "CLAIMED_NO_RUN" : "ISOLATED";
+            gcWriteMarker(cwd, params.unit, {
+              state, run_id: runId, parent_tool_call_id: toolCallId,
+              reason: String(e?.message ?? e),
+            });
+            if (state === "ISOLATED") gcIsolatedUnits.add(params.unit);
+          }
+          return fail(String(e?.message ?? e));
+        } finally {
+          gcActive = null;
+        }
       } finally {
-        gcActive = null;
+        if (!handedToAudit && lockHandle) {
+          gcActiveLocks.delete(runId);
+          await lockHandle.release();
+        }
       }
     },
   });
 
-  // — agent_settled / session_shutdown：同一审计函数（M2：双路径都必须活着）—
+  // — agent_settled / session_shutdown：同一审计函数（M2：双路径都必须活着；结束即释放 write.lock）—
   async function gcRunAudit(_pi: ExtensionAPI, ctx: ExtensionContext, unitFilter?: string): Promise<void> {
     const jobs = gcPendingAudit.splice(0).filter((j) => !unitFilter || j.unit === unitFilter);
     for (const job of jobs) {
       const cwd = ctx.cwd;
       const runDirPath = join(cwd, ".atlas", "runs", "continuations", job.runId);
+      const unknownLocked = gcMarkerIsUnknown(cwd, job.unit);
       try {
         const branch = ctx.sessionManager.getBranch() as Array<Record<string, unknown>>;
         let parentMsg: Record<string, unknown> | null = null;
@@ -1101,7 +1849,9 @@ export default function (pi: ExtensionAPI) {
               (e.data as Record<string, unknown> | undefined)?.parentToolCallId === job.parentToolCallId) sealEntry = e;
         }
         if (!parentMsg || !sealEntry) {
-          gcWriteMarker(cwd, job.unit, { state: "ISOLATED", run_id: job.runId, parent_tool_call_id: job.parentToolCallId, reason: "session 缺父结果或封印" });
+          if (!unknownLocked && !gcMarkerIsUnknown(cwd, job.unit)) {
+            gcWriteMarker(cwd, job.unit, { state: "ISOLATED", run_id: job.runId, parent_tool_call_id: job.parentToolCallId, reason: "session 缺父结果或封印" });
+          }
           gcIsolatedUnits.add(job.unit);
           continue;
         }
@@ -1115,11 +1865,13 @@ export default function (pi: ExtensionAPI) {
           actual_parent_result_sha256: actualHash,
           host_duration_ms: gcHostDurations.get(job.parentToolCallId) ?? null,
         };
-        writeFileSync(join(runDirPath, "host-record.json"), JSON.stringify(hostRecord, null, 2) + "\n");
+        gcAtomicWriteText(join(runDirPath, "host-record.json"), JSON.stringify(hostRecord, null, 2) + "\n");
         const sessionFile = ctx.sessionManager.getSessionFile();
         const continueScript = join(cwd, ".atlas", "scripts", "atlas_continue.py");
         if (!sessionFile || !existsSync(continueScript)) {
-          gcWriteMarker(cwd, job.unit, { state: "ISOLATED", run_id: job.runId, parent_tool_call_id: job.parentToolCallId, reason: "缺 session 文件或审计脚本" });
+          if (!unknownLocked && !gcMarkerIsUnknown(cwd, job.unit)) {
+            gcWriteMarker(cwd, job.unit, { state: "ISOLATED", run_id: job.runId, parent_tool_call_id: job.parentToolCallId, reason: "缺 session 文件或审计脚本" });
+          }
           gcIsolatedUnits.add(job.unit);
           continue;
         }
@@ -1128,12 +1880,39 @@ export default function (pi: ExtensionAPI) {
            "--session", sessionFile, "--host-record", join(runDirPath, "host-record.json"),
            "--atlas-version", detectAtlasStatus(cwd).version ?? "poc"], 60_000);
         let verdict = "";
-        try { verdict = (JSON.parse(res.stdout.trim().split("\n").filter(Boolean).pop() ?? "{}") as { verdict?: string }).verdict ?? ""; } catch { /* fallthrough */ }
+        let archivedTaskDir: string | undefined;
+        try {
+          const outObj = JSON.parse(res.stdout.trim().split("\n").filter(Boolean).pop() ?? "{}") as {
+            verdict?: string;
+            archived_task_dir?: string;
+          };
+          verdict = outObj.verdict ?? "";
+          archivedTaskDir = outObj.archived_task_dir;
+        } catch { /* fallthrough */ }
+
+        if (verdict === "UNKNOWN" || unknownLocked || gcMarkerIsUnknown(cwd, job.unit)) {
+          gcIsolatedUnits.add(job.unit);
+          if (!gcMarkerIsUnknown(cwd, job.unit)) {
+            gcWriteMarker(cwd, job.unit, {
+              state: "UNKNOWN", run_id: job.runId, parent_tool_call_id: job.parentToolCallId,
+              reason: "审计发现 WAL UNKNOWN / 悬空 INTENT，保持封锁禁止自动重放",
+            });
+          }
+          if (ctx.hasUI && ctx.ui.notify) {
+            ctx.ui.notify(
+              `🚨 Guarded Continuation：${job.unit} 处于 UNKNOWN 封锁（${job.runId}），禁止自动重放；请运行 /atlas recover-continuation ${job.unit}`,
+              "warning",
+            );
+          }
+          continue;
+        }
+
         if (res.code === 0 && verdict === "SUCCEEDED") {
           gcWriteMarker(cwd, job.unit, {
             state: "SUCCEEDED", run_id: job.runId,
             parent_tool_call_id: job.parentToolCallId,
             certificate: join(runDirPath, "certificate.json"),
+            archived_task_dir: archivedTaskDir ?? null,
             audited_at: new Date().toISOString(),
           });
         } else if (res.code === 0 && verdict === "CLOSED_FAILED") {
@@ -1144,6 +1923,7 @@ export default function (pi: ExtensionAPI) {
             audited_at: new Date().toISOString(),
           });
         } else {
+          gcIsolatedUnits.add(job.unit);
           gcWriteMarker(cwd, job.unit, {
             state: "AUDIT_FAILED", run_id: job.runId,
             parent_tool_call_id: job.parentToolCallId,
@@ -1161,9 +1941,17 @@ export default function (pi: ExtensionAPI) {
         }
       } catch (e: any) {
         try {
-          gcWriteMarker(cwd, job.unit, { state: "ISOLATED", run_id: job.runId, parent_tool_call_id: job.parentToolCallId, reason: String(e?.message ?? e) });
+          if (!gcMarkerIsUnknown(cwd, job.unit)) {
+            gcWriteMarker(cwd, job.unit, { state: "ISOLATED", run_id: job.runId, parent_tool_call_id: job.parentToolCallId, reason: String(e?.message ?? e) });
+          }
           gcIsolatedUnits.add(job.unit);
         } catch { /* 尽力持久化 */ }
+      } finally {
+        const lh = gcActiveLocks.get(job.runId);
+        if (lh) {
+          gcActiveLocks.delete(job.runId);
+          await lh.release();
+        }
       }
     }
   }

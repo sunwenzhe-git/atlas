@@ -26,9 +26,13 @@ from pathlib import Path
 from _support import review_scope_core as scope_core
 from _support.bug_backflow import validate_backflow
 from _support.docs_governance import DocsGovernanceError, check_docs_for_ids, docs_mode
+from _support.guarded_continuation import WriteLock, WriteLockError, fsync_dir
 from _support.incident import IncidentError, configured_mode as incident_mode, validate_task_incidents
 from _support.layout import LayoutError, load_layout
-from _support.runtime_topology import TopologyError, refresh_topology, scope_topology_result, topology_mode
+from _support.runtime_topology import (
+    TopologyError, collect_topology, refresh_topology, scope_topology_result,
+    topology_mode, validate_topology,
+)
 from _support.semantic_contracts import SemanticError
 from _support.workflow_receipt import (
     ReceiptError, _classification_result, _staged_scope_digest,
@@ -274,6 +278,84 @@ def deferred_open_count(t_dir: Path) -> int:
     return sum(1 for ln in text.splitlines() if _DEFERRED_OPEN_RE.match(ln.strip()))
 
 
+def plan_deferred_findings(root: Path, task: dict, t_dir: Path) -> dict:
+    """只读计算最新轮审查报告中待登记的存量缺陷，不写磁盘。"""
+    root = Path(root).resolve()
+    reviews_dir = root / "product" / "reviews"
+    unit = str(task.get("id") or "")
+    deferred_path = Path(t_dir) / DEFERRED_FILE
+    empty = {
+        "registered": 0,
+        "blocking": 0,
+        "deferred_path": str(deferred_path),
+        "content": None,
+        "shown": "",
+    }
+    if not reviews_dir.is_dir() or not unit:
+        return empty
+    candidates = sorted(
+        p for p in reviews_dir.iterdir()
+        if p.is_dir() and re.fullmatch(
+            REVIEW_DIR_PREFIX_RE + re.escape(unit) + "$", p.name)
+    )
+    if not candidates:
+        return empty
+    try:
+        data = json.loads((candidates[-1] / "review.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return empty
+    checks = data.get("checks") or []
+    if not isinstance(checks, list):
+        return empty
+    round_no = str(data.get("round") or "").strip()
+    if deferred_path.is_file():
+        try:
+            existing = deferred_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return empty
+    else:
+        existing = DEFERRED_HEADER
+    next_no = 1 + max((int(m.group(1)) for m in _DEFERRED_ID_RE.finditer(existing)),
+                      default=0)
+    registered = 0
+    blocking = 0
+    lines: list[str] = []
+    for c in checks:
+        if not isinstance(c, dict) or c.get("pre_existing") is not True:
+            continue
+        disposition = str(c.get("disposition") or "open").strip().lower()
+        if disposition in DEFERRED_STATUS_CLOSED:
+            continue
+        key = _deferred_key(c)
+        if key in existing:
+            continue
+        level = str(c.get("level") or "unknown").strip() or "unknown"
+        detail = " ".join(str(c.get("detail") or "").split()) or "（无描述）"
+        target = str(c.get("target") or "").strip()
+        round_tag = f" r{round_no}" if round_no else ""
+        loc = f"（{target}）" if target else ""
+        lines.append(
+            f"- DW-{next_no} 〔{date.today().isoformat()}｜开放｜族:{level}｜证:{key}{round_tag}〕"
+            f"{detail}{loc}")
+        if level in ("Critical", "Major"):
+            blocking += 1
+        next_no += 1
+        registered += 1
+    if not registered:
+        return empty
+    try:
+        shown = deferred_path.resolve().relative_to(root).as_posix()
+    except ValueError:
+        shown = str(deferred_path)
+    return {
+        "registered": registered,
+        "blocking": blocking,
+        "deferred_path": str(deferred_path),
+        "content": existing.rstrip("\n") + "\n" + "\n".join(lines) + "\n",
+        "shown": shown,
+    }
+
+
 def extract_deferred_findings(root: Path, task: dict, t_dir: Path) -> dict:
     """把最新轮审查报告的存量缺陷（`pre_existing` ∧ 未关闭）登记进任务卡 deferred.md。
 
@@ -340,8 +422,19 @@ def extract_deferred_findings(root: Path, task: dict, t_dir: Path) -> dict:
         return {"registered": 0, "blocking": 0}
     try:
         deferred_path.parent.mkdir(parents=True, exist_ok=True)
-        deferred_path.write_text(
-            existing.rstrip("\n") + "\n" + "\n".join(lines) + "\n", encoding="utf-8")
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=".deferred-", suffix=".tmp", dir=str(deferred_path.parent)
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(existing.rstrip("\n") + "\n" + "\n".join(lines) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_name, deferred_path)
+            fsync_dir(deferred_path.parent)
+        finally:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
     except OSError as exc:
         print(f"WARN（deferred 登记失败）: {exc}", file=sys.stderr)
         return {"registered": 0, "blocking": 0}
@@ -584,7 +677,8 @@ def archive_month(t_dir: Path, tasks_root: Path, task_id: str | None = None) -> 
     return t_dir.parent.name
 
 
-def archive_task(root: Path, tasks_root: Path, t_dir: Path, t_id: str) -> dict:
+def archive_task(root: Path, tasks_root: Path, t_dir: Path, t_id: str,
+                 *, _lock_held: bool = False) -> dict:
     """把已收口任务移到 `.atlas/tasks/archive/<YYYY-MM>/<id>/`（幂等；issue #70）。
 
     月份取归档当天。历史扁平存档（`archive/<id>/`）或缺/错月份层的目录会在
@@ -595,28 +689,40 @@ def archive_task(root: Path, tasks_root: Path, t_dir: Path, t_id: str) -> dict:
     root = root.resolve()
     if archive_month(t_dir, tasks_root, t_id) is not None:
         return {"status": "already", "path": str(t_dir.resolve().relative_to(root))}
-    archive_root = tasks_root / ARCHIVE_DIR
-    month_dir = archive_root / date.today().strftime("%Y-%m")
-    if archive_root.is_symlink() or month_dir.is_symlink():
-        raise FinishError("归档链含 symlink，拒绝移出任务账本", cause="environment")
+    from contextlib import nullcontext
     try:
-        month_resolved = month_dir.resolve()
-        dest_resolved = (month_dir / t_id).resolve()
-    except (OSError, RuntimeError) as exc:
-        raise FinishError(f"归档目标不可解析：{exc}", cause="environment") from exc
-    if (month_resolved.parent != archive_root.resolve()
-            or tasks_root not in dest_resolved.parents or root not in dest_resolved.parents):
-        raise FinishError("归档目标越界，拒绝移动", cause="environment")
-    dest = month_dir / t_id
-    if dest.exists():
-        raise FinishError(f"归档目标已存在：{dest}（源目录仍在 {t_dir}；请人工核对后处理）",
-                          cause="state_transition")
-    try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(t_dir), str(dest))
-    except OSError as exc:
-        raise FinishError(f"归档失败：{t_dir} → {dest}（{exc}）", cause="environment") from exc
-    return {"status": "moved", "path": str(dest.relative_to(root))}
+        lock_ctx = nullcontext() if _lock_held else WriteLock(root, holder="cli-archive", unit=t_id)
+        with lock_ctx:
+            archive_root = tasks_root / ARCHIVE_DIR
+            month_dir = archive_root / date.today().strftime("%Y-%m")
+            if archive_root.is_symlink() or month_dir.is_symlink():
+                raise FinishError("归档链含 symlink，拒绝移出任务账本", cause="environment")
+            try:
+                month_resolved = month_dir.resolve()
+                dest_resolved = (month_dir / t_id).resolve()
+            except (OSError, RuntimeError) as exc:
+                raise FinishError(f"归档目标不可解析：{exc}", cause="environment") from exc
+            if (month_resolved.parent != archive_root.resolve()
+                    or tasks_root not in dest_resolved.parents or root not in dest_resolved.parents):
+                raise FinishError("归档目标越界，拒绝移动", cause="environment")
+            dest = month_dir / t_id
+            if dest.exists():
+                raise FinishError(f"归档目标已存在：{dest}（源目录仍在 {t_dir}；请人工核对后处理）",
+                                  cause="state_transition")
+            src_parent = t_dir.parent
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(t_dir), str(dest))
+                fsync_dir(dest)
+                fsync_dir(dest.parent)
+                fsync_dir(archive_root)
+                if src_parent.exists():
+                    fsync_dir(src_parent)
+            except OSError as exc:
+                raise FinishError(f"归档失败：{t_dir} → {dest}（{exc}）", cause="environment") from exc
+            return {"status": "moved", "path": str(dest.relative_to(root))}
+    except WriteLockError as exc:
+        raise FinishError(f"写链互斥锁冲突：{exc}", cause="environment") from exc
 
 
 def requirement_closeout(root: Path, req_root_rel: str) -> dict:
@@ -706,33 +812,78 @@ def _refresh_staged_topology(root: Path, options: dict) -> dict:
         return refresh_topology(root, source_root=source_root, **options)
 
 
-def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
-    """完成单个任务的收口流转。"""
-    root = root.resolve()
-    t_id = task["id"]
-    if not UNIT_RE.match(t_id):
-        raise FinishError(f"非法任务标识：{t_id!r}", cause="no_task_card")
-    tasks_root = (root / ".atlas" / "tasks").resolve()
-    t_dir = Path(task.get("_dir") or (tasks_root / t_id)).resolve()
-    if t_dir != tasks_root and tasks_root not in t_dir.parents:
-        raise FinishError(f"任务目录越界：{t_dir}（必须在 {tasks_root} 之内）",
-                          cause="no_task_card")
+def _preflight_staged_topology(root: Path, options: dict) -> dict:
+    """只读评估 staged index 的静态拓扑，不写 `.adapter-out/topology` 或代际目录。"""
+    mode = str(options.get("mode") or "shadow")
+    if mode not in ("shadow", "enforce", "off"):
+        raise TopologyError("mode 必须为 shadow/enforce/off")
+    if mode == "off":
+        return {"schema_version": 1, "module": "topology", "mode": "off", "verdict": "UNVERIFIED",
+                "cause": None, "rc": 2,
+                "findings": [{"cause": "observation", "message": "Topology 已关闭；in-scope 不可判定"}],
+                "metrics": {}}
 
-    if not t_dir.is_dir():
-        raise FinishError(f"任务目录不存在：{t_dir}", cause="no_task_card")
-    if receipt_mode(root) == "off":
-        raise FinishError("receipt off 模式下不能完成或归档任务", cause="receipt_unverified")
-    if archive_month(t_dir, tasks_root, t_id) is None:
-        archive_dest = tasks_root / ARCHIVE_DIR / date.today().strftime("%Y-%m") / t_id
-        if archive_dest.exists():
-            raise FinishError(
-                f"归档目标已存在：{archive_dest}（源目录仍在 {t_dir}；请人工核对后处理）",
-                cause="state_transition")
+    def _res(verdict: str, cause: str | None, findings: list[dict], *, metrics: dict | None = None) -> dict:
+        rc = 0 if mode == "shadow" else 2 if verdict == "UNVERIFIED" else 1 if verdict in ("FAIL", "STALE") else 0
+        return {"schema_version": 1, "module": "topology", "mode": mode, "verdict": verdict,
+                "cause": cause, "rc": rc, "findings": findings, "metrics": metrics or {}}
 
-    # 存量缺陷登记（RFC-20261122-07 §3.1.3）：finish 门判定**之前**执行——无论收口
-    # 成败先落账（open pre_existing Critical/Major 以 WARN 下限阻断收口，绑定成功
-    # 路径则头条病案永远到不了台账；fingerprint 幂等兜底复跑重复）。
-    deferred_info = extract_deferred_findings(root, task, t_dir)
+    with tempfile.TemporaryDirectory(prefix="atlas-finish-topology-") as temporary:
+        source_root = Path(temporary)
+        checked_out = subprocess.run(["git", "checkout-index", "--all", f"--prefix={source_root}/"],
+                                     cwd=root, capture_output=True, text=True, timeout=60)
+        if checked_out.returncode != 0:
+            raise TopologyError("staged index 不可物化：" + checked_out.stderr.strip())
+        collect_kw = {k: v for k, v in options.items()
+                      if k in ("project", "environment", "cluster", "release",
+                               "scan_globs", "owner", "due", "adapter")}
+        topology, _ = collect_topology(root, source_root=source_root, **collect_kw)
+    if topology["coverage"]["parse_errors"]:
+        findings = [{"cause": "topology_unverified", "path": item["path"], "message": item["message"]}
+                    for item in topology["coverage"]["parse_errors"]]
+        return _res("UNVERIFIED", "topology_unverified", findings,
+                    metrics={"parsed": topology["coverage"]["parsed"]})
+    if topology["coverage"]["parsed"] == 0 or not topology["items"]:
+        return _res("UNVERIFIED", "topology_unverified",
+                    [{"cause": "topology_unverified", "message": "未解析到任何静态拓扑节点"}])
+    errors = validate_topology(topology)
+    if errors:
+        return _res("FAIL", "topology_stale",
+                    [{"cause": "topology_stale", "message": "topology schema: " + "; ".join(errors)}])
+    unverified = topology["coverage"]["unverified_fields"]
+    return _res(
+        "UNVERIFIED" if unverified else "PASS",
+        "topology_unverified" if unverified else None,
+        [] if not unverified else [{"cause": "topology_unverified", "message": "动态字段见 coverage.unverified_fields"}],
+        metrics={"nodes": sum(bool(item.get("node")) for item in topology["items"]),
+                 "edges": sum(bool(item.get("edge")) for item in topology["items"]),
+                 "parsed": topology["coverage"]["parsed"]},
+    )
+
+
+def _validate_finish_gates(root: Path, task: dict, t_dir: Path, tasks_root: Path, *,
+                           force: bool = False,
+                           require_full_onboarding: bool = False,
+                           mutate_topology: bool = True) -> dict:
+    """共享 finish 门判定核心（预检只读模式与真实收口复用同一契约）。"""
+    t_id = str(task.get("id") or "")
+    if require_full_onboarding:
+        if force:
+            raise FinishError("P2 写链禁止 --force 绕过人工审查", cause="review_not_passed")
+        if not (root / ".git").exists():
+            raise FinishError("M3 写链要求 git 仓库，当前目录无 .git", cause="environment")
+        try:
+            prd_file = load_layout(root).prd_dir / "prd.md"
+        except LayoutError as exc:
+            raise FinishError(f"M3 写链布局配置不可读：{exc}", cause="environment") from exc
+        meta_path = root / ".atlas" / "spec" / "structure" / "_meta.json"
+        if not prd_file.is_file() or not meta_path.is_file():
+            raise FinishError("M3 写链前置不满足：须完整装配且具备 PRD 与结构基线 _meta.json", cause="environment")
+        if task.get("status") != "in_progress":
+            raise FinishError(f"任务 {t_id} 状态须为 in_progress，当前 {task.get('status')!r}",
+                              cause="state_transition")
+        if archive_month(t_dir, tasks_root, t_id) is not None:
+            raise FinishError(f"任务 {t_id} 已归档，不能重复收口", cause="state_transition")
 
     bug_check = validate_backflow(root, task)
     if bug_check["findings"]:
@@ -769,7 +920,7 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
     # 结构事实新鲜度前置（RFC-20261122-05）：没刷 spec 拒收。--force 不绕本门
     # （force 语义 = 跳过人工审查，非跳过事实锚，评审 M4）。
     structure = check_structure_freshness(root)
-    if structure["status"] == "FAIL":
+    if structure["status"] == "FAIL" or (require_full_onboarding and structure["status"] != "PASS"):
         raise FinishError(f"任务 {t_id} 无法收口：{structure['reason']}",
                           cause="freshness_fail")
 
@@ -797,8 +948,8 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
             except (OSError, ValueError):
                 topology_options = {}
         topology_options["mode"] = topology_mode(root)
-        topology_result = (_refresh_staged_topology(root, topology_options)
-                           if task.get("topology_required") else None)
+        topo_fn = _refresh_staged_topology if mutate_topology else _preflight_staged_topology
+        topology_result = topo_fn(root, topology_options) if task.get("topology_required") else None
         if topology_result and topology_result.get("verdict") == "UNVERIFIED" \
                 and topology_result.get("cause") == "topology_unverified":
             topology_data = json.loads((root / ".adapter-out/topology.json").read_text(encoding="utf-8"))
@@ -857,7 +1008,7 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
                     or classification_result["margin"] < thresholds.get("margin", 1):
                 raise FinishError("任务分类 scorer/threshold/分数与校准账本不符", cause="calibration_unverified")
 
-    receipt_result = None
+    enforce_ctx: dict | None = None
     if receipt_mode(root) == "enforce":
         try:
             validate_workflow_origin(root, t_id,
@@ -924,88 +1075,209 @@ def finish_task(root: Path, task: dict, *, force: bool = False) -> dict:
         ok_base, base = _git_out(root, "rev-parse", "HEAD")
         if not ok_base:
             raise FinishError("receipt base HEAD 不可得", cause="environment")
-        try:
-            receipt = build_receipt(root=root, unit=t_id, task_id=t_id, base=base,
-                                    validators=governed_results, in_scope_modules=scope,
-                                    module_modes=module_modes,
-                                    review_path=(Path(review_dir).absolute().relative_to(root).as_posix() + "/review.json"),
-                                    requirement_id=task.get("requirement_root"), clause_ids=task.get("clause_ids") or [],
-                                    incident_ids=task.get("incident_ids") or [], resolves_incidents=task.get("resolves_incidents") or [],
-                                    doc_ids=task.get("doc_ids") or [], topology_refs=task.get("topology_refs") or [],
-                                    topology_required=bool(task.get("topology_required")), migration_required=bool(task.get("source_manifest")),
-                                    classification_required=bool(task.get("classification_required")),
-                                    classification_result=classification_result,
-                                    classification_input_digest=expected_digest,
-                                    review_origin="workflow", force=False)
-            receipt_result = verify_receipt(root, mode="enforce", check_current_tree=True,
-                                            expected_unit=t_id, expected_task_id=t_id,
-                                            expected_validator_digests={item["module"]: item["digest"] for item in governed_results})
-            if receipt_result["rc"] != 0:
-                raise FinishError("；".join(item["message"] for item in receipt_result["findings"]),
-                                  cause=receipt_result.get("cause") or "receipt_unverified")
-        except FinishError:
-            raise
-        except ReceiptError as exc:
-            raise FinishError(f"receipt 验证失败：{exc}", cause="receipt_stale") from exc
-        except SemanticError as exc:
-            raise FinishError(f"receipt Semantic 验证失败：{exc}", cause="contract_unverified") from exc
-        except (OSError, ValueError) as exc:
-            raise FinishError(f"receipt 验证失败：{exc}", cause="environment") from exc
-
-    # 更新 task.json 状态为 completed（E2E 前置结论一并落盘，issue #69）
-    task_json_file = t_dir / "task.json"
-    if task_json_file.is_file():
-        try:
-            meta = json.loads(task_json_file.read_text(encoding="utf-8"))
-        except Exception:
-            meta = task
-    else:
-        meta = task
-
-    meta["status"] = "completed"
-    meta["e2e_precondition"] = e2e
-    meta["structure_freshness"] = structure
-    meta["governance_precondition"] = {"incidents": incident_results, "docs": docs_result,
-                                       "topology": topology_result, "receipt": receipt_result}
-    atomic_write_json(task_json_file, meta)
-
-    # 归档（issue #70）：completed 任务移出活跃区；幂等，失败显式报错
-    archived = archive_task(root, tasks_root, t_dir, t_id)
-
-    # 检查整体工作流是否全部收工（含归档任务）；账本读取失败不得把已归档任务变成崩溃现场。
-    task_load_error: str | None = None
-    try:
-        all_tasks = load_tasks(tasks_root, include_archived=True)
-    except (PlanError, OSError) as exc:
-        all_tasks = [{**task, "status": "completed", "_archived": True}]
-        task_load_error = str(exc)
-    total = len(all_tasks)
-    completed_count = sum(1 for t in all_tasks if t.get("status") == "completed")
+        enforce_ctx = {
+            "scope": scope,
+            "governed_results": governed_results,
+            "module_modes": module_modes,
+            "base": base.splitlines()[0] if base else "",
+        }
 
     return {
-        "unit": t_id,
-        "status": "completed",
-        "total_tasks": total,
-        "completed_tasks": completed_count,
-        "all_done": (task_load_error is None and total > 0 and completed_count == total),
-        "task_load_error": task_load_error,
-        "requirement_closeout": (
-            requirement_closeout(root, task["requirement_root"])
-            if task.get("requirement_root") else None),
-        "bug_backflow": {
-            "applicable": bug_check["applicable"],
-            "artifacts": sorted(bug_artifacts),
-            "review": review_dir,
-        },
-        "change_backflow": {
-            "applicable": bug_check["applicable"],
-            "artifacts": sorted(bug_artifacts),
-            "review": review_dir,
-        },
-        "e2e_precondition": e2e,
-        "structure_freshness": structure,
-        "governance_precondition": {"incidents": incident_results, "docs": docs_result,
-                                    "topology": topology_result, "receipt": receipt_result},
-        "deferred_registration": deferred_info,
-        "archived": archived,
+        "bug_check": bug_check,
+        "bug_artifacts": bug_artifacts,
+        "review_dir": review_dir,
+        "e2e": e2e,
+        "structure": structure,
+        "incident_results": incident_results,
+        "docs_result": docs_result,
+        "topology_result": topology_result,
+        "classification_result": classification_result,
+        "expected_digest": expected_digest,
+        "enforce_ctx": enforce_ctx,
     }
+
+
+def _resolve_task_scope(root: Path, task: dict) -> tuple[Path, str, Path, Path]:
+    root = root.resolve()
+    t_id = str(task.get("id") or "")
+    if not UNIT_RE.match(t_id):
+        raise FinishError(f"非法任务标识：{t_id!r}", cause="no_task_card")
+    tasks_root = (root / ".atlas" / "tasks").resolve()
+    t_dir = Path(task.get("_dir") or (tasks_root / t_id)).resolve()
+    if t_dir != tasks_root and tasks_root not in t_dir.parents:
+        raise FinishError(f"任务目录越界：{t_dir}（必须在 {tasks_root} 之内）",
+                          cause="no_task_card")
+    if not t_dir.is_dir():
+        raise FinishError(f"任务目录不存在：{t_dir}", cause="no_task_card")
+    if receipt_mode(root) == "off":
+        raise FinishError("receipt off 模式下不能完成或归档任务", cause="receipt_unverified")
+    if archive_month(t_dir, tasks_root, t_id) is None:
+        archive_dest = tasks_root / ARCHIVE_DIR / date.today().strftime("%Y-%m") / t_id
+        if archive_dest.exists():
+            raise FinishError(
+                f"归档目标已存在：{archive_dest}（源目录仍在 {t_dir}；请人工核对后处理）",
+                cause="state_transition")
+    return root, t_id, tasks_root, t_dir
+
+
+def preflight_finish(root: Path, task: dict, *, force: bool = False,
+                     require_full_onboarding: bool = False) -> dict:
+    """纯只读预检：校验收口全部门禁与待写面，不写 attempts/deferred/receipt/.adapter-out。"""
+    root, t_id, tasks_root, t_dir = _resolve_task_scope(root, task)
+    deferred_plan = plan_deferred_findings(root, task, t_dir)
+    gates = _validate_finish_gates(
+        root, task, t_dir, tasks_root,
+        force=force, require_full_onboarding=require_full_onboarding, mutate_topology=False,
+    )
+    ok_head, head_out = _git_out(root, "rev-parse", "HEAD")
+    return {
+        "ok": True,
+        "unit": t_id,
+        "task_dir": str(t_dir),
+        "head_commit": head_out.splitlines()[0] if ok_head and head_out else None,
+        "staged_files": staged_files(root) or [],
+        "deferred_plan": deferred_plan,
+        "bug_backflow": {
+            "applicable": gates["bug_check"]["applicable"],
+            "artifacts": sorted(gates["bug_artifacts"]),
+            "review": gates["review_dir"],
+        },
+        "e2e_precondition": gates["e2e"],
+        "structure_freshness": gates["structure"],
+        "governance_precondition": {
+            "incidents": gates["incident_results"],
+            "docs": gates["docs_result"],
+            "topology": gates["topology_result"],
+            "receipt_mode": receipt_mode(root),
+        },
+        "enforce_ready": gates["enforce_ctx"] is not None,
+        "archive_dest": str(tasks_root / ARCHIVE_DIR / date.today().strftime("%Y-%m") / t_id),
+    }
+
+
+def finish_task(root: Path, task: dict, *, force: bool = False,
+                _lock_held: bool = False) -> dict:
+    """完成单个任务的收口流转。"""
+    root, t_id, tasks_root, t_dir = _resolve_task_scope(root, task)
+    from contextlib import nullcontext
+    try:
+        lock_ctx = nullcontext() if _lock_held else WriteLock(root, holder="cli-finish", unit=t_id)
+        with lock_ctx:
+            # 存量缺陷登记（RFC-20261122-07 §3.1.3）：finish 门判定**之前**执行——无论收口
+            # 成败先落账（open pre_existing Critical/Major 以 WARN 下限阻断收口，绑定成功
+            # 路径则头条病案永远到不了台账；fingerprint 幂等兜底复跑重复）。
+            deferred_info = extract_deferred_findings(root, task, t_dir)
+            gates = _validate_finish_gates(
+                root, task, t_dir, tasks_root,
+                force=force, require_full_onboarding=False, mutate_topology=True,
+            )
+            bug_check = gates["bug_check"]
+            bug_artifacts = gates["bug_artifacts"]
+            review_dir = gates["review_dir"]
+            e2e = gates["e2e"]
+            structure = gates["structure"]
+            incident_results = gates["incident_results"]
+            docs_result = gates["docs_result"]
+            topology_result = gates["topology_result"]
+            classification_result = gates["classification_result"]
+            expected_digest = gates["expected_digest"]
+            enforce_ctx = gates["enforce_ctx"]
+
+            receipt_result = None
+            if enforce_ctx is not None:
+                governed_results = enforce_ctx["governed_results"]
+                scope = enforce_ctx["scope"]
+                module_modes = enforce_ctx["module_modes"]
+                base = enforce_ctx["base"]
+                try:
+                    build_receipt(
+                        root=root, unit=t_id, task_id=t_id, base=base,
+                        validators=governed_results, in_scope_modules=scope,
+                        module_modes=module_modes,
+                        review_path=(Path(review_dir).absolute().relative_to(root).as_posix() + "/review.json"),
+                        requirement_id=task.get("requirement_root"), clause_ids=task.get("clause_ids") or [],
+                        incident_ids=task.get("incident_ids") or [], resolves_incidents=task.get("resolves_incidents") or [],
+                        doc_ids=task.get("doc_ids") or [], topology_refs=task.get("topology_refs") or [],
+                        topology_required=bool(task.get("topology_required")), migration_required=bool(task.get("source_manifest")),
+                        classification_required=bool(task.get("classification_required")),
+                        classification_result=classification_result,
+                        classification_input_digest=expected_digest,
+                        review_origin="workflow", force=False,
+                    )
+                    receipt_result = verify_receipt(
+                        root, mode="enforce", check_current_tree=True,
+                        expected_unit=t_id, expected_task_id=t_id,
+                        expected_validator_digests={item["module"]: item["digest"] for item in governed_results},
+                    )
+                    if receipt_result["rc"] != 0:
+                        raise FinishError("；".join(item["message"] for item in receipt_result["findings"]),
+                                          cause=receipt_result.get("cause") or "receipt_unverified")
+                except FinishError:
+                    raise
+                except ReceiptError as exc:
+                    raise FinishError(f"receipt 验证失败：{exc}", cause="receipt_stale") from exc
+                except SemanticError as exc:
+                    raise FinishError(f"receipt Semantic 验证失败：{exc}", cause="contract_unverified") from exc
+                except (OSError, ValueError) as exc:
+                    raise FinishError(f"receipt 验证失败：{exc}", cause="environment") from exc
+
+            # 更新 task.json 状态为 completed（E2E 前置结论一并落盘，issue #69）
+            task_json_file = t_dir / "task.json"
+            if task_json_file.is_file():
+                try:
+                    meta = json.loads(task_json_file.read_text(encoding="utf-8"))
+                except Exception:
+                    meta = task
+            else:
+                meta = task
+
+            meta["status"] = "completed"
+            meta["e2e_precondition"] = e2e
+            meta["structure_freshness"] = structure
+            meta["governance_precondition"] = {"incidents": incident_results, "docs": docs_result,
+                                               "topology": topology_result, "receipt": receipt_result}
+            atomic_write_json(task_json_file, meta)
+            fsync_dir(task_json_file.parent)
+
+            # 归档（issue #70）：completed 任务移出活跃区；幂等，失败显式报错
+            archived = archive_task(root, tasks_root, t_dir, t_id, _lock_held=True)
+
+            # 检查整体工作流是否全部收工（含归档任务）；账本读取失败不得把已归档任务变成崩溃现场。
+            task_load_error: str | None = None
+            try:
+                all_tasks = load_tasks(tasks_root, include_archived=True)
+            except (PlanError, OSError) as exc:
+                all_tasks = [{**task, "status": "completed", "_archived": True}]
+                task_load_error = str(exc)
+            total = len(all_tasks)
+            completed_count = sum(1 for t in all_tasks if t.get("status") == "completed")
+
+            return {
+                "unit": t_id,
+                "status": "completed",
+                "total_tasks": total,
+                "completed_tasks": completed_count,
+                "all_done": (task_load_error is None and total > 0 and completed_count == total),
+                "task_load_error": task_load_error,
+                "requirement_closeout": (
+                    requirement_closeout(root, task["requirement_root"])
+                    if task.get("requirement_root") else None),
+                "bug_backflow": {
+                    "applicable": bug_check["applicable"],
+                    "artifacts": sorted(bug_artifacts),
+                    "review": review_dir,
+                },
+                "change_backflow": {
+                    "applicable": bug_check["applicable"],
+                    "artifacts": sorted(bug_artifacts),
+                    "review": review_dir,
+                },
+                "e2e_precondition": e2e,
+                "structure_freshness": structure,
+                "governance_precondition": {"incidents": incident_results, "docs": docs_result,
+                                            "topology": topology_result, "receipt": receipt_result},
+                "deferred_registration": deferred_info,
+                "archived": archived,
+            }
+    except WriteLockError as exc:
+        raise FinishError(f"写链互斥锁冲突：{exc}", cause="environment") from exc
