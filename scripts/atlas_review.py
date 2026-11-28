@@ -132,8 +132,15 @@ def parse_preview_n(output: str) -> int | None:
 
 
 def _run(argv: list[str], root: Path, *, capture: bool = False):
-    return subprocess.run([str(x) for x in argv], cwd=str(root), capture_output=capture,
-                          text=True)
+    command = [str(x) for x in argv]
+    if sys.platform == "win32" and command:
+        executable = shutil.which(command[0])
+        target = Path(executable or command[0]).expanduser()
+        if target.is_file() and not executable \
+                and target.suffix.lower() not in {".exe", ".cmd", ".bat"}:
+            command = [sys.executable, *command]
+    return subprocess.run(command, cwd=str(root), capture_output=capture,
+                          text=True, encoding="utf-8", errors="replace")
 
 
 def _show(pr, *, capture: bool) -> None:

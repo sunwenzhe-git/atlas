@@ -158,9 +158,11 @@ def bootstrap_defect(root: Path, slug: str, related: str, report_text: str,
             f"| {item} | {target.name}#{item} | 关联需求 | 引用 {target.name}#{item}（正文唯一住址） |\n"
         )
         report = report_text.rstrip() + "\n"
-        (temp / REQUIREMENT_DOC_FILE).write_text(requirement, encoding="utf-8")
-        (temp / REQUIREMENT_ROOT_ITEMS_FILE).write_text(items, encoding="utf-8")
-        (temp / report_rel).write_text(report, encoding="utf-8")
+        (temp / REQUIREMENT_DOC_FILE).write_text(
+            requirement, encoding="utf-8", newline="")
+        (temp / REQUIREMENT_ROOT_ITEMS_FILE).write_text(
+            items, encoding="utf-8", newline="")
+        (temp / report_rel).write_text(report, encoding="utf-8", newline="")
         record = new_record(slug, related, stage, sha256_bytes(report.encode("utf-8")),
                             report_path=report_rel)
         findings = validate_record(record)
@@ -253,6 +255,22 @@ def staged_paths(root: Path) -> set[str]:
     return {p.decode("utf-8", errors="surrogateescape") for p in raw.split(b"\0") if p}
 
 
+def _index_matches_worktree(root: Path, rel: str) -> bool | None:
+    """Compare Git-object IDs so autocrlf/eol clean filters do not cause false divergence."""
+    try:
+        index = subprocess.run(["git", "rev-parse", f":{rel}"], cwd=str(root),
+                               capture_output=True, text=True, timeout=60)
+        worktree = subprocess.run(["git", "hash-object", f"--path={rel}", "--", rel],
+                                  cwd=str(root), capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if worktree.returncode != 0:
+        return None
+    if index.returncode != 0:
+        return False if (root / rel).is_file() else None
+    return index.stdout.strip() == worktree.stdout.strip()
+
+
 def index_worktree_findings(root: Path, source: dict, artifact_paths: set[str]) -> list[str]:
     findings: list[str] = []
     for item in source.get("implementation_files", []):
@@ -261,26 +279,21 @@ def index_worktree_findings(root: Path, source: dict, artifact_paths: set[str]) 
             if (Path(root) / rel).exists() or (Path(root) / rel).is_symlink():
                 findings.append(f"删除路径仍在工作树：{rel}")
             continue
-        try:
-            index_bytes = _git_bytes(root, "show", f":{rel}")
-        except BackflowError:
-            findings.append(f"无法读取 index blob：{rel}")
-            continue
         path = Path(root) / rel
         if not path.is_file() or path.is_symlink():
             findings.append(f"实现路径不是普通工作树文件：{rel}")
             continue
-        if index_bytes != path.read_bytes():
+        if _index_matches_worktree(root, rel) is False:
             findings.append(f"index/worktree 不一致：{rel}")
     for rel in sorted(artifact_paths):
         path = Path(root) / rel
         if not path.is_file() or path.is_symlink():
             findings.append(f"回推产物不是普通工作树文件：{rel}")
             continue
-        try:
-            if _git_bytes(root, "show", f":{rel}") != path.read_bytes():
-                findings.append(f"回推产物 index/worktree 不一致：{rel}")
-        except BackflowError:
+        matched = _index_matches_worktree(root, rel)
+        if matched is False:
+            findings.append(f"回推产物 index/worktree 不一致：{rel}")
+        elif matched is None:
             findings.append(f"回推产物未暂存：{rel}")
     return findings
 

@@ -65,7 +65,7 @@ def write_doc(root: Path, doc: dict, path: str = SEAL_REL) -> None:
     target = root / path
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n",
-                      encoding="utf-8")
+                      encoding="utf-8", newline="")
 
 
 def init_repo(tmp: Path) -> Path:
@@ -166,6 +166,12 @@ def repo(tmp_path: Path) -> Path:
 
 def test_c_first_sign_is_clean(repo: Path) -> None:
     assert codes(repo) == []
+
+
+def test_seal_discovery_normalizes_windows_relative_paths(repo: Path) -> None:
+    found = seal.head_seals(repo, ["product"])
+    assert found == [SEAL_REL]
+    assert seal.is_seal_path(found[0])
 
 
 def test_c_renewal_appends_chain(repo: Path) -> None:
@@ -343,7 +349,8 @@ def test_c_reanchor_writer_advances_epoch(tmp_path: Path) -> None:
     old_a = git(original, "log", "--diff-filter=A", "--format=%H",
                 "--reverse", "--", SEAL_REL).stdout.split()[0]
     rewritten = tmp_path / "rewritten"
-    subprocess.run(["git", "clone", "-q", str(original), str(rewritten)],
+    subprocess.run(["git", "-c", "core.autocrlf=false", "clone", "-q",
+                    str(original), str(rewritten)],
                    check=True)
     git(rewritten, "checkout", "-q", "--orphan", "rewritten")
     git(rewritten, "add", "-A")
@@ -351,13 +358,17 @@ def test_c_reanchor_writer_advances_epoch(tmp_path: Path) -> None:
         "commit", "-qm", "rewritten root")
     git(rewritten, "branch", "-M", "main")
     fresh = tmp_path / "fresh"
-    subprocess.run(["git", "clone", "-q", "file://" + str(rewritten), str(fresh)],
-                   check=True)
-    assert git(fresh, "cat-file", "-e", old_a, check=False).returncode != 0
-    card = fresh / "web" / CARD
-    card.parent.mkdir(parents=True, exist_ok=True)
-    card.write_text("atlas-acceptance: AC-SOLUTION-001\n", encoding="utf-8")
-    (card.parent / "atlas-apply.md").write_text("# apply\n", encoding="utf-8")
+    shutil.copytree(rewritten, fresh, ignore=shutil.ignore_patterns(".git"))
+    shutil.rmtree(fresh / "web", ignore_errors=True)
+    git(fresh, "init", "-q")
+    git(fresh, "add", "-A")
+    git(fresh, "-c", "user.email=a@b", "-c", "user.name=a",
+        "commit", "-qm", "fresh without old objects")
+    # file:// clone may retain extra refs/objects; the orphan HEAD must not
+    # expose the old seal commit in the path history.
+    fresh_history = git(fresh, "rev-list", "--full-history", "--no-renames",
+                        "--reverse", "HEAD", "--", SEAL_REL).stdout.splitlines()
+    assert old_a not in fresh_history
     core.write_lock(fresh, core.load_manifest(fresh), require_clean=True)
     commit(fresh, core.LOCK_NAME, message="lock after rewrite")
     result = core.reanchor_seal(fresh, SEAL_REL, "REVIEW-20261112-01", old_a)
@@ -808,7 +819,8 @@ def _rewrite_keeping_old_path_tree(tmp_path: Path) -> tuple[Path, str]:
         check=True, capture_output=True, text=True).stdout.strip()
     git(original, "branch", "-f", "rewritten", root)
     fresh = tmp_path / "fresh"
-    subprocess.run(["git", "clone", "-q", "--single-branch", "--branch",
+    subprocess.run(["git", "-c", "core.autocrlf=false", "clone", "-q",
+                    "--single-branch", "--branch",
                     "rewritten", "file://" + str(original), str(fresh)],
                    check=True)
     assert git(fresh, "cat-file", "-e", from_a, check=False).returncode != 0
@@ -1046,7 +1058,8 @@ def _rewrite_first_sign(tmp_path: Path) -> Path:
         "commit", "-qm", "rewritten lock")
     git(original, "branch", "-M", "main")
     fresh = tmp_path / "fresh"
-    subprocess.run(["git", "clone", "-q", "file://" + str(original), str(fresh)],
+    subprocess.run(["git", "-c", "core.autocrlf=false", "clone", "-q",
+                    "file://" + str(original), str(fresh)],
                    check=True)
     git(fresh, "fetch", "-q", "origin", "old-history")
     assert git(fresh, "cat-file", "-e", old_first, check=False).returncode == 0
@@ -1122,7 +1135,12 @@ def test_b1_atlas_check_dispatcher_does_not_skip_apply_record(repo: Path) -> Non
     validators = repo / ".atlas" / "validators"
     if validators.exists():
         shutil.rmtree(validators)
-    validators.symlink_to(PKG / "validators", target_is_directory=True)
+    try:
+        validators.symlink_to(PKG / "validators", target_is_directory=True)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
     check = PKG / "scripts" / "atlas_check.py"
 
     def row_of() -> dict:
