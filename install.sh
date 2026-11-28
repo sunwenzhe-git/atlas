@@ -41,15 +41,45 @@ if [ ! -f "$SCRIPT_DIR/install.py" ]; then
 fi
 
 # 解释器探测（Git Bash 里 python.org 只提供 python.exe，没有 python3）：
-#   ATLAS_PYTHON 显式覆盖 > python3 > python；都找不到 ⇒ fail-closed（exit 2）。
+#   ATLAS_PYTHON 显式覆盖 > python3 > python > py -3；都不行 ⇒ fail-closed（exit 2）。
+#
+# **必须验证候选真的能跑**，不能只看 `command -v`：Windows 上
+# `%LOCALAPPDATA%\Microsoft\WindowsApps\python3.exe` 是应用商店的**别名占位壳**，
+# `command -v python3` 命中，但执行时直接以 rc=49 退出且**零输出**（未安装应用时）。
+# 只看名字会把「没装 Python」误报成「install.py 莫名失败」（实测 rc=49/无 stderr）。
+_atlas_py_ok() {
+  "$1" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' \
+    >/dev/null 2>&1
+}
+PY=""
 if [ -n "${ATLAS_PYTHON:-}" ]; then
-  PY="$ATLAS_PYTHON"
-elif command -v python3 >/dev/null 2>&1; then
-  PY="python3"
-elif command -v python >/dev/null 2>&1; then
-  PY="python"
+  if _atlas_py_ok "$ATLAS_PYTHON"; then
+    PY="$ATLAS_PYTHON"
+  else
+    echo "错误：ATLAS_PYTHON 指向的解释器不可用或低于 Python 3.10：$ATLAS_PYTHON" >&2
+    exit 2
+  fi
 else
-  echo "错误：未找到 python3 / python（装配器需要 Python 3.10+）。" >&2
+  for cand in python3 python py; do
+    command -v "$cand" >/dev/null 2>&1 || continue
+    if [ "$cand" = "py" ]; then
+      # Windows py launcher：`py -3` 才是选 Python 3 的形态
+      if py -3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' \
+           >/dev/null 2>&1; then
+        exec py -3 "$SCRIPT_DIR/install.py" "$@"
+      fi
+      continue
+    fi
+    if _atlas_py_ok "$cand"; then
+      PY="$cand"
+      break
+    fi
+  done
+fi
+
+if [ -z "$PY" ]; then
+  echo "错误：未找到可用的 Python 3.10+（试过 python3 / python / py -3）。" >&2
+  echo "      若已安装，请用 ATLAS_PYTHON 指定完整路径。" >&2
   exit 2
 fi
 

@@ -140,7 +140,11 @@ def _scope_matches(root: Path, data: dict, *,
     if staged is None:
         return False, "无法读取暂存区，不能确认审查内容未被替换（请在 git 仓库内重跑 verify）"
     try:
-        hash_source = scope.get("hash_source", "worktree")
+        # review_scope 的 sha256 是「审查时的暂存内容」锚：生成侧一直按 index
+        # 哈希（见 workflow_receipt._staged_scope_digest）。旧报告可能省略
+        # hash_source；缺省若回退 worktree，Windows 的 autocrlf 会让同一 staged
+        # 内容在工作区呈现不同字节并误判为审查后变化。
+        hash_source = scope.get("hash_source", "index")
         head_ref = "INDEX" if hash_source == "index" else scope.get("head")
         if hash_source == "index" and _staged_scope_digest(root, staged) == scope.get("sha256"):
             return True, ""

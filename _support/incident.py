@@ -22,6 +22,7 @@ import shutil
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from _support.filelock import lock_exclusive as _lock_exclusive, unlock as _unlock_file
 from _support.governance_io import GovernancePathError, atomic_write_bytes, load_json, safe_path
 from _support.governance_schema import load_schema, validate
 from _support.layout import LayoutError, load_layout
@@ -712,19 +713,17 @@ def _publish(root: Path, incident_id: str, events: list[dict], selected_mode: st
     lock_path = safe_path(root, _relative(root, directory.parent / f".{incident_id}.lock"))
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    locked = False
     try:
-        try:
-            import fcntl
-            fcntl.flock(fd, fcntl.LOCK_EX)
-        except ImportError:
-            pass
+        _lock_exclusive(fd)
+        locked = True
         return _publish_locked(root, incident_id, events, selected_mode, now=now, closed=closed)
     finally:
-        try:
-            import fcntl
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        except ImportError:
-            pass
+        if locked:
+            try:
+                _unlock_file(fd)
+            except OSError:
+                pass
         os.close(fd)
 
 

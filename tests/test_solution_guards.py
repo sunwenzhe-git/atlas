@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -131,13 +132,18 @@ def test_nested_ignore_in_parent_dir_warns(tmp_path: Path) -> None:
                        install=False)
     result = core.check_solution(tmp_path)
     assert "命中 ignore" in details(result)
-    assert "members/.ignore" in details(result)
+    assert "members/.ignore" in details(result).replace("\\", "/")
 
 
 def test_symlink_escape_warns(tmp_path: Path) -> None:
     make_solution_root(tmp_path)
     outside = make_repo(tmp_path.parent / f"{tmp_path.name}-outside")
-    (tmp_path / "web").symlink_to(outside, target_is_directory=True)
+    try:
+        (tmp_path / "web").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
     core.init_solution(tmp_path, "demo", [("web", "web", "frontend")],
                        install=False)
     assert "逃逸" in details(core.check_solution(tmp_path))

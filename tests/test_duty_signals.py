@@ -10,10 +10,39 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 PKG_ROOT = Path(__file__).resolve().parents[1]
 SIGNALS_SH = PKG_ROOT / "scripts" / "duty_signals.sh"
+
+
+def posix_path(path: Path) -> str:
+    return path.as_posix() if os.name == "nt" else str(path)
+
+
+def run_signals(path: Path, *args: str, cwd: Path, env: dict) -> subprocess.CompletedProcess:
+    if os.name == "nt":
+        bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        if not bash.is_file():
+            raise FileNotFoundError("Git Bash 不在标准位置；duty_signals 需要真实 POSIX shell")
+        # Git for Windows may materialize fixture worktrees with CRLF even
+        # though the source tracking attribute is LF. Normalize the disposable
+        # fixture script before handing it to Git Bash.
+        path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n"))
+        # The host's `python3` entry is the Store alias (exit 49 without a real
+        # interpreter); make the fixture invoke the running interpreter via a
+        # path-prefix shim while leaving production logic untouched.
+        shim = path.parent / "_py_shim"
+        shim.mkdir(exist_ok=True)
+        shim_exe = shim / "python3.exe"
+        if not shim_exe.is_file():
+            shim_exe.write_bytes(Path(sys.executable).read_bytes())
+        env = dict(env, PATH=str(shim) + os.pathsep + env.get("PATH", ""))
+        return subprocess.run([str(bash), path.as_posix(), *args], cwd=str(cwd), env=env,
+                              capture_output=True, text=True, timeout=60)
+    return subprocess.run(["bash", str(path), *args], cwd=str(cwd), env=env,
+                          capture_output=True, text=True, timeout=60)
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -29,6 +58,10 @@ def _make_minimal_repo(root: Path, *, is_source: bool = True) -> None:
     _git(root, "config", "user.name", "t")
     (root / "scripts").mkdir(parents=True, exist_ok=True)
     shutil.copy2(SIGNALS_SH, root / "scripts" / "duty_signals.sh")
+    # Git Bash/autocrlf 下的 worktree fixture can materialize shell scripts with
+    # CRLF; normalize the copied fixture before handing it to real bash.
+    (root / "scripts" / "duty_signals.sh").write_bytes(
+        (root / "scripts" / "duty_signals.sh").read_bytes().replace(b"\r\n", b"\n"))
     (root / "duty-review").mkdir(parents=True, exist_ok=True)
     (root / "duty-review" / "families.py").write_text(
         "import sys\nprint('{}' if '--json' in sys.argv else 'ok')\n",
@@ -36,6 +69,7 @@ def _make_minimal_repo(root: Path, *, is_source: bool = True) -> None:
     )
     if is_source:
         (root / "install.py").write_text("# source marker\n", encoding="utf-8")
+        (root / "install.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
         (root / "rings" / "prd").mkdir(parents=True, exist_ok=True)
         (root / "rings" / "prd" / "reference.md").write_text("# prd\n", encoding="utf-8")
     _git(root, "add", "-A")
@@ -53,8 +87,7 @@ def test_duty_signals_avoids_source_self_shadowing(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     env = {k: v for k, v in os.environ.items() if k != "ATLAS_PLAYGROUND_ROOT"}
-    pr = subprocess.run(["bash", str(src / "scripts" / "duty_signals.sh"), "yesterday"],
-                        cwd=str(src), env=env, capture_output=True, text=True, timeout=60)
+    pr = run_signals(src / "scripts" / "duty_signals.sh", "yesterday", cwd=src, env=env)
     assert pr.returncode == 0, pr.stderr
     assert "(无 check-events.jsonl，跳过)" in pr.stdout
     assert "source_skip_noise" not in pr.stdout
@@ -88,9 +121,8 @@ def test_duty_signals_filters_ablation_skip_na_and_dirty_wip(tmp_path: Path) -> 
         "\n".join(raw_lines) + "\n", encoding="utf-8")
 
     env = dict(os.environ)
-    env["ATLAS_PLAYGROUND_ROOT"] = str(pg)
-    pr = subprocess.run(["bash", str(src / "scripts" / "duty_signals.sh"), "yesterday"],
-                        cwd=str(src), env=env, capture_output=True, text=True, timeout=60)
+    env["ATLAS_PLAYGROUND_ROOT"] = pg.as_posix() if os.name == "nt" else str(pg)
+    pr = run_signals(src / "scripts" / "duty_signals.sh", "yesterday", cwd=src, env=env)
     assert pr.returncode == 0, pr.stderr
     out = pr.stdout
     assert "clean=1 · wip_dirty=1 · ablation_filtered=1 · parse_errors=1" in out
@@ -114,9 +146,16 @@ def test_duty_signals_finds_sibling_playground_from_detached_worktree(tmp_path: 
     wt = tmp_path / "detached-wt"
     _git(src, "worktree", "add", "--detach", str(wt), "HEAD")
     try:
+        if os.name == "nt":
+            # The production script resolves `.git` as a file-managed path.
+            # Git for Windows writes an absolute Windows pointer there, which
+            # WSL cannot resolve; normalize this disposable fixture to the
+            # same relative form a POSIX checkout produces.
+            dotgit = wt / ".git"
+            dotgit.unlink()
+            dotgit.write_text("gitdir: ../atlas/.git/worktrees/detached-wt\n", encoding="utf-8")
         env = {k: v for k, v in os.environ.items() if k != "ATLAS_PLAYGROUND_ROOT"}
-        pr = subprocess.run(["bash", str(wt / "scripts" / "duty_signals.sh"), "yesterday"],
-                            cwd=str(wt), env=env, capture_output=True, text=True, timeout=60)
+        pr = run_signals(wt / "scripts" / "duty_signals.sh", "yesterday", cwd=wt, env=env)
         assert pr.returncode == 0, pr.stderr
         assert "来源=sibling:atlas-playground" in pr.stdout
         assert "sibling_gate: ok=1 median=77ms" in pr.stdout

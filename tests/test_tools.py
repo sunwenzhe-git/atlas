@@ -54,8 +54,9 @@ def test_mutation_proof_happy_path() -> None:
             return out
 
         def run_and_reset():
-            # 第一次调用（基线）后不变；注入后红；还原后（字节已回）自动复位
-            if state["injected"] and t.read_bytes() == b"ok\n":
+            # Windows 的 write_bytes 会按默认文件模式规范换行；用规范化读取判断
+            # 「注入已还原」，避免 CRLF 让状态机停在红。
+            if state["injected"] and t.read_text(encoding="utf-8") == "ok\n":
                 state["injected"] = False
             return run()
 
@@ -530,14 +531,14 @@ def test_f45_e2e_case_id_grammar_single_implementation_and_registered_consumers(
     ci = load("case_id", "_support/case_id.py")
 
     holders = _case_id_grammar_holders()
-    assert holders == ["_support/case_id.py"], (
+    assert [holder.replace("\\", "/") for holder in holders] == ["_support/case_id.py"], (
         f"文法常量应只存在于 _support/case_id.py；实况={holders}"
         "（新增取用者请经 load_module(\"case_id\") 取用，并登记进 CONSUMERS）"
     )
 
     actual = _case_id_actual_consumers()
     declared = sorted(ci.CONSUMERS)
-    assert actual == declared, (
+    assert [item.replace("\\", "/") for item in actual] == declared, (
         f"实际取用者={actual} 与 CONSUMERS 登记表={declared} 不一致"
         "（少登记 ⇒ 补进 CONSUMERS；假登记 ⇒ 去掉或接上单源）"
     )

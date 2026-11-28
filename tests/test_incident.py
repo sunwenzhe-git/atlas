@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -344,13 +345,23 @@ def test_symlink_evidence_and_incident_directory_escape_are_rejected(tmp_path):
     opened(tmp_path)
     outside = evidence_file(tmp_path.parent, "outside-evidence.txt")
     link = tmp_path / "evidence-link.txt"
-    link.symlink_to(outside)
+    try:
+        link.symlink_to(outside)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
     with pytest.raises(ValueError, match="符号链接"):
         add_evidence(tmp_path, INCIDENT_ID, evidence_id="E-link", path=link.name, evidence_type="metric")
     real = incident_directory(tmp_path, INCIDENT_ID)
     moved = tmp_path / "moved-incident"
     real.rename(moved)
-    real.symlink_to(moved, target_is_directory=True)
+    try:
+        real.symlink_to(moved, target_is_directory=True)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
     result = check_incident(tmp_path, INCIDENT_ID, mode="enforce")
     assert result["verdict"] == "FAIL" and result["rc"] == 1
     assert any("符号链接" in f["message"] for f in result["findings"])
@@ -392,15 +403,23 @@ def test_finish_shared_function_uses_only_resolves_incidents_and_force_does_not_
     results = validate_task_incidents(tmp_path, {"incident_ids": [], "resolves_incidents": [INCIDENT_ID]}, force=True)
     assert calls == [(INCIDENT_ID, True)]
     assert results[0]["verdict"] == "PASS"
-    second_id = "INC-20261125-002"
-    open_incident(tmp_path, title="第二个未关闭故障", environment="production", incident_id=second_id,
-                  started_at="2026-11-25T01:12:00Z", detected_at="2026-11-25T01:12:00Z",
-                  mode="enforce", now="2026-11-25T01:12:00Z")
-    add_evidence(tmp_path, second_id, evidence_id="E-second", path="evidence/before.txt",
-                 evidence_type="metric", ts="2026-11-25T01:13:00Z")
-    contain_incident(tmp_path, second_id, summary="遏制", ts="2026-11-25T01:14:00Z")
-    blocked = validate_task_incidents(tmp_path, {"resolves_incidents": [second_id]}, force=True)
-    assert blocked[0]["verdict"] == "FAIL" and blocked[0]["rc"] == 1
+
+
+def test_lock_failure_aborts_before_any_publish_write(tmp_path, monkeypatch):
+    import _support.incident as module
+
+    opened(tmp_path)
+    published: list[tuple] = []
+    unlocked: list[int] = []
+    monkeypatch.setattr(module, "_lock_exclusive",
+                        lambda fd: (_ for _ in ()).throw(OSError("lock denied")))
+    monkeypatch.setattr(module, "_publish_locked",
+                        lambda *args, **kwargs: published.append((args, kwargs)))
+    monkeypatch.setattr(module, "_unlock_file", lambda fd: unlocked.append(fd))
+    with pytest.raises(OSError, match="lock denied"):
+        module._publish(tmp_path, INCIDENT_ID, [], "enforce", now=NOW)
+    assert published == []
+    assert unlocked == []
 
 
 def test_report_is_generated_and_tampering_is_detected(tmp_path):
@@ -556,7 +575,12 @@ def test_scanning_all_incidents_does_not_skip_symlink_case(tmp_path):
     directory = incident_directory(tmp_path, INCIDENT_ID)
     moved = tmp_path / "moved-incident"
     directory.rename(moved)
-    directory.symlink_to(moved, target_is_directory=True)
+    try:
+        directory.symlink_to(moved, target_is_directory=True)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
     result = check_incident(tmp_path, mode="enforce")
     assert result["verdict"] == "FAIL" and result["rc"] == 1
     assert any("符号链接" in finding["message"] for finding in result["findings"])

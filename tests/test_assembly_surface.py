@@ -13,6 +13,7 @@ import importlib.util
 import json
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -89,13 +90,15 @@ def test_cleanup_factory_tests_pure_factory_residual_removed(tmp_path) -> None:
 
 
 def test_npm_pack_excludes_python_bytecode() -> None:
+    npm = "npm.cmd" if sys.platform == "win32" else "npm"
     result = subprocess.run(
-        ["npm", "pack", "--dry-run", "--json"], cwd=PKG_ROOT,
+        [npm, "pack", "--dry-run", "--json"], cwd=PKG_ROOT,
         capture_output=True, text=True, timeout=120,
     )
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    paths = [item["path"] for item in payload[0]["files"]]
+    package = payload[0] if isinstance(payload, list) else next(iter(payload.values()))
+    paths = [item["path"] for item in package["files"]]
     cached = [path for path in paths if "__pycache__" in path or path.endswith((".pyc", ".pyo"))]
     assert not cached, f"npm 包夹带 Python 字节码：{cached}"
 

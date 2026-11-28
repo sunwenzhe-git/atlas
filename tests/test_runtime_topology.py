@@ -368,7 +368,12 @@ def test_symlink_source_is_unverified_and_does_not_replace_last_known_good(tmp_p
     refresh(tmp_path, "*.yaml")
     before = snapshot(tmp_path)
     write(tmp_path, "real.yaml", COMPOSE.replace("name: shop", "name: other"))
-    (tmp_path / "compose.link.yaml").symlink_to("real.yaml")
+    try:
+        (tmp_path / "compose.link.yaml").symlink_to("real.yaml")
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
     result = refresh(tmp_path, "*.yaml", mode="enforce")
     assert result["verdict"] == "UNVERIFIED" and result["rc"] == 2
     assert any("符号链接" in finding["message"] for finding in result["findings"])
@@ -556,7 +561,7 @@ def test_projection_failure_after_pointer_switch_restores_last_known_good(tmp_pa
 
     def fail_render(path, data):
         nonlocal failed
-        if ".atlas/spec/structure/global" in str(path) and not failed:
+        if Path(path).name == "runtime-topology.md" and "/.adapter-out/topology/generations/" not in Path(path).as_posix() and not failed:
             failed = True
             raise OSError("injected projection failure")
         return original(path, data)

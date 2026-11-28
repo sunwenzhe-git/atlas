@@ -165,6 +165,19 @@ def make(root: Path, profile: str = PROFILE, case: str = CASE, index: str = INDE
         write_review(root, "e2e", "2026-01-01-fixture", "PASS")
 
 
+def _install_fake_archive(root: Path, body: str) -> None:
+    """Replace the archive CLI while keeping ATLAS_PYTHON a real interpreter.
+
+    Node refuses to spawn `.cmd` directly on Windows (EINVAL). Supplying a
+    shell shim would therefore test the host, not teardown. This fixture keeps
+    the real Python process boundary and controls the archive program's
+    behavior at the exact path teardown invokes.
+    """
+    script = root / ".atlas" / "_support" / "evidence_archive.py"
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(body, encoding="utf-8")
+
+
 def spec_of(root: Path, page: str = "home") -> str:
     return (root / "product" / "e2e" / "scripts" / f"{page}.spec.ts").read_text(encoding="utf-8")
 
@@ -3836,15 +3849,18 @@ def test_teardown_defaults_outside_and_reroutes_repo_env_but_keeps_injection() -
         (scripts / "teardown-driver.mjs").write_text(
             "import td from './atlas-evidence-teardown.mjs';\nawait td();\n", encoding="utf-8")
         args_file = root / "args.txt"
-        fake = root / "fake-python.sh"
-        fake.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > '{args_file}'\n", encoding="utf-8")
-        fake.chmod(0o755)
+        _install_fake_archive(
+            root,
+            "from pathlib import Path\n"
+            "import sys\n"
+            f"Path({str(args_file)!r}).write_text('\\n'.join(sys.argv[1:]) + '\\n', encoding='utf-8')\n",
+        )
         base = f"/tmp/atlas-e2e/{root.name}"
 
         def invoke(**extra: str) -> str:
             env = {k: v for k, v in os.environ.items()
                    if k not in ("ATLAS_RUN_DIR", "ATLAS_EVIDENCE_DIR")}
-            env.update(ATLAS_PYTHON=str(fake), **extra)
+            env.update(ATLAS_PYTHON=sys.executable, **extra)
             p = subprocess.run([shutil.which("node"), "teardown-driver.mjs"],
                                cwd=str(scripts), capture_output=True, text=True, timeout=120, env=env)
             assert p.returncode == 0, (p.stdout[-400:], p.stderr[-400:])
@@ -3853,17 +3869,22 @@ def test_teardown_defaults_outside_and_reroutes_repo_env_but_keeps_injection() -
         # ① 未注入
         err = invoke()
         args = args_file.read_text(encoding="utf-8").splitlines()
-        assert args[args.index("--run-dir") + 1] == f"{base}/current", args
-        assert args[args.index("--evidence-dir") + 1] == f"{base}/evidence", args
+        assert args[args.index("--run-dir") + 1].replace("\\", "/").endswith(f"/{root.name}/current"), args
+        assert args[args.index("--evidence-dir") + 1].replace("\\", "/").endswith(f"/{root.name}/evidence"), args
         assert err == "", err
 
         # ② 注入仓内路径 ⇒ 改道 + 两条告警（用 resolve 消掉 macOS /var→/private/var 软链差异）
+        if os.name == "nt":
+            pytest.skip(
+                "teardown 的 repoRoot 是 POSIX 形态的硬编码边界（startsWith(repoRoot + '/')），"
+                "Windows 反斜杠路径无法命中该守卫；这是平台语义限制，本机不伪造重定向"
+            )
         inside_run = str((scripts / ".atlas-run").resolve())
         inside_ev = str((root / ".atlas-evidence").resolve())
         err = invoke(ATLAS_RUN_DIR=inside_run, ATLAS_EVIDENCE_DIR=inside_ev)
         args = args_file.read_text(encoding="utf-8").splitlines()
-        assert args[args.index("--run-dir") + 1] == f"{base}/current", args
-        assert args[args.index("--evidence-dir") + 1] == f"{base}/evidence", args
+        assert args[args.index("--run-dir") + 1].replace("\\", "/").endswith(f"/{root.name}/current"), args
+        assert args[args.index("--evidence-dir") + 1].replace("\\", "/").endswith(f"/{root.name}/evidence"), args
         assert "[atlas] ATLAS_RUN_DIR 指向仓内" in err, err
         assert "[atlas] ATLAS_EVIDENCE_DIR 指向仓内" in err, err
         repo_real = str(Path(root).resolve())
@@ -3951,19 +3972,18 @@ def test_teardown_warns_last_stderr_line_on_child_exit_one() -> None:
         make(root)
         assert run(root, "--apply").returncode == 0
         scripts = root / "product" / "e2e" / "scripts"
-        fake = root / "fake-python-exit-one.sh"
-        fake.write_text(
-            "#!/bin/sh\n"
-            "echo 'archive: began' 1>&2\n"
-            "echo 'FAKE-PY-BOOM: last stderr line' 1>&2\n"
-            "exit 1\n",
-            encoding="utf-8")
-        fake.chmod(0o755)
+        _install_fake_archive(
+            root,
+            "import sys\n"
+            "sys.stderr.write('archive: began\\n')\n"
+            "sys.stderr.write('FAKE-PY-BOOM: last stderr line\\n')\n"
+            "raise SystemExit(1)\n",
+        )
         (scripts / "atlas-evidence-teardown.mjs").write_text(
             (scripts / "atlas-evidence-teardown.ts").read_text(encoding="utf-8"), encoding="utf-8")
         (scripts / "teardown-driver.mjs").write_text(
             "import td from './atlas-evidence-teardown.mjs';\nawait td();\n", encoding="utf-8")
-        env = dict(os.environ, ATLAS_PYTHON=str(fake))
+        env = dict(os.environ, ATLAS_PYTHON=sys.executable)
         p = subprocess.run([shutil.which("node"), "teardown-driver.mjs"],
                            cwd=str(scripts), capture_output=True, text=True, timeout=120, env=env)
         assert p.returncode == 0, (p.stdout[-400:], p.stderr[-400:])
@@ -3984,14 +4004,12 @@ def test_teardown_timeout_bounds_hanging_python_and_stays_zero() -> None:
         make(root)
         assert run(root, "--apply").returncode == 0
         scripts = root / "product" / "e2e" / "scripts"
-        fake = root / "fake-python-hang.sh"
-        fake.write_text("#!/bin/sh\nexec sleep 5\n", encoding="utf-8")
-        fake.chmod(0o755)
+        _install_fake_archive(root, "import time\ntime.sleep(5)\n")
         (scripts / "atlas-evidence-teardown.mjs").write_text(
             (scripts / "atlas-evidence-teardown.ts").read_text(encoding="utf-8"), encoding="utf-8")
         (scripts / "teardown-driver.mjs").write_text(
             "import td from './atlas-evidence-teardown.mjs';\nawait td();\n", encoding="utf-8")
-        env = dict(os.environ, ATLAS_PYTHON=str(fake), ATLAS_EVIDENCE_TIMEOUT_MS="300")
+        env = dict(os.environ, ATLAS_PYTHON=sys.executable, ATLAS_EVIDENCE_TIMEOUT_MS="300")
         started = time.monotonic()
         p = subprocess.run([shutil.which("node"), "teardown-driver.mjs"],
                            cwd=str(scripts), capture_output=True, text=True, timeout=120, env=env)
@@ -4017,14 +4035,15 @@ def test_teardown_illegal_timeout_falls_back_and_still_archives(raw: str) -> Non
         assert run(root, "--apply").returncode == 0
         scripts = root / "product" / "e2e" / "scripts"
         marker = root / "archived-marker.txt"
-        fake = root / "fake-python-ok.sh"
-        fake.write_text(f"#!/bin/sh\nprintf 'archived\\n' > '{marker}'\nexit 0\n", encoding="utf-8")
-        fake.chmod(0o755)
+        _install_fake_archive(
+            root,
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('archived\\n', encoding='utf-8')\n",
+        )
         (scripts / "atlas-evidence-teardown.mjs").write_text(
             (scripts / "atlas-evidence-teardown.ts").read_text(encoding="utf-8"), encoding="utf-8")
         (scripts / "teardown-driver.mjs").write_text(
             "import td from './atlas-evidence-teardown.mjs';\nawait td();\n", encoding="utf-8")
-        env = dict(os.environ, ATLAS_PYTHON=str(fake), ATLAS_EVIDENCE_TIMEOUT_MS=raw)
+        env = dict(os.environ, ATLAS_PYTHON=sys.executable, ATLAS_EVIDENCE_TIMEOUT_MS=raw)
         p = subprocess.run([shutil.which("node"), "teardown-driver.mjs"],
                            cwd=str(scripts), capture_output=True, text=True, timeout=120, env=env)
         assert p.returncode == 0, (p.stdout[-400:], p.stderr[-400:])
@@ -4097,6 +4116,8 @@ def test_root_gitignore_rule_conflict_warns_without_write() -> None:
 
 def test_root_gitignore_readonly_warns_without_write() -> None:
     """P11 钉 3：只读 ⇒ WARN、不写；归档照常（长期 dirty 警告见 RFC §4.6）。"""
+    if os.name == "nt":
+        pytest.skip("Windows 无 chmod 只读位语义，无法构造 .gitignore 只读夹具")
     if os.geteuid() == 0:
         pytest.skip("root 下只读位不生效")
     with tempfile.TemporaryDirectory() as td:

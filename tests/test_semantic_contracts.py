@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -62,6 +63,22 @@ def write(root: Path, rel: str, text: str | bytes) -> Path:
     return path
 
 
+def _autocrlf(root: Path, enabled: bool) -> None:
+    value = "true" if enabled else "false"
+    result = subprocess.run(["git", "config", "core.autocrlf", value], cwd=root,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def symlink_or_skip(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target)
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
+
+
 def git(root: Path, *args: str) -> str:
     result = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -75,6 +92,7 @@ def fixture(root: Path) -> str:
     write(root, "pytest.ini", "[pytest]\n")
     write(root, "web/search.tsx", VIEW)
     git(root, "init", "-q")
+    _autocrlf(root, False)
     git(root, "config", "user.email", "semantic@example.test")
     git(root, "config", "user.name", "Semantic Test")
     git(root, "add", ".")
@@ -105,6 +123,7 @@ def seed_expected(root: Path) -> None:
 
 
 def refresh(root: Path, commit: str, mode: str = "enforce") -> dict:
+    _autocrlf(root, False)
     git(root, "add", ".")
     extractor = load_module("validate_testids")
     version = "validate_testids@" + hashlib.sha256(
@@ -114,6 +133,7 @@ def refresh(root: Path, commit: str, mode: str = "enforce") -> dict:
 
 
 def check(root: Path, mode: str = "enforce") -> dict:
+    _autocrlf(root, False)
     extractor = load_module("validate_testids")
     version = "validate_testids@" + hashlib.sha256(
         (PKG_ROOT / "validators/validate_testids.py").read_bytes()).hexdigest()[:12]
@@ -374,7 +394,7 @@ def test_semantic_check_rejects_pointer_tamper_extra_files_and_symlink(tmp_path)
     pointer.unlink()
     outside = tmp_path / "outside.json"
     outside.write_text("{}")
-    pointer.symlink_to(outside)
+    symlink_or_skip(pointer, outside)
     assert check(tmp_path, mode="enforce")["verdict"] == "FAIL"
     with pytest.raises(SemanticError, match="manifest"):
         refresh(tmp_path, commit)
@@ -537,6 +557,7 @@ def test_new_staged_orphan_route_is_fail_even_if_worktree_restored(tmp_path):
     seed_expected(tmp_path)
     assert refresh(tmp_path, commit)["verdict"] == "PASS"
     path = write(tmp_path, "src/main.py", CODE + "\n@app.post('/api/orphan')\ndef orphan():\n    return []\n")
+    _autocrlf(tmp_path, False)
     git(tmp_path, "add", "src/main.py")
     path.write_text(CODE, encoding="utf-8")
     extractor = load_module("validate_testids")
@@ -556,6 +577,7 @@ def test_head_tree_projection_does_not_fall_back_to_current_index(tmp_path):
     git(tmp_path, "add", "src/main.py")
     git(tmp_path, "commit", "-qm", "integer head")
     head = git(tmp_path, "rev-parse", "HEAD")
+    _autocrlf(tmp_path, False)
     write(tmp_path, "src/main.py", CODE)
     git(tmp_path, "add", "src/main.py")
     extractor = load_module("validate_testids")
@@ -581,6 +603,7 @@ def test_non_ascii_staged_orphan_route_is_fail(tmp_path):
     seed_expected(tmp_path)
     assert refresh(tmp_path, commit)["verdict"] == "PASS"
     write(tmp_path, "src/新增.py", "@app.get('/api/orphan')\ndef orphan():\n    return []\n")
+    _autocrlf(tmp_path, False)
     git(tmp_path, "add", "src/新增.py")
     result = refresh(tmp_path, commit)
     assert result["verdict"] == "FAIL" and result["cause"] == "contract_stale", result

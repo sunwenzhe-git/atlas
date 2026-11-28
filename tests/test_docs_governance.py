@@ -267,7 +267,8 @@ def test_random_hash_is_not_objective_no_impact_evidence(tmp_path):
 def test_commit_no_impact_evidence_must_touch_and_match_sources(tmp_path):
     fixture(tmp_path)
     for args in (("init", "-q"), ("config", "user.email", "docs@example.test"),
-                 ("config", "user.name", "Docs Test"), ("add", "."), ("commit", "-qm", "base")):
+                     ("config", "user.name", "Docs Test"), ("config", "core.autocrlf", "false"),
+                     ("add", "."), ("commit", "-qm", "base")):
         subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
     baseline(tmp_path)
     write(tmp_path, "README.md", "unrelated\n")
@@ -435,14 +436,24 @@ def test_symlink_document_and_source_fail_even_when_target_inside_root(tmp_path)
     fixture(tmp_path)
     write(tmp_path, "docs/real.md", "# Real\n")
     (tmp_path / "docs/guide.md").unlink()
-    (tmp_path / "docs/guide.md").symlink_to("real.md")
+    try:
+        (tmp_path / "docs/guide.md").symlink_to("real.md")
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
     result = check_docs(tmp_path, mode="enforce")
     assert result["verdict"] == "FAIL"
     assert any(item.get("path") == "docs/guide.md" and "符号链接" in item["message"] for item in result["findings"])
     (tmp_path / "docs/guide.md").unlink()
     write(tmp_path, "docs/guide.md", "# Guide\n")
     (tmp_path / "src/app.py").unlink()
-    (tmp_path / "src/app.py").symlink_to("../docs/real.md")
+    try:
+        (tmp_path / "src/app.py").symlink_to("../docs/real.md")
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
     result = check_docs(tmp_path, mode="enforce")
     assert result["verdict"] == "FAIL"
     assert any(item.get("path") == "src/app.py" and "符号链接" in item["message"] for item in result["findings"])

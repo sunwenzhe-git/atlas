@@ -82,7 +82,7 @@ class BugBackflowTests(unittest.TestCase):
     def _write(self, rel: str, text: str) -> Path:
         path = self.root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        path.write_text(text, encoding="utf-8", newline="")
         return path
 
     def _prepare_bug(self, *, code: str | None = None,
@@ -95,14 +95,14 @@ class BugBackflowTests(unittest.TestCase):
             f"# 缺陷 {BUG_ID}\n\n**类型**：缺陷\n**关联需求**：{RELATED}\n**状态**：候选\n"
         )
         (req_root / "requirement.md").write_text(
-            requirement_prefix + requirement + requirement_extra, encoding="utf-8",
+            requirement_prefix + requirement + requirement_extra, encoding="utf-8", newline="",
         )
         (req_root / "items.md").write_text(
             "# 落点条目表\n\n| ID | 页码 | 章节 | 原文 |\n|---|---|---|---|\n"
             "| R-01 | baseline#R-01 | 关联需求 | 引用既有行为条款 |\n",
-            encoding="utf-8",
+            encoding="utf-8", newline="",
         )
-        (req_root / "work" / "缺陷报告.md").write_text(report, encoding="utf-8")
+        (req_root / "work" / "缺陷报告.md").write_text(report, encoding="utf-8", newline="")
         record = records.new_record(BUG_ID, RELATED, "test", hashlib.sha256(report.encode()).hexdigest())
         records.write_record(req_root, record)
         if code is not None:
@@ -302,6 +302,16 @@ class BugBackflowTests(unittest.TestCase):
         findings = backflow.index_worktree_findings(self.root, snapshot, self._artifact_paths(req_root))
         self.assertIn("index/worktree 不一致：src/service.py", findings)
 
+    def test_crlf_worktree_matching_index_is_not_divergence(self) -> None:
+        req_root = self._prepare_bug()
+        self._write("src/crlf.txt", "line one\nline two\n")
+        git(self.root, "config", "core.autocrlf", "true")
+        git(self.root, "add", "src/crlf.txt")
+        snapshot = backflow.source_snapshot(self.root, "staged", None, self._artifact_paths(req_root))
+        self.assertEqual(
+            backflow.index_worktree_findings(self.root, snapshot, self._artifact_paths(req_root)),
+            [])
+
     def test_artifact_index_worktree_divergence_is_reported(self) -> None:
         req_root = self._prepare_bug()
         record = records.read_record(req_root)
@@ -318,7 +328,12 @@ class BugBackflowTests(unittest.TestCase):
 
     def test_new_symlink_is_unsupported(self) -> None:
         self._prepare_bug()
-        (self.root / "src" / "link").symlink_to("../baseline.txt")
+        try:
+            (self.root / "src" / "link").symlink_to("../baseline.txt")
+        except OSError as exc:
+            if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                self.skipTest("当前 Windows 用户没有创建符号链接的特权")
+            raise
         git(self.root, "add", "src/link")
         self._assert_unsupported("src/link")
 
@@ -337,7 +352,12 @@ class BugBackflowTests(unittest.TestCase):
         self._prepare_bug()
         path = self.root / "src" / "service.py"
         path.unlink()
-        path.symlink_to("../baseline.txt")
+        try:
+            path.symlink_to("../baseline.txt")
+        except OSError as exc:
+            if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                self.skipTest("当前 Windows 用户没有创建符号链接的特权")
+            raise
         git(self.root, "add", "src/service.py")
         entries = backflow._raw_entries(self.root, "staged", None)
         self.assertEqual(entries[0]["status"], "T")

@@ -109,13 +109,22 @@ def _backend_env() -> dict:
     return env
 
 
+def _command() -> str:
+    exe = shutil.which("cgc")
+    if exe is None:
+        return "cgc"
+    # subprocess 的 Windows CreateProcess 不会套用 PATHEXT 解析：
+    # which() 命中 cgc.CMD 时仍传裸名会 FileNotFound。POSIX 保持裸名。
+    return "cgc.cmd" if os.name == "nt" and exe.lower().endswith(".cmd") else "cgc"
+
+
 def detect(root: Path | None = None, cfg: dict | None = None) -> dict | None:
     """探测 cgc 可执行与版本；若已退役且未安装则返回 None。"""
     exe = shutil.which("cgc")
     if exe is None:
         return None
     try:
-        p = subprocess.run(["cgc", "--version"], capture_output=True, text=True,
+        p = subprocess.run([_command(), "--version"], capture_output=True, text=True,
                            timeout=VERSION_TIMEOUT, env=_backend_env())
     except (subprocess.TimeoutExpired, OSError) as e:
         warn(f"cgc --version 探测失败（{e}）")
@@ -178,7 +187,7 @@ def ensure_index(root: Path, cfg: dict | None = None, version: str | None = None
     marker_path.parent.mkdir(parents=True, exist_ok=True)
     exe = shutil.which("cgc")
     if exe:
-        p = subprocess.run(["cgc", "index"], cwd=str(root), capture_output=True, text=True,
+        p = subprocess.run([_command(), "index"], cwd=str(root), capture_output=True, text=True,
                            timeout=INDEX_TIMEOUT, env=_backend_env())
         if p.returncode != 0:
             die(f"cgc index 失败（code={p.returncode}）: {(p.stderr or p.stdout).strip()}")
@@ -211,7 +220,7 @@ def _rel(root: Path, path: str) -> str | None:
 
 
 def query(root: Path, cypher_statement: str, cfg: dict | None = None) -> list[dict]:
-    p = subprocess.run(["cgc", "query", cypher_statement], cwd=str(root),
+    p = subprocess.run([_command(), "query", cypher_statement], cwd=str(root),
                        capture_output=True, text=True, timeout=QUERY_TIMEOUT, env=_backend_env())
     if p.returncode != 0:
         die(f"cgc query 失败（code={p.returncode}）: {(p.stderr or p.stdout).strip()}")

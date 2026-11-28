@@ -9,7 +9,7 @@
 |---|---|
 | `shared/independent-review.md` | 独立审查契约:四类实例接线(§1)、骨架条款(§2)、输出双份契约(§3) |
 | `shared/closeout.md` | 收口触发表:唯一真相源,派生器只解析不判定(触发表 §1) |
-| `scripts/make_review_inputs.py` | 造审查输入:按模式收集文件并附摘要(`collect`,`scripts/make_review_inputs.py:73`) |
+| `scripts/make_review_inputs.py` | 造审查输入:按模式收集文件并附摘要(`collect`,`scripts/make_review_inputs.py:83`) |
 | `scripts/cli_review_convert.py` | CLI 审查输出 → `review.json` 契约 + N/M 对账(`SEVERITY_MAP`,`scripts/cli_review_convert.py:41`;M=coverage completed,无 coverage 回退 summary;delta v3 校验 head_sha/reviewed_files;缺实审数拒绝产出) |
 | `scripts/validate_review_report.py` | 报告落盘形态门:分级闭集 / fingerprint 去重 / 签字取证 / CLI 状态行(`validate_report`,`scripts/validate_review_report.py:74`) |
 | `scripts/review_closure.py` | 跨轮 finding 闭环台账:prior open Critical/Major ⇔ carried/resolves;关闭按所有出现里最严的级别判(`state_of`,`scripts/review_closure.py:85`)、**按该指纹最后一次证据判**(中间轮关过就算关,`last_close`,`scripts/review_closure.py:85`)、中间轮坏形状逐条取舍且**重复指纹整组不作关闭证据**(`round_declares`,`scripts/review_closure.py:145`)、孤儿单元文件也 WARN(`load_prior_rounds`,`scripts/review_closure.py:109`)、连续 carried 缺 `premise`/`discriminating_check` 记 `premise_required` 并抬 WARN(`streak_prev_round`,`scripts/review_closure.py:249`);WARN observer、非门 |

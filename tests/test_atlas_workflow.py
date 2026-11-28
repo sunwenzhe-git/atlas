@@ -32,6 +32,15 @@ def _month() -> str:
     return date.today().strftime("%Y-%m")
 
 
+def symlink_or_skip(link: Path, target: Path, *, target_is_directory: bool = False) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
+
+
 def run(root: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     e = dict(os.environ)
     e.update(env or {})
@@ -532,7 +541,7 @@ def test_finish_receipt_enforce_keeps_origin_tree_and_immediate_verify_green(tmp
     review = root / "product/reviews/2026-11-25-impl-review-T-RCPT/review.json"
     review.parent.mkdir(parents=True)
     staged = subprocess.check_output(["git", "diff", "--cached", "--name-only"], cwd=root, text=True).splitlines()
-    scope = review_scope_core.build_manifest(root, staged)
+    scope = review_scope_core.build_manifest(root, staged, hash_source="index")
     review.write_text(json.dumps({"status": "PASS", "ok": True, "review_scope": {"sha256": scope["scope_sha256"]}}))
     create_workflow_origin(root, "T-RCPT", review.relative_to(root).as_posix())
     config = root / ".atlas/config.yaml"
@@ -1363,7 +1372,7 @@ def test_requirement_relation_rejects_symlink_escape(tmp_path: Path) -> None:
         encoding="utf-8")
     link = root / "product" / "requirements" / "base"
     link.parent.mkdir(parents=True)
-    link.symlink_to(outside, target_is_directory=True)
+    symlink_or_skip(link, outside, target_is_directory=True)
     make_requirement_root(root, slug="change", kind="需求变更", related="base#R-01")
     p = run(root, "plan", "--unit", "T-21", "--requirement",
             "product/requirements/change")
@@ -1493,8 +1502,8 @@ def test_requirement_relation_rejects_symlinked_authority_files(tmp_path: Path) 
         encoding="utf-8")
     base = root / "product" / "requirements" / "base"
     base.mkdir(parents=True)
-    (base / "requirement.md").symlink_to(outside / "requirement.md")
-    (base / "items.md").symlink_to(outside / "items.md")
+    symlink_or_skip(base / "requirement.md", outside / "requirement.md")
+    symlink_or_skip(base / "items.md", outside / "items.md")
     make_requirement_root(root, slug="change", kind="需求变更", related="base#R-01")
     p = run(root, "plan", "--unit", "T-25", "--requirement",
             "product/requirements/change")
@@ -1511,7 +1520,7 @@ def test_requirement_relation_rejects_symlinked_archive_month(tmp_path: Path) ->
     (real / "items.md").write_text(
         "| ID | 页码 | 章节 | 原文 |\n|---|---|---|---|\n| R-01 | p1 | §1 | x |\n",
         encoding="utf-8")
-    (real.parent.parent / "2026-11").symlink_to(real.parent, target_is_directory=True)
+    symlink_or_skip(real.parent.parent / "2026-11", real.parent, target_is_directory=True)
     make_requirement_root(root, slug="change", kind="需求变更", related="base#R-01")
     p = run(root, "plan", "--unit", "T-26", "--requirement",
             "product/requirements/change")
@@ -1846,7 +1855,7 @@ def test_requirement_archive_root_symlink_is_rejected(tmp_path: Path) -> None:
         encoding="utf-8")
     archive_link = root / "product" / "requirements" / "archive"
     archive_link.parent.mkdir(parents=True)
-    archive_link.symlink_to(outside, target_is_directory=True)
+    symlink_or_skip(archive_link, outside, target_is_directory=True)
     make_requirement_root(root, slug="base")
     make_requirement_root(root, slug="change", kind="需求变更", related="base#R-01")
     p = run(root, "plan", "--unit", "T-35", "--requirement",
@@ -1860,7 +1869,7 @@ def test_normalize_requirement_ref_handles_symlink_loop(tmp_path: Path) -> None:
     from _support.workflow_plan import normalize_requirement_ref
 
     loop = tmp_path / "loop"
-    loop.symlink_to(loop)
+    symlink_or_skip(loop, loop, target_is_directory=True)
     assert normalize_requirement_ref(tmp_path, "loop") == "loop"
 
 
@@ -1898,7 +1907,7 @@ def test_plan_reserves_archive_directory_without_task_json(tmp_path: Path) -> No
 def test_requirement_root_symlink_loop_returns_finding(tmp_path: Path) -> None:
     """M238：verify 后续 resolve 不再捕获 symlink loop 时，本用例必须红。"""
     root = make_clean_project(tmp_path)
-    (root / "loop").symlink_to(root / "loop")
+    symlink_or_skip(root / "loop", root / "loop", target_is_directory=True)
     _make_claim_card(root, "T-A", "loop", ["R-01"])
     findings = requirement_root_findings(root)
     assert any("路径不可解析" in f or "无法解析" in f for f in findings)
@@ -1966,7 +1975,7 @@ def test_archive_task_rejects_symlink_month(tmp_path: Path) -> None:
     outside = tmp_path.parent / f"{tmp_path.name}-month"
     outside.mkdir()
     (tasks / "archive").mkdir()
-    (tasks / "archive" / "2026-11").symlink_to(outside, target_is_directory=True)
+    symlink_or_skip(tasks / "archive" / "2026-11", outside, target_is_directory=True)
     with pytest.raises(FinishError, match="symlink"):
         archive_task(root, tasks, source, "T-A")
     assert source.is_dir()
@@ -2421,7 +2430,7 @@ def test_finish_c1_staged_impl_with_scope_seal_passes(tmp_path: Path) -> None:
     (root / "src").mkdir()
     (root / "src" / "impl.py").write_text("impl v2\n", encoding="utf-8")
     subprocess.run(["git", "add", "src/impl.py"], cwd=str(root), check=True, capture_output=True)
-    manifest = scope_core.build_manifest(root, ["src/impl.py"])
+    manifest = scope_core.build_manifest(root, ["src/impl.py"], hash_source="index")
     r_dir = root / "product" / "reviews" / "2026-11-22-impl-review-T-S10"
     r_dir.mkdir(parents=True)
     (r_dir / "review.json").write_text(json.dumps({

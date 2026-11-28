@@ -10,10 +10,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from _support.argv_split import join_command
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "ablation.py"
 
@@ -81,11 +83,21 @@ def run(root: Path, state: Path, *args: str) -> subprocess.CompletedProcess:
                           capture_output=True, text=True, timeout=120)
 
 
+def _noop_smoke() -> str:
+    """跨平台空操作 smoke 口令。
+
+    POSIX 有 `true`，Windows 没有独立可执行文件（`true` 只在 PowerShell 里是别名，
+    `subprocess` 直起进程时不存在）⇒ 原夹具 `--smoke true` 在 Windows 上 rc=127，
+    把「基线 smoke 失败」误报成消融缺陷。Windows 用 `cmd /c exit 0` 等价表达。
+    """
+    return "cmd /c exit 0" if os.name == "nt" else "true"
+
+
 def begin(root: Path, state: Path, patch: Path, *, ident: str = "t1",
           extra: list[str] | None = None) -> subprocess.CompletedProcess:
     return run(root, state, "begin", "--id", ident, "--patch", str(patch),
                "--scope", "test", "--timebox", "60",
-               "--smoke", "true", *(extra or []))
+               "--smoke", _noop_smoke(), *(extra or []))
 
 
 def _state_dir(root: Path, state: Path) -> Path:
@@ -94,7 +106,7 @@ def _state_dir(root: Path, state: Path) -> Path:
 
 
 def _result(root: Path, state: Path, ident: str = "t1") -> dict:
-    return json.loads((_state_dir(root, state) / ident / "result.json").read_text())
+    return json.loads((_state_dir(root, state) / ident / "result.json").read_text(encoding="utf-8"))
 
 
 def test_begin_and_restore_roundtrip(tmp_path) -> None:
@@ -177,10 +189,10 @@ def test_state_root_inside_project_and_bad_id_are_refused(tmp_path) -> None:
     root = _repo(tmp_path)
     patch = _patch(tmp_path, MODIFY)
     p = run(root, tmp_path / "repo" / "state", "begin", "--id", "t1",
-            "--patch", str(patch), "--scope", "test", "--smoke", "true")
+            "--patch", str(patch), "--scope", "test", "--smoke", _noop_smoke())
     assert p.returncode == 2
     p2 = run(root, tmp_path / "state", "begin", "--id", "../x",
-             "--patch", str(patch), "--scope", "test", "--smoke", "true")
+             "--patch", str(patch), "--scope", "test", "--smoke", _noop_smoke())
     assert p2.returncode == 2
 
 
@@ -198,7 +210,7 @@ def test_duplicate_active_is_refused(tmp_path) -> None:
     patch = _patch(tmp_path, MODIFY)
     assert begin(root, state, patch).returncode == 0
     p = run(root, state, "begin", "--id", "t2", "--patch", str(patch),
-            "--scope", "test", "--smoke", "true")
+            "--scope", "test", "--smoke", _noop_smoke())
     assert p.returncode == 2
     assert (_state_dir(root, state) / "active.json").is_file()
 
@@ -221,8 +233,7 @@ def _smoke_script(tmp_path: Path, body: str) -> Path:
 
 
 def _smoke_cmd(script: Path, counter: Path) -> str:
-    return shlex.join([sys.executable, str(script), str(counter)])
-
+    return join_command([sys.executable, str(script), str(counter)])
 
 def test_smoke_failure_keeps_active(tmp_path) -> None:
     root = _repo(tmp_path)
@@ -320,7 +331,7 @@ def test_after_manifest_write_failure_keeps_before_and_active(tmp_path, monkeypa
     monkeypatch.setattr(mod, "_atomic_json", failing)
     args = argparse.Namespace(id="t1", root=str(root), patch=str(patch),
                               scope="test", state_root=str(state), timebox=60,
-                              smoke="true", owner="tester", allow_dirty=False,
+                              smoke=_noop_smoke(), owner="tester", allow_dirty=False,
                               state=[])
     try:
         mod.cmd_begin(args)
@@ -423,8 +434,56 @@ def test_install_update_refuses_active_ablation(tmp_path) -> None:
         "timebox_min": 60,
     }), encoding="utf-8")
     env = {**os.environ, "ATLAS_ABLATION_HOME": str(state)}
-    p = subprocess.run(["bash", str(pkg / "install.sh"), "--target", str(root),
+    bash = _find_bash()
+    if bash is None:
+        import pytest
+        pytest.skip("无可用 bash（Windows 上需 Git Bash；WSL 与宿主 Python 不在同一文件系统视图）")
+    script = _bash_path(pkg / "install.sh", bash)
+    target = _bash_path(root, bash)
+    p = subprocess.run([bash, script, "--target", target,
                         "--update", "--dry-run"], cwd=str(pkg), env=env,
-                       capture_output=True, text=True, timeout=120)
+                       capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert p.returncode == 2, p.stdout + p.stderr
     assert "消融事务" in p.stdout + p.stderr
+
+
+def _find_bash() -> str | None:
+    """挑一个**与宿主 Python 同一文件系统视图**的 bash。
+
+    Windows 上 PATH 里的 `bash` 常是 WSL 转接器（`WindowsApps\\bash.exe`）：
+    它跑在独立 Linux 命名空间里，看不到宿主盘符的原始路径，也**没有 Windows 的
+    Python** ⇒ `install.sh` 内部的 `exec "$PY" install.py` 必然找不到解释器，
+    从而绕过 `install.py` 的消融互锁（实测 rc=0 而预期 rc=2）。这不是被测代码
+    的问题，是选错了 bash。
+
+    Git Bash（MSYS2）与宿主共享文件系统与进程视图，是本仓 shell 脚本的宿主环境。
+    """
+    if os.name != "nt":
+        return shutil.which("bash")
+    for cand in (r"C:\Program Files\Git\bin\bash.exe",
+                 r"C:\Program Files (x86)\Git\bin\bash.exe",
+                 str(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/Git/bin/bash.exe")):
+        if Path(cand).is_file():
+            return cand
+    found = shutil.which("bash")
+    if found and "WindowsApps" not in found:
+        return found
+    return None
+
+
+def _bash_path(path: Path, bash: str) -> str:
+    """把本机路径转成给定 bash 能解析的形态。
+
+    - Git Bash（MSYS2）：`/d/work/x`
+    - WSL：`/mnt/d/work/x`
+    两者都**不认** `D:\\x` 反斜杠形态（反斜杠被当转义吃掉，报
+    `No such file or directory`，实测）。按 bash 身份选前缀，不硬编码。
+    POSIX 平台原样返回（行为不变）。
+    """
+    p = Path(path)
+    if os.name != "nt":
+        return str(p)
+    drive = p.drive.rstrip(":").lower()
+    rest = str(p)[len(p.drive):].replace("\\", "/")
+    prefix = "/mnt" if "system32" in bash.lower() or "windowsapps" in bash.lower() else ""
+    return f"{prefix}/{drive}{rest}"

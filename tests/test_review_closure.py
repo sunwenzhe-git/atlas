@@ -695,6 +695,10 @@ def sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def file_sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def scope(path: str, file_sha: str, scope_sha: str) -> dict:
     return {"manifest": "scope-manifest.json", "sha256": scope_sha,
             "files": [{"path": path, "sha256": file_sha, "status": "M"}]}
@@ -720,7 +724,7 @@ def test_scope_drift_covered_by_latest_no_warn() -> None:
         root = Path(td)
         (root / "f.txt").write_text("two\n", encoding="utf-8")
         scopes = {1: scope("f.txt", sha("one\n"), "1" * 64),
-                  2: scope("f.txt", sha("two\n"), "2" * 64)}
+                  2: scope("f.txt", file_sha(root / "f.txt"), "2" * 64)}
         d = write_report(root, {1: [], 2: []}, scopes=scopes, report_root=root)
         p = run(d)
         assert p.returncode == 0 and "PASS" in p.stdout, p.stdout
@@ -732,7 +736,7 @@ def test_scope_drift_accepted_no_warn() -> None:
         root = Path(td)
         (root / "f.txt").write_text("two\n", encoding="utf-8")
         scopes = {1: scope("f.txt", sha("one\n"), "1" * 64),
-                  2: scope("f.txt", sha("two\n"), "2" * 64)}
+                  2: scope("f.txt", file_sha(root / "f.txt"), "2" * 64)}
         drift = {"previous_sha256": "1" * 64, "current_sha256": "2" * 64,
                  "accepted_by": "alice", "accepted_at": "2026-11-03T00:00:00+08:00",
                  "reason": "人工确认接受未复审变化", "reviewed": False}

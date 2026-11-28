@@ -55,8 +55,8 @@
 
 ### 1. CLI 与装配
 
-- `bin/atlas.js`(705 行):命令面 = `init / update / upgrade / check / migrate / incident / docs / topology / contracts / receipt / classify / calibrate / metrics / workflow / change / bug / solution / review / eval / e2e / console / report / apply / version`。`init` 直接调装配器(前置仅 Node.js + Python 3.10+);平台探测拆在 `bin/platform.js`(bash 只认 Git Bash 不回落 WSL 中继壳;Python 按平台探测 `py -3`/`python`/`python3` 并校验 3.10+)。
-- `install.py`(1008 行):装配单源(`install.sh` 56 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`(RFC-20261114-01 起不含出厂测试目录,历史残留经 MANIFEST 基线闸清理),落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 123 条 `c()` 自检声明。
+- `bin/atlas.js`(706 行):命令面 = `init / update / upgrade / check / migrate / incident / docs / topology / contracts / receipt / classify / calibrate / metrics / workflow / change / bug / solution / review / eval / e2e / console / report / apply / version`。`init` 直接调装配器(前置仅 Node.js + Python 3.10+);平台探测拆在 `bin/platform.js`(bash 只认 Git Bash 不回落 WSL 中继壳;Python 按平台探测 `py -3`/`python`/`python3` 并校验 3.10+)。
+- `install.py`(1011 行):装配单源(`install.sh` 56 行薄 wrapper)。把 `shared/ rings/ apply/ scripts/ templates/ adapters/ validators/ patches/ _support/` 等白名单目录拷入目标仓 `<target>/.atlas/`(RFC-20261114-01 起不含出厂测试目录,历史残留经 MANIFEST 基线闸清理),落 `.atlas/VERSION`(内容摘要戳)+ `.atlas/MANIFEST.json`(逐文件基线);`--update` 刷新、`--dry-run` 干跑零落盘;自带 123 条 `c()` 自检声明。
 - `patches/`:`project-wiring`(AGENTS.md 指针 / after_finish hook / pytest 兜底 / `.gitignore` 追加 `.adapter-out/` / pi 扩展五触点)。锚点式版本化补丁,可重放;其余 3 族 workflow 补丁已随执行层退役删除。
 - 对账:`scripts/pkg_digest.py`(摘要算法单点)+ `scripts/backflow.py`(副本⇔源包三态回灌,SOURCE_ONLY 拒绝护栏)。
 
@@ -82,7 +82,7 @@
 
 - `scripts/gen_e2e_scripts.py`(3444 行,全仓最大单件):用例分片(中文 DSL)编译为 Playwright `.spec.ts`。动词值域封闭(`click/hover/type/dispatch/…`,第三词即中止——治旧副本静默吸收陌生动词);登录形态三态(real/fabricated/none);独立审查有 Critical 拒绝写盘;前置未声明 ⇒ exit 3 `not_ready`。
 - `scripts/gen_testid_stub.py`:老页面 testid 实然盘点薄桩(adopt 开户交尾件;缺失由 validate_testids 自愈)。
-- `scripts/e2e_console.py`(2391 行):纯标准库 SSE 评审控制台(默认 `127.0.0.1:4190`),500ms 慢动作回放、逐用例三值走查、提交即解锁人工 Review、评审新鲜度绑**用例内容指纹**(`fp.case` = `atlas-case` 块归一化哈希,spec 重生成 / `.atlas` 重放不算变更;旧账本按块迁移,D198)防旧账本挂新执行;超时软杀(SIGTERM→grace→SIGKILL);父仓模式评审新鲜度绑定 run-time provenance(RFC-20261108-02)。
+- `scripts/e2e_console.py`(2393 行):纯标准库 SSE 评审控制台(默认 `127.0.0.1:4190`),500ms 慢动作回放、逐用例三值走查、提交即解锁人工 Review、评审新鲜度绑**用例内容指纹**(`fp.case` = `atlas-case` 块归一化哈希,spec 重生成 / `.atlas` 重放不算变更;旧账本按块迁移,D198)防旧账本挂新执行;超时软杀(SIGTERM→grace→SIGKILL);父仓模式评审新鲜度绑定 run-time provenance(RFC-20261108-02)。
 - 生成物(落 `<e2e>/scripts/`,与 `playwright.config.ts` 同目录):`atlas-evidence-teardown.ts`(`globalTeardown` → `_support/evidence_archive.py --phase post-run`,只复制不判定)、`.atlas-trace-policy.json`(逐用例 `request_assertion`,进 `scripts_hash`)。
 - 配套内核:`_support/pw_runner.py`(运行器可解析性判据 + 全局兜底 + 浏览器就绪探针)、`_support/url_merge.py`(base query 转发)、`_support/case_block.py` / `case_id.py` / `manual_block.py`。
 
@@ -109,13 +109,13 @@
 | 量 | 值 | 出处 |
 |---|---|---|
 | 校验器 | 〔数:校验器=21〕(`atlas_check.VALIDATORS`) | `scripts/atlas_check.py:52` |
-| 编排门行 | 〔数:编排门行=10〕 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 / 消融残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:1201`) |
-| 出厂测试文件 | 〔数:出厂测试文件=104〕 | `tests/` |
+| 编排门行 | 〔数:编排门行=10〕 类(validators / 对齐测试 / 生成物 / 审查报告 / 执行串行 / 结构漂移 / 装配版本 / 写面残留 / 消融残留 + E2E 真跑) | `main()`(`scripts/atlas_check.py:1247`) |
+| 出厂测试文件 | 〔数:出厂测试文件=105〕 | `tests/` |
 | skills | 〔数:skills=10〕(含 frontend-design) | `skills/` |
 | 环 | 〔数:环=3〕(structure / prd / e2e;原型环 E1 已退役) | `rings/` |
 | 共享契约 | 〔数:共享契约=9〕 份 | `shared/` |
-| 共享内核 | 〔数:共享内核=43〕 件 | `_support/` |
-| install.py 自检声明 | 〔数:自检声明=123〕 条 | `install.py` |
+| 共享内核 | 〔数:共享内核=46〕 件 | `_support/` |
+| install.py 自检声明 | 〔数:自检声明=126〕 条 | `install.py` |
 | 最大单件 | `〔数:最大单件文件=scripts/gen_e2e_scripts.py〕` 〔数:最大单件行数=3444〕 行 | — |
 
 ## L1 铺设计划(2026-10-25 定稿)

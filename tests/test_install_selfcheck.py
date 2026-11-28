@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -43,6 +44,19 @@ PKG_ROOT = Path(__file__).resolve().parents[1]
 INSTALL = PKG_ROOT / "install.sh"        # 薄 wrapper（判据 4）
 INSTALL_PY = PKG_ROOT / "install.py"     # 装配单源（判据 1/2/6 的解析对象）
 LAYOUT = PKG_ROOT / "shared" / "layout.md"
+
+
+def _bash_for_tests() -> str:
+    if os.name != "nt":
+        return "bash"
+    candidate = Path(r"C:\Program Files\Git\bin\bash.exe")
+    return str(candidate) if candidate.is_file() else "bash"
+
+
+def _test_env() -> dict:
+    if os.name == "nt":
+        return dict(os.environ, LANG="C.UTF-8", PYTHONUTF8="1")
+    return {"PATH": "/usr/bin:/bin:/opt/homebrew/bin", "LANG": "C.UTF-8"}
 
 # install.py 自检条目：c("<名>", <路径>)。路径三种形态：
 #   f"{atlas_dest}/<包内相对>"   ⇒ 包内侧
@@ -218,7 +232,11 @@ def check_ring_skill_symmetry() -> dict:
                        f"{len(rings)} 个环与对应 skill 一一对应（非环 skill：{sorted(NON_RING_SKILLS)}）")}
 
 
-WRAPPER_MAX_LINES = 60
+# install.sh remains a thin wrapper, but its Python resolver must also cover
+# Git Bash on Windows (python3/python/py -3).  The threshold is a drift guard,
+# not a byte budget; keep it tight enough to reject the historical bash
+# implementation (741 lines) while admitting this small portability probe.
+WRAPPER_MAX_LINES = 100
 
 
 def check_install_sh_is_thin_wrapper() -> dict:
@@ -341,8 +359,7 @@ def test_update_guard_refuses_dirty_touchpoints_and_force_overrides() -> None:
         pytest.skip("包内无 install.sh（副本态）—— F34 集成用例要求源包态执行", allow_module_level=False)
 
     def sh(*a: str):
-        r = subprocess.run(a, capture_output=True, env={"PATH": "/usr/bin:/bin:/opt/homebrew/bin",
-                                                        "LANG": "C.UTF-8"})
+        r = subprocess.run(a, capture_output=True, env=_test_env())
         return r.returncode, r.stdout.decode("utf-8", errors="replace") + r.stderr.decode("utf-8", errors="replace")
 
     with tempfile.TemporaryDirectory() as td:
@@ -357,7 +374,7 @@ def test_update_guard_refuses_dirty_touchpoints_and_force_overrides() -> None:
            "commit", "-qm", "init")
         # 制造脏触点（.atlas 内未提交改动）
         (root / ".atlas" / "VERSION").write_text("dirty local edit\n", encoding="utf-8")
-        r = sh("bash", str(PKG_ROOT / "install.sh"),
+        r = sh(_bash_for_tests(), str(PKG_ROOT / "install.sh"),
                "--update", "--target", str(root),
                "--no-skill", "--no-wiring")
         assert r[0] == 1, r[1]
@@ -365,7 +382,7 @@ def test_update_guard_refuses_dirty_touchpoints_and_force_overrides() -> None:
         # 位置钉：守卫在整包拷贝之前 ⇒ 未提交的 VERSION 未被 rm -rf 卷走
         assert (root / ".atlas" / "VERSION").read_text(encoding="utf-8") == "dirty local edit\n"
         # --force 放行：整包覆盖（源包拷入），守卫通知可见
-        r2 = sh("bash", str(PKG_ROOT / "install.sh"),
+        r2 = sh(_bash_for_tests(), str(PKG_ROOT / "install.sh"),
                 "--update", "--target", str(root),
                 "--no-skill", "--no-wiring", "--force")
         assert r2[0] == 0, r2[1]
@@ -396,8 +413,7 @@ def test_f54_dry_run_writes_nothing_and_leaves_no_residue_on_fresh_target() -> N
         pytest.skip("包内无 install.sh（副本态）—— F54 集成用例要求源包态执行", allow_module_level=False)
 
     def sh(*a: str):
-        r = subprocess.run(a, capture_output=True, env={"PATH": "/usr/bin:/bin:/opt/homebrew/bin",
-                                                        "LANG": "C.UTF-8"})
+        r = subprocess.run(a, capture_output=True, env=_test_env())
         return r.returncode, r.stdout.decode("utf-8", errors="replace") + r.stderr.decode("utf-8", errors="replace")
 
     with tempfile.TemporaryDirectory() as td:
@@ -411,7 +427,7 @@ def test_f54_dry_run_writes_nothing_and_leaves_no_residue_on_fresh_target() -> N
             '{"digest": "f54-fixture-stamp", "files": {"x": "y"}}\n', encoding="utf-8")
         before = (root / ".atlas" / "VERSION").read_bytes()
         before_m = (root / ".atlas" / "MANIFEST.json").read_bytes()
-        r = sh("bash", str(PKG_ROOT / "install.sh"),
+        r = sh(_bash_for_tests(), str(PKG_ROOT / "install.sh"),
                "--update", "--target", str(root),
                "--no-skill", "--no-wiring", "--dry-run")
         assert r[0] == 0, r[1]
@@ -422,7 +438,7 @@ def test_f54_dry_run_writes_nothing_and_leaves_no_residue_on_fresh_target() -> N
 
         # ② 全新 target 干跑：不残留 <target>/.atlas/（旧路径 stamp_file mkdir 副作用 ⇒ 红）
         fresh = Path(td) / "fresh"
-        r2 = sh("bash", str(PKG_ROOT / "install.sh"),
+        r2 = sh(_bash_for_tests(), str(PKG_ROOT / "install.sh"),
                 "--force", "--dry-run", "--target", str(fresh))
         assert r2[0] == 0, r2[1]
         assert not (fresh / ".atlas").exists(), "干跑首装残留 .atlas/（stamp_file mkdir 副作用）"
@@ -450,14 +466,12 @@ def test_f55_update_untracked_touchpoint_warns_and_proceeds_tracked_dirty_still_
         pytest.skip("包内无 install.sh（副本态）—— F55 集成用例要求源包态执行", allow_module_level=False)
 
     def sh(*a: str):
-        r = subprocess.run(a, capture_output=True, env={"PATH": "/usr/bin:/bin:/opt/homebrew/bin",
-                                                        "LANG": "C.UTF-8"})
+        r = subprocess.run(a, capture_output=True, env=_test_env())
         return r.returncode, r.stdout.decode("utf-8", errors="replace") + r.stderr.decode("utf-8", errors="replace")
 
     def g(*a: str, cwd: Path):
-        env = dict({"PATH": "/usr/bin:/bin:/opt/homebrew/bin", "LANG": "C.UTF-8",
-                    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+        env = dict(_test_env(), GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                    GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
         r = subprocess.run(a, capture_output=True, env=env, cwd=str(cwd))
         assert r.returncode == 0, r.stdout + r.stderr
         return r
@@ -473,7 +487,7 @@ def test_f55_update_untracked_touchpoint_warns_and_proceeds_tracked_dirty_still_
         g("git", "commit", "-qm", "init", cwd=root)
 
         # 前半（变异钉 M78）：未跟踪 ⇒ WARN 放行，不再恒拒
-        r = sh("bash", str(PKG_ROOT / "install.sh"),
+        r = sh(_bash_for_tests(), str(PKG_ROOT / "install.sh"),
                "--update", "--target", str(root),
                "--no-skill", "--no-wiring")
         assert r[0] == 0, r[1]
@@ -485,12 +499,12 @@ def test_f55_update_untracked_touchpoint_warns_and_proceeds_tracked_dirty_still_
 
         # 后半（回归钉）：已跟踪脏 ⇒ 拒优先，--force 越过（F34 文案逐字节保留）
         (root / "AGENTS.md").write_text("# agents\n# dirty local edit\n", encoding="utf-8")
-        r2 = sh("bash", str(PKG_ROOT / "install.sh"),
+        r2 = sh(_bash_for_tests(), str(PKG_ROOT / "install.sh"),
                 "--update", "--target", str(root),
                 "--no-skill", "--no-wiring")
         assert r2[0] == 1, r2[1]
         assert "装配触点存在未提交改动" in r2[1], r2[1]
-        r3 = sh("bash", str(PKG_ROOT / "install.sh"),
+        r3 = sh(_bash_for_tests(), str(PKG_ROOT / "install.sh"),
                 "--update", "--target", str(root),
                 "--no-skill", "--no-wiring", "--force")
         assert r3[0] == 0, r3[1]
@@ -499,7 +513,7 @@ def test_f55_update_untracked_touchpoint_warns_and_proceeds_tracked_dirty_still_
 
         # --force 不改指针文件（守卫只是放行，AGENTS.md 脏改动仍在场）⇒ 还原后复跑
         (root / "AGENTS.md").write_text("# agents\n", encoding="utf-8")
-        r4 = sh("bash", str(PKG_ROOT / "install.sh"),
+        r4 = sh(_bash_for_tests(), str(PKG_ROOT / "install.sh"),
                 "--update", "--target", str(root),
                 "--no-skill", "--no-wiring")
         assert r4[0] == 0, r4[1]
@@ -537,14 +551,11 @@ def test_layout_config_first_install_docs_and_update_readonly() -> None:
         pytest.skip("包内无 install.sh（副本态）")
 
     def run(*a: str):
-        r = subprocess.run(
-            a, capture_output=True,
-            env={"PATH": "/usr/bin:/bin:/opt/homebrew/bin", "LANG": "C.UTF-8"},
-        )
+        r = subprocess.run(a, capture_output=True, env=_test_env())
         return r.returncode, r.stdout.decode("utf-8", errors="replace") + r.stderr.decode("utf-8", errors="replace")
 
     def first(target: Path, *extra: str):
-        return run("bash", str(INSTALL), "--force", "--target", str(target),
+        return run(_bash_for_tests(), str(INSTALL), "--force", "--target", str(target),
                    "--no-skill", "--no-wiring", *extra)
 
     with tempfile.TemporaryDirectory() as td:
@@ -567,7 +578,7 @@ def test_layout_config_first_install_docs_and_update_readonly() -> None:
         assert "cases_dir: docs/e2e/cases" in (docs / "docs" / "stack-profile.yaml").read_text(encoding="utf-8")
 
         before = (docs / "atlas.config.yaml").read_bytes()
-        rc, out = run("bash", str(INSTALL), "--update", "--target", str(docs),
+        rc, out = run(_bash_for_tests(), str(INSTALL), "--update", "--target", str(docs),
                       "--no-skill", "--no-wiring")
         assert rc == 0, out
         assert (docs / "atlas.config.yaml").read_bytes() == before
@@ -580,7 +591,7 @@ def test_layout_config_first_install_docs_and_update_readonly() -> None:
         (bad / "atlas.config.yaml").write_text(
             "version: 1\nlayout:\n  assets_root: ../escape\n", encoding="utf-8")
         n_before = len(list((bad / ".atlas").rglob("*")))
-        rc, out = run("bash", str(INSTALL), "--update", "--target", str(bad),
+        rc, out = run(_bash_for_tests(), str(INSTALL), "--update", "--target", str(bad),
                       "--no-skill", "--no-wiring")
         assert rc == 2, out
         assert len(list((bad / ".atlas").rglob("*"))) == n_before

@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import difflib
-import fcntl
 import getpass
 import hashlib
 import json
@@ -35,6 +34,13 @@ import time
 import tempfile
 from datetime import datetime
 from pathlib import Path
+
+# 跨平台文件锁单源（POSIX fcntl.flock / Windows msvcrt.locking）。
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _support.filelock import lock_exclusive_nonblocking as _lock_nb  # noqa: E402
+from _support.filelock import unlock as _unlock_file  # noqa: E402
+from _support.argv_split import split_command as _split_command  # noqa: E402
 
 SCHEMA_VERSION = 1
 STATE_ENV = "ATLAS_ABLATION_HOME"
@@ -170,7 +176,7 @@ def _lock(root_dir: Path):
     os.chmod(root_dir, 0o700)
     f = (root_dir / ".lock").open("a+")
     try:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _lock_nb(f.fileno())
     except BlockingIOError:
         f.close()
         raise AblationError("另一个 ablation 进程持有锁")
@@ -179,7 +185,7 @@ def _lock(root_dir: Path):
 
 def _unlock(f) -> None:
     try:
-        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        _unlock_file(f.fileno())
     finally:
         f.close()
 
@@ -386,11 +392,28 @@ def _restore_entry(root: Path, id_dir: Path, rel: str, entry: dict) -> None:
 def _smoke_arg(value: str | None) -> dict | None:
     if not value:
         return None
-    argv = shlex.split(value)
+    try:
+        argv = _split_command(value)
+    except ValueError as exc:
+        raise AblationError(f"--smoke 解析失败（引号未闭合？）：{exc}") from exc
     if not argv:
         raise AblationError("--smoke 不能为空")
-    trivial = len(argv) == 1 and argv[0] in {"true", ":"}
+    # 空操作口令：POSIX 的 `true` / `:` 与 Windows 的 `cmd /c exit 0` 同义。
+    # 此前只认前两个 ⇒ Windows 上 `--smoke true` 落到 FileNotFoundError、rc=127，
+    # 把「基线 smoke 失败」误报成消融缺陷。
+    trivial = (_is_trivial_noop(argv))
     return {"argv": argv, "trivial": trivial}
+
+
+def _is_trivial_noop(argv: list[str]) -> bool:
+    """`--smoke` 是否为空操作口令（不实际验证任何行为）。"""
+    if len(argv) == 1 and argv[0] in {"true", ":", "exit"}:
+        return True
+    # cmd.exe 形态：cmd /c exit 0（含 /d /q 等前置旗标）
+    if os.name == "nt" and len(argv) >= 3 and argv[0].lower() in {"cmd", "cmd.exe"}:
+        rest = [a.lower() for a in argv[1:] if not a.startswith("/")]
+        return rest[:1] == ["exit"] and (len(rest) == 1 or rest[1] == "0")
+    return False
 
 
 def _run_smoke(root: Path, smoke: dict, ablation_id: str,

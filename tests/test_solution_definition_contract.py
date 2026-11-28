@@ -318,7 +318,7 @@ def test_readers_d15_pointer_uses_definition_path(tmp_path: Path) -> None:
     root, data = _custom_definition_root(tmp_path)
     pointer = task._pointer(root, root / "web", data, data["requirements"][0],
                             "product")
-    assert "parent_prd: ../product/prd/demo-prd.md" in pointer
+    assert "parent_prd: ../product/prd/demo-prd.md" in pointer.replace("\\", "/")
     assert "solution-prd.md" not in pointer
 
 

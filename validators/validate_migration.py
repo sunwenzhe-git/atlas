@@ -24,7 +24,7 @@ if str(Path(__file__).resolve().parents[1]) not in sys.path:
 
 from _support.governance_io import GenerationStore, GovernancePathError, load_json, safe_path
 from _support.governance_schema import canonical_digest, validate
-from _support.legacy_migration import ARTIFACTS, ARTIFACT_SCHEMAS, _commit, _ensure_git_metadata, _environment_digest, _head_paths, _index_hash, _indexed_paths, _inventory, _python_test_nodes, _tree_hash
+from _support.legacy_migration import ARTIFACTS, ARTIFACT_SCHEMAS, _commit, _ensure_git_metadata, _environment_digest, _head_paths, _index_hash, _indexed_paths, _inventory, _python_test_nodes, _tree_hash, index_matches_worktree
 
 _MANIFEST_SCHEMA = {
     "$id": "atlas:migration-manifest:v1", "type": "object", "additionalProperties": False,
@@ -170,7 +170,10 @@ def check_migration(root: str | Path) -> dict:
     current_hashes: dict[str, str] = {}
     for item in recorded:
         try:
-            if git_repo and _index_hash(root, item["path"]) != item["sha256"]:
+            # 索引一致性用**同算法同归一**的 git 对象 ID 比较（见 index_matches_worktree）。
+            # 此处原为 `_index_hash(...) != item["sha256"]`：索引 blob 的 sha256 对工作区
+            # 原始字节的 sha256，在 core.autocrlf=true 的 Windows 上恒不等 ⇒ 全部误报。
+            if git_repo and index_matches_worktree(root, item["path"]) is False:
                 findings.append(_finding("源文件与 staged index 不一致", item["path"], "source_stale"))
             path = safe_path(root, item["path"])
             if path.is_symlink():

@@ -22,7 +22,8 @@ if str(PKG_ROOT) not in sys.path:
 
 from _support.governance_io import GenerationStore, atomic_write_bytes, safe_path
 from _support.governance_schema import canonical_digest
-from _support.legacy_migration import ARTIFACTS, migrate, rollback
+from _support.argv_split import join_command
+from _support.legacy_migration import ARTIFACTS, index_matches_worktree, migrate, rollback
 from validators.validate_migration import check_migration, main as validate_main
 
 PROFILE = """product: 夹具
@@ -32,6 +33,59 @@ apps:
     kind: backend
     stack: 夹具
 """
+
+
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=root, check=True,
+                   capture_output=True, text=True)
+
+
+def test_index_matches_worktree_distinguishes_missing_and_unavailable(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    _git(root, "init", "-q")
+    _git(root, "config", "user.email", "a@b")
+    _git(root, "config", "user.name", "a")
+    path = root / "a.txt"
+    path.write_text("one\n", encoding="utf-8")
+    _git(root, "add", "a.txt")
+    assert index_matches_worktree(root, "a.txt") is True
+    path.write_text("two\n", encoding="utf-8")
+    assert index_matches_worktree(root, "a.txt") is False
+    _git(root, "rm", "--cached", "-f", "a.txt")
+    assert index_matches_worktree(root, "a.txt") is False
+    assert index_matches_worktree(tmp_path / "not-git", "a.txt") is None
+
+
+def test_migrate_and_validator_reject_worktree_file_missing_from_index(tmp_path: Path) -> None:
+    fixture(tmp_path)
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "a@b")
+    _git(tmp_path, "config", "user.name", "a")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "init")
+    assert migrate(tmp_path, test_command=run_tests(tmp_path))["verdict"] == "PASS"
+    _git(tmp_path, "rm", "--cached", "-f", "src/main.py")
+    assert index_matches_worktree(tmp_path, "src/main.py") is False
+    migrated = migrate(tmp_path, test_command=run_tests(tmp_path))
+    assert migrated["verdict"] != "PASS", migrated
+    errors = json.loads((generation(tmp_path) / "parse-errors.json").read_text(encoding="utf-8"))["items"]
+    assert any(item.get("kind") == "source_stale" and item.get("path") == "src/main.py"
+               for item in errors), errors
+    validated = check_migration(tmp_path)
+    assert validated["verdict"] != "PASS", validated
+    assert any(item.get("path") == "src/main.py" and "source_stale" in item.get("message", "")
+               for item in validated["findings"]), validated
+    assert index_matches_worktree(tmp_path, "does-not-exist.py") is None
+
+
+def symlink_or_skip(link: Path, target: Path, *, target_is_directory: bool = False) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
 CODE = """from sqlalchemy import Column, Integer, String
 from sqlalchemy.orm import declarative_base
 app = object()
@@ -122,7 +176,7 @@ def test_positive_openspec_trellis_docs_and_real_test_evidence(tmp_path):
     assert artifact(tmp_path, "parse-errors.json")["items"] == []
     evidence = artifact(tmp_path, "test-evidence.json")
     assert evidence["ran"] is True and evidence["exit_code"] == 0
-    assert evidence["command"].startswith(sys.executable + " ")
+    assert evidence["command"].startswith(join_command([sys.executable]) + " ")
     assert "commit" in evidence and evidence["environment"]
     assert "tests/test_users.py::test_users" in evidence["nodes"]
     assert evidence["output_sha256"] == hashlib.sha256(evidence["output"].encode()).hexdigest()
@@ -475,7 +529,7 @@ def test_migrate_cli_shadow_error_preserves_mode_and_rc0(tmp_path):
     target = tmp_path / "target"
     target.mkdir()
     link = tmp_path / "link"
-    link.symlink_to(target, target_is_directory=True)
+    symlink_or_skip(link, target, target_is_directory=True)
     result = subprocess.run([sys.executable, str(PKG_ROOT / "scripts/atlas_migrate.py"),
                              "--root", str(link), "--mode", "shadow", "--json"],
                             capture_output=True, text=True)
@@ -541,7 +595,7 @@ def test_symlink_source_escape_is_rejected_without_writing_outside(tmp_path):
     outside = tmp_path / "outside.md"
     outside.write_text("GET /api/users\n", encoding="utf-8")
     (root / "docs").mkdir(exist_ok=True)
-    (root / "docs" / "escape.md").symlink_to(outside)
+    symlink_or_skip(root / "docs" / "escape.md", outside)
     with pytest.raises(ValueError, match="symlink|符号链接"):
         migrate(root, test_command=run_tests(root))
     assert outside.read_text(encoding="utf-8") == "GET /api/users\n"
@@ -559,12 +613,12 @@ def test_safe_path_rejects_symlink_parent_and_file(tmp_path):
     outside.mkdir()
     root = tmp_path / "root"
     root.mkdir()
-    (root / "link").symlink_to(outside, target_is_directory=True)
+    symlink_or_skip(root / "link", outside, target_is_directory=True)
     with pytest.raises(ValueError):
         safe_path(root, "link/file.txt")
     target = outside / "file.txt"
     target.write_text("x", encoding="utf-8")
-    (root / "file.txt").symlink_to(target)
+    symlink_or_skip(root / "file.txt", target)
     with pytest.raises(ValueError):
         safe_path(root, "file.txt")
 
@@ -734,8 +788,8 @@ def test_validator_text_output_and_cli_json_exit_codes(tmp_path, capsys):
     command = run_tests(tmp_path)
     result = subprocess.run(
         [sys.executable, str(PKG_ROOT / "scripts/atlas_migrate.py"), "--root", str(tmp_path),
-         "--test-command", " ".join(command), "--mode", "enforce", "--json"],
-        capture_output=True, text=True, timeout=120,
+        "--test-command", join_command(command), "--mode", "enforce", "--json"],
+        capture_output=True, text=True, encoding="utf-8", timeout=120,
     )
     assert result.returncode == 1, result.stdout + result.stderr
     assert json.loads(result.stdout)["verdict"] == "STALE"
@@ -785,7 +839,7 @@ def test_atlas_check_does_not_skip_orphaned_generation_assets(tmp_path, module, 
     support = tmp_path / ".atlas/_support"
     support.mkdir()
     shutil.copy(PKG_ROOT / "validators" / f"{module}.py", installed)
-    for name in ("governance_io.py", "governance_schema.py", "legacy_migration.py", "semantic_contracts.py"):
+    for name in ("governance_io.py", "governance_schema.py", "legacy_migration.py", "semantic_contracts.py", "argv_split.py"):
         shutil.copy(PKG_ROOT / "_support" / name, support)
     rows = atlas_check.Row()
     atlas_check.check_validators(tmp_path, rows, sys.executable)
@@ -802,7 +856,7 @@ def test_atlas_check_shadow_stale_is_warn_not_hard_fail(tmp_path):
     (installed / "validators").mkdir(parents=True)
     (installed / "_support").mkdir()
     shutil.copy(PKG_ROOT / "validators/validate_migration.py", installed / "validators")
-    for name in ("governance_io.py", "governance_schema.py", "legacy_migration.py"):
+    for name in ("governance_io.py", "governance_schema.py", "legacy_migration.py", "argv_split.py"):
         shutil.copy(PKG_ROOT / "_support" / name, installed / "_support")
     rows = atlas_check.Row()
     atlas_check.check_validators(tmp_path, rows, sys.executable)
@@ -818,8 +872,8 @@ def test_node_cli_has_migrate_help_and_preserves_rc(tmp_path):
     command = run_tests(tmp_path)
     result = subprocess.run(
         ["node", str(PKG_ROOT / "bin/atlas.js"), "migrate", "--root", str(tmp_path),
-         "--test-command", " ".join(command), "--mode", "enforce", "--json"],
-        capture_output=True, text=True, timeout=120,
+         "--test-command", join_command(command), "--mode", "enforce", "--json"],
+        capture_output=True, text=True, encoding="utf-8", timeout=120,
     )
     assert result.returncode == 1, result.stdout + result.stderr
     assert json.loads(result.stdout)["verdict"] == "STALE"
@@ -871,7 +925,7 @@ def test_atlas_check_preserves_raw_migration_verdict_cause_and_rc(tmp_path):
     (installed / "validators").mkdir(parents=True)
     (installed / "_support").mkdir()
     shutil.copy(PKG_ROOT / "validators/validate_migration.py", installed / "validators")
-    for name in ("governance_io.py", "governance_schema.py", "legacy_migration.py"):
+    for name in ("governance_io.py", "governance_schema.py", "legacy_migration.py", "argv_split.py"):
         shutil.copy(PKG_ROOT / "_support" / name, installed / "_support")
     rows = atlas_check.Row()
     atlas_check.check_validators(tmp_path, rows, sys.executable)

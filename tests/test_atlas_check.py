@@ -13,6 +13,7 @@ import http.server
 import importlib.util
 import json
 import os
+import stat
 import subprocess
 import sys
 import shutil
@@ -24,6 +25,16 @@ PKG_ROOT = Path(__file__).resolve().parents[1]
 CK = PKG_ROOT / "scripts" / "atlas_check.py"
 
 HOME_HTML = '<html><body><button data-testid="home-cta-btn">x</button></body></html>'
+
+
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    try:
+        os.symlink(target, link)
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            import pytest
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
 
 
 def _mk_pw_module(nm: Path, version: str = "9.9.9") -> Path:
@@ -40,6 +51,21 @@ def _mk_pw_module(nm: Path, version: str = "9.9.9") -> Path:
         encoding="utf-8")
     (pkg / "index.js").write_text("module.exports = {};\n", encoding="utf-8")
     return pkg
+
+
+def _mk_pw_cli(nm: Path) -> Path:
+    if sys.platform == "win32":
+        cli = nm / "@playwright" / "test" / "cli.js"
+        cli.parent.mkdir(parents=True, exist_ok=True)
+        cli.write_text("console.log('1 passed');\n", encoding="utf-8")
+    else:
+        cli = nm / ".bin" / "playwright"
+        cli.parent.mkdir(parents=True, exist_ok=True)
+        cli.write_text("#!/bin/sh\necho '1 passed'\nexit 0\n", encoding="utf-8")
+        cli.chmod(0o755)
+    return cli
+
+
 CASE_BAD = """
 ## E2E-HOME-001 首页
 
@@ -199,8 +225,8 @@ def test_atlas_check_fails_when_a_gate_fails() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / ".atlas").mkdir(parents=True, exist_ok=True)
-        os.symlink(PKG_ROOT / "validators", root / ".atlas" / "validators")
-        os.symlink(PKG_ROOT / "scripts", root / ".atlas" / "scripts")
+        _symlink_or_skip(root / ".atlas" / "validators", PKG_ROOT / "validators")
+        _symlink_or_skip(root / ".atlas" / "scripts", PKG_ROOT / "scripts")
         # E1：抽取源 = 前端源码（前端有 home-cta-btn ⇒ home 页「已实现」，
         # 而 CASE_BAD 引用 home-missing ⇒ 双向差集 FAIL）
         (root / "product").mkdir(parents=True, exist_ok=True)
@@ -230,9 +256,6 @@ def test_e2e_reset_failure_fails_the_run_row() -> None:
     """
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        (root / ".atlas").mkdir(parents=True, exist_ok=True)
-        os.symlink(PKG_ROOT / "scripts", root / ".atlas" / "scripts")
-        (root / "product").mkdir(parents=True, exist_ok=True)
         (root / "product" / "e2e" / "scripts").mkdir(parents=True, exist_ok=True)
         (root / "product" / "e2e" / "scripts" / "config.spec.ts").write_text(
             "test('ok', async () => {});\n", encoding="utf-8")
@@ -255,7 +278,7 @@ def test_generated_gate_reports_not_ready_as_skip() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / ".atlas").mkdir(parents=True, exist_ok=True)
-        os.symlink(PKG_ROOT / "scripts", root / ".atlas" / "scripts")
+        _symlink_or_skip(root / ".atlas" / "scripts", PKG_ROOT / "scripts")
         (root / "product").mkdir(parents=True, exist_ok=True)
         (root / "product" / "stack-profile.yaml").write_text(
             "product: 夹具\ne2e:\n  runner: node-playwright\n  app_base_url: null\n",
@@ -275,7 +298,7 @@ def test_generated_gate_reports_real_error_as_fail() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / ".atlas").mkdir(parents=True, exist_ok=True)
-        os.symlink(PKG_ROOT / "scripts", root / ".atlas" / "scripts")
+        _symlink_or_skip(root / ".atlas" / "scripts", PKG_ROOT / "scripts")
         (root / "product").mkdir(parents=True, exist_ok=True)
         (root / "product" / "stack-profile.yaml").write_text(
             "product: 夹具\ne2e:\n  runner: 不存在的运行器\n  app_base_url: null\n", encoding="utf-8")
@@ -358,16 +381,13 @@ def test_check_e2e_reachable_target_is_not_skipped(monkeypatch) -> None:
     # D124：本钉主题不是浏览器判据 —— 给 probe_browser 旁路假件（浏览器就绪另钉）
     monkeypatch.setattr(mod.pw_runner, "probe_browser", lambda *a, **k: (True, ""))
     with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
+        root = Path(td) / "project with spaces"
         scripts = root / "product" / "e2e" / "scripts"
         scripts.mkdir(parents=True)
         (scripts / "login.spec.ts").write_text("test('ok', async () => {});\n", encoding="utf-8")
         # 常规布局：运行器与模块都在 `<root>/node_modules`（Node 从 scripts 起向上搜索的第一跳）。
         nm_dir = root / "node_modules"
-        (nm_dir / ".bin").mkdir(parents=True)
-        pw = nm_dir / ".bin" / "playwright"
-        pw.write_text("#!/bin/sh\necho '1 passed'\nexit 0\n", encoding="utf-8")
-        pw.chmod(0o755)
+        _mk_pw_cli(nm_dir)
         _mk_pw_module(nm_dir)
         (root / "product" / "stack-profile.yaml").write_text(
             "e2e:\n  runner: node-playwright\n  node_modules: node_modules\n"
@@ -409,7 +429,7 @@ def test_check_e2e_fails_loud_when_browser_missing(monkeypatch) -> None:
     运行器判据（D101）已过、浏览器未装 ⇒ `E2E 真跑` **FAIL** 且出路文案点名
     `npx playwright install chromium`；真跑**不得被起**（failures[0].command 为空 = 未执行
     `playwright test`，旧行为会照跑并在 launch 阶段炸成「N failed」，门谎报过就绪）。
-    变异 **M124**：门内浏览器判据分支退回恒真 ⇒ 本钉红（照跑假 .bin ⇒ 报 ok）。
+    变异 **M124**：门内浏览器判据分支退回恒真 ⇒ 本钉红（照跑夹具 CLI ⇒ 报 ok）。
     """
     mod = _load_check()
     monkeypatch.setattr(mod.pw_runner, "probe_browser",
@@ -421,10 +441,7 @@ def test_check_e2e_fails_loud_when_browser_missing(monkeypatch) -> None:
         scripts.mkdir(parents=True)
         (scripts / "login.spec.ts").write_text("test('ok', async () => {});\n", encoding="utf-8")
         nm_dir = root / "node_modules"
-        (nm_dir / ".bin").mkdir(parents=True)
-        pw = nm_dir / ".bin" / "playwright"
-        pw.write_text("#!/bin/sh\necho '1 passed'\nexit 0\n", encoding="utf-8")
-        pw.chmod(0o755)
+        _mk_pw_cli(nm_dir)
         _mk_pw_module(nm_dir)
         (root / "product" / "stack-profile.yaml").write_text(
             "e2e:\n  runner: node-playwright\n  node_modules: node_modules\n"
@@ -452,10 +469,7 @@ def test_check_e2e_node_modules_anchored_to_root(monkeypatch) -> None:
         # 相对路径以 **root** 为基准锚定（不是 cwd）；且目录名必须是 `node_modules` 才能落在
         # Node 从 scripts 起向上搜索的路径上（issue #24：判据是「可解析」，不是「文件在不在」）。
         nm_dir = root / "product" / "node_modules"
-        pw_mock = nm_dir / ".bin" / "playwright"
-        pw_mock.parent.mkdir(parents=True)
-        pw_mock.write_text("#!/bin/sh\necho '1 passed'\n", encoding="utf-8")
-        pw_mock.chmod(0o755)
+        _mk_pw_cli(nm_dir)
         _mk_pw_module(nm_dir)
 
         (root / "product" / "stack-profile.yaml").write_text(
@@ -484,19 +498,14 @@ def test_check_e2e_global_playwright_detected(monkeypatch) -> None:
         (scripts / "login.spec.ts").write_text("// dummy\n", encoding="utf-8")
         (scripts / "playwright.config.ts").write_text("// dummy config", encoding="utf-8")
 
-        # 伪造全局 Playwright 可执行文件与全局 node_modules
-        fake_bin = root / "fake-bin" / "playwright"
-        fake_bin.parent.mkdir(parents=True)
-        fake_bin.write_text("#!/bin/sh\necho '1 passed'\n", encoding="utf-8")
-        fake_bin.chmod(0o755)
-
         fake_global_nm = root / "fake-global-nm"
         # issue #24：判据是「可解析」⇒ 夹具必须给**真包**（空目录在真探针下 = 解析不到）
         _mk_pw_module(fake_global_nm, version="9.9.9")
-
-        _real_which = mod.shutil.which
-        monkeypatch.setattr(mod.shutil, "which",
-                            lambda cmd: str(fake_bin) if cmd == "playwright" else _real_which(cmd))
+        fake_bin = _mk_pw_cli(fake_global_nm if sys.platform == "win32" else root / "fake-bin")
+        if sys.platform != "win32":
+            _real_which = mod.shutil.which
+            monkeypatch.setattr(mod.shutil, "which",
+                                lambda cmd: str(fake_bin) if cmd == "playwright" else _real_which(cmd))
         monkeypatch.setenv("NODE_PATH", str(fake_global_nm))
 
         # 未声明 node_modules
@@ -513,7 +522,10 @@ def test_check_e2e_global_playwright_detected(monkeypatch) -> None:
         assert row["status"] == "WARN", row
         assert "@playwright/test" in row["detail"] and "软链" in row["detail"], row
         link = root / "node_modules" / "@playwright" / "test"
-        assert link.is_symlink(), f"应已在解析搜索路径上补软链：{link}"
+        if sys.platform == "win32":
+            assert link.lstat().st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT, link
+        else:
+            assert link.is_symlink(), f"应已在解析搜索路径上补软链：{link}"
         assert os.path.realpath(link) == os.path.realpath(fake_global_nm / "@playwright" / "test")
         # 幂等：再跑一次不得重复动手（同物则不动，且结论不变）
         before = os.path.realpath(link)
@@ -564,26 +576,27 @@ def test_check_e2e_runs_with_scripts_dir_as_cwd(monkeypatch) -> None:
         (scripts / "login.spec.ts").write_text("// dummy\n", encoding="utf-8")
         (scripts / "playwright.config.ts").write_text("// dummy config", encoding="utf-8")
         nm_dir = root / "node_modules"
-        (nm_dir / ".bin").mkdir(parents=True)
-        pw = nm_dir / ".bin" / "playwright"
-        pw.write_text("#!/bin/sh\necho '1 passed'\n", encoding="utf-8")
-        pw.chmod(0o755)
+        cli = _mk_pw_cli(nm_dir)
         _mk_pw_module(nm_dir)
         (root / "product" / "stack-profile.yaml").write_text(
             f"e2e:\n  runner: node-playwright\n  node_modules: node_modules\n"
             f"  app_base_url: {_live_base()}\n", encoding="utf-8")
         captured: dict = {}
 
-        def fake_run(cmd, cwd, timeout=1800, shell=False):
-            captured["cmd"] = cmd
-            captured["cwd"] = Path(cwd)
-            return 1, "1 passed"
+        def fake_run(cmd, cwd, timeout=1800, shell=False, env=None):
+            captured.update(cmd=cmd, cwd=Path(cwd), shell=shell)
+            return 0, "1 passed"
 
         monkeypatch.setattr(mod, "run", fake_run)
         mod.check_e2e(root, mod.Row(), "login")
     assert captured["cwd"] == scripts, f"执行 cwd 必须是生成物目录，实际 {captured['cwd']}"
-    assert "playwright.config.ts" in captured["cmd"], captured["cmd"]
-    assert "product/e2e/scripts" not in captured["cmd"], f"不应带相对配置路径：{captured['cmd']}"
+    if sys.platform == "win32":
+        assert captured["shell"] is False
+        assert captured["cmd"] == ["node", str(cli.resolve()), "test", "-c",
+                                   "playwright.config.ts", "login.spec.ts"]
+    else:
+        assert "playwright.config.ts" in captured["cmd"], captured["cmd"]
+        assert "product/e2e/scripts" not in captured["cmd"], f"不应带相对配置路径：{captured['cmd']}"
 
 
 def test_check_e2e_module_unresolvable_fails_loudly(monkeypatch) -> None:
@@ -603,14 +616,8 @@ def test_check_e2e_module_unresolvable_fails_loudly(monkeypatch) -> None:
         scripts.mkdir(parents=True)
         (scripts / "login.spec.ts").write_text("// dummy\n", encoding="utf-8")
         (scripts / "playwright.config.ts").write_text("// dummy config", encoding="utf-8")
-        pw = root / "node_modules" / ".bin" / "playwright"
-        pw.parent.mkdir(parents=True)
-        pw.write_text("#!/bin/sh\necho '1 passed'\n", encoding="utf-8")
-        pw.chmod(0o755)
-        monkeypatch.setattr(mod.shutil, "which", lambda cmd: None)
-        monkeypatch.delenv("NODE_PATH", raising=False)
-        monkeypatch.setattr(mod.subprocess, "run",
-                            lambda *a, **k: type("Proc", (), {"returncode": 1, "stdout": "", "stderr": ""})())
+        _mk_pw_cli(root / "node_modules")
+        monkeypatch.setattr(mod.pw_runner, "global_nm_root", lambda: None)
         (root / "product" / "stack-profile.yaml").write_text(
             f"e2e:\n  runner: node-playwright\n  node_modules: node_modules\n"
             f"  app_base_url: {_live_base()}\n",
@@ -620,8 +627,7 @@ def test_check_e2e_module_unresolvable_fails_loudly(monkeypatch) -> None:
         row = [r for r in rows.rows if r["name"].startswith("E2E 真跑")][0]
         assert row["status"] == "FAIL", row
         assert "依赖可导入性" in row["detail"], row
-        if shutil.which("node"):
-            assert "@playwright/test" in row["detail"], row
+        assert "@playwright/test" in row["detail"], row
         # FAIL 不得留下真跑凭据（未跑就不该有 e2e-summary）
         assert not (root / ".atlas" / "runs" / "e2e-summary.json").exists()
 
@@ -647,10 +653,7 @@ def test_check_e2e_strips_inline_comments_from_profile_scalars(monkeypatch) -> N
         (scripts / "login.spec.ts").write_text("// dummy\n", encoding="utf-8")
         (scripts / "playwright.config.ts").write_text("// dummy config", encoding="utf-8")
         nm_dir = root / "node_modules"
-        (nm_dir / ".bin").mkdir(parents=True)
-        pw = nm_dir / ".bin" / "playwright"
-        pw.write_text("#!/bin/sh\necho '1 passed'\n", encoding="utf-8")
-        pw.chmod(0o755)
+        _mk_pw_cli(nm_dir)
         _mk_pw_module(nm_dir)
         (root / "product" / "stack-profile.yaml").write_text(
             "e2e:\n"
@@ -678,10 +681,7 @@ def test_check_e2e_still_runs_a_real_reset_command(monkeypatch) -> None:
         (scripts / "login.spec.ts").write_text("// dummy\n", encoding="utf-8")
         (scripts / "playwright.config.ts").write_text("// dummy config", encoding="utf-8")
         nm_dir = root / "node_modules"
-        (nm_dir / ".bin").mkdir(parents=True)
-        pw = nm_dir / ".bin" / "playwright"
-        pw.write_text("#!/bin/sh\necho '1 passed'\n", encoding="utf-8")
-        pw.chmod(0o755)
+        _mk_pw_cli(nm_dir)
         _mk_pw_module(nm_dir)
         (root / "product" / "stack-profile.yaml").write_text(
             "e2e:\n"
@@ -1068,8 +1068,8 @@ def test_atlas_check_failure_log_written_on_fail_and_cleaned_on_pass() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / ".atlas").mkdir(parents=True, exist_ok=True)
-        os.symlink(PKG_ROOT / "validators", root / ".atlas" / "validators")
-        os.symlink(PKG_ROOT / "scripts", root / ".atlas" / "scripts")
+        _symlink_or_skip(root / ".atlas" / "validators", PKG_ROOT / "validators")
+        _symlink_or_skip(root / ".atlas" / "scripts", PKG_ROOT / "scripts")
         (root / "product").mkdir(parents=True, exist_ok=True)
         (root / "product" / "stack-profile.yaml").write_text(
             "product: 夹具\napps:\n  - name: web\n    path: web\n    kind: frontend\n"
@@ -1107,8 +1107,8 @@ def test_check_events_log_records_durations_on_fail() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / ".atlas").mkdir(parents=True, exist_ok=True)
-        os.symlink(PKG_ROOT / "validators", root / ".atlas" / "validators")
-        os.symlink(PKG_ROOT / "scripts", root / ".atlas" / "scripts")
+        _symlink_or_skip(root / ".atlas" / "validators", PKG_ROOT / "validators")
+        _symlink_or_skip(root / ".atlas" / "scripts", PKG_ROOT / "scripts")
         (root / "product").mkdir(parents=True, exist_ok=True)
         (root / "product" / "stack-profile.yaml").write_text(
             "product: 夹具\napps:\n  - name: web\n    path: web\n    kind: frontend\n"
@@ -1488,7 +1488,7 @@ def _ablation_state(root: Path, state: Path, *, status: str = "active",
     def entry(text: str) -> dict:
         data = text.encode("utf-8")
         return {"type": "file", "sha256": hashlib.sha256(data).hexdigest(),
-                "size": len(data), "mode": "0o644"}
+                "size": len(data), "mode": oct((root / "x.txt").stat().st_mode & 0o777)}
 
     (id_dir / "before" / "x.txt").write_text("before", encoding="utf-8")
     before = {"schema_version": 1, "entries": {"x.txt": entry("before")}}

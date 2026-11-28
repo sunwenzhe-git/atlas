@@ -1561,8 +1561,10 @@ def head_seals(root: Path, roots: list[str]) -> list[str]:
         base = Path(root) / asset_root / "reviews" / "apply"
         if not base.is_dir():
             continue
-        for path in base.rglob("*.seal.json"):
-            rel = str(path.relative_to(root))
+        for path in base.rglob("*"):
+            if not path.is_file() or not path.name.endswith(".seal.json"):
+                continue
+            rel = path.relative_to(root).as_posix()
             if is_seal_path(rel):
                 found.add(rel)
     return sorted(found)

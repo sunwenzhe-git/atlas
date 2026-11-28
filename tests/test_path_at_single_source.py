@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -79,7 +80,12 @@ def test_missing_commit_object_is_chain_unverifiable(tmp_path: Path) -> None:
 def test_symlink_is_non_blob_on_both_sides(tmp_path: Path) -> None:
     repo = make_repo(tmp_path / "repo")
     (repo / "real.json").write_text('{"schema_version": 2}', encoding="utf-8")
-    os.symlink("real.json", repo / LOCK)
+    try:
+        os.symlink("real.json", repo / LOCK)
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
     head = commit(repo, "symlink")
     with pytest.raises(core.LockHistoryUnparsable):
         core.path_at(repo, head)

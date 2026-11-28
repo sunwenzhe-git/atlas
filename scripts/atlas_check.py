@@ -40,6 +40,7 @@ if str(Path(__file__).resolve().parent.parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from _support.siblings import load_module  # noqa: E402
 from _support.layout import LayoutError, load_layout  # noqa: E402
+from _support.argv_split import split_command as _split_command  # noqa: E402
 
 # node 运行器单源内核（二进制解析 / **可解析性判据** / 全局兜底修复；issue #24，`DESIGN.md` D101）。
 # 本文件此前与 `scripts/e2e_console.py` 各存一份解析实现（含 `_is_node_playwright` 两份拷贝）。
@@ -170,7 +171,7 @@ READONLY_COMMAND_HEADS = frozenset({"python", "pytest", "node", "npx", "bash", "
 
 def _command_head(cmd: str) -> str:
     try:
-        parts = shlex.split(cmd)
+        parts = _split_command(cmd)
     except ValueError:
         return ""
     if not parts:
@@ -312,10 +313,11 @@ def _strip_matching_quotes(v: str) -> str:
     return s
 
 
-def run(cmd: list[str] | str, cwd: Path, timeout: int = 1800, shell: bool = False) -> tuple[int, str]:
+def run(cmd: list[str] | str, cwd: Path, timeout: int = 1800, shell: bool = False,
+        env: dict[str, str] | None = None) -> tuple[int, str]:
     try:
         p = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True,
-                           timeout=timeout, shell=shell)
+                           timeout=timeout, shell=shell, env=env)
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except subprocess.TimeoutExpired as exc:
         # 超时不是静默截断（issue #63：900s 只回 "TIMEOUT" 无诊断面）：带上已捕获的
@@ -357,6 +359,19 @@ def _url_reachable(url: str, timeout: float = 5.0) -> tuple[bool, str]:
 def port_free(port: int) -> bool:
     with socket.socket() as s:
         return s.connect_ex(("127.0.0.1", port)) != 0
+
+
+def _playwright_invocation(pw_bin: Path, node_path: Path | None,
+                           spec_arg: str) -> tuple[list[str] | str, dict[str, str]]:
+    """Preserve the POSIX shell invocation; on Windows pass Node an argv list."""
+    argv = pw_runner.command_argv(pw_bin, "test", "-c", "playwright.config.ts")
+    if spec_arg:
+        argv.append(spec_arg)
+    cmd = argv if os.name == "nt" else shlex.join(argv)
+    env = dict(os.environ)
+    if node_path:
+        env["NODE_PATH"] = str(node_path)
+    return cmd, env
 
 
 def _elapsed_ms(start: float) -> int:
@@ -1027,11 +1042,10 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     nm_rel = Path(strip_inline_comment(nm.group(1))) if nm else None
     pw_bin, node_path, runner_source, why = pw_runner.resolve(root, str(nm_rel) if nm_rel else None)
     if pw_bin is None:
-        disp_bin = (nm_rel / ".bin" / pw_runner.PW_BIN_NAME) if nm_rel else "未配置"
         hint = f"（提示：请在 {nm_rel.parent if nm_rel else '.'} 执行 npm i -D {pw_runner.MODULE_SPEC}）"
+        detail = why if nm_rel else "node-playwright 可执行文件不存在：未配置（stack-profile e2e.node_modules）"
         rows.add("E2E 真跑", "FAIL",
-                 f"node-playwright 可执行文件不存在：{disp_bin}（stack-profile e2e.node_modules）{hint}",
-                 command="", full_output=f"pw_bin not found: {pw_bin}\n提示：请先在对应目录安装 {pw_runner.MODULE_SPEC}",
+                 f"{detail}{hint}", command="", full_output=f"{detail}\n{hint}",
                  duration_ms=_elapsed_ms(started_gate))
         return
     # 判据本体（与执行器同一实现、同一修复）：不成立 ⇒ 先试全局兜底修复，复检仍不过 ⇒ FAIL。
@@ -1058,14 +1072,13 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
                  duration_ms=_elapsed_ms(started_gate))
         return
     spec_arg = f"{page}.spec.ts" if page else ""
-    node_path_env = f"NODE_PATH={node_path} " if node_path else ""
     # **执行 cwd = 生成物所在目录**（issue #29 / `DESIGN.md` D106）：生成物里的相对路径全是
     # cwd 相对的（`storageState: ".atlas-auth/state.json"`、`outputDir: ".atlas-run"`、mock fixture）。
     # 此前本门用 cwd=项目根 + `-c <相对路径>` 跑，Playwright 把 storageState 解析到 `<root>/.atlas-auth/`
     # ⇒ **读不到人的会话**（并在那儿写一个空 state）⇒ 未登录态跑用例 ⇒ 20s 超时假红。
     # 控制台（`e2e_console`）本来就是 `cd scripts` 再跑 —— 本门与它对齐，两个入口一个口径。
-    cmd = f"{node_path_env}{pw_bin} test -c playwright.config.ts {spec_arg}".strip()
-    code, out = run(cmd, scripts, timeout=1800, shell=True)
+    cmd, run_env = _playwright_invocation(pw_bin, node_path, spec_arg)
+    code, out = run(cmd, scripts, timeout=1800, shell=isinstance(cmd, str), env=run_env)
     m2 = re.findall(r"(\d+) (passed|failed|error)", out)
     summary = " ".join(f"{n} {k}" for n, k in m2) or "无结果"
 
@@ -1144,7 +1157,8 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
         summary = f"{summary} ｜ {runner_note}" + (f"（{runner_detail}）" if runner_detail else "")
     rows.add("E2E 真跑" + (f"[{page}]" if page else "（六页）"),
              level, summary,
-             command=cmd, full_output=full_err_output, code=code,
+             command=cmd if isinstance(cmd, str) else subprocess.list2cmdline(cmd),
+             full_output=full_err_output, code=code,
              duration_ms=_elapsed_ms(started_gate))
 
 
