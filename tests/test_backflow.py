@@ -76,6 +76,8 @@ def test_apply_refused_on_source_only(tmp_path: Path) -> None:
 
 def test_apply_copies_and_preserves_exec_bit(tmp_path: Path) -> None:
     """正常回灌：NEW/DIFF 落盘、内容一致、可执行位保留、SOURCE_ONLY 不被动。"""
+    if sys.platform == "win32":
+        pytest.skip("Windows 无 POSIX 可执行位语义，无法断言 S_IXUSR 传播")
     copy_root, src_root = _mk_tree(
         tmp_path,
         {"scripts/a.py": "new\n", "validators/b.py": "copy2\n", "scripts/tool.py": "tool\n"},
@@ -111,7 +113,13 @@ def test_drift_check_detects_write(tmp_path: Path) -> None:
     copy_root, _ = _mk_tree(tmp_path, {"scripts/a.py": "v1\n"}, {})
     rels = ["scripts/a.py"]
     snap = {rel: bf._stat_of(copy_root / rel) for rel in rels}
+    # Windows 文件时间戳分辨率可能吞掉紧邻两次写；显式推进 mtime，仍保留
+    # 「快照后内容被改写」的真实窗口，而不是靠 sleep 碰运气。
+    before = (copy_root / rels[0]).stat()
     (copy_root / "scripts" / "a.py").write_text("v2\n", encoding="utf-8")
+    after = (copy_root / rels[0]).stat()
+    if after.st_mtime_ns == before.st_mtime_ns:
+        os.utime(copy_root / rels[0], ns=(after.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
     assert bf.drift_check(copy_root, rels, snap) == rels
     # 未改写 ⇒ 空（防恒报噪声）
     snap2 = {rel: bf._stat_of(copy_root / rel) for rel in rels}

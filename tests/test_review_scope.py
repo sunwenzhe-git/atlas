@@ -55,7 +55,8 @@ def test_manifest_deterministic_and_content_sensitive(tmp_path: Path) -> None:
 
 def test_manifest_rejects_absolute_and_parent_paths(tmp_path: Path) -> None:
     (tmp_path / "a.txt").write_text("x", encoding="utf-8")
-    r = run(tmp_path, "manifest", "--reviewed-files", "/etc/passwd")
+    # 用宿主原生绝对路径，确保 Windows 也进入绝对路径分支而不是拼成相对段。
+    r = run(tmp_path, "manifest", "--reviewed-files", str((tmp_path / "a.txt").resolve()))
     assert r.returncode == 2 and "绝对路径" in r.stderr
     r = run(tmp_path, "manifest", "--reviewed-files", "../a.txt")
     assert r.returncode == 2 and ".." in r.stderr
@@ -65,7 +66,13 @@ def test_manifest_rejects_missing_file_and_symlink(tmp_path: Path) -> None:
     r = run(tmp_path, "manifest", "--reviewed-files", "missing.txt")
     assert r.returncode == 2 and "不存在" in r.stderr
     (tmp_path / "real.txt").write_text("x", encoding="utf-8")
-    (tmp_path / "link.txt").symlink_to(tmp_path / "real.txt")
+    try:
+        (tmp_path / "link.txt").symlink_to(tmp_path / "real.txt")
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            import pytest
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
     r = run(tmp_path, "manifest", "--reviewed-files", "link.txt")
     assert r.returncode == 2 and "符号链接" in r.stderr
 

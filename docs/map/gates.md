@@ -13,7 +13,7 @@
 
 | 文件 | 角色 |
 |---|---|
-| `scripts/atlas_check.py`(1344 行) | 统一检查入口 / 编排器(**只聚合,不改判据**) |
+| `scripts/atlas_check.py`(1312 行) | 统一检查入口 / 编排器(**只聚合,不改判据**) |
 | `validators/`(〔数:校验器文件=21〕 器) | 判据本体,每器一行输出 |
 | `shared/gates.md`(209 行) | 门登记总账:六列(门 / 对账平面 / 查什么 / **不查什么** / 预算 / 假绿测试等级);§4.1 另有无门约束登记(不参与门计数) |
 | `scripts/mutation_proof.py`(155 行) | 变异证明工具:把缺陷放回去看门红不红,还原须逐字节一致 + 报告须含注入 diff |
@@ -35,7 +35,7 @@
 | 对齐测试(.atlas/tests) | `scripts/atlas_check.py:518` `check_factory` | 装配副本跑 pytest;目录不存在 = 装配未含测试(F53 三形态 SKIP) |
 | 生成物最新 | `scripts/atlas_check.py:587` `check_generated` | gen_e2e_scripts 干跑 diff;exit 3 = not_ready SKIP |
 | 审查报告形态 | `scripts/atlas_check.py:653` `check_review_report` | 最新 E2E 审查报告复算(validate_review_report 单源) |
-| 执行串行 | `scripts/atlas_check.py:557` `check_serial_execution` | 运行器配置必须 `workers: 1` + `fullyParallel: false`(D115) |
+| 执行串行 | `scripts/atlas_check.py:525` `check_serial_execution` | 运行器配置必须 `workers: 1` + `fullyParallel: false`(D115) |
 | 结构漂移 | `scripts/atlas_check.py:703` `check_drift` | 只读 `.adapter-out/_drift.json` 标记,不做二次判定 |
 | 装配版本 | `scripts/atlas_check.py:766` `check_version` | `.atlas/VERSION` 摘要戳 + `.atlas/MANIFEST.json` 逐文件基线 ⇔ 当前源包重算(D145);历史坏戳单列根因级 WARN |
 | 写面残留 | `check_write_claims` :612 | glob 未释放 claim ⇒ WARN 指名(提醒面,不是门禁) |

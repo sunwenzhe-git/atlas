@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import shlex
 import socket
 import subprocess
@@ -127,6 +128,20 @@ def parent_index(tmp_path: Path, cids: list[str]) -> None:
         "# solution-flow\n\n" + blocks, encoding="utf-8")
 
 
+def _rmtree_writable(path: Path) -> None:
+    import shutil
+    import stat
+
+    def onexc(func, name, exc):
+        if isinstance(exc, PermissionError):
+            os.chmod(name, stat.S_IWRITE)
+            func(name)
+        else:
+            raise exc
+
+    shutil.rmtree(path, onexc=onexc)
+
+
 def seed_parent_submit(tmp_path: Path, cids: list[str]) -> None:
     prov = cons.run_provenance(tmp_path)
     cases = {cid: cons._compact(
@@ -228,7 +243,7 @@ def test_missing_member_blocks_dependent_parent_case(tmp_path: Path) -> None:
     make_parent(tmp_path, [req("REQ-001", "web", case_ids="E2E-SOLUTION-001,E2E-SOLUTION-002")])
     parent_index(tmp_path, ["E2E-SOLUTION-001", "E2E-SOLUTION-002"])
     import shutil
-    shutil.rmtree(tmp_path / "api")
+    _rmtree_writable(tmp_path / "api")
 
     result = view(tmp_path)
     members = {m["name"]: m for m in result["members"]}
@@ -334,7 +349,7 @@ def test_console_member_missing_is_disclosed(tmp_path: Path) -> None:
     import shutil
     make_parent(tmp_path, [req("REQ-001", "web", case_ids="E2E-SOLUTION-001")])
     parent_index(tmp_path, ["E2E-SOLUTION-001"])
-    shutil.rmtree(tmp_path / "api")
+    _rmtree_writable(tmp_path / "api")
 
     api = next(m for m in cons.member_snapshots(tmp_path)["members"] if m["name"] == "api")
     assert api["state"] == "missing"
@@ -385,7 +400,7 @@ def test_console_member_exposes_console_entry_and_command(tmp_path: Path) -> Non
     assert web["console_url"] == "http://127.0.0.1:4201/"
     assert api["console_url"] == "http://127.0.0.1:4202/"
     assert web["root"] == str((tmp_path / "web").resolve())
-    assert f"--root {web['root']}" in web["console_cmd"]
+    assert f"--root {shlex.quote(web['root'])}" in web["console_cmd"]
     assert "--port 4201 --host 127.0.0.1" in web["console_cmd"]
     # 入口链接/命令是纯读字段：只读口径与拒绝原因不变。
     assert web["readonly"] is True
@@ -394,9 +409,10 @@ def test_console_member_exposes_console_entry_and_command(tmp_path: Path) -> Non
 
 def test_member_console_cmd_is_shell_copyable() -> None:
     """路径含空格/中文时按 shell 规则转义，粘进终端可原样执行。"""
-    cmd = cons.member_console_cmd(Path("/tmp/有 空格/member"), 4191)
+    cmd_path = Path("/tmp/有 空格/member") if os.name != "nt" else Path("C:/有 空格/member")
+    cmd = cons.member_console_cmd(cmd_path, 4191)
     assert shlex.split(cmd)[-6:] == [
-        "--root", "/tmp/有 空格/member", "--port", "4191", "--host", "127.0.0.1"]
+        "--root", str(cmd_path), "--port", "4191", "--host", "127.0.0.1"]
 
 
 def test_member_run_and_submit_guards_are_still_409(tmp_path: Path) -> None:

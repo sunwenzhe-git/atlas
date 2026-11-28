@@ -75,7 +75,8 @@ class BugLedgerValidatorTests(unittest.TestCase):
         self.assertEqual(result.status, "FAIL", result.checks)
         failures = [item for item in result.checks if item["status"] == "FAIL"]
         self.assertTrue(any(item["check"] == "canonical_landing" for item in failures), failures)
-        self.assertTrue(any(expected_path in item["detail"] for item in failures), failures)
+        self.assertTrue(any(expected_path.replace("/", "\\") in item["detail"].replace("/", "\\")
+                            for item in failures), failures)
 
     def test_rejects_atlas_bugs_landing(self) -> None:
         """M252：摘除 legacy 双落点扫描后，本用例必须红。"""
@@ -120,8 +121,13 @@ class BugLedgerValidatorTests(unittest.TestCase):
         outside.mkdir()
         (outside / "record.json").write_text(
             '{"schema_version": 1, "backflow_status": "pending"}\n', encoding="utf-8")
-        (self.root / "product" / "requirements" / "bug-login" / "linked").symlink_to(
-            outside, target_is_directory=True)
+        try:
+            (self.root / "product" / "requirements" / "bug-login" / "linked").symlink_to(
+                outside, target_is_directory=True)
+        except OSError as exc:
+            if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+                self.skipTest("当前 Windows 用户没有创建符号链接的特权")
+            raise
         result = ledger.validate(self.root)
         self.assertEqual(result.status, "FAIL", result.checks)
         failures = [item for item in result.checks
@@ -144,14 +150,24 @@ class BugLedgerValidatorTests(unittest.TestCase):
         outside.mkdir()
         (outside / "report.md").write_text("type: bug\n", encoding="utf-8")
         (self.root / ".atlas").mkdir()
-        (self.root / ".atlas" / "bugs").symlink_to(outside, target_is_directory=True)
+        try:
+            (self.root / ".atlas" / "bugs").symlink_to(outside, target_is_directory=True)
+        except OSError as exc:
+            if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+                self.skipTest("当前 Windows 用户没有创建符号链接的特权")
+            raise
         self._assert_landing_failure(".atlas/bugs")
 
     def test_rejects_symlinked_canonical_record(self) -> None:
         self._requirement("bug-login")
         outside = Path(self.temp.name) / "record.json"
         outside.write_text("{}\n", encoding="utf-8")
-        (self.root / "product" / "requirements" / "bug-login" / "record.json").symlink_to(outside)
+        try:
+            (self.root / "product" / "requirements" / "bug-login" / "record.json").symlink_to(outside)
+        except OSError as exc:
+            if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+                self.skipTest("当前 Windows 用户没有创建符号链接的特权")
+            raise
         result = ledger.validate(self.root)
         self.assertEqual(result.status, "FAIL", result.checks)
         self.assertTrue(any(

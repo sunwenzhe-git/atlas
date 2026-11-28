@@ -5,8 +5,11 @@ from __future__ import annotations
 import importlib.util
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
+import stat
 import sys
 from pathlib import Path
 
@@ -39,6 +42,26 @@ e2e_kernel = load_e2e_kernel()
 def git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(cwd), *args], check=True,
                    capture_output=True, text=True)
+
+
+def symlink_or_skip(link: Path, target: Path, *, target_is_directory: bool = False) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
+
+
+def rmtree_writable(path: Path) -> None:
+    def onexc(func, name, exc):
+        if isinstance(exc, PermissionError):
+            os.chmod(name, stat.S_IWRITE)
+            func(name)
+        else:
+            raise exc
+
+    shutil.rmtree(path, onexc=onexc)
 
 
 def make_repo(path: Path, files: dict[str, str] | None = None) -> Path:
@@ -361,7 +384,7 @@ def test_contract_symlink_escape_is_missing(tmp_path: Path) -> None:
     make_repo(tmp_path / "api", {"openapi.yaml": "openapi: 3.0.0\n"})
     web = make_repo(tmp_path / "web", {"client.ts": "// inside\n"})
     (web / "client.ts").unlink()
-    (web / "client.ts").symlink_to(outside)
+    symlink_or_skip(web / "client.ts", outside)
     core.init_solution(
         tmp_path, "demo",
         [("api", "api", "backend"), ("web", "web", "frontend")],
@@ -594,7 +617,7 @@ def test_b_missing_prd_is_source_unavailable_not_dangling(tmp_path: Path) -> Non
     detail = "\n".join(c["detail"] for c in ac_fails(report))
     assert "AC 定义源不可用" in detail
     assert "AC 定义行缺失" not in detail
-    assert "product/prd/solution-prd.md" in detail
+    assert "product/prd/solution-prd.md" in detail.replace("\\", "/")
 
 
 def test_c_assets_root_mismatch_is_source_unavailable(tmp_path: Path) -> None:
@@ -606,7 +629,7 @@ def test_c_assets_root_mismatch_is_source_unavailable(tmp_path: Path) -> None:
     detail = "\n".join(c["detail"] for c in ac_fails(report))
     assert "AC 定义源不可用" in detail
     assert "AC 定义行缺失" not in detail
-    assert "docs/prd/solution-prd.md" in detail
+    assert "docs/prd/solution-prd.md" in detail.replace("\\", "/")
 
 
 def test_d_zero_ac_definitions_is_source_unavailable(tmp_path: Path) -> None:
@@ -857,7 +880,7 @@ def test_f_fix_acs_preserves_other_bytes_and_comment(tmp_path: Path) -> None:
 def test_f2_fix_acs_preserves_crlf_line_endings(tmp_path: Path) -> None:
     """F 的 CRLF 变体：行尾保字节必须连 `\\r\\n` 一起保留，不得混入裸 LF。"""
     manifest = build_raw_solution(tmp_path, REQ_RAW)
-    manifest.write_bytes(manifest.read_bytes().replace(b"\n", b"\r\n"))
+    manifest.write_bytes(manifest.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
     before = manifest.read_bytes()
     assert before.count(b"\r\n") == 15
     res = check_cli(tmp_path, "--fix-acs", "--apply")
@@ -1392,11 +1415,9 @@ def test_b0_check_members_quotes_paths_with_spaces(tmp_path: Path) -> None:
 
 def test_b0_u09_lenient_allows_lock_only_clone_and_rejects_seal(tmp_path: Path) -> None:
     """U-09：只有锁、无成员工作区时 `--lenient` 可用；有封条 ⇒ exit 2。"""
-    import shutil
-
     make_repo(tmp_path / "web")
     core.init_solution(tmp_path, "demo", [("web", "web", "frontend")], install=False)
-    shutil.rmtree(tmp_path / "web")
+    rmtree_writable(tmp_path / "web")
 
     res = run_cli(tmp_path, "--root", str(tmp_path), "check", "--lenient", "--json")
     assert res.returncode == 0, res.stdout + res.stderr
@@ -2493,7 +2514,7 @@ def test_b_current_lock_non_blob_is_lock_unparsable_and_short_circuits(
     core.init_solution(root, "demo", [("web", "web", "frontend")], install=False)
     (root / "real.json").write_text('{"schema_version": 2}', encoding="utf-8")
     os.remove(root / core.LOCK_NAME)
-    os.symlink("real.json", root / core.LOCK_NAME)
+    symlink_or_skip(root / core.LOCK_NAME, Path("real.json"))
 
     def _must_not_read_history(*_a, **_kw):
         raise AssertionError("⓪-0 一红必须短路，不得读历史")
@@ -2520,7 +2541,7 @@ def test_b_history_non_blob_is_lock_history_unparsable(tmp_path: Path) -> None:
     # c1：历史版本是 symlink（non_blob）。
     (root / "real.json").write_text('{"schema_version": 2}', encoding="utf-8")
     os.remove(root / core.LOCK_NAME)
-    os.symlink("real.json", root / core.LOCK_NAME)
+    symlink_or_skip(root / core.LOCK_NAME, Path("real.json"))
     git(root, "add", "-A")
     git(root, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "bad")
     # c2：当前锁恢复成普通文件。

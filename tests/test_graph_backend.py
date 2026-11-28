@@ -56,6 +56,11 @@ sys.exit(2)
 '''
 
 
+FAKE_CGC_CMD = r'''@echo off
+"%PYTHON%" "%~dp0cgc" %*
+'''
+
+
 @pytest.fixture()
 def fake_cgc(tmp_path: Path, monkeypatch):
     """装一个 fake cgc 进 PATH；返回 state 目录。"""
@@ -63,7 +68,11 @@ def fake_cgc(tmp_path: Path, monkeypatch):
     bin_dir.mkdir()
     exe = bin_dir / "cgc"
     exe.write_text(FAKE_CGC, encoding="utf-8")
-    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+    if sys.platform == "win32":
+        (bin_dir / "cgc.cmd").write_text(FAKE_CGC_CMD, encoding="utf-8")
+        monkeypatch.setenv("PYTHON", sys.executable)
+    else:
+        exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
     state = tmp_path / "state"
     state.mkdir()
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")

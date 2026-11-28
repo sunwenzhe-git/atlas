@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "atlas_eval.py"
+PYTHON_CMD = subprocess.list2cmdline([sys.executable])
 
 FAKE_FILES = {
     "README.md": "marker\n",
@@ -69,11 +70,27 @@ def make_repo(tmp: Path) -> tuple[Path, str, str]:
     return root, base, cand
 
 
-def registry(cases: list[dict], gate_command: str | None = "python3 gate.py") -> dict:
+def py_cmd(*args: str) -> str:
+    return subprocess.list2cmdline([sys.executable, *args])
+
+
+def registry(cases: list[dict], gate_command: str | None = None) -> dict:
+    if gate_command is None:
+        gate_command = py_cmd("gate.py")
     return {"schema_version": 1, "gate_command": gate_command, "cases": cases}
 
 
 def write_cases(root: Path, cases: dict, name: str = "cases.json") -> Path:
+    def expand(value):
+        if isinstance(value, str):
+            return value.replace("PYTHON_CMD ", PYTHON_CMD + " ")
+        if isinstance(value, dict):
+            return {key: expand(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [expand(item) for item in value]
+        return value
+
+    cases = expand(cases)
     p = root / name
     p.write_text(json.dumps(cases, ensure_ascii=False), encoding="utf-8")
     return p
@@ -94,19 +111,19 @@ def repo(tmp_path: Path):
 
 CASES_MAIN = [
     {"id": "C1-p2p", "kind": "mutation", "anchor": "test_sample.py::test_ok",
-     "command": "python3 -m pytest test_sample.py -q"},
+     "command": py_cmd("-m", "pytest", "test_sample.py", "-q")},
     {"id": "C2-p2f", "kind": "bug", "anchor": "README.md#marker",
-     "command": "python3 -c \"import sys,pathlib; sys.exit(0 if pathlib.Path('flag.txt').exists() else 1)\""},
+     "command": py_cmd("-c", "import sys,pathlib; sys.exit(0 if pathlib.Path('flag.txt').exists() else 1)")},
     {"id": "C3-f2f", "kind": "mutation", "anchor": "test_sample.py::test_ok",
-     "command": "python3 -c \"raise SystemExit(1)\""},
+     "command": py_cmd("-c", "raise SystemExit(1)")},
     {"id": "C4-missing", "kind": "bug", "anchor": "docs/nope.md#X",
-     "command": "python3 -c \"print('ok')\""},
+     "command": py_cmd("-c", "print('ok')")},
 ]
 
 
 def ledger_dict(root: Path, base: str, cand: str, cases: list[dict],
                 out: Path, extra: list[str] | None = None,
-                gate_command: str | None = "python3 gate.py") -> dict:
+                gate_command: str | None = None) -> dict:
     cp = write_cases(root, registry(cases, gate_command), "cases-run.json")
     p = run_eval(root, "run", "--cases", str(cp), "--base", base, "--candidate", cand,
                  "--out", str(out), "--timeout", "120", *(extra or []))
@@ -151,7 +168,7 @@ def test_error_named_anchor_not_killed(repo) -> None:
     root, base, cand = repo
     cases = [{"id": "E1-err", "kind": "mutation",
               "anchor": "test_probe.py::test_error_probe",
-              "command": "python3 -c \"print('ok')\""}]
+              "command": py_cmd("-c", "print('ok')")}]
     out = root / "o"
     ledger = ledger_dict(root, base, cand, cases, out)
     assert ledger["cases"][0]["anchor_ok"] is True
@@ -163,7 +180,7 @@ def test_missing_node_anchor_detected(repo) -> None:
     root, base, cand = repo
     cases = [{"id": "E2-nope", "kind": "mutation",
               "anchor": "test_probe.py::test_not_there",
-              "command": "python3 -c \"print('ok')\""}]
+              "command": "PYTHON_CMD -c \"print('ok')\""}]
     out = root / "o"
     ledger = ledger_dict(root, base, cand, cases, out)
     assert ledger["cases"][0]["anchor_ok"] is False
@@ -175,9 +192,9 @@ def test_new_red_fails_gate_not_f2f(repo) -> None:
     root, base, cand = repo
     cases = [{"id": "N1-newred", "kind": "bug",
               "anchor": "test_new.py::test_bad",
-              "command": "python3 -m pytest test_new.py -q"}]
+              "command": py_cmd("-m", "pytest", "test_new.py", "-q")}]
     out = root / "o"
-    ledger = ledger_dict(root, base, cand, cases, out, gate_command=None)
+    ledger = ledger_dict(root, base, cand, cases, out, gate_command="")
     c0 = ledger["cases"][0]
     assert c0["anchor_ok"] is True and c0["anchor_ok_base"] is False
     assert c0["base_status"] == "skipped" and c0["candidate_status"] == "fail"
@@ -190,17 +207,17 @@ def test_new_ok_recorded_not_f2p(repo) -> None:
     root, base, cand = repo
     cases = [{"id": "N2-newok", "kind": "bug",
               "anchor": "test_new_ok.py::test_good",
-              "command": "python3 -m pytest test_new_ok.py -q"}]
+              "command": py_cmd("-m", "pytest", "test_new_ok.py", "-q")}]
     out = root / "o"
-    ledger = ledger_dict(root, base, cand, cases, out, gate_command=None)
+    ledger = ledger_dict(root, base, cand, cases, out, gate_command="")
     assert ledger["summary"]["new_ok"] == 1 and ledger["summary"]["fail2pass"] == 0
     p = run_eval(root, "gate", "--ledger", str(out / "ledger.json"))
     assert p.returncode == 0
 
 
-FLAKY_CMD = ("python3 -c \"import sys,pathlib; p=pathlib.Path('count.txt'); "
+FLAKY_CMD = (py_cmd("-c", "import sys,pathlib; p=pathlib.Path('count.txt'); "
              "n=(int(p.read_text())+1) if p.exists() else 0; p.write_text(str(n)); "
-             "sys.exit(0 if (n>=1 or not pathlib.Path('newflag.txt').exists()) else 1)\"")
+             "sys.exit(0 if (n>=1 or not pathlib.Path('newflag.txt').exists()) else 1)"))
 
 
 def test_retries_flaky_pass_not_regression(repo) -> None:
@@ -210,7 +227,7 @@ def test_retries_flaky_pass_not_regression(repo) -> None:
               "command": FLAKY_CMD}]
     out = root / "o"
     ledger = ledger_dict(root, base, cand, cases, out, extra=["--retries", "2"],
-                         gate_command=None)
+                         gate_command="")
     c0 = ledger["cases"][0]
     assert c0["base_status"] == "pass" and c0["candidate_status"] == "pass"
     assert c0["retries_used"] == 1
@@ -222,8 +239,8 @@ def test_retries_flaky_pass_not_regression(repo) -> None:
 def test_retries_exhausted_still_regression(repo) -> None:
     """M1 反面：恒红（newflag 恒在）复跑耗尽 ⇒ 仍判 pass2fail 回归。"""
     root, base, cand = repo
-    always_fail = ("python3 -c \"import sys,pathlib; "
-                   "sys.exit(0 if not pathlib.Path('newflag.txt').exists() else 1)\"")
+    always_fail = py_cmd("-c", "import sys,pathlib; "
+                         "sys.exit(0 if not pathlib.Path('newflag.txt').exists() else 1)")
     cases = [{"id": "R2-real", "kind": "bug", "anchor": "README.md#marker",
               "command": always_fail}]
     out = root / "o"
@@ -325,7 +342,7 @@ def test_kind_is_free_text_not_validated(repo) -> None:
     root, base, cand = repo
     cases = write_cases(root, registry([
         {"id": "K1", "kind": "未来的某类", "anchor": "README.md#marker",
-         "command": "python3 -c \"print('ok')\""}]), "k.json")
+         "command": "PYTHON_CMD -c \"print('ok')\""}]), "k.json")
     r = run_eval(root, "run", "--cases", str(cases), "--base", base,
                  "--candidate", cand, "--out", str(root / "o"), "--timeout", "120")
     assert r.returncode == 0, r.stdout + r.stderr
@@ -415,14 +432,14 @@ def test_host_assembles_skills_wiring_and_gate_passes(tmp_path: Path) -> None:
         "pointer-v2\n", encoding="utf-8")
     cases_path = write_cases(tmp_path, {
         "schema_version": 1,
-        "gate_command": "python3 -c \"print('ok gate1')\"",
+        "gate_command": py_cmd("-c", "print('ok gate1')"),
         "cases": [
             {
                 "id": "H1-skill",
                 "kind": "fast-lane",
                 "anchor": "README.md#host-anchor",
                 "command": (
-                    "python3 -c \"import pathlib, sys; "
+                    "PYTHON_CMD -c \"import pathlib, sys; "
                     "s=pathlib.Path('.agents/skills/demo/SKILL.md').read_text().strip(); "
                     "a=pathlib.Path('AGENTS.md').read_text().strip(); "
                     "sys.exit(0 if s.startswith('skill-v') and a.startswith('pointer-v') else 1)\""
@@ -433,7 +450,7 @@ def test_host_assembles_skills_wiring_and_gate_passes(tmp_path: Path) -> None:
                 "kind": "fast-lane",
                 "anchor": ".agents/skills/demo/SKILL.md#skill-v2",
                 "command": (
-                    "python3 -c \"import pathlib, sys; "
+                    "PYTHON_CMD -c \"import pathlib, sys; "
                     "sys.exit(0 if 'skill-v2' in pathlib.Path('.agents/skills/demo/SKILL.md').read_text() "
                     "and 'pointer-v2' in pathlib.Path('AGENTS.md').read_text() else 1)\""
                 ),
@@ -461,7 +478,7 @@ def test_host_worktree_anti_noop_refused_without_allow(tmp_path: Path) -> None:
     (harness / "README.md").write_text("non-assembly-only\n", encoding="utf-8")
     cases_path = write_cases(tmp_path, registry([
         {"id": "H0", "kind": "smoke", "anchor": "README.md#host-anchor",
-         "command": "python3 -c \"print('ok')\""}
+         "command": "PYTHON_CMD -c \"print('ok')\""}
     ], gate_command=None), "noop-cases.json")
     r_refuse = run_eval(host, "host", "--cases", str(cases_path),
                         "--harness-base", h_base, "--harness-cand", "WORKTREE",
@@ -481,7 +498,7 @@ def test_host_cleans_both_repos_on_install_failure(tmp_path: Path) -> None:
     (harness / "FAIL_INSTALL").write_text("boom\n", encoding="utf-8")
     cases_path = write_cases(tmp_path, registry([
         {"id": "H0", "kind": "smoke", "anchor": "README.md#host-anchor",
-         "command": "python3 -c \"print('ok')\""}
+         "command": "PYTHON_CMD -c \"print('ok')\""}
     ], gate_command=None), "fail-install.json")
     wt_root = tmp_path / "wt-clean"
     r = run_eval(host, "host", "--cases", str(cases_path),
@@ -500,15 +517,21 @@ def test_host_check_events_delta_excludes_gate_command_and_ablation(tmp_path: Pa
     harness, h_base, host, _host_sha = _make_harness_and_host(tmp_path)
     (harness / "skills" / "demo" / "SKILL.md").write_text("skill-v2\n", encoding="utf-8")
     append_case = (
-        "python3 -c \"import json, pathlib; p=pathlib.Path('.atlas/runs/check-events.jsonl'); "
-        "lines=[json.dumps({'timestamp':'t1','ablation_id':None,'rows':[{'name':'g1','status':'WARN','duration_ms':12}]}),"
-        "json.dumps({'timestamp':'t2','ablation_id':'ab-1','rows':[{'name':'g2','status':'FAIL','duration_ms':99}]}),"
-        "'{bad-json']; p.write_text(p.read_text()+chr(10).join(lines)+chr(10))\""
+        py_cmd(
+            "-c",
+            "import json, pathlib; p=pathlib.Path('.atlas/runs/check-events.jsonl'); "
+            "lines=[json.dumps({'timestamp':'t1','ablation_id':None,'rows':[{'name':'g1','status':'WARN','duration_ms':12}]}),"
+            "json.dumps({'timestamp':'t2','ablation_id':'ab-1','rows':[{'name':'g2','status':'FAIL','duration_ms':99}]}),"
+            "'{bad-json']; p.write_text(p.read_text()+chr(10).join(lines)+chr(10))",
+        )
     )
     gate_cmd = (
-        "python3 -c \"import json, pathlib; p=pathlib.Path('.atlas/runs/check-events.jsonl'); "
-        "p.write_text(p.read_text()+json.dumps({'timestamp':'tg','ablation_id':None,'rows':[{'name':'g3','status':'FAIL','duration_ms':5}]})+chr(10)); "
-        "print('ok g1')\""
+        py_cmd(
+            "-c",
+            "import json, pathlib; p=pathlib.Path('.atlas/runs/check-events.jsonl'); "
+            "p.write_text(p.read_text()+json.dumps({'timestamp':'tg','ablation_id':None,'rows':[{'name':'g3','status':'FAIL','duration_ms':5}]})+chr(10)); "
+            "print('ok g1')",
+        )
     )
     cases_path = write_cases(tmp_path, registry([
         {"id": "H-EV", "kind": "obs", "anchor": "README.md#host-anchor", "command": append_case}
@@ -548,7 +571,7 @@ def test_host_rejects_missing_installer_in_historical_base(tmp_path: Path) -> No
     git(host, "commit", "-qm", "h")
     cases_path = write_cases(tmp_path, registry([
         {"id": "H0", "kind": "smoke", "anchor": "README.md#host",
-         "command": "python3 -c \"print('ok')\""}
+         "command": "PYTHON_CMD -c \"print('ok')\""}
     ], gate_command=None), "old-cases.json")
     r = run_eval(host, "host", "--cases", str(cases_path),
                  "--harness-base", old_sha, "--harness-cand", "WORKTREE",

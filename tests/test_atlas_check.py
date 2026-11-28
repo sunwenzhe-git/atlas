@@ -27,6 +27,16 @@ CK = PKG_ROOT / "scripts" / "atlas_check.py"
 HOME_HTML = '<html><body><button data-testid="home-cta-btn">x</button></body></html>'
 
 
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    try:
+        os.symlink(target, link)
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            import pytest
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
+
+
 def _mk_pw_module(nm: Path, version: str = "9.9.9") -> Path:
     """在 `nm` 下造一个**真能被 Node 解析**的 `@playwright/test`（issue #24 夹具）。
 
@@ -215,8 +225,8 @@ def test_atlas_check_fails_when_a_gate_fails() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / ".atlas").mkdir(parents=True, exist_ok=True)
-        os.symlink(PKG_ROOT / "validators", root / ".atlas" / "validators")
-        os.symlink(PKG_ROOT / "scripts", root / ".atlas" / "scripts")
+        _symlink_or_skip(root / ".atlas" / "validators", PKG_ROOT / "validators")
+        _symlink_or_skip(root / ".atlas" / "scripts", PKG_ROOT / "scripts")
         # E1：抽取源 = 前端源码（前端有 home-cta-btn ⇒ home 页「已实现」，
         # 而 CASE_BAD 引用 home-missing ⇒ 双向差集 FAIL）
         (root / "product").mkdir(parents=True, exist_ok=True)
@@ -268,7 +278,7 @@ def test_generated_gate_reports_not_ready_as_skip() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / ".atlas").mkdir(parents=True, exist_ok=True)
-        os.symlink(PKG_ROOT / "scripts", root / ".atlas" / "scripts")
+        _symlink_or_skip(root / ".atlas" / "scripts", PKG_ROOT / "scripts")
         (root / "product").mkdir(parents=True, exist_ok=True)
         (root / "product" / "stack-profile.yaml").write_text(
             "product: 夹具\ne2e:\n  runner: node-playwright\n  app_base_url: null\n",
@@ -288,7 +298,7 @@ def test_generated_gate_reports_real_error_as_fail() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / ".atlas").mkdir(parents=True, exist_ok=True)
-        os.symlink(PKG_ROOT / "scripts", root / ".atlas" / "scripts")
+        _symlink_or_skip(root / ".atlas" / "scripts", PKG_ROOT / "scripts")
         (root / "product").mkdir(parents=True, exist_ok=True)
         (root / "product" / "stack-profile.yaml").write_text(
             "product: 夹具\ne2e:\n  runner: 不存在的运行器\n  app_base_url: null\n", encoding="utf-8")
@@ -1058,8 +1068,8 @@ def test_atlas_check_failure_log_written_on_fail_and_cleaned_on_pass() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / ".atlas").mkdir(parents=True, exist_ok=True)
-        os.symlink(PKG_ROOT / "validators", root / ".atlas" / "validators")
-        os.symlink(PKG_ROOT / "scripts", root / ".atlas" / "scripts")
+        _symlink_or_skip(root / ".atlas" / "validators", PKG_ROOT / "validators")
+        _symlink_or_skip(root / ".atlas" / "scripts", PKG_ROOT / "scripts")
         (root / "product").mkdir(parents=True, exist_ok=True)
         (root / "product" / "stack-profile.yaml").write_text(
             "product: 夹具\napps:\n  - name: web\n    path: web\n    kind: frontend\n"
@@ -1097,8 +1107,8 @@ def test_check_events_log_records_durations_on_fail() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / ".atlas").mkdir(parents=True, exist_ok=True)
-        os.symlink(PKG_ROOT / "validators", root / ".atlas" / "validators")
-        os.symlink(PKG_ROOT / "scripts", root / ".atlas" / "scripts")
+        _symlink_or_skip(root / ".atlas" / "validators", PKG_ROOT / "validators")
+        _symlink_or_skip(root / ".atlas" / "scripts", PKG_ROOT / "scripts")
         (root / "product").mkdir(parents=True, exist_ok=True)
         (root / "product" / "stack-profile.yaml").write_text(
             "product: 夹具\napps:\n  - name: web\n    path: web\n    kind: frontend\n"

@@ -363,8 +363,9 @@ def test_write_state_is_private_and_meta_only_has_hashes() -> None:
         meta = A.write_state(root, state, source="imported", base_url=BASE,
                              probe={"ok": True, "status": 200})
         state_path, meta_path = A.state_paths(root)
-        assert (state_path.stat().st_mode & 0o777) == 0o600
-        assert (meta_path.stat().st_mode & 0o777) == 0o600
+        if sys.platform != "win32":
+            assert (state_path.stat().st_mode & 0o777) == 0o600
+            assert (meta_path.stat().st_mode & 0o777) == 0o600
         assert set(meta) == {"source", "written_at", "expires_at", "base_url_fingerprint",
                              "probe", "state_sha256"}
         text = meta_path.read_text(encoding="utf-8")

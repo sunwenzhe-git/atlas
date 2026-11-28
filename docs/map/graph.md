@@ -13,7 +13,7 @@
 
 | 文件 | 行数 | 角色 |
 |---|---|---|
-| `adapters/_graph.py` | 332 | 透镜辅助层:FRAS 行解析 / 反向一跳 / cgc 兼容 shim / 遗留声明解析 |
+| `adapters/_graph.py` | 341 | 透镜辅助层:FRAS 行解析 / 反向一跳 / cgc 兼容 shim / 遗留声明解析 |
 | `scripts/impact_report.py` | 222 | 消费者①:aoci_candidates 候选面 + not_ready 三态 |
 | `scripts/impact_reconcile.py` | 149 | 消费者②:预测集 ⇔ 实际 diff 双向对账 |
 
@@ -23,11 +23,11 @@
 
 ### 1. 两级透镜行(输入,atlas 只读)
 
-`.atlas/spec/structure/global/cognition.fras`(跨切面共享基础设施:axios/auth/hooks/router 等)与 `.atlas/spec/structure/current/<域>/cognition.fras`(业务域内),另兼容仓根 `aoci.code.txt`。紧凑行格式 `路径[TAG]: F:… | R:code:x.py,… | A:… | S:…`,`read_cognition_fras`(`adapters/_graph.py:267`)解析;只 R 边参与反查。生产在 atlas 环外(AOCI 管线/人工增量维护);单源分工:apis/models 维持实体事实,FRAS 专管穿透拓扑(R)与防改崩硬约束(S)。
+`.atlas/spec/structure/global/cognition.fras`(跨切面共享基础设施:axios/auth/hooks/router 等)与 `.atlas/spec/structure/current/<域>/cognition.fras`(业务域内),另兼容仓根 `aoci.code.txt`。紧凑行格式 `路径[TAG]: F:… | R:code:x.py,… | A:… | S:…`,`read_cognition_fras`(`adapters/_graph.py:277`)解析;只 R 边参与反查。生产在 atlas 环外(AOCI 管线/人工增量维护);单源分工:apis/models 维持实体事实,FRAS 专管穿透拓扑(R)与防改崩硬约束(S)。
 
 ### 2. 反向 1-hop 反查(唯一的图查询)
 
-`reverse_1hop_callers`(`adapters/_graph.py:302`):扫全部透镜行,收集 R 边指向目标文件集的源文件,排序去重返回。单跳、path 级、无深度展开——「一跳就停」是刻意保守:多跳传递面归 agent 语义判断,机器只给证据不替人拍板。
+`reverse_1hop_callers`(`adapters/_graph.py:270`):扫全部透镜行,收集 R 边指向目标文件集的源文件,排序去重返回。单跳、path 级、无深度展开——「一跳就停」是刻意保守:多跳传递面归 agent 语义判断,机器只给证据不替人拍板。
 
 ### 3. 影响面候选面(消费者①)
 
@@ -39,7 +39,7 @@
 
 ### 5. cgc 兼容 shim(过渡件)
 
-`callers`(`adapters/_graph.py:240`)双轨:PATH 有 cgc 走旧 CALLS 查询,否则 FRAS 反查。`GRAPH_BACKENDS`(`adapters/_graph.py:29`)词表常量保留防外部加载断裂;`freshness_key`(`adapters/_graph.py:29`)仅 shim 路径消费。退役的是依赖,不是兼容。
+`callers`(`adapters/_graph.py:249`)双轨:PATH 有 cgc 走旧 CALLS 查询,否则 FRAS 反查。`GRAPH_BACKENDS`(`adapters/_graph.py:29`)词表常量保留防外部加载断裂;`freshness_key`(`adapters/_graph.py:29`)仅 shim 路径消费。退役的是依赖,不是兼容。
 
 ## 对外接口(谁咬它)
 

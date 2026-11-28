@@ -90,7 +90,13 @@ def test_non_git_member_fingerprint_is_none(tmp_path: Path) -> None:
 def test_symlink_member_fingerprint_is_none(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     outside = make_repo(tmp_path.parent / f"{tmp_path.name}-outside", {"a.js": "1\n"})
-    (tmp_path / "web").symlink_to(outside, target_is_directory=True)
+    try:
+        (tmp_path / "web").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            import pytest
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
     core.init_solution(tmp_path, "demo", [("web", "web", "frontend")],
                        install=False)
     assert console.app_fingerprint(tmp_path) is None

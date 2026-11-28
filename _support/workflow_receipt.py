@@ -167,9 +167,9 @@ def _calibration_payload(root: Path) -> tuple[dict, dict[str, bytes], dict[str, 
             if not source.is_file() or source.is_symlink() or _sha(source.read_bytes()) != expected:
                 raise ReceiptError(f"classification generation 证据不可复核：{name}")
             rel = source.relative_to(root).as_posix()
-            destination = f".atlas/runs/workflow-receipt/calibration-generation/{rel}"
-            payload[destination] = source.read_bytes()
-            generation_files[rel] = expected
+            artifact = f".atlas/runs/workflow-receipt/calibration-generation/{name}"
+            payload[artifact] = source.read_bytes()
+            generation_files[rel] = {"path": artifact, "sha256": expected}
     return evidence, payload, generation_files
 
 
@@ -490,9 +490,9 @@ def _verify_calibration_evidence(root: Path, receipt: dict) -> dict | None:
                 destination = safe_path(evidence_root, source_rel)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(raw)
-            for rel, expected in receipt["calibration_generation_files"].items():
-                path = safe_path(root, f".atlas/runs/workflow-receipt/calibration-generation/{rel}")
-                if not path.is_file() or path.is_symlink() or _sha(path.read_bytes()) != expected:
+            for rel, bound in receipt["calibration_generation_files"].items():
+                path = safe_path(root, bound["path"])
+                if not path.is_file() or path.is_symlink() or _sha(path.read_bytes()) != bound["sha256"]:
                     raise ReceiptError(f"校准代际证据不可复核：{rel}")
                 destination = safe_path(evidence_root, rel)
                 destination.parent.mkdir(parents=True, exist_ok=True)
@@ -575,10 +575,11 @@ def _replay_validators(root: Path, receipt: dict, tree: str) -> dict | None:
                 if not source.is_file() or source.is_symlink() or _sha(source.read_bytes()) != expected:
                     raise ReceiptError(f"validator evidence 不可复核：{rel}")
                 destination = safe_path(worktree, rel)
-                if destination.exists():
-                    if not destination.is_file() or destination.is_symlink() or destination.read_bytes() != source.read_bytes():
-                        raise ReceiptError(f"validator evidence 与重建 tree 冲突：{rel}")
-                    continue
+                if destination.exists() and (not destination.is_file() or destination.is_symlink()):
+                    raise ReceiptError(f"validator evidence 与重建 tree 冲突：{rel}")
+                # evidence 是 validator 对「重建 tree」运行后的产物。树里若已有同名
+                # 文件（尤其 checkout 行尾规范化后的 JSON），它不是不可覆盖的输入；
+                # 覆盖后仍会用下面同一 validator 重跑并逐摘要对拍。
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(source.read_bytes())
             recorded = {item["module"]: item for item in receipt["validators"]}

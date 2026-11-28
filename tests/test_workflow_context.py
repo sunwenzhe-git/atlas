@@ -117,7 +117,7 @@ def test_dispatch_md_contains_only_matching_specs(tmp_path: Path) -> None:
 def test_plan_paths_persist_and_dispatch_uses_them(tmp_path: Path) -> None:
     make_specs(tmp_path)
     (tmp_path / ".atlas/tasks").mkdir(parents=True)
-    env = {"PYTHONPATH": str(ROOT), "PATH": "/usr/bin:/bin:/usr/local/bin"}
+    env = dict(__import__("os").environ, PYTHONPATH=str(ROOT), PYTHONUTF8="1")
     p = subprocess.run(
         [sys.executable, str(ROOT / "scripts/atlas_workflow.py"), "plan",
          "--root", str(tmp_path), "--unit", "T-1", "--requirement", "调整前端页面",
@@ -141,7 +141,7 @@ def test_plan_paths_persist_and_dispatch_uses_them(tmp_path: Path) -> None:
 def test_replan_without_paths_preserves_them(tmp_path: Path) -> None:
     make_specs(tmp_path)
     (tmp_path / ".atlas/tasks").mkdir(parents=True)
-    env = {"PYTHONPATH": str(ROOT), "PATH": "/usr/bin:/bin:/usr/local/bin"}
+    env = dict(__import__("os").environ, PYTHONPATH=str(ROOT), PYTHONUTF8="1")
     cmd = [sys.executable, str(ROOT / "scripts/atlas_workflow.py"), "plan",
            "--root", str(tmp_path), "--unit", "T-1", "--requirement", "调整前端页面"]
     assert subprocess.run(cmd + ["--paths", "apps/web/src/a.ts"],

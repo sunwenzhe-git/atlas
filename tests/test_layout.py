@@ -139,7 +139,12 @@ def test_adr_is_file(tmp_path: Path) -> None:
 def test_symlink_escape_rejected(tmp_path: Path) -> None:
     outside = tmp_path.parent / f"{tmp_path.name}-outside"
     outside.mkdir()
-    os.symlink(outside, tmp_path / "link")
+    try:
+        os.symlink(outside, tmp_path / "link")
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+        raise
     write_config(tmp_path, make_config("link/assets"))
     with pytest.raises(LayoutError, match="逃出项目根"):
         load_layout(tmp_path)
