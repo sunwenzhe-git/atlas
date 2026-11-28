@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -112,7 +113,7 @@ def make(root: Path, prep: bool = True, check: bool = True) -> None:
 
 def run(root: Path, *extra: str) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, str(VERIFY), "--root", str(root), *extra],
-                          capture_output=True, text=True, timeout=300)
+                          capture_output=True, text=True, encoding="utf-8", timeout=300)
 
 
 def _invocations(root: Path) -> int:
@@ -218,7 +219,7 @@ def test_missing_root_fails_clean_without_writes() -> None:
         empty = Path(td) / "nope"
         empty.mkdir()
         r = subprocess.run([sys.executable, str(VERIFY), "--root", str(Path(td) / "absent")],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding="utf-8")
         assert r.returncode == 2, (r.returncode, r.stderr)
         assert list(empty.iterdir()) == []                                 # 未写盘
 
@@ -455,7 +456,12 @@ def test_archive_symlink_escape_refused() -> None:
         root = Path(td) / "repo"
         (root / "product/e2e/scripts/.atlas-run").mkdir(parents=True)
         (root / "product/e2e/scripts/.atlas-run/trace.zip").write_bytes(b"t")
-        (root / ".atlas-evidence").symlink_to(Path(outside))
+        try:
+            (root / ".atlas-evidence").symlink_to(Path(outside), target_is_directory=True)
+        except OSError as exc:
+            if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                pytest.skip("当前 Windows 用户没有创建符号链接的特权")
+            raise
         out = ev.archive_run_artifacts(root, source="t", phase="fail")
         assert out["status"] == "WARN", out
         assert not list(Path(outside).glob("*")), "越界目录被写入"
@@ -516,11 +522,23 @@ def test_global_teardown_absent_in_legacy_projects() -> None:
         (run_dir / "trace.zip").write_bytes(b"legacy")
         proc = subprocess.run([sys.executable, str(ev_path), "--phase", "post-run",
                                "--root", str(root), "--run-dir", str(run_dir)],
-                              capture_output=True, text=True, timeout=60)
+                              capture_output=True, text=True, encoding="utf-8", timeout=60)
         assert proc.returncode == 0, proc.stdout + proc.stderr
         m = _manifests(root)[0]
         d = json.loads(m.read_text(encoding="utf-8"))
         assert "verdict" not in d, d
+
+
+def test_evidence_archive_direct_cli_imports_filelock() -> None:
+    """The teardown entry point is executed as a file, not imported as a package."""
+    ev_path = PKG_ROOT / "_support" / "evidence_archive.py"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        proc = subprocess.run([sys.executable, str(ev_path), "--phase", "post-run",
+                               "--root", str(root)],
+                              capture_output=True, text=True, encoding="utf-8", timeout=60)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "No module named '_support'" not in proc.stderr
 
 
 def test_archive_cli_never_exits_nonzero() -> None:
@@ -534,6 +552,6 @@ def test_archive_cli_never_exits_nonzero() -> None:
         (root / ".atlas-evidence").write_text("not a dir", encoding="utf-8")
         proc = subprocess.run([sys.executable, str(ev_path), "--phase", "post-run",
                                "--root", str(root), "--run-dir", str(run_dir)],
-                              capture_output=True, text=True, timeout=60)
+                              capture_output=True, text=True, encoding="utf-8", timeout=60)
         assert proc.returncode == 0, proc.stdout + proc.stderr
         assert "WARN" in proc.stderr, proc.stderr

@@ -30,6 +30,13 @@ if str(Path(__file__).resolve().parents[1]) not in sys.path:
 from _support.layout import LayoutError, load_layout  # noqa: E402
 
 
+def _reject_partial_anchor(path: Path, label: str) -> None:
+    # Windows rooted paths without a drive (or with a drive only) are relative
+    # to process/drive state, not to the declared project root.
+    if path.anchor and not path.is_absolute():
+        raise LayoutError(f"{label} 必须在项目根内（相对路径或完整绝对路径）：{path}")
+
+
 def defaults_for(root: Path) -> tuple[str, ...]:
     """默认收录：索引 + 用例分片 + 域级 PRD。
 
@@ -53,6 +60,7 @@ def defaults_for(root: Path) -> tuple[str, ...]:
     root_resolved = root.resolve()
     for label, value in (("e2e.index", index), ("e2e.cases_dir", cases)):
         p = Path(value)
+        _reject_partial_anchor(p, label)
         if ".." in p.parts:
             raise LayoutError(f"{label} 不得包含 `..`：{value}")
         if p.is_absolute() and not p.resolve().is_relative_to(root_resolved):
@@ -77,6 +85,7 @@ def collect(root: Path, patterns: list[str]) -> list[dict]:
     seen: list[Path] = []
     for pat in patterns:
         p = Path(pat)
+        _reject_partial_anchor(p, "--include")
         if p.is_absolute():
             p = p.resolve()
             if any(c in p.name for c in "*?["):
@@ -111,10 +120,10 @@ def main() -> int:
     root = Path(args.root).resolve()
     try:
         pats = list(defaults_for(root)) + args.include
+        files = collect(root, pats)
     except LayoutError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
-    files = collect(root, pats)
     for ex in args.exclude:
         files = [f for f in files if ex not in f["path"]]
     if not files:

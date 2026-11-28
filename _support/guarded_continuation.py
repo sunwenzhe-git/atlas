@@ -156,7 +156,10 @@ def safe_mkdir_nofollow(root: Path, rel_parts: tuple[str, ...]) -> Path:
                 os.fsync(cur_fd)
             except FileExistsError:
                 pass
-            next_fd = os.open(part, flags, dir_fd=cur_fd)
+            try:
+                next_fd = os.open(part, flags, dir_fd=cur_fd)
+            except OSError as exc:
+                raise PlanError(f"路径无法安全打开为目录：{cur_path / part}") from exc
             st = os.fstat(next_fd)
             if not os.path.stat.S_ISDIR(st.st_mode):
                 os.close(next_fd)
@@ -605,9 +608,9 @@ def isolated_marker_path(root: Path, unit: str) -> Path:
 
 def write_exclusive(path: Path, text: str) -> None:
     """O_EXCL 不可变写 + fsync + dir_fsync（已存在即失败）。"""
+    if _is_link_like(path.parent):
+        raise PlanError(f"父目录不得为链接（symlink/junction）：{path.parent}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.parent.is_symlink():
-        raise PlanError(f"父目录不得为 symlink：{path.parent}")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(path, flags, 0o644)
     # newline="" 禁用换行转换：Windows 上文本模式会把 "\n" 写成 "\r\n"，导致落盘字节
@@ -630,8 +633,8 @@ def write_json_exclusive(path: Path, payload: dict) -> str:
 
 def atomic_write_json_durable(path: Path, payload: dict) -> str:
     """临时文件 fsync + os.replace + dir_fsync；返回落盘字节 sha256。"""
-    if path.parent.is_symlink():
-        raise PlanError(f"父目录不得为 symlink：{path.parent}")
+    if _is_link_like(path.parent):
+        raise PlanError(f"父目录不得为链接（symlink/junction）：{path.parent}")
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
@@ -689,8 +692,8 @@ def wal_path(run: Path) -> Path:
 def append_wal(run: Path, entry: dict) -> dict:
     """向 wal.jsonl 追加一行并 fsync + dir_fsync。"""
     p = wal_path(run)
-    if p.is_symlink() or p.parent.is_symlink():
-        raise PlanError(f"WAL 路径含 symlink：{p}")
+    if _is_link_like(p) or _is_link_like(p.parent):
+        raise PlanError(f"WAL 路径含链接（symlink/junction）：{p}")
     existing, truncated = read_wal(run)
     if truncated:
         raise PlanError("WAL 存在未闭合尾部半行，禁止继续追加写（须人工诊断）")

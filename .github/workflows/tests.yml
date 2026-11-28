@@ -101,6 +101,9 @@ jobs:
       - name: Run CLI and wiring tests
         run: python -m pytest tests/test_cli_commands.py tests/test_project_wiring.py -q -k "not update_dry_run_on_initialized"
 
+      - name: Windows portability and archive contracts
+        run: python -m pytest tests/test_windows_portability.py tests/test_atlas_verify.py tests/test_ablation.py -q
+
       - name: Installer via Git Bash (gating)
         run: python -m pytest tests/test_cli_commands.py -q -k "update_dry_run_on_initialized"
 
@@ -120,6 +123,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+
+      - name: Windows runtime regressions
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          python -m pip install pytest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q tests/test_windows_portability.py tests/test_atlas_verify.py tests/test_atlas_check.py tests/test_e2e_console.py -k "test_w or test_check_e2e or e2e_reset_failure or review_input_manifest or resolve_pw or prepare_hook_runs_before_case or evidence_archive or archive_cli"
 
       - name: Bare PowerShell init → check → update (dry-run stays zero-write)
         run: |

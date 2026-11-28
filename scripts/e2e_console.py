@@ -1746,7 +1746,7 @@ class Runner:
             self._emit(f"# 提示：旧仓内运行目录仍存在（不删除，可手动清理）：{legacy}\n")
         # node 单轨（3507 BO）：`file:line` 过滤 + 运行器原生 flag（--headed）；NODE_PATH 让生成物里的
         # @playwright/test 解析到项目声明的依赖目录（与 atlas_check 真跑门同一姿势）。
-        cmd = [str(pw_bin), "test", "-c", "playwright.config.ts", nodeid]
+        cmd = pw_runner.command_argv(pw_bin, "test", "-c", "playwright.config.ts", nodeid)
         # `--output` 覆盖配置里的 outputDir（旧生成物也能吃到结构修复）；JSON reporter 的落点由
         # Playwright 官方环境变量 PLAYWRIGHT_JSON_OUTPUT_NAME 覆盖。
         cmd += ["--output", str(self.run_dir)]

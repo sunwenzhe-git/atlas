@@ -3,8 +3,8 @@
 
 **为什么存在**（issue #24，2026-10-17 现场 = 百炼/v2前端；决策行见 `DESIGN.md` D101）：
 
-「找得到 playwright」此前被实现为**判据 = 可执行文件存在**（`<e2e.node_modules>/.bin/playwright`
-或系统全局命令），而真跑需要的性质是「**从 `product/e2e/scripts/` 出发 `@playwright/test`
+「找得到 playwright」此前被实现为**判据 = 可执行文件存在**，而真跑需要的性质是
+「**从 `product/e2e/scripts/` 出发 `@playwright/test`
 可解析**」。`shared/gates.md` 2.2「E2E 真跑」行早已写明「解释器按**依赖可导入性**选
 （不按路径存在）」——node 轨的实现漂离了该口径（**是实现漂了，不是设计选择**）。
 
@@ -25,7 +25,7 @@
 - **`ensure_resolvable()`** —— 判据不成立时**怎么办**由调用方定：执行器要「让这轮能跑」⇒ 修复；
   门要「这个结论可信吗」⇒ 修复后照样在行里写明（依赖机器全局状态 = 不是项目自足）。
 
-修复 = **幂等软链**（本机实测能让 ESM 解析生效、且不把全局版本混进项目依赖的唯一通道）；
+修复 = **幂等目录链接**（Windows 用 junction，POSIX 用软链）；
 只在 `source == "global"` 时发生——项目自装目录里缺模块是**项目自身缺口**，给软链会把全局版本
 混进项目依赖（版本漂移源），故该情形一律**不修、只报**。
 
@@ -51,7 +51,7 @@ PROBE_SNIPPET = (
     "e=>{console.error('ERR '+((e&&e.code)||e));process.exit(1)})"
 )
 
-PW_BIN_NAME = "playwright.cmd" if sys.platform == "win32" else "playwright"
+_PLAYWRIGHT_ENTRY = Path("@playwright/test/cli.js" if sys.platform == "win32" else ".bin/playwright")
 
 #: 浏览器就绪探针：让 playwright **自己算** chromium 可执行路径（走它自带的 registry——
 #: 自动吃 `PLAYWRIGHT_BROWSERS_PATH` 与所装版本的 revision，Python 侧不猜路径），存在性
@@ -95,7 +95,8 @@ def global_nm_root() -> str | None:
     if g:
         return g
     try:
-        res = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=5)
+        npm = "npm.cmd" if sys.platform == "win32" else "npm"
+        res = subprocess.run([npm, "root", "-g"], capture_output=True, text=True, timeout=5)
         if res.returncode == 0 and res.stdout.strip():
             return res.stdout.strip()
     except Exception:
@@ -125,13 +126,13 @@ def global_playwright(nm_root: str | None) -> Path | None:
     if nm_root:
         for p in nm_root.split(os.pathsep):
             gnp = Path(p).resolve()
-            candidates.append(gnp.parent / "bin" / PW_BIN_NAME)
-            candidates.append(gnp.parent.parent / "bin" / PW_BIN_NAME)
-            candidates.append(gnp / ".bin" / PW_BIN_NAME)
+            candidates.append(gnp.parent / "bin" / "playwright")
+            candidates.append(gnp.parent.parent / "bin" / "playwright")
+            candidates.append(gnp / _PLAYWRIGHT_ENTRY)
     try:
         res_bin = subprocess.run(["npm", "prefix", "-g"], capture_output=True, text=True, timeout=5)
         if res_bin.returncode == 0 and res_bin.stdout.strip():
-            candidates.append(Path(res_bin.stdout.strip()) / "bin" / PW_BIN_NAME)
+            candidates.append(Path(res_bin.stdout.strip()) / "bin" / "playwright")
     except Exception:
         pass
     for c in candidates:
@@ -142,6 +143,21 @@ def global_playwright(nm_root: str | None) -> Path | None:
 
 # ---------------------------------------------------------------- 二进制解析
 
+def _local_entry(nm_dir: Path) -> Path:
+    entry = nm_dir / _PLAYWRIGHT_ENTRY
+    if sys.platform == "win32" and not entry.is_file():
+        alternative = nm_dir / "playwright" / "cli.js"
+        if alternative.is_file():
+            return alternative
+    return entry
+
+
+def command_argv(pw_bin: Path, *args: str) -> list[str]:
+    """On Windows invoke the Node CLI directly, without an npm batch shim."""
+    prefix = ["node"] if sys.platform == "win32" else []
+    return [*prefix, str(pw_bin), *args]
+
+
 def resolve(root: Path, nm_rel: str | None) -> tuple[Path | None, Path | None, str, str]:
     """运行器二进制解析（项目声明优先，全局兜底）。
 
@@ -149,18 +165,27 @@ def resolve(root: Path, nm_rel: str | None) -> tuple[Path | None, Path | None, s
     `why` 非空 ⇔ `pw_bin is None`。**本函数不判可解析性**（那是 `probe` 的事）。
     """
     nm_dir = (root / nm_rel).resolve() if nm_rel else None
-    pw_bin = (nm_dir / ".bin" / PW_BIN_NAME) if nm_dir else None
+    pw_bin = _local_entry(nm_dir) if nm_dir else None
     if pw_bin and pw_bin.is_file():
         return pw_bin, nm_dir, "local", ""
 
     g_root = global_nm_root()
-    g_pw = global_playwright(g_root)
-    if g_pw is not None and g_root:
-        return g_pw, Path(g_root), "global", ""
+    if g_root:
+        if sys.platform == "win32":
+            for candidate in g_root.split(os.pathsep):
+                if candidate:
+                    g_dir = Path(candidate).resolve()
+                    g_pw = _local_entry(g_dir)
+                    if g_pw.is_file():
+                        return g_pw, g_dir, "global", ""
+        else:
+            g_pw = global_playwright(g_root)
+            if g_pw is not None:
+                return g_pw, Path(g_root), "global", ""
 
     if not nm_rel:
         return None, None, "none", "stack-profile 未声明 e2e.node_modules（node-playwright 依赖目录，契约 §7）"
-    return None, None, "none", f"node-playwright 可执行文件不存在：{pw_bin}（e2e.node_modules）"
+    return None, None, "none", f"node-playwright 可执行文件不存在：{pw_bin}（stack-profile e2e.node_modules）"
 
 
 # ---------------------------------------------------------------- 判据本体
@@ -308,7 +333,12 @@ def ensure_resolvable(scripts_dir: Path, nm_target: Path, *, source: str,
                                  f"（非本工具所建，不覆盖）：{link}"), note
         else:
             link.parent.mkdir(parents=True, exist_ok=True)
-            os.symlink(src, link)
+            if sys.platform == "win32":
+                from _winapi import CreateJunction
+
+                CreateJunction(str(src), str(link))
+            else:
+                os.symlink(src, link)
     except OSError as e:
         return "fail", f"{MODULE_SPEC} 从 {scripts_dir} 不可解析，软链失败：{link} → {src}（{e}）", note
     ok2, detail2 = probe(scripts_dir)

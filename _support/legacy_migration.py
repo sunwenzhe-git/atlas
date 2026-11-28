@@ -422,33 +422,47 @@ def index_matches_worktree(root: Path, rel: str) -> bool | None:
     比较两侧的 **git 对象 ID**：`git rev-parse :rel`（索引）对
     `git hash-object --path=<rel> -- <rel>`（工作区，按同一 `.gitattributes` 归一）。
 
-    返回 `None` = 无法判定（非 git 仓库 / git 不可用），调用方应按「不适用」处理，
-    **不得**当成 False。
+    返回 `False` = 工作区有该文件但索引中没有；返回 `None` = 非 git / git 不可用，
+    调用方按「不适用」处理。
 
     ⚠️ 不要用 `_index_hash(root, rel) != item["sha256"]` 判这件事：那是「索引 blob 的
     sha256」对「工作区原始字节的 sha256」，在 `core.autocrlf=true` 的 Windows 上
     恒不相等（实测该 bug 使迁移与 `validate_migration` 全部误报 `source_stale`）。
     """
-    index_id = _index_object_id(root, rel)
-    worktree_id = _worktree_object_id(root, rel)
+    if not _git_available(root):
+        return None
+    index_id, index_known = _index_object_id(root, rel)
+    worktree_id, worktree_known = _worktree_object_id(root, rel)
+    if not index_known or not worktree_known:
+        return None
+    if worktree_id is not None and index_id is None:
+        return False
     if index_id is None or worktree_id is None:
         return None
     return index_id == worktree_id
 
 
-def _index_object_id(root: Path, rel: str) -> str | None:
-    """索引中 `rel` 的 **git 对象 ID**（SHA-1），即 `git rev-parse :rel`。"""
+def _git_available(root: Path) -> bool:
+    """Whether Git can answer a query for this root at all."""
+    try:
+        result = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"],
+                                cwd=root, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def _index_object_id(root: Path, rel: str) -> tuple[str | None, bool]:
+    """索引中 `rel` 的 git 对象 ID；第二值表示 Git 是否能完成判断。"""
     try:
         result = subprocess.run(["git", "rev-parse", f":{rel}"], cwd=root,
-                                capture_output=True, timeout=10)
+                                capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout.decode("ascii", "ignore").strip() or None
+        return None, False
+    return (result.stdout.strip() or None if result.returncode == 0 else None), True
 
 
-def _worktree_object_id(root: Path, rel: str) -> str | None:
+def _worktree_object_id(root: Path, rel: str) -> tuple[str | None, bool]:
     """工作区文件的 **git 对象 ID**，按 `rel` 的 `.gitattributes` / `core.autocrlf` 归一。
 
     **为什么不能用 `path.read_bytes()` 的 sha256 去和索引比**：
@@ -471,12 +485,12 @@ def _worktree_object_id(root: Path, rel: str) -> str | None:
     try:
         result = subprocess.run(
             ["git", "hash-object", f"--path={rel}", "--", rel],
-            cwd=root, capture_output=True, timeout=10)
+            cwd=root, capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
-        return None
+        return None, False
     if result.returncode != 0:
-        return None
-    return result.stdout.decode("ascii", "ignore").strip() or None
+        return None, True
+    return result.stdout.strip() or None, True
 
 
 def _tree_hash(root: Path) -> str | None:
@@ -692,7 +706,7 @@ def migrate(root: str | Path, test_command: list[str] | str | None = None,
             # 两侧统一用 **git 对象 ID** 比较（索引 :rel vs 工作区按同路径规则归一）。
             # 直接用工作区原始字节的 sha256 与索引 blob 比，在 core.autocrlf=true 的
             # Windows 上必然不等 ⇒ 每个文件都误报 source_stale（实测）。
-            if _index_object_id(root, row["path"]) != _worktree_object_id(root, row["path"]):
+            if index_matches_worktree(root, row["path"]) is False:
                 errors.append({"kind": "source_stale", "path": row["path"],
                                "message": "源文件与 staged index 不一致，拒绝生成迁移证据"})
         recorded_paths = {row["path"] for row in source_manifest["sources"]}

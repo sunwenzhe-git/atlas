@@ -33,7 +33,12 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from _support.filelock import lock_exclusive as _lock_exclusive, unlock as _unlock_file
+if __package__:
+    from _support.filelock import lock_exclusive as _lock_exclusive, unlock as _unlock_file
+else:
+    if str(Path(__file__).resolve().parent.parent) not in sys.path:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from _support.filelock import lock_exclusive as _lock_exclusive, unlock as _unlock_file
 
 SCHEMA = "atlas-evidence-manifest-v1"
 INDEX_SCHEMA = "atlas-evidence-index-v1"

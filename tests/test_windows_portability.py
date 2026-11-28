@@ -41,6 +41,8 @@ if str(PKG_ROOT) not in sys.path:
 from _support import filelock  # noqa: E402
 from _support.guarded_continuation import (  # noqa: E402
     PlanError,
+    append_wal,
+    atomic_write_json_durable,
     assert_no_symlink_components,
     safe_mkdir_nofollow,
     write_exclusive,
@@ -148,6 +150,19 @@ def test_w2_safe_mkdir_rejects_symlink_component(tmp_path: Path) -> None:
         assert_no_symlink_components(tmp_path, link / "x.txt")
 
 
+@pytest.mark.skipif(IS_WINDOWS, reason="POSIX dir_fd/O_NOFOLLOW path")
+def test_w2_safe_mkdir_normalizes_posix_symlink_open_error(tmp_path: Path) -> None:
+    outside = tmp_path / "outside_posix"
+    outside.mkdir()
+    link = tmp_path / "link_posix"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("本平台/权限不支持创建目录 symlink")
+    with pytest.raises(PlanError):
+        safe_mkdir_nofollow(tmp_path, ("link_posix", "child"))
+
+
 @pytest.mark.skipif(not IS_WINDOWS, reason="junction 是 Windows 专有重解析点")
 def test_w2_safe_mkdir_rejects_windows_junction(tmp_path: Path) -> None:
     """M-W2 坏输入：Windows junction 必须当作链接拒绝。
@@ -171,6 +186,28 @@ def test_w2_safe_mkdir_rejects_windows_junction(tmp_path: Path) -> None:
         safe_mkdir_nofollow(tmp_path, ("jump", "evil"))
     with pytest.raises(PlanError):
         assert_no_symlink_components(tmp_path, junction / "x.txt")
+
+
+@pytest.mark.skipif(not IS_WINDOWS, reason="junction 是 Windows 专有重解析点")
+def test_w2_protected_write_paths_reject_junction_parent(tmp_path: Path) -> None:
+    """All mutation helpers must reject a junction, not just safe_mkdir."""
+    outside = tmp_path / "outside_write"
+    outside.mkdir()
+    junction = tmp_path / "write_jump"
+    res = subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
+                         capture_output=True, text=True)
+    if res.returncode != 0:
+        pytest.skip(f"无法创建 junction：{res.stderr or res.stdout}")
+    run = junction / "run"
+    with pytest.raises(PlanError):
+        write_exclusive(junction / "new.txt", "x")
+    with pytest.raises(PlanError):
+        atomic_write_json_durable(junction / "new.json", {"x": 1})
+    with pytest.raises(PlanError):
+        append_wal(junction, {"phase": "INTENT"})
+    assert not (outside / "new.txt").exists()
+    assert not (outside / "new.json").exists()
+    assert not run.exists()
 
 
 # ─────────────────────────────────────────────────────────── M-W3 字节一致性
@@ -245,6 +282,46 @@ def test_w4_unclosed_quote_raises_value_error() -> None:
 
     with pytest.raises(ValueError):
         split_command('python "unterminated')
+
+
+def test_w4_round_trip_reaches_subprocess_with_original_argv() -> None:
+    from _support.argv_split import join_command, split_command
+
+    args = ["", 'embedded "quote"', 'C:\\work dir\\', "it's literal"]
+    argv = [sys.executable, "-c", "import json, sys; print(json.dumps(sys.argv[1:]))", *args]
+    parsed = split_command(join_command(argv))
+    assert parsed == argv
+    assert json.loads(subprocess.check_output(parsed, text=True)) == args
+
+
+@pytest.mark.skipif(not IS_WINDOWS, reason="Windows argv syntax")
+def test_w4_windows_native_option_and_embedded_quote_round_trip() -> None:
+    from _support.argv_split import join_command, split_command
+
+    assert split_command('python --path="C:\\Program Files\\Atlas" --ok') == [
+        "python", "--path=C:\\Program Files\\Atlas", "--ok"]
+    argv = ["python", 'say "hello"', "C:\\work dir\\"]
+    assert split_command(join_command(argv)) == argv
+
+
+@pytest.mark.skipif(not IS_WINDOWS, reason="Windows argv syntax")
+def test_w4_space_path_does_not_depend_on_repo_checkout(tmp_path: Path) -> None:
+    from _support.argv_split import split_command
+
+    exe = tmp_path / "Project Harness" / "python.exe"
+    assert " " in str(exe)
+    command = subprocess.list2cmdline([str(exe), "--root", str(tmp_path / "a b")])
+    assert split_command(command) == [str(exe), "--root", str(tmp_path / "a b")]
+
+
+@pytest.mark.skipif(not IS_WINDOWS, reason="Windows native command-line quoting")
+def test_w4_single_quoted_python_argument_remains_compatible() -> None:
+    from _support.argv_split import split_command
+
+    command = (subprocess.list2cmdline([sys.executable])
+               + " -c 'import sys; print(sys.argv[-1])' -- pre'fix with space'post")
+    argv = split_command(command)
+    assert subprocess.check_output(argv, text=True).strip() == "prefix with spacepost"
 
 
 # ─────────────────────────────────────────────────────────── M-W5 shell 脚本 LF
@@ -506,80 +583,44 @@ def test_w8_blocking_lock_acquires_immediately_when_free(tmp_path: Path) -> None
         os.close(fd)
 
 
-# ─────────────────────────────────────────────────────────── M-W9 命令串引号
-#
-# 背景：`_playwright_invocation` 把 `pw_bin` 直接插进命令串再 `shell=True`。
-# 项目路径含空格时（`D:\workplace\Project Harness`、`C:\Program Files\...`）
-# 两个 shell 都在空格处断开：
-#
-#     'D:\Temp\qtest\sp' is not recognized as an internal or external command
-#
-# 实测同一路径加引号后 rc=0 —— 不加引号就是 E2E 门必然假红。
+# ─────────────────────────────────────────────────────────── M-W9 Playwright
 
-def test_w9_shell_quote_token_survives_space_containing_path() -> None:
-    """M-W9: 含空格的路径经 `_shell_quote_token` 后，必须能被本平台 shell 还原成单 token。"""
-    from importlib import import_module
+@pytest.mark.parametrize("dirname", ["Project Harness", "Project&Harness", "Project%TEMP%"])
+def test_w9_playwright_invocation_preserves_paths_and_argv(tmp_path: Path, dirname: str) -> None:
+    from scripts import atlas_check
 
-    sys.path.insert(0, str(PKG_ROOT / "scripts"))
-    try:
-        atlas_check = import_module("atlas_check")
-    finally:
-        sys.path.pop(0)
-
-    raw = str(PKG_ROOT / "node_modules" / ".bin" / "playwright")
-    assert " " in raw, "本仓路径不含空格，本钉的前提不成立（换一个含空格的路径）"
-    quoted = atlas_check._shell_quote_token(raw)
-    assert quoted != raw, "含空格路径未被引号包裹"
-    # 还原性：按本平台词法拆回来必须等于原 token
-    from _support.argv_split import split_command
-
-    if os.name == "nt":
-        # cmd.exe 语义由 list2cmdline 生成：能原样拆回即可
-        assert raw in quoted
+    nm = tmp_path / dirname / "node_modules"
+    if IS_WINDOWS:
+        if shutil.which("node") is None:
+            pytest.skip("Node.js is required for the Windows Playwright launcher")
+        cli = nm / "@playwright" / "test" / "cli.js"
+        source = "console.log(JSON.stringify([process.argv.slice(2), process.env.NODE_PATH]));"
     else:
-        assert split_command(quoted) == [raw]
+        cli = nm / ".bin" / "playwright"
+        source = '#!/bin/sh\nprintf "%s\\n" "$@" "$NODE_PATH"\n'
+    cli.parent.mkdir(parents=True)
+    cli.write_text(source, encoding="utf-8", newline="\n")
+    cli.chmod(0o755)
+
+    args = ["test", "-c", "playwright.config.ts", "case&name.spec.ts"]
+    command, env = atlas_check._playwright_invocation(cli, nm, args[-1])
+    assert isinstance(command, str) != IS_WINDOWS
+    code, out = atlas_check.run(command, tmp_path, timeout=10, shell=isinstance(command, str), env=env)
+    assert code == 0, out
+    if IS_WINDOWS:
+        assert json.loads(out) == [args, str(nm)]
+    else:
+        assert out.splitlines() == [*args, str(nm)]
 
 
-def test_w9_playwright_invocation_quotes_binary_path() -> None:
-    """M-W9: `_playwright_invocation` 生成的命令串必须把 pw_bin 引起来。
-
-    变异方向：把 `_playwright_invocation` 改回 `f"{pw_bin} test ..."`，
-    本钉在**两端**都红（含空格路径下 POSIX `sh -c` 同样会断）。
-    """
-    from importlib import import_module
-
-    sys.path.insert(0, str(PKG_ROOT / "scripts"))
-    try:
-        atlas_check = import_module("atlas_check")
-    finally:
-        sys.path.pop(0)
-
-    spaced_bin = Path("/tmp/a b/playwright.cmd" if os.name != "nt"
-                      else r"C:\a b\playwright.cmd")
-    nm = Path("/tmp/nm" if os.name != "nt" else r"C:\nm")
-    cmd, env = atlas_check._playwright_invocation(spaced_bin, nm, "case.spec.ts")
-    assert str(spaced_bin) in cmd
-    # 引号必须紧贴可执行路径两侧（不是被丢在整串两端）
-    assert f'"{spaced_bin}"' in cmd or f"'{spaced_bin}'" in cmd, (
-        f"pw_bin 未被引号包裹，含空格路径会断：{cmd!r}")
-    assert "-c" in cmd and "playwright.config.ts" in cmd and "case.spec.ts" in cmd
-    assert env.get("NODE_PATH") == str(nm), "NODE_PATH 必须走 env 而不是拼进命令串"
-
-
-def test_w9_playwright_invocation_without_page_has_no_trailing_space() -> None:
-    """M-W9 边界：无 page（六页全跑）时命令串不得留尾随空格。
-
-    旧实现靠 `.strip()` 收尾；改用逐 token 拼接后不应再需要它（也不该残留空格）。
-    """
-    from importlib import import_module
-
-    sys.path.insert(0, str(PKG_ROOT / "scripts"))
-    try:
-        atlas_check = import_module("atlas_check")
-    finally:
-        sys.path.pop(0)
-
-    cmd, _env = atlas_check._playwright_invocation(
-        Path("playwright" if os.name != "nt" else "playwright.cmd"), None, "")
-    assert cmd == cmd.strip()
-    assert "  " not in cmd
+@pytest.mark.skipif(not IS_WINDOWS, reason="Windows drive/root syntax")
+@pytest.mark.parametrize("pattern", [r"\outside\*.md", "D:drive-relative/*.md"])
+def test_review_input_include_rejects_partial_windows_anchor(tmp_path: Path, pattern: str) -> None:
+    script = PKG_ROOT / "scripts" / "make_review_inputs.py"
+    proc = subprocess.run([sys.executable, str(script), "--root", str(tmp_path),
+                           "--out", "review", "--include", pattern],
+                          capture_output=True, text=True, encoding="utf-8",
+                          env={**os.environ, "PYTHONUTF8": "1"}, timeout=15)
+    assert proc.returncode == 2, proc.stderr
+    assert "--include" in proc.stderr and "必须在项目根内" in proc.stderr
+    assert not (tmp_path / "review").exists()

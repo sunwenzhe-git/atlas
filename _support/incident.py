@@ -713,17 +713,17 @@ def _publish(root: Path, incident_id: str, events: list[dict], selected_mode: st
     lock_path = safe_path(root, _relative(root, directory.parent / f".{incident_id}.lock"))
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    locked = False
     try:
-        try:
-            _lock_exclusive(fd)
-        except OSError:
-            pass
+        _lock_exclusive(fd)
+        locked = True
         return _publish_locked(root, incident_id, events, selected_mode, now=now, closed=closed)
     finally:
-        try:
-            _unlock_file(fd)
-        except OSError:
-            pass
+        if locked:
+            try:
+                _unlock_file(fd)
+            except OSError:
+                pass
         os.close(fd)
 
 

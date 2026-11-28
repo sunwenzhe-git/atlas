@@ -361,45 +361,13 @@ def port_free(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) != 0
 
 
-def _shell_quote_token(token: str) -> str:
-    """把一个 argv token 编码成「能被本平台 shell 原样还原」的单 token 串。
-
-    **为什么必须做**：`_playwright_invocation` 把 `pw_bin` 直接插进命令串再
-    `shell=True`。项目或用户目录含空格（如 `D:\\workplace\\Project Harness`、
-    `C:\\Program Files\\...`）时，`cmd.exe` / `sh` 都会在空格处断开：
-
-        'D:\\Temp\\qtest\\sp' is not recognized as an internal or external command
-
-    实测同一条命令加引号后 rc=0 —— 不加引号就是 E2E 门在 Windows 上**必然假红**，
-    且报错与用例无关（本次修复 `NODE_PATH` 前缀时暴露出这一半）。
-
-    POSIX 走 `shlex.quote`（与 `sh -c` 词法同源），Windows 走
-    `subprocess.list2cmdline`（`CreateProcess` 命令行编码的官方实现）——
-    两端各用自己 shell 的规则，不互相迁就。
-    """
-    if os.name == "nt":
-        return subprocess.list2cmdline([token])
-    return shlex.quote(token)
-
-
-def _playwright_invocation(pw_bin, node_path, spec_arg: str) -> tuple[str, dict[str, str]]:
-    """构造 Playwright 真跑命令与其环境。
-
-    **为什么不能把 `NODE_PATH=...` 拼进命令串**：那是 POSIX shell 的前置赋值语法，
-    只在 `sh -c` 下成立。Windows 上 `shell=True` 走 `cmd.exe`，`NODE_PATH=x cmd`
-    会被当成「要执行的程序名」⇒ `'NODE_PATH' 不是内部或外部命令`（实测 rc=1）——
-    E2E 门在 Windows 上**必然假红**，且报错与用例无关。
-
-    正确做法：命令串只含可执行名与参数，`NODE_PATH` 走 `subprocess` 的 `env`。
-    两端因此同形：POSIX 侧 `sh -c "<bin> test ..."`，Windows 侧 `cmd /c` 同一条。
-
-    **每个 token 都要过 `_shell_quote_token`**：`pw_bin` 落在项目 node_modules 下，
-    项目路径含空格时裸拼必然断（实测 `'D:\\Temp\\qtest\\sp' is not recognized`）。
-    """
-    parts = [_shell_quote_token(str(pw_bin)), "test", "-c", "playwright.config.ts"]
+def _playwright_invocation(pw_bin: Path, node_path: Path | None,
+                           spec_arg: str) -> tuple[list[str] | str, dict[str, str]]:
+    """Preserve the POSIX shell invocation; on Windows pass Node an argv list."""
+    argv = pw_runner.command_argv(pw_bin, "test", "-c", "playwright.config.ts")
     if spec_arg:
-        parts.append(_shell_quote_token(spec_arg))
-    cmd = " ".join(parts)
+        argv.append(spec_arg)
+    cmd = argv if os.name == "nt" else shlex.join(argv)
     env = dict(os.environ)
     if node_path:
         env["NODE_PATH"] = str(node_path)
@@ -1074,11 +1042,10 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     nm_rel = Path(strip_inline_comment(nm.group(1))) if nm else None
     pw_bin, node_path, runner_source, why = pw_runner.resolve(root, str(nm_rel) if nm_rel else None)
     if pw_bin is None:
-        disp_bin = (nm_rel / ".bin" / pw_runner.PW_BIN_NAME) if nm_rel else "未配置"
         hint = f"（提示：请在 {nm_rel.parent if nm_rel else '.'} 执行 npm i -D {pw_runner.MODULE_SPEC}）"
+        detail = why if nm_rel else "node-playwright 可执行文件不存在：未配置（stack-profile e2e.node_modules）"
         rows.add("E2E 真跑", "FAIL",
-                 f"node-playwright 可执行文件不存在：{disp_bin}（stack-profile e2e.node_modules）{hint}",
-                 command="", full_output=f"pw_bin not found: {pw_bin}\n提示：请先在对应目录安装 {pw_runner.MODULE_SPEC}",
+                 f"{detail}{hint}", command="", full_output=f"{detail}\n{hint}",
                  duration_ms=_elapsed_ms(started_gate))
         return
     # 判据本体（与执行器同一实现、同一修复）：不成立 ⇒ 先试全局兜底修复，复检仍不过 ⇒ FAIL。
@@ -1111,7 +1078,7 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
     # ⇒ **读不到人的会话**（并在那儿写一个空 state）⇒ 未登录态跑用例 ⇒ 20s 超时假红。
     # 控制台（`e2e_console`）本来就是 `cd scripts` 再跑 —— 本门与它对齐，两个入口一个口径。
     cmd, run_env = _playwright_invocation(pw_bin, node_path, spec_arg)
-    code, out = run(cmd, scripts, timeout=1800, shell=True, env=run_env)
+    code, out = run(cmd, scripts, timeout=1800, shell=isinstance(cmd, str), env=run_env)
     m2 = re.findall(r"(\d+) (passed|failed|error)", out)
     summary = " ".join(f"{n} {k}" for n, k in m2) or "无结果"
 
@@ -1190,7 +1157,8 @@ def check_e2e(root: Path, rows: Row, page: str | None) -> None:
         summary = f"{summary} ｜ {runner_note}" + (f"（{runner_detail}）" if runner_detail else "")
     rows.add("E2E 真跑" + (f"[{page}]" if page else "（六页）"),
              level, summary,
-             command=cmd, full_output=full_err_output, code=code,
+             command=cmd if isinstance(cmd, str) else subprocess.list2cmdline(cmd),
+             full_output=full_err_output, code=code,
              duration_ms=_elapsed_ms(started_gate))
 
 

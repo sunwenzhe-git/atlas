@@ -92,7 +92,8 @@ function requirePython() {
 
 function runPython(scriptArgs, opts = {}) {
   const py = requirePython();
-  return spawnSync(py.cmd, [...py.args, ...scriptArgs], { env: process.env, ...opts });
+  const env = { ...process.env, PYTHONUTF8: '1', ...(opts.env || {}) };
+  return spawnSync(py.cmd, [...py.args, ...scriptArgs], { ...opts, env });
 }
 
 function hasAutoChangeMarker(file) {

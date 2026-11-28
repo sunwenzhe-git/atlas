@@ -27,6 +27,7 @@ def run_cmd(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProc
         cwd=cwd or PKG_ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         env=os.environ.copy(),
     )
 
@@ -37,6 +38,23 @@ def test_cli_help_includes_update_and_upgrade():
     assert "update" in res.stdout
     assert "upgrade" in res.stdout
     assert "solution" in res.stdout
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows console encoding")
+def test_cli_check_help_uses_utf8_for_python_output(tmp_path: Path):
+    env = {**os.environ, "PYTHONUTF8": "0"}
+    env.pop("PYTHONIOENCODING", None)
+    res = subprocess.run(
+        ["node", str(ATLAS_BIN), "check", "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        timeout=20,
+    )
+    assert res.returncode == 0, res.stderr
+    assert "⇒" in res.stdout
 
 
 def test_cli_update_help():

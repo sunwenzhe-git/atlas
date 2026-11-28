@@ -10,10 +10,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from _support.argv_split import join_command
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "ablation.py"
 
@@ -104,7 +106,7 @@ def _state_dir(root: Path, state: Path) -> Path:
 
 
 def _result(root: Path, state: Path, ident: str = "t1") -> dict:
-    return json.loads((_state_dir(root, state) / ident / "result.json").read_text())
+    return json.loads((_state_dir(root, state) / ident / "result.json").read_text(encoding="utf-8"))
 
 
 def test_begin_and_restore_roundtrip(tmp_path) -> None:
@@ -231,7 +233,7 @@ def _smoke_script(tmp_path: Path, body: str) -> Path:
 
 
 def _smoke_cmd(script: Path, counter: Path) -> str:
-    return shlex.join([sys.executable, str(script), str(counter)])
+    return join_command([sys.executable, str(script), str(counter)])
 
 def test_smoke_failure_keeps_active(tmp_path) -> None:
     root = _repo(tmp_path)
@@ -440,7 +442,7 @@ def test_install_update_refuses_active_ablation(tmp_path) -> None:
     target = _bash_path(root, bash)
     p = subprocess.run([bash, script, "--target", target,
                         "--update", "--dry-run"], cwd=str(pkg), env=env,
-                       capture_output=True, text=True, timeout=120)
+                       capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert p.returncode == 2, p.stdout + p.stderr
     assert "消融事务" in p.stdout + p.stderr
 

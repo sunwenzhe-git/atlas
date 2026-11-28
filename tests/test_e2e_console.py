@@ -656,7 +656,7 @@ def test_prepare_hook_runs_before_case_and_refuses_on_failure() -> None:
             pass
 
     def fake_popen(cmd, cwd=None, **kw):
-        seen["calls"].append(("真跑", cmd[0]))
+        seen["calls"].append(("真跑", cmd[:cmd.index("test")]))
         return FakeProc()
 
     with tempfile.TemporaryDirectory() as td:
@@ -677,7 +677,7 @@ def test_prepare_hook_runs_before_case_and_refuses_on_failure() -> None:
             # ① 钩子在真跑之前；参数形态钉死（node / cwd=项目根 / 180s / 用例 ID 经 env 传入 / NODE_PATH 注入）
             assert seen["calls"] == [
                 ("prepare", "node", str(root), 180, "E2E-PREP-001", str(Path("/nm"))),
-                ("真跑", "/pw"),
+                ("真跑", ["node", str(Path("/pw"))] if os.name == "nt" else ["/pw"]),
             ], seen["calls"]
             assert runner.done["ok"] is True, runner.done
             assert "prep_failed" not in runner.done, runner.done
@@ -727,7 +727,9 @@ def test_resolve_pw_global_playwright(monkeypatch) -> None:
 
         fake_global_nm = root / "fake-global-node-modules"
         fake_global_nm.mkdir(parents=True)
-        (fake_global_nm / "@playwright" / "test").mkdir(parents=True)
+        pkg = _mk_resolvable_pw_module(fake_global_nm)
+        if os.name == "nt":
+            fake_pw = pkg / "cli.js"
 
         monkeypatch.setattr(cons.shutil, "which", lambda cmd: str(fake_pw) if cmd == "playwright" else None)
         monkeypatch.setenv("NODE_PATH", str(fake_global_nm))
@@ -775,6 +777,7 @@ def _mk_resolvable_pw_module(nm: Path, version: str = "9.9.9") -> Path:
                     "main": "index.js", "exports": "./index.js"}),
         encoding="utf-8")
     (pkg / "index.js").write_text("module.exports = {};\n", encoding="utf-8")
+    (pkg / "cli.js").write_text("process.exit(0);\n", encoding="utf-8")
     return pkg
 
 
@@ -790,6 +793,8 @@ def _global_pw_fixture(root: Path, cons, monkeypatch):
     fake_pw.chmod(0o755)
     g_nm = root / "fake-global-node-modules"
     pkg = _mk_resolvable_pw_module(g_nm)
+    if os.name == "nt":
+        fake_pw = pkg / "cli.js"
     real_which = shutil.which
     monkeypatch.setattr(cons.shutil, "which",
                         lambda cmd: str(fake_pw) if cmd == "playwright" else real_which(cmd))
@@ -832,7 +837,10 @@ def test_resolve_pw_repairs_unresolvable_module_from_global(monkeypatch) -> None
         assert pw == fake_pw and why == "", (pw, why)
         assert "@playwright/test" in note and "软链" in note, note
         link = root / "node_modules" / "@playwright" / "test"
-        assert link.is_symlink(), f"应在解析搜索路径上补软链：{link}"
+        if os.name == "nt":
+            assert link.lstat().st_reparse_tag == 0xA0000003
+        else:
+            assert link.is_symlink(), f"应在解析搜索路径上补软链：{link}"
         assert os.path.realpath(link) == os.path.realpath(pkg)
 
         # ③ 幂等：第二次不再动手（同物不动），而「用了机器全局状态」这个**前提事实**照样读得回
@@ -856,7 +864,8 @@ def test_resolve_pw_refuses_when_module_unresolvable_without_global(monkeypatch)
         (root / "product" / "stack-profile.yaml").write_text(
             "product: demo\napps: []\ne2e:\n  runner: node-playwright\n"
             "  node_modules: node_modules\n", encoding="utf-8")
-        pw = root / "node_modules" / ".bin" / "playwright"
+        nm = root / "node_modules"
+        pw = nm / ("playwright/cli.js" if os.name == "nt" else ".bin/playwright")
         pw.parent.mkdir(parents=True)
         pw.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         pw.chmod(0o755)
@@ -885,7 +894,10 @@ def test_resolve_pw_refuses_to_clobber_foreign_path(monkeypatch) -> None:
             "product: demo\napps: []\ne2e:\n  runner: node-playwright\n", encoding="utf-8")
         foreign = root / "node_modules" / "@playwright" / "test"
         foreign.parent.mkdir(parents=True)
-        foreign.symlink_to(root / "nowhere-else")   # 悬空符号链接：探针不过、修复也不得覆盖
+        if os.name == "nt":
+            foreign.mkdir()
+        else:
+            foreign.symlink_to(root / "nowhere-else")
         _fake_pw, _g_nm, _pkg = _global_pw_fixture(root, cons, monkeypatch)
         if not shutil.which("node"):
             return
@@ -893,7 +905,10 @@ def test_resolve_pw_refuses_to_clobber_foreign_path(monkeypatch) -> None:
         assert p is None, (p, why)
         assert "占用" in why, why
         assert note == "", note
-        assert os.path.realpath(str(foreign)) == os.path.realpath(str(root / "nowhere-else"))
+        if os.name == "nt":
+            assert foreign.is_dir() and not list(foreign.iterdir()) and not foreign.lstat().st_reparse_tag
+        else:
+            assert os.path.realpath(str(foreign)) == os.path.realpath(str(root / "nowhere-else"))
 
 
 # ── 2026-10-20 issue #38（D124）：浏览器就绪判据（真跑依赖的第二件事）───────────────────
